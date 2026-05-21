@@ -181,7 +181,7 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
             continue
         search, search_normalizations = normalize_wrapped_text(block.search, block.path, "search")
         replace, replace_normalizations = normalize_wrapped_text(block.replace, block.path, "replace")
-        normalizations = search_normalizations + replace_normalizations
+        normalizations = (block.path_normalizations or []) + search_normalizations + replace_normalizations
 
         current = ""
         creating_file = not resolved.exists() and search == ""

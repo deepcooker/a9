@@ -133,3 +133,9 @@ target path, and remove one outer pair of triple-backtick fences. These changes
 are recorded per block in `normalizations`, such as `search:filename_line` or
 `replace:fence`, and also produce a warning finding. The engine does not strip
 arbitrary prose or nested wrappers.
+
+Path lines get the same bounded cleanup before validation: `# file.py`,
+``file.py``, `file.py:`, and ```python file.py can be normalized to `file.py`.
+The normalized path still goes through the same repository-relative path guard,
+so traversal, absolute paths, `vendor-src/`, and `reference-projects/` remain
+blocked.

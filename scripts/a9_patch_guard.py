@@ -41,6 +41,7 @@ class SearchReplaceBlock:
     search: str
     replace: str
     line: int
+    path_normalizations: list[str] | None = None
 
 
 def read_patch(path: str) -> str:
@@ -58,6 +59,36 @@ def normalize_diff_path(raw: str) -> str:
     if raw.startswith("a/") or raw.startswith("b/"):
         raw = raw[2:]
     return raw
+
+
+def normalize_search_replace_path(raw: str) -> tuple[str, list[str]]:
+    path = raw.strip()
+    normalizations: list[str] = []
+    if path.startswith("```"):
+        candidate = path[3:].strip()
+        if candidate:
+            parts = candidate.split(None, 1)
+            if len(parts) == 2 and ("." in parts[1] or "/" in parts[1]):
+                path = parts[1].strip()
+                normalizations.append("path:fence_language_prefix")
+            elif "." in candidate or "/" in candidate:
+                path = candidate
+                normalizations.append("path:fence_prefix")
+            else:
+                return raw.strip(), []
+        else:
+            return raw.strip(), []
+    if path.endswith(":"):
+        path = path.rstrip(":").strip()
+        normalizations.append("path:trailing_colon")
+    if path.startswith("#"):
+        path = path.lstrip("#").strip()
+        normalizations.append("path:leading_hash")
+    stripped = path.strip("`").strip("*").strip()
+    if stripped != path:
+        path = stripped
+        normalizations.append("path:inline_markup")
+    return path, normalizations
 
 
 def validate_rel_path(root: Path, raw_path: str, findings: list[Finding]) -> Path | None:
@@ -96,8 +127,10 @@ def parse_search_replace(text: str) -> tuple[list[SearchReplaceBlock], list[Find
     while index < len(lines):
         stripped = lines[index].strip()
         if stripped != "<<<<<<< SEARCH":
-            if stripped and not stripped.startswith("```"):
-                last_nonempty = (index + 1, stripped)
+            if stripped:
+                normalized_path, path_normalizations = normalize_search_replace_path(stripped)
+                if not stripped.startswith("```") or path_normalizations:
+                    last_nonempty = (index + 1, stripped)
             index += 1
             continue
 
@@ -105,7 +138,8 @@ def parse_search_replace(text: str) -> tuple[list[SearchReplaceBlock], list[Find
             findings.append(Finding("error", f"SEARCH block at line {index + 1} has no preceding file path"))
             index += 1
             continue
-        path_line, path = last_nonempty
+        path_line, raw_path = last_nonempty
+        path, path_normalizations = normalize_search_replace_path(raw_path)
         search_start = index + 1
         sep = None
         end = None
@@ -129,7 +163,15 @@ def parse_search_replace(text: str) -> tuple[list[SearchReplaceBlock], list[Find
 
         search = "".join(lines[search_start:sep])
         replace = "".join(lines[sep + 1 : end])
-        blocks.append(SearchReplaceBlock(path=path, search=search, replace=replace, line=path_line))
+        blocks.append(
+            SearchReplaceBlock(
+                path=path,
+                search=search,
+                replace=replace,
+                line=path_line,
+                path_normalizations=path_normalizations,
+            )
+        )
         index = end + 1
         last_nonempty = None
 

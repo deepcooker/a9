@@ -67,6 +67,36 @@ gamma
         self.assertEqual(result["kind"], "search_replace")
         self.assertEqual(result["touched_files"], ["scripts/demo.py"])
 
+    def test_search_replace_normalizes_wrapped_path_lines(self):
+        mod = load_patch_guard()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "scripts" / "demo.py"
+            target.parent.mkdir()
+            target.write_text("alpha\n", encoding="utf-8")
+
+            patch = """# `scripts/demo.py`:
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+```python scripts/demo.py
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+"""
+            blocks, findings = mod.parse_search_replace(patch)
+            result = mod.validate(patch, root, "auto")
+
+        self.assertEqual([block.path for block in blocks], ["scripts/demo.py", "scripts/demo.py"])
+        self.assertEqual(blocks[0].path_normalizations, ["path:trailing_colon", "path:leading_hash", "path:inline_markup"])
+        self.assertEqual(blocks[1].path_normalizations, ["path:fence_language_prefix"])
+        self.assertEqual(findings, [])
+        self.assertEqual(result["status"], "pass")
+
     def test_search_replace_rejects_ambiguous_match(self):
         mod = load_patch_guard()
         with tempfile.TemporaryDirectory() as tmp:

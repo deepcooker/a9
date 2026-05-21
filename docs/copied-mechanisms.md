@@ -214,6 +214,10 @@ Mechanisms to adapt:
   and fence cleanup. A leading target filename and one outer triple-backtick
   fence pair can be stripped before matching, with `normalizations` recorded in
   the block evidence.
+- `scripts/a9_patch_guard.py`: Aider-style path-line cleanup is shared by guard
+  and apply. Lightweight wrappers such as `# file.py`, ``file.py``, `file.py:`,
+  and ```python file.py are normalized before the existing repository path
+  checks run.
 
 ## Client Skeleton Reference Notes
 
