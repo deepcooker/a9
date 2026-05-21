@@ -251,6 +251,7 @@ Implemented now:
 26. `scripts/a9_page_monitor.py` copies Cline's browser-observation boundary and OpenHands-style lifecycle state: exported page/TUI text is hashed for idle/stopped detection, snapshotted as non-canonical evidence, and optionally enqueued as a supervisor continuation task.
 27. `crates/a9-worker` is the first native Rust worker wrapper: it leases one Redis Stream task, writes lifecycle heartbeats, runs a bounded command with task env vars, emits started/completed/failed events, and acks the task.
 28. `scripts/a9_supervisor.py` now has explicit copy-pipeline templates: reference scan, mechanism extraction, vendor import, implementation, tests, record, and repair.
+29. `scripts/a9_soak.py` runs bounded unattended soak checks with a fake worker, exercising queue, auto-next, worktrees, evidence, checks, progress, and report writing without model-token spend.
 
 ## Middleware
 
@@ -288,6 +289,7 @@ scripts/a9_middleware.py status
 scripts/a9_middleware.py down
 cargo run -p a9-gateway -- status
 cargo run -p a9-worker -- run-once --command 'python3 scripts/a9_supervisor.py run-one --auto-next'
+scripts/a9_soak.py run --tasks 1 --fake-worker
 scripts/a9_memory.py add "A9 prefers Codex-style evidence backed context" --memory-type decision
 scripts/a9_memory.py search evidence
 scripts/a9_checkpoint.py put demo --channels '{"task":["e1"],"messages":["m1"]}'

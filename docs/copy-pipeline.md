@@ -19,3 +19,9 @@ Phases:
 
 The supervisor schedules these phases through `run-loop --auto-next`. A worker
 must not stop at analysis when code, tests, or durable records are needed.
+
+Use `scripts/a9_soak.py run --tasks N --fake-worker` for bounded unattended
+verification of the loop without spending model tokens. The report is written to
+`.a9/soak/latest.json` and a timestamped file under `.a9/soak/reports/`.
+The fake worker is the default; pass `--real-worker` only for deliberate live
+worker testing.

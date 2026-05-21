@@ -194,6 +194,7 @@ Do the work.
         subprocess.run([str(SUPERVISOR_PATH), "run-one"], cwd=ROOT, check=True, env=env)
         data = json.loads(done_path.read_text(encoding="utf-8"))
         self.assertEqual(data["status"], "pass")
+        self.assertEqual(data["phase"], "implement")
         self.assertGreater(data["diff"]["diff_bytes"], 0)
         self.assertIn("persistence", data)
         evidence_path = Path(data["evidence_path"])

@@ -1857,6 +1857,7 @@ def run_one(*, auto_next: bool = False) -> int:
             **lease,
             "finished_at": utc_now(),
             "status": status,
+            "phase": task.phase,
             "task_path": str(task.path),
             "worker": worker,
             "diff": diff,
