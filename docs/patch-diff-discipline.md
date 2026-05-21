@@ -78,5 +78,16 @@ A non-empty worker diff must pass this guard before the run can be considered
 Empty diffs are recorded with a skipped guard result and still use the existing
 `needs-followup` path.
 
-This integration validates recorded diffs only. Applying model-proposed patches
-through the guard before mutation remains a later bounded task.
+## SEARCH/REPLACE Apply Engine
+
+`scripts/a9_patch_apply.py` is the first A9-native apply engine copied from
+Aider's edit-block discipline:
+
+- only `SEARCH/REPLACE` blocks are accepted;
+- each `SEARCH` must match exactly once before writing;
+- ambiguous or missing matches fail without modifying the target file;
+- empty `SEARCH` is allowed only when creating a new file;
+- `--dry-run` reports the planned edits without writing files.
+
+This is intentionally stricter than a free-form model answer. The model may
+propose text, but A9 applies only deterministic, auditable edits.

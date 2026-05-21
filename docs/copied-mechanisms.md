@@ -188,6 +188,10 @@ Mechanisms to adapt:
   Reused worktrees are also reset to the current base before a new attempt, so
   stale worker commits cannot make a repeated task look like it produced no
   diff.
+- `scripts/a9_patch_apply.py`: Aider SEARCH/REPLACE edit blocks are now
+  executable in A9. The apply engine requires exact unique matches, rejects
+  ambiguous/missing targets without writing, supports empty-SEARCH new files,
+  and exposes `--dry-run` JSON evidence before mutation.
 
 ## Client Skeleton Reference Notes
 
