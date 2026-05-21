@@ -68,6 +68,17 @@ def run_cmd(
     )
 
 
+def run_cmd_no_raise(args: list[str], *, cwd: Path = ROOT) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        cwd=cwd,
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+
 def ensure_dirs() -> None:
     for path in [QUEUE_DIR, RUNNING_DIR, DONE_DIR, RUNS_DIR, WORKTREES_DIR]:
         path.mkdir(parents=True, exist_ok=True)
@@ -437,6 +448,17 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def json_compact(payload: Any) -> str:
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def sql_quote(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    text = str(value)
+    return "'" + text.replace("\\", "\\\\").replace("'", "''") + "'"
+
+
 def rel_path(path: Path) -> str:
     try:
         return str(path.resolve().relative_to(ROOT))
@@ -487,7 +509,8 @@ def mark_record(
 ) -> dict[str, Any]:
     return {
         "mark_id": f"{record['evidence_id']}:mark:{index}",
-        "session_id": record["run_id"],
+        "session_id": record.get("session_id", record["run_id"]),
+        "run_id": record["run_id"],
         "checkpoint_id": record["checkpoint_id"],
         "evidence_id": record["evidence_id"],
         "kind": kind,
@@ -676,7 +699,7 @@ def write_evidence_and_state(
     run_dir: Path,
     summary: dict[str, Any],
     context_path: Path,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path, list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     run_id = Path(summary["run_dir"]).name
     checkpoint_id = f"{run_id}:checkpoint:{summary['attempt']}"
     records: list[dict[str, Any]] = []
@@ -699,6 +722,7 @@ def write_evidence_and_state(
             metadata=metadata,
         )
         if record:
+            record["session_id"] = task.task_id
             records.append(record)
 
     for index, check in enumerate(summary["checks"], start=1):
@@ -715,6 +739,7 @@ def write_evidence_and_state(
             },
         )
         if record:
+            record["session_id"] = task.task_id
             records.append(record)
 
     evidence_path = run_dir / "evidence.jsonl"
@@ -771,7 +796,285 @@ def write_evidence_and_state(
     }
     state_path = run_dir / "state.json"
     write_json(state_path, state)
-    return evidence_path, state_path, deep_marks_path
+    return evidence_path, state_path, deep_marks_path, records, state, deep_marks
+
+
+def mysql_exec_stdin(sql: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "docker",
+            "exec",
+            "-i",
+            "a9-mysql",
+            "mysql",
+            "-h127.0.0.1",
+            "-ua9",
+            "-pa9_dev_password",
+            "a9",
+        ],
+        cwd=ROOT,
+        text=True,
+        input=sql,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+
+
+def redis_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return run_cmd_no_raise(["docker", "exec", "a9-redis", "redis-cli", *args])
+
+
+def redis_available() -> bool:
+    return redis_cli(["PING"]).stdout.strip().endswith("PONG")
+
+
+def mysql_available() -> bool:
+    result = run_cmd_no_raise(
+        [
+            "docker",
+            "exec",
+            "a9-mysql",
+            "mysql",
+            "-h127.0.0.1",
+            "-ua9",
+            "-pa9_dev_password",
+            "a9",
+            "-NBe",
+            "select 1;",
+        ]
+    )
+    return result.returncode == 0
+
+
+def persist_mysql(
+    task: Task,
+    summary: dict[str, Any],
+    evidence: list[dict[str, Any]],
+    state: dict[str, Any],
+    deep_marks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not mysql_available():
+        return {"enabled": False, "status": "unavailable"}
+
+    checkpoint_id = state["checkpoint_id"]
+    session_sql = f"""
+INSERT INTO sessions (session_id, project_id, root_path, status, current_checkpoint_id, source)
+VALUES ({sql_quote(task.task_id)}, 'a9', {sql_quote(str(ROOT))}, 'running', {sql_quote(checkpoint_id)}, 'codex_exec')
+ON DUPLICATE KEY UPDATE
+  status=VALUES(status),
+  current_checkpoint_id=VALUES(current_checkpoint_id),
+  updated_at=CURRENT_TIMESTAMP(6);
+"""
+    checkpoint_sql = f"""
+INSERT INTO checkpoints (
+  checkpoint_id, session_id, parent_checkpoint_id, step, source, status,
+  channels, updated_channels, token_usage, evidence_ids
+) VALUES (
+  {sql_quote(checkpoint_id)},
+  {sql_quote(task.task_id)},
+  NULL,
+  {int(summary['attempt'])},
+  'loop',
+  {sql_quote(summary['status'])},
+  {sql_quote(json_compact(state['channels']))},
+  {sql_quote(json_compact(state['updated_channels']))},
+  {sql_quote(json_compact({
+      'prompt_approx_tokens': summary['worker'].get('prompt_approx_tokens'),
+      'prompt_budget_tokens': summary['worker'].get('prompt_budget_tokens'),
+  }))},
+  {sql_quote(json_compact(state['evidence_ids']))}
+) ON DUPLICATE KEY UPDATE
+  status=VALUES(status),
+  channels=VALUES(channels),
+  updated_channels=VALUES(updated_channels),
+  token_usage=VALUES(token_usage),
+  evidence_ids=VALUES(evidence_ids);
+"""
+    evidence_sql = "\n".join(
+        f"""
+INSERT INTO evidence (
+  evidence_id, session_id, checkpoint_id, kind, path, sha256, size_bytes, metadata
+) VALUES (
+  {sql_quote(item['evidence_id'])},
+  {sql_quote(task.task_id)},
+  {sql_quote(item['checkpoint_id'])},
+  {sql_quote(item['kind'])},
+  {sql_quote(item['path'])},
+  {sql_quote(item['sha256'])},
+  {int(item['size_bytes'])},
+  {sql_quote(json_compact(item.get('metadata', {})))}
+) ON DUPLICATE KEY UPDATE
+  path=VALUES(path),
+  sha256=VALUES(sha256),
+  size_bytes=VALUES(size_bytes),
+  metadata=VALUES(metadata);
+"""
+        for item in evidence
+    )
+    marks_sql = "\n".join(
+        f"""
+INSERT INTO deep_context_marks (
+  mark_id, session_id, checkpoint_id, evidence_id, kind, label, value, weight, metadata
+) VALUES (
+  {sql_quote(mark['mark_id'])},
+  {sql_quote(task.task_id)},
+  {sql_quote(mark['checkpoint_id'])},
+  {sql_quote(mark['evidence_id'])},
+  {sql_quote(mark['kind'])},
+  {sql_quote(mark['label'])},
+  {sql_quote(mark['value'])},
+  {float(mark['weight'])},
+  {sql_quote(json_compact(mark.get('metadata', {})))}
+) ON DUPLICATE KEY UPDATE
+  kind=VALUES(kind),
+  label=VALUES(label),
+  value=VALUES(value),
+  weight=VALUES(weight),
+  metadata=VALUES(metadata);
+"""
+        for mark in deep_marks
+    )
+    result = mysql_exec_stdin(session_sql + checkpoint_sql + evidence_sql + marks_sql)
+    return {
+        "enabled": True,
+        "status": "ok" if result.returncode == 0 else "error",
+        "return_code": result.returncode,
+        "output": result.stdout[-4000:],
+        "evidence_rows": len(evidence),
+        "deep_mark_rows": len(deep_marks),
+    }
+
+
+def persist_redis(
+    task: Task,
+    summary: dict[str, Any],
+    evidence: list[dict[str, Any]],
+    state: dict[str, Any],
+    deep_marks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not redis_available():
+        return {"enabled": False, "status": "unavailable"}
+
+    run_id = Path(summary["run_dir"]).name
+    checkpoint_id = state["checkpoint_id"]
+    errors: list[str] = []
+
+    def call(args: list[str]) -> None:
+        result = redis_cli(args)
+        if result.returncode != 0:
+            errors.append(result.stdout.strip())
+
+    call(
+        [
+            "XADD",
+            "a9:events",
+            "*",
+            "type",
+            "run_completed",
+            "task_id",
+            task.task_id,
+            "run_id",
+            run_id,
+            "checkpoint_id",
+            checkpoint_id,
+            "status",
+            summary["status"],
+            "summary_path",
+            str(Path(summary["run_dir"]) / "summary.json"),
+        ]
+    )
+    call(
+        [
+            "JSON.SET",
+            f"a9:session:{task.task_id}",
+            "$",
+            json_compact(
+                {
+                    "session_id": task.task_id,
+                    "current_checkpoint_id": checkpoint_id,
+                    "status": summary["status"],
+                    "updated_at": summary["finished_at"],
+                    "run_id": run_id,
+                    "state": state,
+                }
+            ),
+        ]
+    )
+    for item in evidence:
+        call(["BF.ADD", "a9:dedupe:evidence", item["sha256"]])
+        call(
+            [
+                "XADD",
+                "a9:events",
+                "*",
+                "type",
+                "evidence",
+                "task_id",
+                task.task_id,
+                "run_id",
+                run_id,
+                "evidence_id",
+                item["evidence_id"],
+                "kind",
+                item["kind"],
+                "path",
+                item["path"],
+            ]
+        )
+    for mark in deep_marks:
+        call(
+            [
+                "JSON.SET",
+                f"a9:deep_mark:{mark['mark_id']}",
+                "$",
+                json_compact(mark),
+            ]
+        )
+        call(
+            [
+                "XADD",
+                "a9:deep_marks",
+                "*",
+                "task_id",
+                task.task_id,
+                "run_id",
+                run_id,
+                "mark_id",
+                mark["mark_id"],
+                "kind",
+                mark["kind"],
+                "label",
+                mark["label"],
+                "value",
+                mark["value"][:1000],
+            ]
+        )
+    call(["TS.ADD", "a9:ts:tokens_in", "*", str(summary["worker"].get("prompt_approx_tokens", 0))])
+    call(["TS.ADD", "a9:ts:task_latency_ms", "*", "0"])
+    if summary["status"].startswith("retryable-"):
+        call(["TS.ADD", "a9:ts:retry", "*", "1"])
+    call(["TS.ADD", "a9:ts:heartbeat", "*", "1"])
+    return {
+        "enabled": True,
+        "status": "ok" if not errors else "error",
+        "errors": errors[-10:],
+        "evidence_events": len(evidence),
+        "deep_mark_events": len(deep_marks),
+    }
+
+
+def persist_run_state(
+    task: Task,
+    summary: dict[str, Any],
+    evidence: list[dict[str, Any]],
+    state: dict[str, Any],
+    deep_marks: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "mysql": persist_mysql(task, summary, evidence, state, deep_marks),
+        "redis": persist_redis(task, summary, evidence, state, deep_marks),
+    }
 
 
 def read_text_if_exists(path: Path, limit: int = 4000) -> str:
@@ -877,12 +1180,13 @@ def run_one() -> int:
         }
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
-        evidence_path, state_path, deep_marks_path = write_evidence_and_state(
+        evidence_path, state_path, deep_marks_path, evidence, state, deep_marks = write_evidence_and_state(
             task, run_dir, summary, context_path
         )
         summary["evidence_path"] = str(evidence_path)
         summary["state_path"] = str(state_path)
         summary["deep_marks_path"] = str(deep_marks_path)
+        summary["persistence"] = persist_run_state(task, summary, evidence, state, deep_marks)
         write_json(run_dir / "summary.json", summary)
 
         retryable = status.startswith("retryable-")

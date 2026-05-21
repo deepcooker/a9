@@ -93,6 +93,7 @@ Do the work.
         data = json.loads(done_path.read_text(encoding="utf-8"))
         self.assertEqual(data["status"], "pass")
         self.assertGreater(data["diff"]["diff_bytes"], 0)
+        self.assertIn("persistence", data)
         evidence_path = Path(data["evidence_path"])
         state_path = Path(data["state_path"])
         deep_marks_path = Path(data["deep_marks_path"])
@@ -126,9 +127,15 @@ Do the work.
             for line in deep_marks_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
+        self.assertTrue(all(item["session_id"] == task_id for item in deep_marks))
         mark_kinds = {item["kind"] for item in deep_marks}
         self.assertIn("check_result", mark_kinds)
         self.assertIn("changed_file", mark_kinds)
+
+        for backend in ("mysql", "redis"):
+            status = data["persistence"][backend]
+            if status["enabled"]:
+                self.assertEqual(status["status"], "ok", status)
 
 
 if __name__ == "__main__":

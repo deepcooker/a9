@@ -234,6 +234,8 @@ Implemented now:
 9. Every run now writes `state.json` with checkpoint-style channels for task, messages, tool events, repo state, patches, checks, and future memories.
 10. Worker prompts are now built through a bounded context packet instead of passing the raw task alone.
 11. `docker-compose.yml` starts MySQL and Redis for durable session governance.
+12. Completed runs now persist to MySQL `sessions/checkpoints/evidence/deep_context_marks`.
+13. Completed runs now publish Redis events, RedisJSON session/deep-mark documents, Bloom evidence dedupe entries, and TimeSeries metrics.
 
 ## Middleware
 
@@ -252,7 +254,16 @@ Redis hot-path pieces to copy from the mature ecosystem:
 - Bloom/Cuckoo filters: cheap dedupe for repeated evidence and repeated task proposals.
 - TimeSeries: worker heartbeat, latency, token-cost, retry, and throughput metrics.
 
-Rust is the intended implementation language for the hot worker loop. The Python supervisor remains a fast MVP/control script, but the production path should move queue consumption, Redis stream handling, lease transitions, deep-mark indexing, and prompt assembly into Rust.
+Rust is the intended implementation language for the stable gateway and governance layer. It should own queue consumption, Redis stream handling, lease transitions, timeout/retry/dead-letter logic, concurrency limits, heartbeats, durable state transitions, and MySQL/Redis consistency.
+
+Python remains a first-class runtime for model-facing and personalization logic. It should own fast-changing business logic: prompt assembly policy, memory extraction prompts, personalization rules, model/provider adapters, reference-mechanism analysis, quant-domain reasoning, and experiment scripts.
+
+The production split is:
+
+- Rust: gateway, scheduler, worker orchestration, Redis/MySQL state machine, reliability.
+- Python: LLM business logic, memory extraction, personalization, domain strategy, analysis.
+- Redis Stack: hot path for streams, functions, search, JSON state, Bloom dedupe, TimeSeries metrics.
+- MySQL: cold canonical facts, evidence, checkpoints, memories, and audit history.
 
 Commands:
 

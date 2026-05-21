@@ -237,6 +237,8 @@ The supervisor MVP has started moving from summary-only continuity to evidence-b
 - `summary.json` remains convenient UI/status data, but it is no longer the only continuity artifact.
 - `scripts/a9_supervisor.py` builds bounded context packets with `A9_CONTEXT_TOKEN_BUDGET`.
 - `docker-compose.yml` provides MySQL for canonical session data and Redis for queue/lease/heartbeat state.
+- Completed supervisor runs write local files, MySQL canonical rows, and Redis hot-path events/documents.
+- Redis `session_id` is stable task/session identity; `run_id` and `checkpoint_id` vary per attempt.
 
 ## Token Explosion Controls
 
@@ -269,6 +271,29 @@ Use Redis for:
 - TimeSeries: worker heartbeat, latency, token budget, token usage, retries, and cost signals.
 
 The prompt builder should hit Redis first for speed, then follow evidence IDs back to MySQL/files only when exact detail is needed.
+
+## Rust / Python Boundary
+
+A9 should not force everything into one language.
+
+Rust owns the stable governance path:
+
+- API/gateway and process supervision.
+- Redis Streams consumer groups.
+- Redis Functions/Lua integration.
+- Lease, ack, retry, dead-letter, heartbeat, and timeout logic.
+- MySQL/Redis consistency writes.
+- High-concurrency worker orchestration.
+
+Python owns the model-facing business path:
+
+- Prompt policy and context assembly experiments.
+- Personalized memory extraction and update logic.
+- Model/provider adapters.
+- Reference project comparison and mechanism extraction.
+- Financial quant research logic and fast iteration scripts.
+
+This mirrors the mature-project lesson: stable runtime mechanics need a strict systems layer, while model behavior needs a flexible iteration layer.
 
 ## Page Monitor In The Stable Architecture
 
