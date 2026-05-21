@@ -1757,7 +1757,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "copy_session": True,
         "auto_next_scheduler": True,
         "browser_or_tui_monitor": True,
-        "native_rust_worker": False,
+        "native_rust_worker": True,
         "quant_workflow_templates": False,
         "production_daemon_packaging": True,
     }
@@ -1777,7 +1777,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
         "capabilities": capabilities,
-        "next_goal": "Add browser/TUI idle monitor, native Rust worker, and quant-specific task templates.",
+        "next_goal": "Add quant-specific task templates and wire them into the 24-hour scheduler.",
     }
     write_json(PROGRESS_PATH, progress)
     return progress

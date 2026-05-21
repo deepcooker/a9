@@ -9,3 +9,7 @@ version = "0.1.0"
 [[package]]
 name = "a9-redis-probe"
 version = "0.1.0"
+
+[[package]]
+name = "a9-worker"
+version = "0.1.0"

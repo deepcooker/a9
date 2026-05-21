@@ -132,3 +132,7 @@ Mechanisms to adapt:
   Exported transcript text is treated as a non-canonical observation, hashed for
   idle/stopped detection, snapshotted, converted into a continuation prompt, and
   optionally enqueued back into the supervisor loop.
+- `crates/a9-worker`: Redis Streams worker wrapper shaped after mature queue
+  workers: lease one task from a consumer group, heartbeat lifecycle state,
+  execute a bounded worker command, emit started/completed/failed events, and
+  ack the stream entry so production orchestration is Rust-first.
