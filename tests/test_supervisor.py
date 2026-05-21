@@ -93,6 +93,29 @@ Do the work.
         data = json.loads(done_path.read_text(encoding="utf-8"))
         self.assertEqual(data["status"], "pass")
         self.assertGreater(data["diff"]["diff_bytes"], 0)
+        evidence_path = Path(data["evidence_path"])
+        state_path = Path(data["state_path"])
+        self.assertTrue(evidence_path.exists())
+        self.assertTrue(state_path.exists())
+
+        evidence = [
+            json.loads(line)
+            for line in evidence_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        kinds = {item["kind"] for item in evidence}
+        self.assertIn("prompt", kinds)
+        self.assertIn("events", kinds)
+        self.assertIn("patch", kinds)
+        self.assertIn("check_log", kinds)
+        self.assertIn("context", kinds)
+        self.assertTrue(all(item["sha256"] for item in evidence))
+
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["session_id"], task_id)
+        self.assertEqual(state["status"], "pass")
+        self.assertTrue(state["channels"]["checks"])
+        self.assertEqual(len(state["evidence_ids"]), len(evidence))
 
 
 if __name__ == "__main__":

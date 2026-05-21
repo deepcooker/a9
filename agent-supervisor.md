@@ -217,6 +217,8 @@ Implemented now:
 5. Every run stores `prompt.md`, `events.jsonl`, `stderr.log`, `final.md`, `patch.diff`, check logs, and `summary.json`.
 6. Each task runs in an isolated git worktree under `.a9/worktrees`.
 7. The supervisor classifies results as `pass`, `needs-followup`, `needs-repair`, or retryable failures.
+8. Every run now writes `evidence.jsonl` with SHA-256 hashes for prompt, events, stderr, final message, patch, context, and check logs.
+9. Every run now writes `state.json` with checkpoint-style channels for task, messages, tool events, repo state, patches, checks, and future memories.
 
 Verified:
 

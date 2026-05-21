@@ -9,6 +9,7 @@ the interactive UI.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -287,6 +288,128 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def rel_path(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def evidence_record(
+    *,
+    run_id: str,
+    checkpoint_id: str,
+    kind: str,
+    path: Path,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return {
+        "evidence_id": f"{checkpoint_id}:{kind}:{len(str(path))}:{path.name}",
+        "run_id": run_id,
+        "checkpoint_id": checkpoint_id,
+        "kind": kind,
+        "path": rel_path(path),
+        "sha256": sha256_file(path),
+        "size_bytes": path.stat().st_size,
+        "created_at": utc_now(),
+        "metadata": metadata or {},
+    }
+
+
+def write_evidence_and_state(
+    task: Task,
+    run_dir: Path,
+    summary: dict[str, Any],
+    context_path: Path,
+) -> tuple[Path, Path]:
+    run_id = Path(summary["run_dir"]).name
+    checkpoint_id = f"{run_id}:checkpoint:{summary['attempt']}"
+    records: list[dict[str, Any]] = []
+
+    paths = [
+        ("prompt", run_dir / "prompt.md", {"task_id": task.task_id}),
+        ("events", Path(summary["worker"]["events_path"]), summary["worker"]["event_counts"]),
+        ("stderr", Path(summary["worker"]["stderr_path"]), {}),
+        ("final_message", Path(summary["worker"]["final_path"]), {}),
+        ("patch", Path(summary["diff"]["diff_path"]), {"diff_bytes": summary["diff"]["diff_bytes"]}),
+        ("context", context_path, {"status": summary["status"]}),
+    ]
+    for kind, path, metadata in paths:
+        record = evidence_record(
+            run_id=run_id,
+            checkpoint_id=checkpoint_id,
+            kind=kind,
+            path=path,
+            metadata=metadata,
+        )
+        if record:
+            records.append(record)
+
+    for index, check in enumerate(summary["checks"], start=1):
+        record = evidence_record(
+            run_id=run_id,
+            checkpoint_id=checkpoint_id,
+            kind="check_log",
+            path=Path(check["output_path"]),
+            metadata={
+                "index": index,
+                "command": check["command"],
+                "return_code": check["return_code"],
+                "duration_seconds": check["duration_seconds"],
+            },
+        )
+        if record:
+            records.append(record)
+
+    evidence_path = run_dir / "evidence.jsonl"
+    with evidence_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    by_kind: dict[str, list[str]] = {}
+    for record in records:
+        by_kind.setdefault(record["kind"], []).append(record["evidence_id"])
+
+    state = {
+        "checkpoint_id": checkpoint_id,
+        "session_id": task.task_id,
+        "parent_checkpoint_id": None,
+        "step": summary["attempt"],
+        "source": "loop",
+        "created_at": utc_now(),
+        "status": summary["status"],
+        "channels": {
+            "task": by_kind.get("prompt", []),
+            "messages": by_kind.get("final_message", []) + by_kind.get("context", []),
+            "tool_events": by_kind.get("events", []) + by_kind.get("stderr", []),
+            "repo_state": [
+                {
+                    "repo_head": summary["repo_head"],
+                    "worktree": summary["worktree"],
+                }
+            ],
+            "patches": by_kind.get("patch", []),
+            "checks": by_kind.get("check_log", []),
+            "memories": [],
+        },
+        "updated_channels": ["task", "messages", "tool_events", "repo_state", "patches", "checks"],
+        "evidence_ids": [record["evidence_id"] for record in records],
+    }
+    state_path = run_dir / "state.json"
+    write_json(state_path, state)
+    return evidence_path, state_path
+
+
 def read_text_if_exists(path: Path, limit: int = 4000) -> str:
     if not path.exists():
         return ""
@@ -390,6 +513,9 @@ def run_one() -> int:
         }
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
+        evidence_path, state_path = write_evidence_and_state(task, run_dir, summary, context_path)
+        summary["evidence_path"] = str(evidence_path)
+        summary["state_path"] = str(state_path)
         write_json(run_dir / "summary.json", summary)
 
         retryable = status.startswith("retryable-")
