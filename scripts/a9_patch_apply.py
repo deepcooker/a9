@@ -88,6 +88,65 @@ def build_repair_hint(successful: list[dict[str, Any]], failed: list[dict[str, A
     return "\n\n".join(hints)
 
 
+def split_keepends(text: str) -> list[str]:
+    if text and not text.endswith("\n"):
+        text += "\n"
+    return text.splitlines(keepends=True)
+
+
+def replace_exact(current: str, search: str, replace: str) -> tuple[str, dict[str, Any]] | None:
+    matches = current.count(search)
+    if matches != 1:
+        return None
+    return current.replace(search, replace, 1), {
+        "matches": matches,
+        "match_strategy": "exact",
+        "fuzz_level": 0,
+    }
+
+
+def match_leading_whitespace(whole_lines: list[str], part_lines: list[str]) -> str | None:
+    if len(whole_lines) != len(part_lines):
+        return None
+    if not all(whole_lines[index].lstrip() == part_lines[index].lstrip() for index in range(len(part_lines))):
+        return None
+    offsets = {
+        whole_lines[index][: len(whole_lines[index]) - len(part_lines[index])]
+        for index in range(len(part_lines))
+        if whole_lines[index].strip()
+    }
+    if len(offsets) != 1:
+        return None
+    return offsets.pop()
+
+
+def replace_leading_whitespace(current: str, search: str, replace: str) -> tuple[str, dict[str, Any]] | None:
+    whole_lines = split_keepends(current)
+    search_lines = split_keepends(search)
+    replace_lines = split_keepends(replace)
+    if not search_lines:
+        return None
+    matches: list[tuple[int, str]] = []
+    for index in range(len(whole_lines) - len(search_lines) + 1):
+        add_leading = match_leading_whitespace(whole_lines[index : index + len(search_lines)], search_lines)
+        if add_leading is not None:
+            matches.append((index, add_leading))
+    if len(matches) != 1:
+        return None
+    index, add_leading = matches[0]
+    adjusted_replace = [add_leading + line if line.strip() else line for line in replace_lines]
+    new_lines = whole_lines[:index] + adjusted_replace + whole_lines[index + len(search_lines) :]
+    return "".join(new_lines), {
+        "matches": len(matches),
+        "match_strategy": "leading_whitespace",
+        "fuzz_level": 1,
+    }
+
+
+def replace_with_strategy(current: str, search: str, replace: str) -> tuple[str, dict[str, Any]] | None:
+    return replace_exact(current, search, replace) or replace_leading_whitespace(current, search, replace)
+
+
 def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dict[str, Any]:
     findings: list[a9_patch_guard.Finding] = []
     blocks, parse_findings = a9_patch_guard.parse_search_replace(text)
@@ -127,11 +186,12 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
 
         if creating_file:
             new_content = block.replace
-            matches = 0
+            match_meta = {"matches": 0, "match_strategy": "new_file", "fuzz_level": 0}
         else:
-            matches = current.count(block.search)
-            if matches != 1:
-                message = f"SEARCH content must match exactly once; found {matches}"
+            replacement = replace_with_strategy(current, block.search, block.replace)
+            if replacement is None:
+                exact_matches = current.count(block.search)
+                message = f"SEARCH content must match exactly once; found {exact_matches}"
                 findings.append(
                     a9_patch_guard.Finding(
                         "error",
@@ -147,15 +207,25 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
                         "mode": "failed",
                         "search_bytes": len(block.search.encode("utf-8")),
                         "replace_bytes": len(block.replace.encode("utf-8")),
-                        "matches": matches,
+                        "matches": exact_matches,
+                        "match_strategy": "none",
+                        "fuzz_level": None,
                         "repair_hint": repair_hint_for_block(block, current, message),
                     }
                 )
                 continue
-            new_content = current.replace(block.search, block.replace, 1)
+            new_content, match_meta = replacement
 
         if new_content == current and not creating_file:
             findings.append(a9_patch_guard.Finding("warning", "replacement is identical to search", block.path))
+        if match_meta["fuzz_level"] > 0:
+            findings.append(
+                a9_patch_guard.Finding(
+                    "warning",
+                    f"applied with controlled fuzz: {match_meta['match_strategy']}",
+                    block.path,
+                )
+            )
 
         if not dry_run:
             resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -168,7 +238,7 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
                 "mode": "create" if creating_file else "replace",
                 "search_bytes": len(block.search.encode("utf-8")),
                 "replace_bytes": len(block.replace.encode("utf-8")),
-                "matches": matches,
+                **match_meta,
             }
         )
 

@@ -115,3 +115,12 @@ lists successful blocks separately to prevent duplicate application. In the
 supervisor path, git governance may roll back the failed run, so the next worker
 must check target content and the block metadata before deciding whether to
 resend a successful block.
+
+## Controlled Fuzz
+
+A9 copies only Aider's lowest-risk flexible match: missing or extra leading
+whitespace. Exact match is always attempted first. If exact match fails, A9 may
+apply a block only when every searched non-empty line matches after stripping
+leading whitespace and the target block has one consistent indentation offset.
+The result records `match_strategy=leading_whitespace` and `fuzz_level=1`, and
+adds a warning finding. Arbitrary edit-distance fuzzy matching remains disabled.

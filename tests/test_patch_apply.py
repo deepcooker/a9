@@ -124,6 +124,54 @@ other
             self.assertIn("block 1: demo.py", result["repair_hint"])
             self.assertEqual(target.read_text(encoding="utf-8"), "gamma\nsame\nsame\n")
 
+    def test_leading_whitespace_fuzz_is_controlled_and_recorded(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "demo.py"
+            target.write_text("def run():\n    alpha\n    beta\n", encoding="utf-8")
+
+            result = mod.apply_search_replace(
+                """demo.py
+<<<<<<< SEARCH
+alpha
+beta
+=======
+gamma
+delta
+>>>>>>> REPLACE
+""",
+                root,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["applied"][0]["match_strategy"], "leading_whitespace")
+            self.assertEqual(result["applied"][0]["fuzz_level"], 1)
+            self.assertIn("controlled fuzz", result["findings"][0]["message"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "def run():\n    gamma\n    delta\n")
+
+    def test_leading_whitespace_fuzz_rejects_ambiguous_matches(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "demo.py"
+            target.write_text("    alpha\nalpha\n", encoding="utf-8")
+
+            result = mod.apply_search_replace(
+                """demo.py
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+""",
+                root,
+            )
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["applied_count"], 0)
+            self.assertEqual(target.read_text(encoding="utf-8"), "    alpha\nalpha\n")
+
     def test_dry_run_does_not_write(self):
         mod = load_patch_apply()
         with tempfile.TemporaryDirectory() as tmp:

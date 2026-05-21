@@ -206,6 +206,10 @@ Mechanisms to adapt:
   blocks can report `successful_blocks` and `failed_blocks`, with repair hints
   warning not to duplicate successful edits when a retained worktree already has
   them.
+- `scripts/a9_patch_apply.py`: controlled fuzz copies Aider's leading
+  whitespace recovery only. Exact match still wins; indentation-only recovery is
+  recorded as `match_strategy=leading_whitespace`, `fuzz_level=1`, with a
+  warning. Edit-distance fuzzy matching stays disabled.
 
 ## Client Skeleton Reference Notes
 
