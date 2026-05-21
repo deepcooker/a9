@@ -124,6 +124,28 @@ Do the work.
         self.assertGreater(meta["included_files"], 0)
         self.assertEqual(meta["strategy"], "aider_ranked_symbol_repo_map")
 
+    def test_codex_style_event_summary_preserves_tool_meta_signal(self):
+        mod = load_supervisor()
+        event = {
+            "type": "item.completed",
+            "item": {
+                "id": "mcp-1",
+                "type": "mcp_tool_call",
+                "server": "search service",
+                "tool": "web_run",
+                "status": "completed",
+                "duration_ms": 42,
+                "result": {"_meta": {"raw_messages": [{"ref_id": "turn0search0"}]}},
+            },
+        }
+
+        summary = mod.summarize_thread_event(event)
+
+        self.assertEqual(summary["event_type"], "item.completed")
+        self.assertEqual(summary["item_type"], "mcp_tool_call")
+        self.assertEqual(summary["tool"], "web_run")
+        self.assertTrue(summary["has_meta"])
+
     def test_supervisor_fake_worker_end_to_end(self):
         env = os.environ.copy()
         env["A9_SUPERVISOR_WORKER_CMD"] = (
@@ -131,6 +153,8 @@ Do the work.
             "from pathlib import Path\n"
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
+            "print(json.dumps({'type':'thread.started','thread_id':'fake-thread'}))\n"
+            "print(json.dumps({'type':'item.completed','item':{'id':'cmd-1','type':'command_execution','command':'echo ok','status':'completed','exit_code':0,'aggregated_output':'ok'}}))\n"
             "Path('worker-output.txt').write_text('done\\n')\n"
             "Path('{run_dir}/final.md').write_text('ok\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
@@ -171,9 +195,11 @@ Do the work.
         evidence_path = Path(data["evidence_path"])
         state_path = Path(data["state_path"])
         deep_marks_path = Path(data["deep_marks_path"])
+        event_summaries_path = Path(data["worker"]["event_summaries_path"])
         self.assertTrue(evidence_path.exists())
         self.assertTrue(state_path.exists())
         self.assertTrue(deep_marks_path.exists())
+        self.assertTrue(event_summaries_path.exists())
 
         evidence = [
             json.loads(line)
@@ -183,6 +209,7 @@ Do the work.
         kinds = {item["kind"] for item in evidence}
         self.assertIn("prompt", kinds)
         self.assertIn("events", kinds)
+        self.assertIn("event_summary", kinds)
         self.assertIn("patch", kinds)
         self.assertIn("check_log", kinds)
         self.assertIn("context", kinds)
@@ -193,6 +220,7 @@ Do the work.
         self.assertEqual(state["status"], "pass")
         self.assertIn("parent_checkpoint_id", state)
         self.assertIn("repo_map", state)
+        self.assertTrue(state["channels"]["event_summaries"])
         self.assertTrue(state["channels"]["checks"])
         self.assertTrue(state["channels"]["deep_marks"])
         self.assertGreater(state["deep_mark_count"], 0)
@@ -207,6 +235,14 @@ Do the work.
         mark_kinds = {item["kind"] for item in deep_marks}
         self.assertIn("check_result", mark_kinds)
         self.assertIn("changed_file", mark_kinds)
+
+        event_summaries = [
+            json.loads(line)
+            for line in event_summaries_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertTrue(any(item.get("event_type") == "thread.started" for item in event_summaries))
+        self.assertTrue(any(item.get("item_type") == "command_execution" for item in event_summaries))
 
         for backend in ("mysql", "redis"):
             status = data["persistence"][backend]

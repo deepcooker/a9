@@ -112,3 +112,7 @@ Mechanisms to adapt:
   packet. A9 ranks tracked files by task terms and important paths, extracts
   lightweight symbols, excludes vendor/reference/build noise, and records repo
   map metadata in checkpoint token usage.
+- `scripts/a9_supervisor.py`: Codex exec JSONL event normalization. Raw event
+  streams are still stored, but A9 also writes `event_summaries.jsonl` with
+  typed turn, tool, command, file-change, and token-usage summaries for durable
+  monitoring and future recovery.

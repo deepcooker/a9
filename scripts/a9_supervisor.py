@@ -668,12 +668,89 @@ def build_worker_cmd(
 
 
 def classify_event(line: str) -> str | None:
+    payload = parse_event_payload(line)
+    if not payload:
+        return None
+    event_type = payload.get("type") or payload.get("event") or payload.get("msg", {}).get("type")
+    return str(event_type) if event_type else None
+
+
+def parse_event_payload(line: str) -> dict[str, Any] | None:
     try:
         payload = json.loads(line)
     except json.JSONDecodeError:
         return None
+    return payload if isinstance(payload, dict) else None
+
+
+def summarize_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     event_type = payload.get("type") or payload.get("event") or payload.get("msg", {}).get("type")
-    return str(event_type) if event_type else None
+    if not event_type:
+        return None
+    summary: dict[str, Any] = {"event_type": str(event_type)}
+    if event_type == "thread.started":
+        summary["thread_id"] = payload.get("thread_id")
+        summary["label"] = "thread_started"
+        return summary
+    if event_type == "turn.completed":
+        usage = payload.get("usage") or {}
+        summary["label"] = "turn_completed"
+        summary["usage"] = usage
+        summary["input_tokens"] = usage.get("input_tokens")
+        summary["output_tokens"] = usage.get("output_tokens")
+        return summary
+    if event_type == "turn.failed":
+        error = payload.get("error") or {}
+        summary["label"] = "turn_failed"
+        summary["message"] = error.get("message") or payload.get("message")
+        return summary
+    if event_type == "error":
+        summary["label"] = "stream_error"
+        summary["message"] = payload.get("message")
+        return summary
+
+    item = payload.get("item")
+    if not isinstance(item, dict):
+        summary["label"] = str(event_type)
+        return summary
+
+    item_type = item.get("type") or item.get("details", {}).get("type")
+    summary.update(
+        {
+            "item_id": item.get("id"),
+            "item_type": item_type,
+            "label": f"{event_type}:{item_type}",
+        }
+    )
+    if item_type == "command_execution":
+        command = item.get("command") or item.get("details", {}).get("command")
+        output = item.get("aggregated_output") or item.get("details", {}).get("aggregated_output")
+        summary.update(
+            {
+                "command": command,
+                "status": item.get("status"),
+                "exit_code": item.get("exit_code"),
+                "output_preview": truncate_to_token_budget(str(output or ""), 120, keep="tail"),
+            }
+        )
+    elif item_type == "file_change":
+        changes = item.get("changes") or item.get("details", {}).get("changes") or []
+        summary["changes"] = changes[:50] if isinstance(changes, list) else changes
+    elif item_type == "mcp_tool_call":
+        result = item.get("result") or {}
+        summary.update(
+            {
+                "server": item.get("server"),
+                "tool": item.get("tool"),
+                "status": item.get("status"),
+                "duration_ms": item.get("duration_ms"),
+                "has_meta": isinstance(result, dict) and "_meta" in result,
+            }
+        )
+    elif item_type in {"agent_message", "reasoning"}:
+        text = item.get("text") or item.get("details", {}).get("text") or ""
+        summary["text_preview"] = truncate_to_token_budget(str(text), 160, keep="tail")
+    return summary
 
 
 def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
@@ -681,6 +758,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     raw_task_path = run_dir / "raw_task.md"
     final_path = run_dir / "final.md"
     events_path = run_dir / "events.jsonl"
+    event_summaries_path = run_dir / "event_summaries.jsonl"
     stderr_path = run_dir / "stderr.log"
     context_packet = build_context_packet(task)
     raw_task_path.write_text(task.prompt + "\n", encoding="utf-8")
@@ -690,6 +768,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     started = time.monotonic()
     last_output = started
     event_counts: dict[str, int] = {}
+    event_summaries: list[dict[str, Any]] = []
+    seen_event_summaries: set[str] = set()
     timed_out = False
     idle_timed_out = False
 
@@ -726,6 +806,14 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                     event_type = classify_event(line)
                     if event_type:
                         event_counts[event_type] = event_counts.get(event_type, 0) + 1
+                    payload = parse_event_payload(line)
+                    if payload:
+                        event_summary = summarize_thread_event(payload)
+                        if event_summary:
+                            fingerprint = json_compact(event_summary)
+                            if fingerprint not in seen_event_summaries:
+                                seen_event_summaries.add(fingerprint)
+                                event_summaries.append(event_summary)
                 elif proc.poll() is not None:
                     break
             elif proc.poll() is not None:
@@ -733,13 +821,19 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
 
         return_code = proc.wait()
 
+    with event_summaries_path.open("w", encoding="utf-8") as summaries:
+        for item in event_summaries:
+            summaries.write(json.dumps(item, ensure_ascii=False) + "\n")
+
     return {
         "command": cmd,
         "return_code": return_code,
         "timed_out": timed_out,
         "idle_timed_out": idle_timed_out,
         "event_counts": event_counts,
+        "event_summary_count": len(event_summaries),
         "events_path": str(events_path),
+        "event_summaries_path": str(event_summaries_path),
         "stderr_path": str(stderr_path),
         "final_path": str(final_path),
         "raw_task_path": str(raw_task_path),
@@ -1073,6 +1167,11 @@ def write_evidence_and_state(
         ("raw_task", Path(summary["worker"]["raw_task_path"]), {"task_id": task.task_id}),
         ("prompt", run_dir / "prompt.md", {"task_id": task.task_id}),
         ("events", Path(summary["worker"]["events_path"]), summary["worker"]["event_counts"]),
+        (
+            "event_summary",
+            Path(summary["worker"]["event_summaries_path"]),
+            {"count": summary["worker"].get("event_summary_count", 0)},
+        ),
         ("stderr", Path(summary["worker"]["stderr_path"]), {}),
         ("final_message", Path(summary["worker"]["final_path"]), {}),
         ("patch", Path(summary["diff"]["diff_path"]), {"diff_bytes": summary["diff"]["diff_bytes"]}),
@@ -1136,6 +1235,7 @@ def write_evidence_and_state(
             "task": by_kind.get("prompt", []),
             "messages": by_kind.get("final_message", []) + by_kind.get("context", []),
             "tool_events": by_kind.get("events", []) + by_kind.get("stderr", []),
+            "event_summaries": by_kind.get("event_summary", []),
             "repo_state": [
                 {
                     "repo_head": summary["repo_head"],
@@ -1151,6 +1251,7 @@ def write_evidence_and_state(
             "task",
             "messages",
             "tool_events",
+            "event_summaries",
             "repo_state",
             "patches",
             "checks",
