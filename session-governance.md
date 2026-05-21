@@ -284,6 +284,19 @@ Rust owns the stable governance path:
 - Lease, ack, retry, dead-letter, heartbeat, and timeout logic.
 - MySQL/Redis consistency writes.
 - High-concurrency worker orchestration.
+- `crates/a9-gateway` starts this path with Redis Streams submit/lease/ack/fail/heartbeat/status.
+
+## Mem0 Integration Strategy
+
+Mem0 is Apache-2.0 and can be directly introduced or forked. A9's current path is:
+
+- Copy the API shape first: `add`, `search`, `get_all`, `history`, scoped filters, metadata, evidence IDs.
+- Keep canonical memory rows in MySQL.
+- Keep hot memory documents in RedisJSON and searchable through RediSearch.
+- Keep Python as the memory business-logic layer for extraction/update/rerank experiments.
+- Later, optionally install `mem0ai` as a Python plugin or vendor a modified fork if its internals need deeper changes.
+
+This avoids putting a heavy Python memory framework inside the Rust governance hot path while still copying Mem0's mature memory semantics.
 
 Python owns the model-facing business path:
 

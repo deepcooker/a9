@@ -3,5 +3,9 @@
 version = 3
 
 [[package]]
+name = "a9-gateway"
+version = "0.1.0"
+
+[[package]]
 name = "a9-redis-probe"
 version = "0.1.0"

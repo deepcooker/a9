@@ -236,6 +236,8 @@ Implemented now:
 11. `docker-compose.yml` starts MySQL and Redis for durable session governance.
 12. Completed runs now persist to MySQL `sessions/checkpoints/evidence/deep_context_marks`.
 13. Completed runs now publish Redis events, RedisJSON session/deep-mark documents, Bloom evidence dedupe entries, and TimeSeries metrics.
+14. `crates/a9-gateway` is the first Rust gateway slice for Redis Streams submit/lease/ack/fail/heartbeat/status.
+15. `scripts/a9_memory.py` is a Mem0-shaped memory adapter backed by A9 MySQL and Redis Stack.
 
 ## Middleware
 
@@ -271,6 +273,9 @@ Commands:
 scripts/a9_middleware.py up
 scripts/a9_middleware.py status
 scripts/a9_middleware.py down
+cargo run -p a9-gateway -- status
+scripts/a9_memory.py add "A9 prefers Codex-style evidence backed context" --memory-type decision
+scripts/a9_memory.py search evidence
 ```
 
 Default local URLs are in `.env.example`.
