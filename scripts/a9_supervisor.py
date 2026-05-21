@@ -912,7 +912,7 @@ def write_evidence_and_state(
     state = {
         "checkpoint_id": checkpoint_id,
         "session_id": task.task_id,
-        "parent_checkpoint_id": None,
+        "parent_checkpoint_id": summary.get("parent_checkpoint_id"),
         "step": summary["attempt"],
         "source": "loop",
         "created_at": utc_now(),
@@ -1024,7 +1024,7 @@ INSERT INTO checkpoints (
 ) VALUES (
   {sql_quote(checkpoint_id)},
   {sql_quote(task.task_id)},
-  NULL,
+  {sql_quote(state.get('parent_checkpoint_id'))},
   {int(summary['attempt'])},
   'loop',
   {sql_quote(summary['status'])},
@@ -1038,6 +1038,7 @@ INSERT INTO checkpoints (
   {sql_quote(json_compact(state['evidence_ids']))}
 ) ON DUPLICATE KEY UPDATE
   status=VALUES(status),
+  parent_checkpoint_id=VALUES(parent_checkpoint_id),
   channels=VALUES(channels),
   updated_channels=VALUES(updated_channels),
   token_usage=VALUES(token_usage),
@@ -1293,6 +1294,29 @@ Continue this task from the durable context above. If status is `needs-repair`, 
     return context_path
 
 
+def previous_task_checkpoint_id(task: Task) -> str | None:
+    done_path = DONE_DIR / f"{task.task_id}.json"
+    if not done_path.exists():
+        return None
+    try:
+        summary = json.loads(done_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    state_path = summary.get("state_path")
+    if state_path:
+        path = Path(state_path)
+        if path.exists():
+            try:
+                state = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                state = {}
+            checkpoint_id = state.get("checkpoint_id")
+            if checkpoint_id:
+                return str(checkpoint_id)
+    checkpoint_id = summary.get("checkpoint_id")
+    return str(checkpoint_id) if checkpoint_id else None
+
+
 def run_one() -> int:
     ensure_dirs()
     task = next_task()
@@ -1313,6 +1337,7 @@ def run_one() -> int:
             "run_dir": str(run_dir),
             "worktree": str(worktree),
             "repo_head": git_head(),
+            "parent_checkpoint_id": previous_task_checkpoint_id(task),
         }
         lease_path = RUNNING_DIR / f"{task.task_id}.json"
         write_json(lease_path, lease)

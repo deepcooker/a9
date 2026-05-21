@@ -150,6 +150,7 @@ Do the work.
         state = json.loads(state_path.read_text(encoding="utf-8"))
         self.assertEqual(state["session_id"], task_id)
         self.assertEqual(state["status"], "pass")
+        self.assertIn("parent_checkpoint_id", state)
         self.assertTrue(state["channels"]["checks"])
         self.assertTrue(state["channels"]["deep_marks"])
         self.assertGreater(state["deep_mark_count"], 0)
@@ -169,6 +170,29 @@ Do the work.
             status = data["persistence"][backend]
             if status["enabled"]:
                 self.assertEqual(status["status"], "ok", status)
+
+    def test_previous_task_checkpoint_id_reads_done_state(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.QUEUE_DIR / "lineage-test.md",
+            task_id="lineage-test",
+            prompt="lineage",
+        )
+        run_dir = mod.RUNS_DIR / "lineage-test-run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        state_path = run_dir / "state.json"
+        state_path.write_text(
+            json.dumps({"checkpoint_id": "lineage-test:checkpoint:1"}),
+            encoding="utf-8",
+        )
+        done_path = mod.DONE_DIR / "lineage-test.json"
+        done_path.write_text(json.dumps({"state_path": str(state_path)}), encoding="utf-8")
+
+        self.assertEqual(
+            mod.previous_task_checkpoint_id(task),
+            "lineage-test:checkpoint:1",
+        )
 
 
 if __name__ == "__main__":

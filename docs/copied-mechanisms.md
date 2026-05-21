@@ -97,3 +97,7 @@ Mechanisms to adapt:
   split old head from recent tail, summarize old details into explicit
   file/symbol/status references, preserve the latest tail verbatim, and record
   compression metadata in checkpoint token usage.
+- `scripts/a9_supervisor.py`: LangGraph-style checkpoint lineage for repeated
+  task runs. Each new run reads the previous completed checkpoint and writes it
+  as `parent_checkpoint_id`, enabling channel-history reconstruction across
+  supervisor attempts and 24-hour continuations.
