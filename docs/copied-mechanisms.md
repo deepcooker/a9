@@ -45,6 +45,7 @@ Mechanisms to adapt:
 Copied files:
 
 - `vendor-src/aider/aider/history.py`
+- `vendor-src/aider/aider/repomap.py`
 
 Mechanisms to adapt:
 
@@ -53,6 +54,8 @@ Mechanisms to adapt:
 - Recursive compression when summary plus tail still exceeds budget.
 - Summary prompt rules that keep filenames, functions, libraries, and package
   names explicit.
+- Ranked repository map built from symbols and file relevance under a token
+  budget instead of inlining full source files.
 
 ### LangGraph
 
@@ -105,3 +108,7 @@ Mechanisms to adapt:
   extraction. Obvious command/test/client warnings, truncation markers, repeated
   lines, and duplicate events are filtered from prompt summaries and long-term
   deep marks while raw evidence files remain untouched.
+- `scripts/a9_supervisor.py`: Aider-inspired repo map in each bounded context
+  packet. A9 ranks tracked files by task terms and important paths, extracts
+  lightweight symbols, excludes vendor/reference/build noise, and records repo
+  map metadata in checkpoint token usage.

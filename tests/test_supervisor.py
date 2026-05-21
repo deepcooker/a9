@@ -113,6 +113,17 @@ Do the work.
         self.assertEqual(rendered.count("scripts/noise_filter.py"), 1)
         self.assertIn("RECENT_NOISE_SENTINEL keep this", rendered)
 
+    def test_repo_map_is_ranked_bounded_and_excludes_vendor_noise(self):
+        mod = load_supervisor()
+        repo_map, meta = mod.build_repo_map("change a9_supervisor context repo map tests", 450)
+
+        self.assertLessEqual(mod.approx_token_count(repo_map), 450)
+        self.assertIn("scripts/a9_supervisor.py", repo_map)
+        self.assertIn("tests/test_supervisor.py", repo_map)
+        self.assertNotIn("vendor-src/", repo_map)
+        self.assertGreater(meta["included_files"], 0)
+        self.assertEqual(meta["strategy"], "aider_ranked_symbol_repo_map")
+
     def test_supervisor_fake_worker_end_to_end(self):
         env = os.environ.copy()
         env["A9_SUPERVISOR_WORKER_CMD"] = (
@@ -181,6 +192,7 @@ Do the work.
         self.assertEqual(state["session_id"], task_id)
         self.assertEqual(state["status"], "pass")
         self.assertIn("parent_checkpoint_id", state)
+        self.assertIn("repo_map", state)
         self.assertTrue(state["channels"]["checks"])
         self.assertTrue(state["channels"]["deep_marks"])
         self.assertGreater(state["deep_mark_count"], 0)

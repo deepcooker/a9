@@ -37,6 +37,7 @@ SECTION_TOKEN_BUDGETS = {
     "doctrine": 5000,
     "task": 4000,
     "previous_context": 3000,
+    "repo_map": 2500,
     "reference_mechanisms": 2500,
     "contract": 1500,
 }
@@ -376,6 +377,153 @@ def compress_text_aider_style(text: str, budget: int) -> tuple[str, dict[str, An
     }
 
 
+def prompt_terms(text: str) -> set[str]:
+    return {
+        item.lower()
+        for item in re.findall(r"[A-Za-z_][A-Za-z0-9_./-]{2,}", text)
+        if item.lower() not in {"the", "and", "for", "with", "this", "that", "from", "into"}
+    }
+
+
+def git_tracked_files() -> list[str]:
+    result = run_cmd_no_raise(["git", "ls-files"])
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def repo_map_allowed_file(rel_path: str) -> bool:
+    blocked_prefixes = (
+        ".a9/",
+        ".git/",
+        "reference-projects/",
+        "vendor-src/",
+        "target/",
+        "node_modules/",
+        "__pycache__/",
+    )
+    if rel_path.startswith(blocked_prefixes):
+        return False
+    blocked_parts = {".git", "target", "node_modules", "__pycache__", ".pytest_cache"}
+    if any(part in blocked_parts for part in Path(rel_path).parts):
+        return False
+    allowed_suffixes = {
+        ".py",
+        ".rs",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".md",
+        ".toml",
+        ".yml",
+        ".yaml",
+        ".sql",
+        ".json",
+        ".sh",
+    }
+    return Path(rel_path).suffix in allowed_suffixes
+
+
+def extract_repo_symbols(rel_path: str, limit: int = 8) -> list[str]:
+    path = ROOT / rel_path
+    if not path.exists() or path.stat().st_size > 200_000:
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    patterns = [
+        re.compile(r"^\s*(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
+        re.compile(r"^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
+        re.compile(r"^\s*(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
+        re.compile(r"^\s*(?:pub\s+)?(?:struct|enum|trait)\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
+        re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
+        re.compile(r"^\s*(?:export\s+)?(?:class|interface|type)\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M),
+        re.compile(r"^\s*CREATE\s+(?:TABLE|INDEX)\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)", re.M | re.I),
+        re.compile(r"^#{1,3}\s+(.+)$", re.M),
+    ]
+    symbols: list[str] = []
+    seen: set[str] = set()
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            symbol = normalize_context_line(match.group(1))
+            if symbol and symbol not in seen:
+                seen.add(symbol)
+                symbols.append(symbol)
+            if len(symbols) >= limit:
+                return symbols
+    return symbols
+
+
+def score_repo_file(rel_path: str, symbols: list[str], terms: set[str]) -> int:
+    lower_path = rel_path.lower()
+    score = 0
+    important_names = {
+        "agent-supervisor.md",
+        "docs/copied-mechanisms.md",
+        "scripts/a9_supervisor.py",
+        "scripts/a9_checkpoint.py",
+        "scripts/a9_memory.py",
+        "docker-compose.yml",
+        "infra/mysql/initdb/001_session_store.sql",
+    }
+    if rel_path in important_names:
+        score += 20
+    if lower_path.startswith(("scripts/", "crates/", "infra/", "tests/", "docs/")):
+        score += 8
+    symbol_text = " ".join(symbols).lower()
+    for term in terms:
+        if term in lower_path:
+            score += 10
+        if term in symbol_text:
+            score += 6
+    return score
+
+
+def build_repo_map(task_prompt: str, budget: int) -> tuple[str, dict[str, Any]]:
+    terms = prompt_terms(task_prompt)
+    candidates: list[tuple[int, str, list[str]]] = []
+    scanned = 0
+    for rel_path in git_tracked_files():
+        if not repo_map_allowed_file(rel_path):
+            continue
+        scanned += 1
+        symbols = extract_repo_symbols(rel_path)
+        score = score_repo_file(rel_path, symbols, terms)
+        if score <= 0 and not symbols:
+            continue
+        candidates.append((score, rel_path, symbols))
+
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    lines = [
+        "A9 repo map, inspired by Aider: ranked files and symbols only; raw files are not inlined.",
+    ]
+    included = 0
+    for score, rel_path, symbols in candidates:
+        entry_lines = [f"- {rel_path} score={score}"]
+        if symbols:
+            entry_lines.append("  symbols: " + ", ".join(symbols))
+        next_lines = lines + entry_lines
+        rendered = "\n".join(next_lines) + "\n"
+        if approx_token_count(rendered) > budget:
+            break
+        lines = next_lines
+        included += 1
+
+    repo_map = "\n".join(lines) + "\n"
+    return repo_map, {
+        "strategy": "aider_ranked_symbol_repo_map",
+        "terms": sorted(terms)[:50],
+        "scanned_files": scanned,
+        "candidate_files": len(candidates),
+        "included_files": included,
+        "budget_tokens": budget,
+        "approx_tokens": approx_token_count(repo_map),
+    }
+
+
 def read_budgeted(path: Path, budget: int, *, keep: str = "head") -> str:
     if not path.exists():
         return ""
@@ -417,6 +565,8 @@ def build_context_packet(task: Task) -> dict[str, Any]:
             previous_context_raw,
             section_budgets["previous_context"],
         )
+
+    repo_map, repo_map_meta = build_repo_map(task.prompt, section_budgets["repo_map"])
 
     reference_mechanisms = truncate_to_token_budget(
         """Codex is the first source-level reference for session governance:
@@ -462,6 +612,7 @@ Hard rules:
         ("Contract", contract),
         ("Current Task", task_prompt),
         ("Previous Task Context Tail", previous_context or "(none)"),
+        ("Repository Map", repo_map or "(none)"),
         ("Reference Mechanisms To Copy", reference_mechanisms),
         ("Doctrine Excerpts", doctrine or "(none)"),
     ]
@@ -475,6 +626,7 @@ Hard rules:
         "section_budgets": section_budgets,
         "previous_context_path": str(previous_context_path) if previous_context else "",
         "previous_context_compression": previous_context_meta,
+        "repo_map": repo_map_meta,
     }
 
 
@@ -596,6 +748,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "prompt_section_budgets": context_packet["section_budgets"],
         "previous_context_path": context_packet["previous_context_path"],
         "previous_context_compression": context_packet["previous_context_compression"],
+        "repo_map": context_packet["repo_map"],
     }
 
 
@@ -1006,6 +1159,7 @@ def write_evidence_and_state(
         "evidence_ids": [record["evidence_id"] for record in records],
         "deep_mark_count": len(deep_marks),
         "context_compression": summary["worker"].get("previous_context_compression", {}),
+        "repo_map": summary["worker"].get("repo_map", {}),
     }
     state_path = run_dir / "state.json"
     write_json(state_path, state)
@@ -1096,6 +1250,7 @@ INSERT INTO checkpoints (
       'prompt_approx_tokens': summary['worker'].get('prompt_approx_tokens'),
       'prompt_budget_tokens': summary['worker'].get('prompt_budget_tokens'),
       'previous_context_compression': summary['worker'].get('previous_context_compression', {}),
+      'repo_map': summary['worker'].get('repo_map', {}),
   }))},
   {sql_quote(json_compact(state['evidence_ids']))}
 ) ON DUPLICATE KEY UPDATE
