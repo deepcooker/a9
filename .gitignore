@@ -1,5 +1,7 @@
 reference-projects/
 third-party-packages/
 .a9/
+.env
+target/
 __pycache__/
 *.pyc

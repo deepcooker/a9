@@ -95,8 +95,10 @@ Do the work.
         self.assertGreater(data["diff"]["diff_bytes"], 0)
         evidence_path = Path(data["evidence_path"])
         state_path = Path(data["state_path"])
+        deep_marks_path = Path(data["deep_marks_path"])
         self.assertTrue(evidence_path.exists())
         self.assertTrue(state_path.exists())
+        self.assertTrue(deep_marks_path.exists())
 
         evidence = [
             json.loads(line)
@@ -115,7 +117,18 @@ Do the work.
         self.assertEqual(state["session_id"], task_id)
         self.assertEqual(state["status"], "pass")
         self.assertTrue(state["channels"]["checks"])
+        self.assertTrue(state["channels"]["deep_marks"])
+        self.assertGreater(state["deep_mark_count"], 0)
         self.assertEqual(len(state["evidence_ids"]), len(evidence))
+
+        deep_marks = [
+            json.loads(line)
+            for line in deep_marks_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        mark_kinds = {item["kind"] for item in deep_marks}
+        self.assertIn("check_result", mark_kinds)
+        self.assertIn("changed_file", mark_kinds)
 
 
 if __name__ == "__main__":

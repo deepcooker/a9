@@ -32,6 +32,14 @@ RUNNING_DIR = STATE_DIR / "tasks" / "running"
 DONE_DIR = STATE_DIR / "tasks" / "done"
 RUNS_DIR = STATE_DIR / "runs"
 WORKTREES_DIR = STATE_DIR / "worktrees"
+DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
+SECTION_TOKEN_BUDGETS = {
+    "doctrine": 5000,
+    "task": 4000,
+    "previous_context": 3000,
+    "reference_mechanisms": 2500,
+    "contract": 1500,
+}
 
 
 def utc_now() -> str:
@@ -131,6 +139,133 @@ def git_head() -> str:
     return run_cmd(["git", "rev-parse", "HEAD"]).stdout.strip()
 
 
+def approx_token_count(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, (len(text) + 3) // 4)
+
+
+def token_budget() -> int:
+    value = os.getenv("A9_CONTEXT_TOKEN_BUDGET", str(DEFAULT_CONTEXT_TOKEN_BUDGET))
+    try:
+        return max(4000, int(value))
+    except ValueError:
+        return DEFAULT_CONTEXT_TOKEN_BUDGET
+
+
+def truncate_to_token_budget(text: str, budget: int, *, keep: str = "head") -> str:
+    if budget <= 0 or approx_token_count(text) <= budget:
+        return text
+    char_budget = max(0, budget * 4)
+    marker = "\n...[truncated by A9 token budget]...\n"
+    marker_budget = len(marker)
+    if char_budget <= marker_budget:
+        return text[:char_budget]
+    remaining = char_budget - marker_budget
+    if keep == "tail":
+        return marker + text[-remaining:]
+    if keep == "middle":
+        head = remaining // 2
+        tail = remaining - head
+        return text[:head] + marker + text[-tail:]
+    return text[:remaining] + marker
+
+
+def read_budgeted(path: Path, budget: int, *, keep: str = "head") -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="backslashreplace")
+    return truncate_to_token_budget(text, budget, keep=keep)
+
+
+def build_context_packet(task: Task) -> dict[str, Any]:
+    """Build a bounded prompt packet from durable channels.
+
+    This copies the Codex/Aider shape: assemble only what is needed for prompt
+    time, track approximate token pressure, keep recent task context as tail,
+    and leave raw evidence on disk instead of inlining everything.
+    """
+    total_budget = token_budget()
+    section_budgets = SECTION_TOKEN_BUDGETS.copy()
+    scale = min(1.0, total_budget / sum(section_budgets.values()))
+    if scale < 1.0:
+        section_budgets = {
+            name: max(256, int(value * scale)) for name, value in section_budgets.items()
+        }
+
+    doctrine_parts = []
+    for path in [ROOT / "需求.md", ROOT / "codex.md", ROOT / "session-governance.md"]:
+        text = read_budgeted(path, max(512, section_budgets["doctrine"] // 3), keep="head")
+        if text:
+            doctrine_parts.append(f"## {path.name}\n\n{text}")
+    doctrine = "\n\n".join(doctrine_parts)
+
+    previous_context_path = DONE_DIR / f"{task.task_id}.context.md"
+    previous_context = read_budgeted(
+        previous_context_path,
+        section_budgets["previous_context"],
+        keep="tail",
+    )
+
+    reference_mechanisms = truncate_to_token_budget(
+        """Codex is the first source-level reference for session governance:
+- ordered raw history before prompt construction
+- history_version changes when history is rewritten
+- prompt-time normalization
+- token pressure tracking
+- compaction as an explicit task with hooks/status
+- summary reinjection as handoff, not truth
+
+Aider complements Codex for token cost control:
+- keep recent tail with high fidelity
+- summarize or omit older head under token pressure
+- force filenames/functions/libraries/packages into summaries
+- use repo maps instead of dumping whole repositories
+
+LangGraph/mem0/OpenHands/Continue complement persistence:
+- checkpoint channels and parent lineage
+- scoped memories with history and evidence
+- UI/browser streams as adapters, never canonical state
+""",
+        section_budgets["reference_mechanisms"],
+    )
+
+    task_prompt = truncate_to_token_budget(task.prompt, section_budgets["task"], keep="tail")
+    contract = truncate_to_token_budget(
+        """Run under the A9 supervisor.
+
+Hard rules:
+- The project core is copying mature mechanisms, then adapting them with license awareness.
+- Prefer Codex session/compaction/context governance before weaker alternatives.
+- Do not inline huge raw logs or whole reference repositories.
+- Cite local source paths when borrowing ideas from reference projects.
+- Preserve details by writing artifacts, evidence, state, checks, and patches.
+- Final answer must include files changed, reference ideas used, commands run, test result, and next recommended task.
+""",
+        section_budgets["contract"],
+    )
+
+    sections = [
+        ("A9 Bounded Context Packet", ""),
+        ("Token Budget", f"approx_budget: {total_budget} tokens"),
+        ("Contract", contract),
+        ("Current Task", task_prompt),
+        ("Previous Task Context Tail", previous_context or "(none)"),
+        ("Reference Mechanisms To Copy", reference_mechanisms),
+        ("Doctrine Excerpts", doctrine or "(none)"),
+    ]
+    prompt = "\n\n".join(f"# {title}\n\n{body}".rstrip() for title, body in sections) + "\n"
+    if approx_token_count(prompt) > total_budget:
+        prompt = truncate_to_token_budget(prompt, total_budget, keep="middle")
+    return {
+        "prompt": prompt,
+        "approx_tokens": approx_token_count(prompt),
+        "budget_tokens": total_budget,
+        "section_budgets": section_budgets,
+        "previous_context_path": str(previous_context_path) if previous_context else "",
+    }
+
+
 def create_worktree(task: Task, attempt: int) -> Path:
     worktree = WORKTREES_DIR / f"{task.task_id}-attempt-{attempt}"
     branch = f"a9-supervisor/{task.task_id}-{attempt}"
@@ -140,7 +275,13 @@ def create_worktree(task: Task, attempt: int) -> Path:
     return worktree
 
 
-def build_worker_cmd(task: Task, worktree: Path, run_dir: Path, final_path: Path) -> list[str]:
+def build_worker_cmd(
+    task: Task,
+    worktree: Path,
+    run_dir: Path,
+    final_path: Path,
+    prompt_text: str,
+) -> list[str]:
     override = os.getenv("A9_SUPERVISOR_WORKER_CMD")
     prompt_file = run_dir / "prompt.md"
     if override:
@@ -158,7 +299,7 @@ def build_worker_cmd(task: Task, worktree: Path, run_dir: Path, final_path: Path
         str(worktree),
         "--output-last-message",
         str(final_path),
-        task.prompt,
+        prompt_text,
     ]
 
 
@@ -173,12 +314,15 @@ def classify_event(line: str) -> str | None:
 
 def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     prompt_path = run_dir / "prompt.md"
+    raw_task_path = run_dir / "raw_task.md"
     final_path = run_dir / "final.md"
     events_path = run_dir / "events.jsonl"
     stderr_path = run_dir / "stderr.log"
-    prompt_path.write_text(task.prompt + "\n", encoding="utf-8")
+    context_packet = build_context_packet(task)
+    raw_task_path.write_text(task.prompt + "\n", encoding="utf-8")
+    prompt_path.write_text(context_packet["prompt"], encoding="utf-8")
 
-    cmd = build_worker_cmd(task, worktree, run_dir, final_path)
+    cmd = build_worker_cmd(task, worktree, run_dir, final_path, context_packet["prompt"])
     started = time.monotonic()
     last_output = started
     event_counts: dict[str, int] = {}
@@ -234,6 +378,11 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "events_path": str(events_path),
         "stderr_path": str(stderr_path),
         "final_path": str(final_path),
+        "raw_task_path": str(raw_task_path),
+        "prompt_approx_tokens": context_packet["approx_tokens"],
+        "prompt_budget_tokens": context_packet["budget_tokens"],
+        "prompt_section_budgets": context_packet["section_budgets"],
+        "previous_context_path": context_packet["previous_context_path"],
     }
 
 
@@ -326,6 +475,202 @@ def evidence_record(
     }
 
 
+def mark_record(
+    *,
+    record: dict[str, Any],
+    index: int,
+    kind: str,
+    label: str,
+    value: str,
+    weight: float = 1.0,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "mark_id": f"{record['evidence_id']}:mark:{index}",
+        "session_id": record["run_id"],
+        "checkpoint_id": record["checkpoint_id"],
+        "evidence_id": record["evidence_id"],
+        "kind": kind,
+        "label": label,
+        "value": value,
+        "weight": weight,
+        "metadata": metadata or {},
+        "created_at": utc_now(),
+    }
+
+
+def extract_deep_marks_from_text(record: dict[str, Any], path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    marks: list[dict[str, Any]] = []
+    text = path.read_text(encoding="utf-8", errors="backslashreplace")
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            marks.append(
+                mark_record(
+                    record=record,
+                    index=len(marks) + 1,
+                    kind="heading",
+                    label="markdown_heading",
+                    value=stripped,
+                    weight=0.8,
+                    metadata={"line": line_no},
+                )
+            )
+        if re.search(r"\b(TODO|FIXME|error|failed|needs-repair|timeout|blocked)\b", stripped, re.I):
+            marks.append(
+                mark_record(
+                    record=record,
+                    index=len(marks) + 1,
+                    kind="risk_or_status",
+                    label="status_signal",
+                    value=stripped,
+                    weight=1.4,
+                    metadata={"line": line_no},
+                )
+            )
+        for match in re.finditer(r"[\w./-]+\.(?:py|rs|ts|tsx|js|jsx|md|toml|yml|yaml|sql|json)", stripped):
+            marks.append(
+                mark_record(
+                    record=record,
+                    index=len(marks) + 1,
+                    kind="file_reference",
+                    label="file_path",
+                    value=match.group(0),
+                    weight=1.2,
+                    metadata={"line": line_no},
+                )
+            )
+        if stripped.startswith(("-", "*")) and len(stripped) > 2:
+            marks.append(
+                mark_record(
+                    record=record,
+                    index=len(marks) + 1,
+                    kind="detail",
+                    label="bullet_detail",
+                    value=stripped,
+                    weight=0.7,
+                    metadata={"line": line_no},
+                )
+            )
+    return marks
+
+
+def extract_deep_marks_from_events(record: dict[str, Any], path: Path) -> list[dict[str, Any]]:
+    marks: list[dict[str, Any]] = []
+    if not path.exists():
+        return marks
+    for line_no, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            marks.append(
+                mark_record(
+                    record=record,
+                    index=len(marks) + 1,
+                    kind="event_line",
+                    label="raw_event",
+                    value=line[:500],
+                    weight=0.6,
+                    metadata={"line": line_no, "parse_error": True},
+                )
+            )
+            continue
+        event_type = payload.get("type") or payload.get("event") or payload.get("msg", {}).get("type")
+        marks.append(
+            mark_record(
+                record=record,
+                index=len(marks) + 1,
+                kind="event",
+                label=str(event_type or "unknown"),
+                value=json.dumps(payload, ensure_ascii=False)[:1000],
+                weight=1.0,
+                metadata={"line": line_no},
+            )
+        )
+    return marks
+
+
+def extract_deep_marks_from_diff(record: dict[str, Any], path: Path) -> list[dict[str, Any]]:
+    marks: list[dict[str, Any]] = []
+    if not path.exists():
+        return marks
+    current_file = ""
+    for line_no, line in enumerate(path.read_text(encoding="utf-8", errors="backslashreplace").splitlines(), start=1):
+        if line.startswith("diff --git "):
+            parts = line.split()
+            current_file = parts[-1][2:] if len(parts) >= 4 and parts[-1].startswith("b/") else line
+            marks.append(
+                mark_record(
+                    record=record,
+                    index=len(marks) + 1,
+                    kind="changed_file",
+                    label="diff_file",
+                    value=current_file,
+                    weight=1.6,
+                    metadata={"line": line_no},
+                )
+            )
+        elif line.startswith("@@"):
+            marks.append(
+                mark_record(
+                    record=record,
+                    index=len(marks) + 1,
+                    kind="diff_hunk",
+                    label=current_file or "hunk",
+                    value=line,
+                    weight=1.3,
+                    metadata={"line": line_no, "file": current_file},
+                )
+            )
+        elif line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+            stripped = line[:500]
+            if re.search(r"\b(def |class |function |CREATE TABLE|CREATE INDEX|import |from )", stripped):
+                marks.append(
+                    mark_record(
+                        record=record,
+                        index=len(marks) + 1,
+                        kind="code_symbol_change",
+                        label=current_file or "symbol_change",
+                        value=stripped,
+                        weight=1.5,
+                        metadata={"line": line_no, "file": current_file},
+                    )
+                )
+    return marks
+
+
+def extract_deep_marks(record: dict[str, Any]) -> list[dict[str, Any]]:
+    path = ROOT / record["path"]
+    kind = record["kind"]
+    if kind == "events":
+        return extract_deep_marks_from_events(record, path)
+    if kind == "patch":
+        return extract_deep_marks_from_diff(record, path)
+    marks = extract_deep_marks_from_text(record, path)
+    if kind == "check_log":
+        command = record.get("metadata", {}).get("command", "")
+        return_code = record.get("metadata", {}).get("return_code")
+        marks.insert(
+            0,
+            mark_record(
+                record=record,
+                index=0,
+                kind="check_result",
+                label="command_status",
+                value=f"{command} -> {return_code}",
+                weight=1.8 if return_code else 1.2,
+                metadata=record.get("metadata", {}),
+            ),
+        )
+    return marks
+
+
 def write_evidence_and_state(
     task: Task,
     run_dir: Path,
@@ -337,6 +682,7 @@ def write_evidence_and_state(
     records: list[dict[str, Any]] = []
 
     paths = [
+        ("raw_task", Path(summary["worker"]["raw_task_path"]), {"task_id": task.task_id}),
         ("prompt", run_dir / "prompt.md", {"task_id": task.task_id}),
         ("events", Path(summary["worker"]["events_path"]), summary["worker"]["event_counts"]),
         ("stderr", Path(summary["worker"]["stderr_path"]), {}),
@@ -376,6 +722,14 @@ def write_evidence_and_state(
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+    deep_marks = []
+    for record in records:
+        deep_marks.extend(extract_deep_marks(record))
+    deep_marks_path = run_dir / "deep_marks.jsonl"
+    with deep_marks_path.open("w", encoding="utf-8") as handle:
+        for mark in deep_marks:
+            handle.write(json.dumps(mark, ensure_ascii=False) + "\n")
+
     by_kind: dict[str, list[str]] = {}
     for record in records:
         by_kind.setdefault(record["kind"], []).append(record["evidence_id"])
@@ -400,14 +754,24 @@ def write_evidence_and_state(
             ],
             "patches": by_kind.get("patch", []),
             "checks": by_kind.get("check_log", []),
+            "deep_marks": [mark["mark_id"] for mark in deep_marks],
             "memories": [],
         },
-        "updated_channels": ["task", "messages", "tool_events", "repo_state", "patches", "checks"],
+        "updated_channels": [
+            "task",
+            "messages",
+            "tool_events",
+            "repo_state",
+            "patches",
+            "checks",
+            "deep_marks",
+        ],
         "evidence_ids": [record["evidence_id"] for record in records],
+        "deep_mark_count": len(deep_marks),
     }
     state_path = run_dir / "state.json"
     write_json(state_path, state)
-    return evidence_path, state_path
+    return evidence_path, state_path, deep_marks_path
 
 
 def read_text_if_exists(path: Path, limit: int = 4000) -> str:
@@ -513,9 +877,12 @@ def run_one() -> int:
         }
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
-        evidence_path, state_path = write_evidence_and_state(task, run_dir, summary, context_path)
+        evidence_path, state_path, deep_marks_path = write_evidence_and_state(
+            task, run_dir, summary, context_path
+        )
         summary["evidence_path"] = str(evidence_path)
         summary["state_path"] = str(state_path)
+        summary["deep_marks_path"] = str(deep_marks_path)
         write_json(run_dir / "summary.json", summary)
 
         retryable = status.startswith("retryable-")

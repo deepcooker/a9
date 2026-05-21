@@ -235,6 +235,40 @@ The supervisor MVP has started moving from summary-only continuity to evidence-b
 - `scripts/a9_supervisor.py` writes `state.json` for each run.
 - State records use checkpoint-style channels: task, messages, tool events, repo state, patches, checks, and future memories.
 - `summary.json` remains convenient UI/status data, but it is no longer the only continuity artifact.
+- `scripts/a9_supervisor.py` builds bounded context packets with `A9_CONTEXT_TOKEN_BUDGET`.
+- `docker-compose.yml` provides MySQL for canonical session data and Redis for queue/lease/heartbeat state.
+
+## Token Explosion Controls
+
+A9 must not solve continuity by stuffing everything into prompts.
+
+Copied constraints:
+
+- Codex-style prompt-time assembly: construct the prompt from normalized current state, not from unbounded raw logs.
+- Codex-style compaction boundary: summaries are handoff items, while raw events remain separately stored.
+- Aider-style tail preservation: keep the latest task context with higher fidelity than older material.
+- Aider-style repo-map discipline: use selected reference notes and repo maps instead of dumping full repositories.
+- Channel budgets: doctrine, task, previous context, reference mechanisms, checks, patches, and memories are budgeted separately.
+- Deep context marks: every evidence item is parsed into structured marks, not sampled.
+- Evidence citations: when a detail falls out of the prompt budget, the worker can retrieve it from evidence/state storage by ID/path.
+
+## Redis Hot Path
+
+MySQL is the cold canonical store. Redis Stack is the hot runtime.
+
+Use Redis for:
+
+- `a9:tasks` stream: task queue and consumer group distribution.
+- `a9:events` stream: worker events, tool events, status transitions.
+- `a9:deep_marks` stream: every extracted mark from every evidence item.
+- Redis Functions: atomic lease/ack/retry/dead-letter/heartbeat operations.
+- RedisJSON: current session/checkpoint state documents.
+- RediSearch: low-latency search over deep marks and memory text.
+- Vector indexes: semantic recall over marks and memories.
+- Bloom/Cuckoo filters: dedupe evidence hashes, repeated facts, repeated proposed tasks.
+- TimeSeries: worker heartbeat, latency, token budget, token usage, retries, and cost signals.
+
+The prompt builder should hit Redis first for speed, then follow evidence IDs back to MySQL/files only when exact detail is needed.
 
 ## Page Monitor In The Stable Architecture
 

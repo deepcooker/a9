@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/a9-redis-probe"]
+resolver = "2"

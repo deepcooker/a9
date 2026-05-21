@@ -107,6 +107,19 @@ Each worker run should receive only:
 
 This copies Codex's context-compaction spirit without relying on an invisible browser/chat context.
 
+### Token Budget
+
+Token control is a hard architecture constraint. A9 copies Codex's prompt-time context assembly and token pressure tracking, plus Aider's recent-tail preservation:
+
+- `A9_CONTEXT_TOKEN_BUDGET` caps the generated worker prompt.
+- The raw task is saved separately as `raw_task.md`.
+- The model receives a bounded `prompt.md`, assembled from channels.
+- Doctrine excerpts, previous context, reference mechanisms, and task text each have separate budgets.
+- Old context is tail-preserved when continuity matters; huge doctrine/reference files are head-limited.
+- Raw evidence remains on disk and in MySQL; it is not blindly inlined into the model window.
+
+This prevents the 24-hour worker from becoming unaffordable as logs, references, and tasks grow.
+
 ### Page Monitoring Role
 
 Page monitoring is useful for one case: a human is already deep in a live Codex/ChatGPT conversation and wants a watcher to notice that the assistant stopped and submit the next continuation prompt.
@@ -219,6 +232,37 @@ Implemented now:
 7. The supervisor classifies results as `pass`, `needs-followup`, `needs-repair`, or retryable failures.
 8. Every run now writes `evidence.jsonl` with SHA-256 hashes for prompt, events, stderr, final message, patch, context, and check logs.
 9. Every run now writes `state.json` with checkpoint-style channels for task, messages, tool events, repo state, patches, checks, and future memories.
+10. Worker prompts are now built through a bounded context packet instead of passing the raw task alone.
+11. `docker-compose.yml` starts MySQL and Redis for durable session governance.
+
+## Middleware
+
+Local services:
+
+- MySQL: canonical store for `sessions`, `checkpoints`, `evidence`, `deep_context_marks`, `memories`, and `memory_history`.
+- Redis Stack: hot-path runtime for streams, consumer groups, functions, fast state, search/vector indexes, JSON documents, probabilistic dedupe, and time-series metrics.
+
+Redis hot-path pieces to copy from the mature ecosystem:
+
+- Streams + consumer groups: durable task/event/deep-mark bus.
+- Functions/Lua: atomic lease, ack, retry, dead-letter, and heartbeat transitions.
+- RediSearch: fast full-text lookup over deep context marks.
+- Vector search / RedisVL-compatible schema: embedding recall over memories and marks.
+- RedisJSON: structured hot documents for current session state.
+- Bloom/Cuckoo filters: cheap dedupe for repeated evidence and repeated task proposals.
+- TimeSeries: worker heartbeat, latency, token-cost, retry, and throughput metrics.
+
+Rust is the intended implementation language for the hot worker loop. The Python supervisor remains a fast MVP/control script, but the production path should move queue consumption, Redis stream handling, lease transitions, deep-mark indexing, and prompt assembly into Rust.
+
+Commands:
+
+```bash
+scripts/a9_middleware.py up
+scripts/a9_middleware.py status
+scripts/a9_middleware.py down
+```
+
+Default local URLs are in `.env.example`.
 
 Verified:
 
