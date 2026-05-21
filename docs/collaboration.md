@@ -76,8 +76,16 @@
 健康检查：
 
 ```bash
+scripts/a9_service.py ps
 scripts/a9_supervisor.py status
 scripts/a9_soak.py run --tasks 1 --fake-worker
+```
+
+停止真实后台 worker：
+
+```bash
+scripts/a9_service.py stop --dry-run
+scripts/a9_service.py stop
 ```
 
 通过 Rust client 提交任务：

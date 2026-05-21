@@ -17,8 +17,21 @@ Status:
 
 ```bash
 scripts/a9_service.py status
+scripts/a9_service.py ps
 scripts/a9_supervisor.py status
 ```
+
+Stop controls:
+
+```bash
+scripts/a9_service.py stop --dry-run
+scripts/a9_service.py stop
+scripts/a9_service.py stop --all
+```
+
+`stop` defaults to supervisor run-loop processes. Use `--all` only when a direct
+`codex exec --json` worker must also be terminated. This mirrors the Codex
+`/ps` and `/stop` operator controls that prevent unattended token burn.
 
 Bounded soak test:
 

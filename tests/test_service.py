@@ -15,6 +15,15 @@ SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
 UNIT_PATH = ROOT / "infra" / "systemd" / "a9-supervisor.service"
 
 
+def load_service():
+    spec = importlib.util.spec_from_file_location("a9_service", SERVICE_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_supervisor():
     spec = importlib.util.spec_from_file_location("a9_supervisor", SUPERVISOR_PATH)
     assert spec and spec.loader
@@ -42,6 +51,44 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("[Unit]", result.stdout)
         self.assertIn("a9_supervisor.py run-loop --auto-next", result.stdout)
+
+    def test_parse_process_table_finds_supervisor_and_worker(self):
+        mod = load_service()
+        processes = mod.parse_process_table(
+            """123 1 00:01:02 python3 scripts/a9_supervisor.py run-loop --auto-next
+456 123 00:00:20 node /usr/local/bin/codex exec --json -C /tmp/work prompt
+789 1 00:00:01 rg 'a9_supervisor.py run-loop|codex exec --json'
+"""
+        )
+
+        self.assertEqual([item["kind"] for item in processes], ["supervisor", "worker"])
+        self.assertEqual(processes[0]["pid"], 123)
+        self.assertEqual(processes[1]["ppid"], 123)
+
+    def test_service_ps_command_returns_json(self):
+        result = subprocess.run(
+            [str(SERVICE_PATH), "ps"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertIn("processes", payload)
+
+    def test_service_stop_dry_run_returns_json(self):
+        result = subprocess.run(
+            [str(SERVICE_PATH), "stop", "--dry-run"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["target"], "supervisor")
 
     def test_daemon_heartbeat_is_json(self):
         mod = load_supervisor()
