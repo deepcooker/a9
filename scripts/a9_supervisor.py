@@ -130,6 +130,7 @@ class Task:
     idle_timeout_seconds: int = 300
     max_attempts: int = 2
     checks: list[str] = field(default_factory=list)
+    allowed_paths: list[str] = field(default_factory=list)
 
 
 def parse_task(path: Path) -> Task:
@@ -167,6 +168,7 @@ def parse_task(path: Path) -> Task:
 
     task_id = slugify(str(meta.get("id") or path.stem))
     checks = [str(item) for item in meta.get("checks", [])]
+    allowed_paths = [str(item) for item in meta.get("allowed_paths", [])]
     return Task(
         path=path,
         task_id=task_id,
@@ -176,6 +178,7 @@ def parse_task(path: Path) -> Task:
         idle_timeout_seconds=int(meta.get("idle_timeout_seconds", 300)),
         max_attempts=int(meta.get("max_attempts", 2)),
         checks=checks,
+        allowed_paths=allowed_paths,
     )
 
 
@@ -939,6 +942,56 @@ def validate_captured_diff(diff: dict[str, Any], worktree: Path, run_dir: Path) 
     return result
 
 
+def validate_scope(diff: dict[str, Any], task: Task, run_dir: Path) -> dict[str, Any]:
+    output_path = run_dir / "scope_guard.json"
+    if diff["diff_bytes"] == 0:
+        result = {
+            "status": "skip",
+            "changed_files": [],
+            "allowed_paths": task.allowed_paths,
+            "findings": [{"level": "info", "message": "no recorded worker diff"}],
+            "return_code": 0,
+            "output_path": str(output_path),
+        }
+        write_json(output_path, result)
+        return result
+
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "a9_scope_guard.py"),
+        str(diff["diff_path"]),
+    ]
+    for allowed in task.allowed_paths:
+        cmd.extend(["--allow", allowed])
+    proc = subprocess.run(
+        cmd,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        result = {
+            "status": "fail",
+            "changed_files": [],
+            "allowed_paths": task.allowed_paths,
+            "findings": [
+                {
+                    "level": "error",
+                    "message": "scope guard returned non-json output",
+                    "output_preview": proc.stdout[-2000:],
+                }
+            ],
+        }
+    result["return_code"] = proc.returncode
+    result["output_path"] = str(output_path)
+    write_json(output_path, result)
+    return result
+
+
 def run_checks(task: Task, worktree: Path, run_dir: Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     checks_dir = run_dir / "checks"
@@ -970,12 +1023,15 @@ def decide_status(
     diff: dict[str, Any],
     checks: list[dict[str, Any]],
     patch_guard: dict[str, Any] | None = None,
+    scope_guard: dict[str, Any] | None = None,
 ) -> str:
     if worker["timed_out"] or worker["idle_timed_out"]:
         return "retryable-timeout"
     if worker["return_code"] != 0:
         return "retryable-worker-failed"
     if patch_guard and patch_guard.get("status") == "fail":
+        return "needs-repair"
+    if scope_guard and scope_guard.get("status") == "fail":
         return "needs-repair"
     failed_checks = [item for item in checks if item["return_code"] != 0]
     if failed_checks:
@@ -1242,6 +1298,22 @@ def extract_deep_marks(record: dict[str, Any]) -> list[dict[str, Any]]:
             ),
         )
         return marks
+    if kind == "scope_guard":
+        marks = extract_deep_marks_from_text(record, path)
+        metadata = record.get("metadata", {})
+        marks.insert(
+            0,
+            mark_record(
+                record=record,
+                index=0,
+                kind="scope_guard_result",
+                label="scope_guard_status",
+                value=f"{metadata.get('status')} -> {metadata.get('return_code')}",
+                weight=1.8 if metadata.get("status") == "fail" else 1.3,
+                metadata=metadata,
+            ),
+        )
+        return marks
     marks = extract_deep_marks_from_text(record, path)
     if kind == "check_log":
         command = record.get("metadata", {}).get("command", "")
@@ -1290,6 +1362,16 @@ def write_evidence_and_state(
                 "status": summary["patch_guard"].get("status"),
                 "return_code": summary["patch_guard"].get("return_code"),
                 "touched_files": summary["patch_guard"].get("touched_files", []),
+            },
+        ),
+        (
+            "scope_guard",
+            Path(summary["scope_guard"]["output_path"]),
+            {
+                "status": summary["scope_guard"].get("status"),
+                "return_code": summary["scope_guard"].get("return_code"),
+                "changed_files": summary["scope_guard"].get("changed_files", []),
+                "allowed_paths": summary["scope_guard"].get("allowed_paths", []),
             },
         ),
         ("context", context_path, {"status": summary["status"]}),
@@ -1360,6 +1442,7 @@ def write_evidence_and_state(
                 }
             ],
             "patches": by_kind.get("patch", []) + by_kind.get("patch_guard", []),
+            "guards": by_kind.get("patch_guard", []) + by_kind.get("scope_guard", []),
             "checks": by_kind.get("check_log", []),
             "deep_marks": [mark["mark_id"] for mark in deep_marks],
             "memories": [],
@@ -1371,6 +1454,7 @@ def write_evidence_and_state(
             "event_summaries",
             "repo_state",
             "patches",
+            "guards",
             "checks",
             "deep_marks",
         ],
@@ -1683,6 +1767,7 @@ def write_context_summary(task: Task, run_dir: Path, summary: dict[str, Any]) ->
         for item in summary["checks"]
     )
     patch_guard = summary.get("patch_guard", {})
+    scope_guard = summary.get("scope_guard", {})
     content = f"""# Task Context: {task.task_id}
 
 Updated: {summary['finished_at']}
@@ -1710,6 +1795,14 @@ Worktree: {summary['worktree']}
 - status: {patch_guard.get('status', 'missing')}
 - return_code: {patch_guard.get('return_code', 'missing')}
 - output: {patch_guard.get('output_path', 'missing')}
+
+## Scope Guard
+
+- status: {scope_guard.get('status', 'missing')}
+- return_code: {scope_guard.get('return_code', 'missing')}
+- allowed_paths: {json.dumps(scope_guard.get('allowed_paths', []), ensure_ascii=False)}
+- changed_files: {json.dumps(scope_guard.get('changed_files', []), ensure_ascii=False)}
+- output: {scope_guard.get('output_path', 'missing')}
 
 ## Failed Checks
 
@@ -1805,6 +1898,7 @@ def enqueue_task_file(
     timeout_seconds: int = 3600,
     idle_timeout_seconds: int = 300,
     max_attempts: int = 2,
+    allowed_paths: list[str] | None = None,
 ) -> Path:
     ensure_dirs()
     clean_id = slugify(task_id)
@@ -1814,7 +1908,9 @@ def enqueue_task_file(
         suffix += 1
         path = QUEUE_DIR / f"{clean_id}-{suffix}.md"
     checks = checks or []
+    allowed_paths = allowed_paths or []
     checks_text = "\n".join(f'  - "{item}"' for item in checks)
+    allowed_paths_text = "\n".join(f'  - "{item}"' for item in allowed_paths)
     frontmatter = [
         "---",
         f'id: "{path.stem}"',
@@ -1824,6 +1920,8 @@ def enqueue_task_file(
         f"max_attempts: {max_attempts}",
         "checks:",
         checks_text,
+        "allowed_paths:",
+        allowed_paths_text,
         "---",
         "",
         prompt.strip(),
@@ -1873,6 +1971,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "copy_pipeline_templates": True,
         "production_daemon_packaging": True,
         "patch_guard_evidence": True,
+        "scope_guard_evidence": True,
     }
     done_capabilities = sum(1 for value in capabilities.values() if value)
     progress = {
@@ -1952,8 +2051,9 @@ def run_one(*, auto_next: bool = False) -> int:
         worker = run_worker(task, worktree, run_dir)
         diff = capture_diff(worktree, run_dir)
         patch_guard = validate_captured_diff(diff, worktree, run_dir)
+        scope_guard = validate_scope(diff, task, run_dir)
         checks = run_checks(task, worktree, run_dir)
-        status = decide_status(worker, diff, checks, patch_guard)
+        status = decide_status(worker, diff, checks, patch_guard, scope_guard)
         summary = {
             **lease,
             "finished_at": utc_now(),
@@ -1963,6 +2063,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "worker": worker,
             "diff": diff,
             "patch_guard": patch_guard,
+            "scope_guard": scope_guard,
             "checks": checks,
         }
         context_path = write_context_summary(task, run_dir, summary)
@@ -2025,6 +2126,7 @@ def enqueue(args: argparse.Namespace) -> int:
         timeout_seconds=args.timeout_seconds,
         idle_timeout_seconds=args.idle_timeout_seconds,
         max_attempts=args.max_attempts,
+        allowed_paths=args.allow_path,
     )
     print(path)
     return 0
@@ -2070,6 +2172,7 @@ def main(argv: list[str]) -> int:
     enqueue_parser.add_argument("prompt")
     enqueue_parser.add_argument("--phase", default="implement")
     enqueue_parser.add_argument("--check", action="append", default=[])
+    enqueue_parser.add_argument("--allow-path", action="append", default=[])
     enqueue_parser.add_argument("--timeout-seconds", type=int, default=3600)
     enqueue_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
     enqueue_parser.add_argument("--max-attempts", type=int, default=2)

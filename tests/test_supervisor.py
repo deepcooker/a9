@@ -39,6 +39,9 @@ idle_timeout_seconds: 3
 max_attempts: 4
 checks:
   - "python --version"
+allowed_paths:
+  - "scripts/"
+  - "tests/*.py"
 ---
 Do the work.
 """,
@@ -51,6 +54,7 @@ Do the work.
         self.assertEqual(task.idle_timeout_seconds, 3)
         self.assertEqual(task.max_attempts, 4)
         self.assertEqual(task.checks, ["python --version"])
+        self.assertEqual(task.allowed_paths, ["scripts/", "tests/*.py"])
         self.assertEqual(task.prompt, "Do the work.")
 
     def test_aider_style_compression_preserves_recent_tail_and_references(self):
@@ -187,6 +191,8 @@ Do the work.
                         "fake task",
                         "--check",
                         "test -f worker-output.txt",
+                        "--allow-path",
+                        "worker-output.txt",
                         "--timeout-seconds",
                         "60",
                         "--idle-timeout-seconds",
@@ -211,6 +217,9 @@ Do the work.
         self.assertGreater(data["diff"]["diff_bytes"], 0)
         self.assertEqual(data["patch_guard"]["status"], "pass")
         self.assertTrue(Path(data["patch_guard"]["output_path"]).exists())
+        self.assertEqual(data["scope_guard"]["status"], "pass")
+        self.assertEqual(data["scope_guard"]["allowed_paths"], ["worker-output.txt"])
+        self.assertTrue(Path(data["scope_guard"]["output_path"]).exists())
         self.assertIn("persistence", data)
         evidence_path = Path(data["evidence_path"])
         state_path = Path(data["state_path"])
@@ -232,6 +241,7 @@ Do the work.
         self.assertIn("event_summary", kinds)
         self.assertIn("patch", kinds)
         self.assertIn("patch_guard", kinds)
+        self.assertIn("scope_guard", kinds)
         self.assertIn("check_log", kinds)
         self.assertIn("context", kinds)
         self.assertTrue(all(item["sha256"] for item in evidence))
@@ -243,6 +253,7 @@ Do the work.
         self.assertIn("repo_map", state)
         self.assertTrue(state["channels"]["event_summaries"])
         self.assertEqual(len(state["channels"]["patches"]), 2)
+        self.assertEqual(len(state["channels"]["guards"]), 2)
         self.assertTrue(state["channels"]["checks"])
         self.assertTrue(state["channels"]["deep_marks"])
         self.assertGreater(state["deep_mark_count"], 0)
@@ -258,6 +269,7 @@ Do the work.
         self.assertIn("check_result", mark_kinds)
         self.assertIn("changed_file", mark_kinds)
         self.assertIn("patch_guard_result", mark_kinds)
+        self.assertIn("scope_guard_result", mark_kinds)
 
         event_summaries = [
             json.loads(line)
@@ -310,6 +322,22 @@ Do the work.
 
         self.assertEqual(mod.decide_status(worker, diff, checks, patch_guard), "needs-repair")
 
+    def test_failed_scope_guard_status_requires_repair(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
+        diff = {"diff_bytes": 120}
+        checks = [{"return_code": 0}]
+        patch_guard = {"status": "pass"}
+        scope_guard = {
+            "status": "fail",
+            "findings": [{"level": "error", "message": "changed file is outside allowed_paths"}],
+        }
+
+        self.assertEqual(
+            mod.decide_status(worker, diff, checks, patch_guard, scope_guard),
+            "needs-repair",
+        )
+
     def test_validate_captured_diff_records_patch_guard_json(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -336,6 +364,40 @@ index 0000000..3e75765
             )
             self.assertEqual(result["status"], "pass")
             self.assertEqual(result["return_code"], 0)
+            self.assertTrue(Path(result["output_path"]).exists())
+
+    def test_validate_scope_records_scope_guard_json(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            run_dir.mkdir()
+            diff_path = run_dir / "patch.diff"
+            diff_path.write_text(
+                """diff --git a/scripts/demo.py b/scripts/demo.py
+new file mode 100644
+index 0000000..3e75765
+--- /dev/null
++++ b/scripts/demo.py
+@@ -0,0 +1 @@
++hello
+""",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("demo.md"),
+                task_id="demo",
+                prompt="demo",
+                allowed_paths=["scripts/"],
+            )
+            result = mod.validate_scope(
+                {"diff_path": str(diff_path), "diff_bytes": diff_path.stat().st_size},
+                task,
+                run_dir,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["return_code"], 0)
+            self.assertEqual(result["changed_files"], ["scripts/demo.py"])
             self.assertTrue(Path(result["output_path"]).exists())
 
     def test_schedule_next_task_creates_copy_pipeline_followup_with_progress(self):
@@ -371,6 +433,7 @@ index 0000000..3e75765
         self.assertTrue(progress["auto_next_scheduled"])
         self.assertTrue(progress["capabilities"]["production_daemon_packaging"])
         self.assertTrue(progress["capabilities"]["patch_guard_evidence"])
+        self.assertTrue(progress["capabilities"]["scope_guard_evidence"])
         self.assertEqual(progress["progress_percent"], 100.0)
         self.assertTrue(mod.PROGRESS_PATH.exists())
 

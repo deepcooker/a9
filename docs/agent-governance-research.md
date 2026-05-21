@@ -170,6 +170,7 @@ A9 already has the beginning of the controlled runtime:
 - Checkpoint lineage and memory adapters.
 - Rust client, gateway, and worker skeletons.
 - Patch guard evidence integration for recorded diffs.
+- Scope guard evidence integration for declared task file boundaries.
 
 This means A9 is closer to a governable runtime than a raw chat window.
 
@@ -177,9 +178,6 @@ This means A9 is closer to a governable runtime than a raw chat window.
 
 The current runtime still lacks several governance gates:
 
-- `scope_guard`: verify the diff only touches authorized files and does not
-  change tests, vendor code, or production config unless the task explicitly
-  allows it.
 - `policy_gate`: classify dangerous commands and high-risk file operations
   before execution.
 - `license_guard`: detect source-level copying and enforce license/notice
@@ -242,7 +240,7 @@ Do not make private model deployment the immediate blocker.
 The immediate priority should be governance data and runtime control:
 
 ```text
-scope_guard -> policy_gate -> monitor_score -> eval_store -> model gateway
+policy_gate -> monitor_score -> eval_store -> model gateway
 ```
 
 After that, model deployment becomes valuable because A9 will already have:

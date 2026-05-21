@@ -156,6 +156,11 @@ Mechanisms to adapt:
   worker diff is validated into `patch_guard.json`, stored as durable evidence
   in the checkpoint patch channel, and failed validation forces `needs-repair`
   before a run can be marked `pass`.
+- `scripts/a9_scope_guard.py` plus `scripts/a9_supervisor.py`: METR-style
+  sandbox/task-boundary discipline adapted into a local diff gate. Tasks can
+  declare `allowed_paths`; every captured worker diff is checked into
+  `scope_guard.json`, recorded as guard evidence, added to deep marks as
+  `scope_guard_result`, and failed scope validation forces `needs-repair`.
 
 ## Client Skeleton Reference Notes
 
