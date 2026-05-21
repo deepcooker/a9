@@ -131,6 +131,76 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(payload["seed"]["value"], ["m1"])
         self.assertEqual(payload["writes"][0]["value"], ["m2"])
 
+    @unittest.skipUnless(middleware_available(), "middleware is not running")
+    def test_copy_session_preserves_checkpoint_chain(self):
+        source_id = "checkpoint-copy-src"
+        dest_id = "checkpoint-copy-dst"
+        for checkpoint_id, parent_id, message in [
+            (f"{source_id}:1", "", "copy-m1"),
+            (f"{source_id}:2", f"{source_id}:1", "copy-m2"),
+        ]:
+            result = subprocess.run(
+                [
+                    str(CHECKPOINT),
+                    "put",
+                    source_id,
+                    "--checkpoint-id",
+                    checkpoint_id,
+                    "--parent-checkpoint-id",
+                    parent_id,
+                    "--channels",
+                    json.dumps({"messages": [message], "step": [checkpoint_id]}),
+                    "--updated-channel",
+                    "messages",
+                    "--source",
+                    "copy-test",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+
+        copied = subprocess.run(
+            [str(CHECKPOINT), "copy-session", source_id, dest_id],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(copied.returncode, 0, copied.stdout)
+        self.assertIn('"copied": 2', copied.stdout)
+
+        lineage = subprocess.run(
+            [str(CHECKPOINT), "lineage", f"{dest_id}:2"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(lineage.returncode, 0, lineage.stdout)
+        self.assertIn(f"{dest_id}:1", lineage.stdout)
+        self.assertIn(f"{dest_id}:2", lineage.stdout)
+
+        history = subprocess.run(
+            [
+                str(CHECKPOINT),
+                "channel-history",
+                f"{dest_id}:2",
+                "--channel",
+                "messages",
+            ],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(history.returncode, 0, history.stdout)
+        payload = json.loads(history.stdout)
+        self.assertEqual(payload["writes"][0]["value"], ["copy-m1"])
+        self.assertEqual(payload["writes"][1]["value"], ["copy-m2"])
+
 
 if __name__ == "__main__":
     unittest.main()

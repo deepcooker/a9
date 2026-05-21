@@ -116,3 +116,7 @@ Mechanisms to adapt:
   streams are still stored, but A9 also writes `event_summaries.jsonl` with
   typed turn, tool, command, file-change, and token-usage summaries for durable
   monitoring and future recovery.
+- `scripts/a9_checkpoint.py copy-session`: LangGraph copy-thread capability
+  adapted for A9. It copies all checkpoints from one session into another,
+  rewrites checkpoint IDs and parent links, preserves channel/token/evidence
+  JSON, leaves the source untouched, and publishes RedisJSON hot state.

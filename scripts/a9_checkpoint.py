@@ -351,6 +351,151 @@ def channel_history(args: argparse.Namespace) -> int:
     return 0
 
 
+def copied_checkpoint_id(source_session_id: str, dest_session_id: str, checkpoint_id: str) -> str:
+    if checkpoint_id.startswith(source_session_id):
+        return dest_session_id + checkpoint_id[len(source_session_id) :]
+    return f"{dest_session_id}:copy:{checkpoint_id}"
+
+
+def copy_session(args: argparse.Namespace) -> int:
+    result = mysql(
+        "SELECT checkpoint_id, parent_checkpoint_id, step, source, status, "
+        "channels, updated_channels, token_usage, evidence_ids "
+        "FROM checkpoints "
+        f"WHERE session_id={sql_quote(args.source_session_id)} ORDER BY step ASC;"
+    )
+    if result.returncode != 0:
+        print(result.stdout, file=sys.stderr)
+        return result.returncode
+
+    lines = mysql_data_lines(result.stdout)
+    if not lines:
+        print(json.dumps({"copied": 0, "source_session_id": args.source_session_id, "dest_session_id": args.dest_session_id}))
+        return 0
+
+    rows: list[dict[str, Any]] = []
+    id_map: dict[str, str] = {}
+    for line in lines:
+        parts = line.split("\t", 8)
+        if len(parts) < 9:
+            continue
+        checkpoint_id = parts[0]
+        dest_checkpoint_id = copied_checkpoint_id(
+            args.source_session_id,
+            args.dest_session_id,
+            checkpoint_id,
+        )
+        id_map[checkpoint_id] = dest_checkpoint_id
+        rows.append(
+            {
+                "checkpoint_id": checkpoint_id,
+                "dest_checkpoint_id": dest_checkpoint_id,
+                "parent_checkpoint_id": parts[1] if parts[1] != "NULL" else None,
+                "step": int(parts[2]),
+                "source": parts[3],
+                "status": parts[4],
+                "channels": parts[5] or "{}",
+                "updated_channels": parts[6] or "[]",
+                "token_usage": parts[7] or "{}",
+                "evidence_ids": parts[8] or "[]",
+            }
+        )
+
+    statements = [
+        f"""
+INSERT INTO sessions (session_id, project_id, root_path, status, current_checkpoint_id, source)
+VALUES (
+  {sql_quote(args.dest_session_id)}, 'a9', {sql_quote(str(ROOT))}, 'running',
+  {sql_quote(rows[-1]['dest_checkpoint_id'])}, {sql_quote(args.source)}
+)
+ON DUPLICATE KEY UPDATE
+  status='running',
+  current_checkpoint_id=VALUES(current_checkpoint_id),
+  updated_at=CURRENT_TIMESTAMP(6);
+"""
+    ]
+    for row in rows:
+        parent_id = id_map.get(row["parent_checkpoint_id"] or "")
+        statements.append(
+            f"""
+INSERT INTO checkpoints (
+  checkpoint_id, session_id, parent_checkpoint_id, step, source, status,
+  channels, updated_channels, token_usage, evidence_ids
+) VALUES (
+  {sql_quote(row['dest_checkpoint_id'])},
+  {sql_quote(args.dest_session_id)},
+  {sql_quote(parent_id)},
+  {int(row['step'])},
+  {sql_quote(args.source)},
+  {sql_quote(row['status'])},
+  {sql_quote(row['channels'])},
+  {sql_quote(row['updated_channels'])},
+  {sql_quote(row['token_usage'])},
+  {sql_quote(row['evidence_ids'])}
+)
+ON DUPLICATE KEY UPDATE
+  parent_checkpoint_id=VALUES(parent_checkpoint_id),
+  source=VALUES(source),
+  status=VALUES(status),
+  channels=VALUES(channels),
+  updated_channels=VALUES(updated_channels),
+  token_usage=VALUES(token_usage),
+  evidence_ids=VALUES(evidence_ids);
+"""
+        )
+    write_result = mysql_stdin("\n".join(statements))
+    if write_result.returncode != 0:
+        print(write_result.stdout, file=sys.stderr)
+        return write_result.returncode
+
+    for row in rows:
+        payload = {
+            "checkpoint_id": row["dest_checkpoint_id"],
+            "session_id": args.dest_session_id,
+            "parent_checkpoint_id": id_map.get(row["parent_checkpoint_id"] or ""),
+            "step": row["step"],
+            "source": args.source,
+            "status": row["status"],
+            "channels": json.loads(row["channels"]),
+            "updated_channels": json.loads(row["updated_channels"]),
+            "token_usage": json.loads(row["token_usage"]),
+            "evidence_ids": json.loads(row["evidence_ids"]),
+            "copied_from": row["checkpoint_id"],
+            "created_at": utc_now(),
+        }
+        redis(["JSON.SET", f"a9:checkpoint:{row['dest_checkpoint_id']}", "$", json_compact(payload)])
+    redis(
+        [
+            "JSON.SET",
+            f"a9:session:{args.dest_session_id}",
+            "$",
+            json_compact(
+                {
+                    "session_id": args.dest_session_id,
+                    "current_checkpoint_id": rows[-1]["dest_checkpoint_id"],
+                    "status": "running",
+                    "source": args.source,
+                    "copied_from": args.source_session_id,
+                    "updated_at": utc_now(),
+                }
+            ),
+        ]
+    )
+    print(
+        json.dumps(
+            {
+                "copied": len(rows),
+                "source_session_id": args.source_session_id,
+                "dest_session_id": args.dest_session_id,
+                "current_checkpoint_id": rows[-1]["dest_checkpoint_id"],
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 checkpoint adapter")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -384,6 +529,11 @@ def main(argv: list[str]) -> int:
     channel_history_parser.add_argument("--session-id")
     channel_history_parser.add_argument("--channel", required=True)
 
+    copy_parser = sub.add_parser("copy-session")
+    copy_parser.add_argument("source_session_id")
+    copy_parser.add_argument("dest_session_id")
+    copy_parser.add_argument("--source", default="copy-session")
+
     args = parser.parse_args(argv)
     if args.command == "put":
         return put(args)
@@ -395,6 +545,8 @@ def main(argv: list[str]) -> int:
         return lineage(args)
     if args.command == "channel-history":
         return channel_history(args)
+    if args.command == "copy-session":
+        return copy_session(args)
     raise AssertionError(args.command)
 
 

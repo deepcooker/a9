@@ -245,6 +245,7 @@ Implemented now:
 20. Supervisor prompt compression and deep-mark extraction now gate obvious noise: command warnings, pytest separators, truncation markers, repeated lines, and duplicate events stay in raw evidence but no longer pollute summaries or long-term marks.
 21. Supervisor context packets now include an Aider-inspired repo map: ranked tracked files plus lightweight symbols under a token budget, excluding vendor/reference/build noise so workers get orientation without full-source token blowups.
 22. Supervisor runs now copy Codex exec's typed JSONL event idea by writing `event_summaries.jsonl` for thread, turn, command, MCP tool, file-change, and usage signals while preserving the raw event stream.
+23. `scripts/a9_checkpoint.py copy-session` copies LangGraph's copy-thread capability for A9: fork a completed session into a new session while preserving checkpoint order, channels, token usage, evidence IDs, and rewritten parent links.
 
 ## Middleware
 
