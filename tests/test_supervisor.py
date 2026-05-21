@@ -50,6 +50,39 @@ Do the work.
         self.assertEqual(task.checks, ["python --version"])
         self.assertEqual(task.prompt, "Do the work.")
 
+    def test_aider_style_compression_preserves_recent_tail_and_references(self):
+        mod = load_supervisor()
+        messages = []
+        for index in range(18):
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"# Step {index}\n"
+                        f"- touched scripts/module_{index}.py\n"
+                        f"- def function_{index} changed\n"
+                        f"- status pass\n"
+                    )
+                    * 6,
+                }
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": f"Assistant detail {index}\n- tests/test_{index}.py passed\n" * 6,
+                }
+            )
+        messages.append({"role": "user", "content": "RECENT_SENTINEL keep this exact tail detail"})
+
+        compressed = mod.compress_messages_aider_style(messages, 700)
+        rendered = mod.render_messages(compressed)
+
+        self.assertLessEqual(mod.approx_token_count(rendered), 700)
+        self.assertIn("RECENT_SENTINEL keep this exact tail detail", rendered)
+        self.assertIn("scripts/module_0.py", rendered)
+        self.assertIn("tests/test_0.py", rendered)
+        self.assertLess(len(compressed), len(messages))
+
     def test_supervisor_fake_worker_end_to_end(self):
         env = os.environ.copy()
         env["A9_SUPERVISOR_WORKER_CMD"] = (

@@ -240,6 +240,7 @@ Implemented now:
 15. `scripts/a9_memory.py` is a Mem0-shaped memory adapter backed by A9 MySQL and Redis Stack.
 16. `scripts/a9_checkpoint.py` is a LangGraph-shaped checkpoint adapter backed by A9 MySQL and RedisJSON.
 17. `scripts/a9_checkpoint.py channel-history` copies LangGraph's delta-channel history idea: reconstruct one channel through checkpoint lineage with a seed plus ordered writes, so future prompts can fetch narrow context instead of replaying whole sessions.
+18. `scripts/a9_supervisor.py` now copies Aider's history compression shape: old context is compressed into explicit file/symbol/status references while the recent tail stays verbatim, and compression metadata is persisted with the checkpoint.
 
 ## Middleware
 

@@ -93,3 +93,7 @@ Mechanisms to adapt:
   `add/search/get-all/history` shape while using A9 MySQL and Redis Stack.
 - `scripts/a9_supervisor.py`: A9 run evidence/state/deep-mark writer inspired by
   Codex raw history and LangGraph checkpoint channels.
+- `scripts/a9_supervisor.py`: Aider-style deterministic context compression:
+  split old head from recent tail, summarize old details into explicit
+  file/symbol/status references, preserve the latest tail verbatim, and record
+  compression metadata in checkpoint token usage.

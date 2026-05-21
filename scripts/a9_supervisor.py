@@ -40,6 +40,8 @@ SECTION_TOKEN_BUDGETS = {
     "reference_mechanisms": 2500,
     "contract": 1500,
 }
+SUMMARY_MIN_SPLIT = 4
+SUMMARY_MAX_DEPTH = 3
 
 
 def utc_now() -> str:
@@ -182,6 +184,146 @@ def truncate_to_token_budget(text: str, budget: int, *, keep: str = "head") -> s
     return text[:remaining] + marker
 
 
+def text_to_messages(text: str) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    current_role = "user"
+    current_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        role = ""
+        if stripped.startswith("# USER"):
+            role = "user"
+        elif stripped.startswith("# ASSISTANT"):
+            role = "assistant"
+        if role:
+            if current_lines:
+                messages.append({"role": current_role, "content": "\n".join(current_lines).strip()})
+            current_role = role
+            current_lines = []
+            continue
+        current_lines.append(line)
+    if current_lines:
+        messages.append({"role": current_role, "content": "\n".join(current_lines).strip()})
+    return [message for message in messages if message["content"]]
+
+
+def summarize_messages_deterministic(messages: list[dict[str, str]], budget: int) -> list[dict[str, str]]:
+    headings: list[str] = []
+    bullets: list[str] = []
+    references: list[str] = []
+    status_lines: list[str] = []
+    file_re = re.compile(r"[\w./-]+\.(?:py|rs|ts|tsx|js|jsx|md|toml|yml|yaml|sql|json)")
+    symbol_re = re.compile(r"\b(?:def|class|fn|struct|enum|impl|function|CREATE TABLE|CREATE INDEX)\s+[\w_]+")
+
+    for message in messages:
+        role = message["role"].upper()
+        for line in message["content"].splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                headings.append(f"{role}: {stripped}")
+            if stripped.startswith(("-", "*")):
+                bullets.append(f"{role}: {stripped}")
+            if re.search(r"\b(pass|failed|error|timeout|needs-repair|needs-followup|blocked|TODO|FIXME)\b", stripped, re.I):
+                status_lines.append(f"{role}: {stripped}")
+            for match in file_re.finditer(stripped):
+                references.append(f"file:{match.group(0)}")
+            symbol_match = symbol_re.search(stripped)
+            if symbol_match:
+                references.append(f"symbol:{symbol_match.group(0)}")
+
+    ordered_refs = list(dict.fromkeys(references))
+    parts = [
+        "I asked you to continue from compressed A9 context. This summary is deterministic and preserves concrete references.",
+    ]
+    if status_lines:
+        parts.append("Status signals:\n" + "\n".join(f"- {item}" for item in status_lines[:20]))
+    if ordered_refs:
+        parts.append("Referenced files/symbols:\n" + "\n".join(f"- {item}" for item in ordered_refs[:40]))
+    if headings:
+        parts.append("Headings:\n" + "\n".join(f"- {item}" for item in headings[:20]))
+    if bullets:
+        parts.append("Details:\n" + "\n".join(f"- {item}" for item in bullets[:30]))
+    if messages:
+        recent_tail = messages[-1]["content"]
+        parts.append(
+            "Recent tail preserved verbatim:\n"
+            + truncate_to_token_budget(recent_tail, max(128, budget // 4), keep="tail")
+        )
+    if len(parts) == 1:
+        excerpt = "\n\n".join(f"{msg['role'].upper()}: {msg['content']}" for msg in messages)
+        parts.append(truncate_to_token_budget(excerpt, max(256, budget - 128), keep="middle"))
+    summary = "\n\n".join(parts)
+    return [{"role": "user", "content": truncate_to_token_budget(summary, budget, keep="middle")}]
+
+
+def compress_messages_aider_style(
+    messages: list[dict[str, str]],
+    max_tokens: int,
+    *,
+    depth: int = 0,
+) -> list[dict[str, str]]:
+    sized = [(approx_token_count(message["content"]), message) for message in messages]
+    total = sum(tokens for tokens, _message in sized)
+    if total <= max_tokens and depth == 0:
+        return messages
+    if len(messages) <= SUMMARY_MIN_SPLIT or depth > SUMMARY_MAX_DEPTH:
+        return summarize_messages_deterministic(messages, max_tokens)
+
+    tail_tokens = 0
+    split_index = len(messages)
+    half_max_tokens = max_tokens // 2
+    for index in range(len(sized) - 1, -1, -1):
+        tokens, _message = sized[index]
+        if tail_tokens + tokens < half_max_tokens:
+            tail_tokens += tokens
+            split_index = index
+        else:
+            break
+
+    while split_index > 1 and messages[split_index - 1]["role"] != "assistant":
+        split_index -= 1
+
+    if split_index <= SUMMARY_MIN_SPLIT:
+        return summarize_messages_deterministic(messages, max_tokens)
+
+    head = messages[:split_index]
+    tail = messages[split_index:]
+    summary_budget = max(256, max_tokens - tail_tokens)
+    summary = summarize_messages_deterministic(head, summary_budget)
+    combined = summary + tail
+    combined_tokens = sum(approx_token_count(message["content"]) for message in combined)
+    if combined_tokens <= max_tokens:
+        return combined
+    return compress_messages_aider_style(combined, max_tokens, depth=depth + 1)
+
+
+def render_messages(messages: list[dict[str, str]]) -> str:
+    return "\n\n".join(
+        f"# {message['role'].upper()}\n\n{message['content']}".rstrip() for message in messages
+    )
+
+
+def compress_text_aider_style(text: str, budget: int) -> tuple[str, dict[str, Any]]:
+    messages = text_to_messages(text)
+    if not messages:
+        messages = [{"role": "user", "content": text}]
+    original_tokens = sum(approx_token_count(message["content"]) for message in messages)
+    compressed_messages = compress_messages_aider_style(messages, budget)
+    compressed = render_messages(compressed_messages)
+    if approx_token_count(compressed) > budget:
+        compressed = truncate_to_token_budget(compressed, budget, keep="tail")
+    return compressed, {
+        "strategy": "aider_tail_preserve_deterministic_summary",
+        "original_messages": len(messages),
+        "compressed_messages": len(compressed_messages),
+        "original_tokens": original_tokens,
+        "compressed_tokens": approx_token_count(compressed),
+        "budget_tokens": budget,
+    }
+
+
 def read_budgeted(path: Path, budget: int, *, keep: str = "head") -> str:
     if not path.exists():
         return ""
@@ -212,11 +354,17 @@ def build_context_packet(task: Task) -> dict[str, Any]:
     doctrine = "\n\n".join(doctrine_parts)
 
     previous_context_path = DONE_DIR / f"{task.task_id}.context.md"
-    previous_context = read_budgeted(
-        previous_context_path,
-        section_budgets["previous_context"],
-        keep="tail",
-    )
+    previous_context = ""
+    previous_context_meta: dict[str, Any] = {}
+    if previous_context_path.exists():
+        previous_context_raw = previous_context_path.read_text(
+            encoding="utf-8",
+            errors="backslashreplace",
+        )
+        previous_context, previous_context_meta = compress_text_aider_style(
+            previous_context_raw,
+            section_budgets["previous_context"],
+        )
 
     reference_mechanisms = truncate_to_token_budget(
         """Codex is the first source-level reference for session governance:
@@ -274,6 +422,7 @@ Hard rules:
         "budget_tokens": total_budget,
         "section_budgets": section_budgets,
         "previous_context_path": str(previous_context_path) if previous_context else "",
+        "previous_context_compression": previous_context_meta,
     }
 
 
@@ -394,6 +543,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "prompt_budget_tokens": context_packet["budget_tokens"],
         "prompt_section_budgets": context_packet["section_budgets"],
         "previous_context_path": context_packet["previous_context_path"],
+        "previous_context_compression": context_packet["previous_context_compression"],
     }
 
 
@@ -793,6 +943,7 @@ def write_evidence_and_state(
         ],
         "evidence_ids": [record["evidence_id"] for record in records],
         "deep_mark_count": len(deep_marks),
+        "context_compression": summary["worker"].get("previous_context_compression", {}),
     }
     state_path = run_dir / "state.json"
     write_json(state_path, state)
@@ -882,6 +1033,7 @@ INSERT INTO checkpoints (
   {sql_quote(json_compact({
       'prompt_approx_tokens': summary['worker'].get('prompt_approx_tokens'),
       'prompt_budget_tokens': summary['worker'].get('prompt_budget_tokens'),
+      'previous_context_compression': summary['worker'].get('previous_context_compression', {}),
   }))},
   {sql_quote(json_compact(state['evidence_ids']))}
 ) ON DUPLICATE KEY UPDATE
