@@ -1,0 +1,22 @@
+[Unit]
+Description=A9 24-hour supervisor auto-next loop
+Wants=docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/a9
+EnvironmentFile=-/root/a9/.env
+Environment=A9_CONTEXT_TOKEN_BUDGET=24000
+ExecStartPre=/root/a9/scripts/a9_middleware.py up
+ExecStartPre=/root/a9/scripts/a9_middleware.py status
+ExecStart=/root/a9/scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error
+Restart=always
+RestartSec=15
+KillSignal=SIGINT
+TimeoutStopSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

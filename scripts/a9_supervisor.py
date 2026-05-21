@@ -33,6 +33,7 @@ DONE_DIR = STATE_DIR / "tasks" / "done"
 RUNS_DIR = STATE_DIR / "runs"
 WORKTREES_DIR = STATE_DIR / "worktrees"
 PROGRESS_PATH = STATE_DIR / "progress.json"
+DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_NEXT_CHECKS = [
     "python3 -m unittest tests/test_supervisor.py tests/test_memory.py tests/test_checkpoint.py",
@@ -1758,7 +1759,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "browser_or_tui_monitor": False,
         "native_rust_worker": False,
         "quant_workflow_templates": False,
-        "production_daemon_packaging": False,
+        "production_daemon_packaging": True,
     }
     done_capabilities = sum(1 for value in capabilities.values() if value)
     progress = {
@@ -1776,10 +1777,24 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
         "capabilities": capabilities,
-        "next_goal": "Add production daemon packaging, browser/TUI idle monitor, native Rust worker, and quant-specific task templates.",
+        "next_goal": "Add browser/TUI idle monitor, native Rust worker, and quant-specific task templates.",
     }
     write_json(PROGRESS_PATH, progress)
     return progress
+
+
+def write_daemon_heartbeat(state: str, *, detail: str = "") -> dict[str, Any]:
+    ensure_dirs()
+    payload = {
+        "updated_at": utc_now(),
+        "state": state,
+        "detail": detail,
+        "queued_tasks": len(list(QUEUE_DIR.glob("*.md"))),
+        "running_tasks": len(list(RUNNING_DIR.glob("*.json"))),
+        "done_tasks": len(list(DONE_DIR.glob("*.json"))),
+    }
+    write_json(DAEMON_HEARTBEAT_PATH, payload)
+    return payload
 
 
 def print_service_progress(progress: dict[str, Any]) -> None:
@@ -1868,12 +1883,16 @@ def run_loop(args: argparse.Namespace) -> int:
     ensure_dirs()
     completed = 0
     while True:
+        write_daemon_heartbeat("polling", detail=f"completed={completed}")
         task = next_task()
         if not task:
+            write_daemon_heartbeat("idle", detail="no queued tasks")
             print("No queued tasks.")
             return 0
+        write_daemon_heartbeat("running", detail=task.task_id)
         code = run_one(auto_next=args.auto_next)
         completed += 1
+        write_daemon_heartbeat("sleeping", detail=f"last_code={code}")
         if code != 0 and not args.keep_going_on_error:
             return code
         if args.max_tasks and completed >= args.max_tasks:

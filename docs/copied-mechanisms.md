@@ -124,3 +124,7 @@ Mechanisms to adapt:
   loop. Each completed task can schedule the next compare/implement/test/record
   or repair task, and every run writes `.a9/progress.json` with stable 24-hour
   automation capability progress.
+- `infra/systemd/a9-supervisor.service` and `scripts/a9_service.py`: production
+  daemon packaging inspired by mature service practices. The unit uses
+  middleware preflight, restart policy, journal output, and the helper exposes
+  unit rendering, install hints, heartbeat/progress status, and health checks.

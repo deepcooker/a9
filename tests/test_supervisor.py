@@ -307,7 +307,7 @@ Do the work.
         self.assertEqual(progress["stage"], "auto-loop-mvp")
         self.assertTrue(progress["capabilities"]["auto_next_scheduler"])
         self.assertTrue(progress["auto_next_scheduled"])
-        self.assertFalse(progress["capabilities"]["production_daemon_packaging"])
+        self.assertTrue(progress["capabilities"]["production_daemon_packaging"])
         self.assertTrue(mod.PROGRESS_PATH.exists())
 
         next_path.unlink(missing_ok=True)
