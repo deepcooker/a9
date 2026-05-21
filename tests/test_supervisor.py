@@ -365,6 +365,7 @@ Do the work.
         self.assertIn("prompt", kinds)
         self.assertIn("events", kinds)
         self.assertIn("event_summary", kinds)
+        self.assertIn("patch_apply", kinds)
         self.assertIn("patch", kinds)
         self.assertIn("patch_guard", kinds)
         self.assertIn("scope_guard", kinds)
@@ -378,7 +379,7 @@ Do the work.
         self.assertIn("parent_checkpoint_id", state)
         self.assertIn("repo_map", state)
         self.assertTrue(state["channels"]["event_summaries"])
-        self.assertEqual(len(state["channels"]["patches"]), 2)
+        self.assertEqual(len(state["channels"]["patches"]), 3)
         self.assertEqual(len(state["channels"]["guards"]), 2)
         self.assertTrue(state["channels"]["checks"])
         self.assertTrue(state["channels"]["deep_marks"])
@@ -412,6 +413,74 @@ Do the work.
 
         for path in (ROOT / ".a9" / "tasks" / "queue").glob("auto-*-selftest-supervisor-*.md"):
             path.unlink()
+
+    def test_supervisor_applies_worker_search_replace_final_message(self):
+        env = os.environ.copy()
+        env["A9_SUPERVISOR_WORKER_CMD"] = (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "import json\n"
+            "print(json.dumps({'type':'fake.start'}))\n"
+            "Path('{run_dir}/final.md').write_text('README.md\\n<<<<<<< SEARCH\\n# a9\\n=======\\n# a9 deterministic apply\\n>>>>>>> REPLACE\\n')\n"
+            "print(json.dumps({'type':'fake.done'}))\n"
+            "PY"
+        )
+        task_id = "selftest-search-replace-apply"
+        queue_path = ROOT / ".a9" / "tasks" / "queue" / f"{task_id}.md"
+        done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
+        queue_dir = ROOT / ".a9" / "tasks" / "queue"
+
+        with tempfile.TemporaryDirectory() as held_tmp:
+            held_dir = Path(held_tmp)
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            held_paths = []
+            for path in queue_dir.glob("*.md"):
+                held_path = held_dir / path.name
+                shutil.move(str(path), str(held_path))
+                held_paths.append((held_path, path))
+            try:
+                if done_path.exists():
+                    done_path.unlink()
+                subprocess.run(
+                    [
+                        str(SUPERVISOR_PATH),
+                        "enqueue",
+                        task_id,
+                        "fake search replace task",
+                        "--check",
+                        "grep -q 'deterministic apply' README.md",
+                        "--allow-path",
+                        "README.md",
+                        "--timeout-seconds",
+                        "60",
+                        "--idle-timeout-seconds",
+                        "20",
+                        "--max-attempts",
+                        "1",
+                    ],
+                    cwd=ROOT,
+                    check=True,
+                )
+                subprocess.run([str(SUPERVISOR_PATH), "run-one"], cwd=ROOT, check=True, env=env)
+                data = json.loads(done_path.read_text(encoding="utf-8"))
+            finally:
+                queue_path.unlink(missing_ok=True)
+                for path in queue_dir.glob("auto-*-selftest-search-replace-apply-*.md"):
+                    path.unlink()
+                for held_path, original_path in held_paths:
+                    if held_path.exists() and not original_path.exists():
+                        shutil.move(str(held_path), str(original_path))
+
+        self.assertEqual(data["status"], "pass")
+        self.assertEqual(data["patch_apply"]["status"], "pass")
+        self.assertEqual(data["patch_apply"]["applied_count"], 1)
+        self.assertEqual(data["patch_guard"]["status"], "pass")
+        evidence = [
+            json.loads(line)
+            for line in Path(data["evidence_path"]).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertIn("patch_apply", {item["kind"] for item in evidence})
 
     def test_previous_task_checkpoint_id_reads_done_state(self):
         mod = load_supervisor()

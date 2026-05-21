@@ -937,6 +937,83 @@ def capture_diff(worktree: Path, run_dir: Path) -> dict[str, Any]:
     return {"diff_path": str(diff_path), "diff_bytes": len(diff.encode("utf-8"))}
 
 
+def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir: Path) -> dict[str, Any]:
+    output_path = run_dir / "patch_apply.json"
+    patch_path = run_dir / "model_patch.search_replace"
+    final_path = Path(worker["final_path"])
+    result: dict[str, Any] = {
+        "status": "skip",
+        "kind": "search_replace_apply",
+        "return_code": 0,
+        "output_path": str(output_path),
+        "patch_path": str(patch_path),
+        "findings": [{"level": "info", "message": "no SEARCH/REPLACE patch in final message"}],
+    }
+    if not final_path.exists():
+        write_json(output_path, result)
+        return result
+
+    text = final_path.read_text(encoding="utf-8", errors="backslashreplace")
+    if "<<<<<<< SEARCH" not in text or ">>>>>>> REPLACE" not in text:
+        write_json(output_path, result)
+        return result
+
+    dirty = run_cmd_no_raise(["git", "status", "--porcelain"], cwd=worktree).stdout.strip()
+    if dirty:
+        result.update(
+            {
+                "status": "skip-dirty-worktree",
+                "findings": [
+                    {
+                        "level": "warning",
+                        "message": "worker already modified files; deterministic apply skipped",
+                        "status_preview": dirty.splitlines()[:20],
+                    }
+                ],
+            }
+        )
+        write_json(output_path, result)
+        return result
+
+    patch_path.write_text(text, encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "a9_patch_apply.py"),
+            str(patch_path),
+            "--root",
+            str(worktree),
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        result = {
+            "status": "fail",
+            "kind": "search_replace_apply",
+            "applied_count": 0,
+            "applied": [],
+            "touched_files": [],
+            "findings": [
+                {
+                    "level": "error",
+                    "message": "patch apply returned non-json output",
+                    "output_preview": proc.stdout[-2000:],
+                }
+            ],
+        }
+    result["return_code"] = proc.returncode
+    result["output_path"] = str(output_path)
+    result["patch_path"] = str(patch_path)
+    write_json(output_path, result)
+    return result
+
+
 def validate_captured_diff(diff: dict[str, Any], worktree: Path, run_dir: Path) -> dict[str, Any]:
     output_path = run_dir / "patch_guard.json"
     if diff["diff_bytes"] == 0:
@@ -1143,11 +1220,14 @@ def decide_status(
     checks: list[dict[str, Any]],
     patch_guard: dict[str, Any] | None = None,
     scope_guard: dict[str, Any] | None = None,
+    patch_apply: dict[str, Any] | None = None,
 ) -> str:
     if worker["timed_out"] or worker["idle_timed_out"]:
         return "retryable-timeout"
     if worker["return_code"] != 0:
         return "retryable-worker-failed"
+    if patch_apply and patch_apply.get("status") == "fail":
+        return "needs-repair"
     if patch_guard and patch_guard.get("status") == "fail":
         return "needs-repair"
     if scope_guard and scope_guard.get("status") == "fail":
@@ -1518,6 +1598,16 @@ def write_evidence_and_state(
         ),
         ("stderr", Path(summary["worker"]["stderr_path"]), {}),
         ("final_message", Path(summary["worker"]["final_path"]), {}),
+        (
+            "patch_apply",
+            Path(summary["patch_apply"]["output_path"]),
+            {
+                "status": summary["patch_apply"].get("status"),
+                "return_code": summary["patch_apply"].get("return_code"),
+                "applied_count": summary["patch_apply"].get("applied_count", 0),
+                "touched_files": summary["patch_apply"].get("touched_files", []),
+            },
+        ),
         ("patch", Path(summary["diff"]["diff_path"]), {"diff_bytes": summary["diff"]["diff_bytes"]}),
         (
             "patch_guard",
@@ -1614,7 +1704,7 @@ def write_evidence_and_state(
                     "worktree": summary["worktree"],
                 }
             ],
-            "patches": by_kind.get("patch", []) + by_kind.get("patch_guard", []),
+            "patches": by_kind.get("patch_apply", []) + by_kind.get("patch", []) + by_kind.get("patch_guard", []),
             "guards": by_kind.get("patch_guard", []) + by_kind.get("scope_guard", []),
             "git_governance": by_kind.get("git_governance", []),
             "checks": by_kind.get("check_log", []),
@@ -1971,6 +2061,7 @@ def write_context_summary(task: Task, run_dir: Path, summary: dict[str, Any]) ->
         f"- `{item['command']}` -> {item['return_code']} ({item['output_path']})"
         for item in summary["checks"]
     )
+    patch_apply = summary.get("patch_apply", {})
     patch_guard = summary.get("patch_guard", {})
     scope_guard = summary.get("scope_guard", {})
     git_governance = summary.get("git_governance", {})
@@ -1996,6 +2087,13 @@ Worktree: {summary['worktree']}
 ## Checks
 
 {checks_text or '- none'}
+
+## Patch Apply
+
+- status: {patch_apply.get('status', 'missing')}
+- return_code: {patch_apply.get('return_code', 'missing')}
+- applied_count: {patch_apply.get('applied_count', 0)}
+- output: {patch_apply.get('output_path', 'missing')}
 
 ## Patch Guard
 
@@ -2275,11 +2373,12 @@ def run_one(*, auto_next: bool = False) -> int:
         write_json(lease_path, lease)
 
         worker = run_worker(task, worktree, run_dir)
+        patch_apply = apply_worker_search_replace(worker, worktree, run_dir)
         diff = capture_diff(worktree, run_dir)
         patch_guard = validate_captured_diff(diff, worktree, run_dir)
         scope_guard = validate_scope(diff, task, run_dir)
         checks = run_checks(task, worktree, run_dir)
-        status = decide_status(worker, diff, checks, patch_guard, scope_guard)
+        status = decide_status(worker, diff, checks, patch_guard, scope_guard, patch_apply)
         git_governance = apply_git_governance(worktree, run_dir, task, status, diff)
         summary = {
             **lease,
@@ -2288,6 +2387,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "phase": task.phase,
             "task_path": str(task.path),
             "worker": worker,
+            "patch_apply": patch_apply,
             "diff": diff,
             "patch_guard": patch_guard,
             "scope_guard": scope_guard,

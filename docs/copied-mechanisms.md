@@ -192,6 +192,11 @@ Mechanisms to adapt:
   executable in A9. The apply engine requires exact unique matches, rejects
   ambiguous/missing targets without writing, supports empty-SEARCH new files,
   and exposes `--dry-run` JSON evidence before mutation.
+- `scripts/a9_supervisor.py`: worker final messages can now carry
+  SEARCH/REPLACE blocks instead of mutating files directly. The supervisor
+  applies clean-worktree edit blocks deterministically, records
+  `patch_apply.json`, then sends the resulting diff through patch guard, scope
+  guard, checks, and git governance.
 
 ## Client Skeleton Reference Notes
 

@@ -91,3 +91,15 @@ Aider's edit-block discipline:
 
 This is intentionally stricter than a free-form model answer. The model may
 propose text, but A9 applies only deterministic, auditable edits.
+
+## Supervisor Apply Path
+
+`scripts/a9_supervisor.py` now checks the worker final message before capturing
+the run diff. If the final message contains `SEARCH/REPLACE` blocks and the
+worktree is still clean, A9 writes `model_patch.search_replace`, applies it with
+`a9_patch_apply.py`, records `patch_apply.json`, then continues through the
+normal diff capture, patch guard, scope guard, checks, and git governance.
+
+If the worker already modified files directly, deterministic apply is skipped
+and the existing captured-diff path remains in force. If deterministic apply
+fails, the run becomes `needs-repair`.
