@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 import sys
 import uuid
@@ -116,6 +117,55 @@ def parse_metadata(items: list[str]) -> dict[str, Any]:
     return metadata
 
 
+def tokenize(text: str) -> set[str]:
+    return {part.lower() for part in text.replace("_", " ").replace("-", " ").split() if part}
+
+
+def normalize_bm25(raw_score: float, midpoint: float, steepness: float) -> float:
+    return 1.0 / (1.0 + math.exp(-steepness * (raw_score - midpoint)))
+
+
+def bm25_params(query: str) -> tuple[float, float]:
+    terms = len(tokenize(query)) or 1
+    if terms <= 3:
+        return 5.0, 0.7
+    if terms <= 6:
+        return 7.0, 0.6
+    if terms <= 9:
+        return 9.0, 0.5
+    if terms <= 15:
+        return 10.0, 0.5
+    return 12.0, 0.5
+
+
+def lexical_score(query: str, memory: str) -> float:
+    query_terms = tokenize(query)
+    memory_terms = tokenize(memory)
+    if not query_terms or not memory_terms:
+        return 0.0
+    overlap = len(query_terms & memory_terms)
+    raw = overlap * 3.0
+    if query.lower() in memory.lower():
+        raw += 4.0
+    midpoint, steepness = bm25_params(query)
+    return normalize_bm25(raw, midpoint, steepness)
+
+
+def format_ranked(rows: list[dict[str, Any]]) -> str:
+    return "\n".join(
+        "\t".join(
+            [
+                item["memory_id"],
+                item["memory_type"],
+                f"{item['score']:.4f}",
+                f"{item['confidence']:.3f}",
+                item["memory"],
+            ]
+        )
+        for item in rows
+    )
+
+
 def add_memory(args: argparse.Namespace) -> int:
     memory_id = str(uuid.uuid4())
     payload = memory_payload(args, memory_id)
@@ -164,26 +214,43 @@ VALUES ({sql_quote(memory_id)}, 'ADD', NULL, {sql_quote(json_compact(payload))})
 
 
 def search_memory(args: argparse.Namespace) -> int:
-    query = args.query or "*"
-    if query != "*":
-        query = query.replace('"', "")
-    redis_query = query if query == "*" else f"({query})"
-    result = redis(["FT.SEARCH", "a9:idx:memories", redis_query, "LIMIT", "0", str(args.limit)])
-    if result.returncode == 0 and not result.stdout.startswith("0"):
-        print(result.stdout)
-        return 0
-
     sql = f"""
-SELECT memory_id, memory_type, confidence, memory
+SELECT memory_id, memory_type, confidence, memory, UNIX_TIMESTAMP(updated_at)
 FROM memories
 WHERE project_id={sql_quote(args.project_id)}
-  AND ({sql_quote(args.query)}='' OR memory LIKE {sql_quote('%' + args.query + '%')})
 ORDER BY updated_at DESC
-LIMIT {int(args.limit)};
+LIMIT {max(int(args.limit) * 4, 40)};
 """
-    fallback = mysql(sql)
-    print(fallback.stdout)
-    return fallback.returncode
+    result = mysql(sql)
+    if result.returncode != 0:
+        print(result.stdout, file=sys.stderr)
+        return result.returncode
+    rows: list[dict[str, Any]] = []
+    for line in result.stdout.splitlines():
+        parts = line.split("\t", 4)
+        if len(parts) < 5:
+            continue
+        memory_id, memory_type, confidence, memory, updated_at = parts
+        confidence_f = float(confidence or 0.0)
+        lexical = lexical_score(args.query, memory)
+        type_boost = 0.08 if memory_type in {"decision", "procedure", "risk"} else 0.0
+        confidence_boost = min(confidence_f, 1.0) * 0.12
+        score = min(1.0, lexical + type_boost + confidence_boost)
+        if score < args.threshold:
+            continue
+        rows.append(
+            {
+                "memory_id": memory_id,
+                "memory_type": memory_type,
+                "confidence": confidence_f,
+                "memory": memory,
+                "updated_at": float(updated_at or 0.0),
+                "score": score,
+            }
+        )
+    rows.sort(key=lambda item: (item["score"], item["updated_at"]), reverse=True)
+    print(format_ranked(rows[: args.limit]))
+    return 0
 
 
 def get_all(args: argparse.Namespace) -> int:
@@ -231,6 +298,7 @@ def main(argv: list[str]) -> int:
     search.add_argument("query")
     search.add_argument("--project-id", default="a9")
     search.add_argument("--limit", type=int, default=10)
+    search.add_argument("--threshold", type=float, default=0.05)
 
     all_parser = sub.add_parser("get-all")
     all_parser.add_argument("--project-id", default="a9")

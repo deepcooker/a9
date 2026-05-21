@@ -238,6 +238,8 @@ Implemented now:
 13. Completed runs now publish Redis events, RedisJSON session/deep-mark documents, Bloom evidence dedupe entries, and TimeSeries metrics.
 14. `crates/a9-gateway` is the first Rust gateway slice for Redis Streams submit/lease/ack/fail/heartbeat/status.
 15. `scripts/a9_memory.py` is a Mem0-shaped memory adapter backed by A9 MySQL and Redis Stack.
+16. `scripts/a9_checkpoint.py` is a LangGraph-shaped checkpoint adapter backed by A9 MySQL and RedisJSON.
+17. `scripts/a9_checkpoint.py channel-history` copies LangGraph's delta-channel history idea: reconstruct one channel through checkpoint lineage with a seed plus ordered writes, so future prompts can fetch narrow context instead of replaying whole sessions.
 
 ## Middleware
 
@@ -276,6 +278,7 @@ scripts/a9_middleware.py down
 cargo run -p a9-gateway -- status
 scripts/a9_memory.py add "A9 prefers Codex-style evidence backed context" --memory-type decision
 scripts/a9_memory.py search evidence
+scripts/a9_checkpoint.py put demo --channels '{"task":["e1"],"messages":["m1"]}'
 ```
 
 Default local URLs are in `.env.example`.
