@@ -62,9 +62,18 @@ python3 scripts/a9_patch_guard.py proposed.patch --root .
 The command prints JSON with `status`, touched files, and findings. Exit code is
 zero only when validation passes.
 
-## Next Code Step
+## Supervisor Integration
 
-Wire `scripts/a9_patch_guard.py` into the supervisor run evidence path so worker
-patches are validated before checks are marked pass. The first integration can
-guard recorded diff artifacts only; actual patch application can remain a later
-bounded task.
+`scripts/a9_supervisor.py` now runs the patch guard against the captured
+`patch.diff` before classifying a completed run. The guard result is written to
+`patch_guard.json`, recorded as `patch_guard` evidence, added to the checkpoint
+`patches` channel, and marked in deep context as `patch_guard_result`.
+
+A non-empty worker diff must pass this guard before the run can be considered
+`pass`. If patch validation fails, the supervisor classifies the run as
+`needs-repair` even when the worker process and declared checks returned zero.
+Empty diffs are recorded with a skipped guard result and still use the existing
+`needs-followup` path.
+
+This integration validates recorded diffs only. Applying model-proposed patches
+through the guard before mutation remains a later bounded task.

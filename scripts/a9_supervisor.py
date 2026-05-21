@@ -886,6 +886,59 @@ def capture_diff(worktree: Path, run_dir: Path) -> dict[str, Any]:
     return {"diff_path": str(diff_path), "diff_bytes": len(diff.encode("utf-8"))}
 
 
+def validate_captured_diff(diff: dict[str, Any], worktree: Path, run_dir: Path) -> dict[str, Any]:
+    output_path = run_dir / "patch_guard.json"
+    if diff["diff_bytes"] == 0:
+        result = {
+            "status": "skip",
+            "kind": "unified_diff",
+            "block_count": 0,
+            "touched_files": [],
+            "findings": [{"level": "info", "message": "no recorded worker diff"}],
+            "return_code": 0,
+            "output_path": str(output_path),
+        }
+        write_json(output_path, result)
+        return result
+
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "a9_patch_guard.py"),
+            str(diff["diff_path"]),
+            "--root",
+            str(worktree),
+            "--format",
+            "unified_diff",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        result = {
+            "status": "fail",
+            "kind": "unified_diff",
+            "block_count": 0,
+            "touched_files": [],
+            "findings": [
+                {
+                    "level": "error",
+                    "message": "patch guard returned non-json output",
+                    "output_preview": proc.stdout[-2000:],
+                }
+            ],
+        }
+    result["return_code"] = proc.returncode
+    result["output_path"] = str(output_path)
+    write_json(output_path, result)
+    return result
+
+
 def run_checks(task: Task, worktree: Path, run_dir: Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     checks_dir = run_dir / "checks"
@@ -912,11 +965,18 @@ def run_checks(task: Task, worktree: Path, run_dir: Path) -> list[dict[str, Any]
     return results
 
 
-def decide_status(worker: dict[str, Any], diff: dict[str, Any], checks: list[dict[str, Any]]) -> str:
+def decide_status(
+    worker: dict[str, Any],
+    diff: dict[str, Any],
+    checks: list[dict[str, Any]],
+    patch_guard: dict[str, Any] | None = None,
+) -> str:
     if worker["timed_out"] or worker["idle_timed_out"]:
         return "retryable-timeout"
     if worker["return_code"] != 0:
         return "retryable-worker-failed"
+    if patch_guard and patch_guard.get("status") == "fail":
+        return "needs-repair"
     failed_checks = [item for item in checks if item["return_code"] != 0]
     if failed_checks:
         return "needs-repair"
@@ -1166,6 +1226,22 @@ def extract_deep_marks(record: dict[str, Any]) -> list[dict[str, Any]]:
         return extract_deep_marks_from_events(record, path)
     if kind == "patch":
         return extract_deep_marks_from_diff(record, path)
+    if kind == "patch_guard":
+        marks = extract_deep_marks_from_text(record, path)
+        metadata = record.get("metadata", {})
+        marks.insert(
+            0,
+            mark_record(
+                record=record,
+                index=0,
+                kind="patch_guard_result",
+                label="patch_guard_status",
+                value=f"{metadata.get('status')} -> {metadata.get('return_code')}",
+                weight=1.8 if metadata.get("status") == "fail" else 1.3,
+                metadata=metadata,
+            ),
+        )
+        return marks
     marks = extract_deep_marks_from_text(record, path)
     if kind == "check_log":
         command = record.get("metadata", {}).get("command", "")
@@ -1207,6 +1283,15 @@ def write_evidence_and_state(
         ("stderr", Path(summary["worker"]["stderr_path"]), {}),
         ("final_message", Path(summary["worker"]["final_path"]), {}),
         ("patch", Path(summary["diff"]["diff_path"]), {"diff_bytes": summary["diff"]["diff_bytes"]}),
+        (
+            "patch_guard",
+            Path(summary["patch_guard"]["output_path"]),
+            {
+                "status": summary["patch_guard"].get("status"),
+                "return_code": summary["patch_guard"].get("return_code"),
+                "touched_files": summary["patch_guard"].get("touched_files", []),
+            },
+        ),
         ("context", context_path, {"status": summary["status"]}),
     ]
     for kind, path, metadata in paths:
@@ -1274,7 +1359,7 @@ def write_evidence_and_state(
                     "worktree": summary["worktree"],
                 }
             ],
-            "patches": by_kind.get("patch", []),
+            "patches": by_kind.get("patch", []) + by_kind.get("patch_guard", []),
             "checks": by_kind.get("check_log", []),
             "deep_marks": [mark["mark_id"] for mark in deep_marks],
             "memories": [],
@@ -1597,6 +1682,7 @@ def write_context_summary(task: Task, run_dir: Path, summary: dict[str, Any]) ->
         f"- `{item['command']}` -> {item['return_code']} ({item['output_path']})"
         for item in summary["checks"]
     )
+    patch_guard = summary.get("patch_guard", {})
     content = f"""# Task Context: {task.task_id}
 
 Updated: {summary['finished_at']}
@@ -1618,6 +1704,12 @@ Worktree: {summary['worktree']}
 ## Checks
 
 {checks_text or '- none'}
+
+## Patch Guard
+
+- status: {patch_guard.get('status', 'missing')}
+- return_code: {patch_guard.get('return_code', 'missing')}
+- output: {patch_guard.get('output_path', 'missing')}
 
 ## Failed Checks
 
@@ -1780,6 +1872,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "native_rust_worker": True,
         "copy_pipeline_templates": True,
         "production_daemon_packaging": True,
+        "patch_guard_evidence": True,
     }
     done_capabilities = sum(1 for value in capabilities.values() if value)
     progress = {
@@ -1858,8 +1951,9 @@ def run_one(*, auto_next: bool = False) -> int:
 
         worker = run_worker(task, worktree, run_dir)
         diff = capture_diff(worktree, run_dir)
+        patch_guard = validate_captured_diff(diff, worktree, run_dir)
         checks = run_checks(task, worktree, run_dir)
-        status = decide_status(worker, diff, checks)
+        status = decide_status(worker, diff, checks, patch_guard)
         summary = {
             **lease,
             "finished_at": utc_now(),
@@ -1868,6 +1962,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "task_path": str(task.path),
             "worker": worker,
             "diff": diff,
+            "patch_guard": patch_guard,
             "checks": checks,
         }
         context_path = write_context_summary(task, run_dir, summary)

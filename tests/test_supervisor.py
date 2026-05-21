@@ -209,6 +209,8 @@ Do the work.
         self.assertEqual(data["status"], "pass")
         self.assertEqual(data["phase"], "implement")
         self.assertGreater(data["diff"]["diff_bytes"], 0)
+        self.assertEqual(data["patch_guard"]["status"], "pass")
+        self.assertTrue(Path(data["patch_guard"]["output_path"]).exists())
         self.assertIn("persistence", data)
         evidence_path = Path(data["evidence_path"])
         state_path = Path(data["state_path"])
@@ -229,6 +231,7 @@ Do the work.
         self.assertIn("events", kinds)
         self.assertIn("event_summary", kinds)
         self.assertIn("patch", kinds)
+        self.assertIn("patch_guard", kinds)
         self.assertIn("check_log", kinds)
         self.assertIn("context", kinds)
         self.assertTrue(all(item["sha256"] for item in evidence))
@@ -239,6 +242,7 @@ Do the work.
         self.assertIn("parent_checkpoint_id", state)
         self.assertIn("repo_map", state)
         self.assertTrue(state["channels"]["event_summaries"])
+        self.assertEqual(len(state["channels"]["patches"]), 2)
         self.assertTrue(state["channels"]["checks"])
         self.assertTrue(state["channels"]["deep_marks"])
         self.assertGreater(state["deep_mark_count"], 0)
@@ -253,6 +257,7 @@ Do the work.
         mark_kinds = {item["kind"] for item in deep_marks}
         self.assertIn("check_result", mark_kinds)
         self.assertIn("changed_file", mark_kinds)
+        self.assertIn("patch_guard_result", mark_kinds)
 
         event_summaries = [
             json.loads(line)
@@ -293,6 +298,46 @@ Do the work.
             "lineage-test:checkpoint:1",
         )
 
+    def test_failed_patch_guard_status_requires_repair(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
+        diff = {"diff_bytes": 120}
+        checks = [{"return_code": 0}]
+        patch_guard = {
+            "status": "fail",
+            "findings": [{"level": "error", "message": "blocked path component: vendor-src"}],
+        }
+
+        self.assertEqual(mod.decide_status(worker, diff, checks, patch_guard), "needs-repair")
+
+    def test_validate_captured_diff_records_patch_guard_json(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            root.mkdir()
+            run_dir.mkdir()
+            diff_path = run_dir / "patch.diff"
+            diff_path.write_text(
+                """diff --git a/demo.txt b/demo.txt
+new file mode 100644
+index 0000000..3e75765
+--- /dev/null
++++ b/demo.txt
+@@ -0,0 +1 @@
++hello
+""",
+                encoding="utf-8",
+            )
+            result = mod.validate_captured_diff(
+                {"diff_path": str(diff_path), "diff_bytes": diff_path.stat().st_size},
+                root,
+                run_dir,
+            )
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["return_code"], 0)
+            self.assertTrue(Path(result["output_path"]).exists())
+
     def test_schedule_next_task_creates_copy_pipeline_followup_with_progress(self):
         mod = load_supervisor()
         mod.ensure_dirs()
@@ -325,6 +370,7 @@ Do the work.
         self.assertTrue(progress["capabilities"]["copy_pipeline_templates"])
         self.assertTrue(progress["auto_next_scheduled"])
         self.assertTrue(progress["capabilities"]["production_daemon_packaging"])
+        self.assertTrue(progress["capabilities"]["patch_guard_evidence"])
         self.assertEqual(progress["progress_percent"], 100.0)
         self.assertTrue(mod.PROGRESS_PATH.exists())
 

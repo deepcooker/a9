@@ -151,6 +151,10 @@ Mechanisms to adapt:
   `SEARCH/REPLACE` edits and unified diff path sanity, enforcing exact unique
   matches, repository-relative paths, and read-only vendor/reference boundaries
   before patch execution is trusted.
+- `scripts/a9_supervisor.py`: patch guard evidence integration. Every recorded
+  worker diff is validated into `patch_guard.json`, stored as durable evidence
+  in the checkpoint patch channel, and failed validation forces `needs-repair`
+  before a run can be marked `pass`.
 
 ## Client Skeleton Reference Notes
 
