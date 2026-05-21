@@ -1092,6 +1092,29 @@ def compact_guard_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return guards
 
 
+def compact_context_pressure(summary: dict[str, Any]) -> dict[str, Any]:
+    worker = summary.get("worker")
+    if not isinstance(worker, dict):
+        return {}
+    approx_tokens = worker.get("prompt_approx_tokens")
+    budget_tokens = worker.get("prompt_budget_tokens")
+    if not isinstance(approx_tokens, int) or not isinstance(budget_tokens, int):
+        return {}
+    remaining_tokens = max(0, budget_tokens - approx_tokens)
+    ratio = round(approx_tokens / budget_tokens, 3) if budget_tokens > 0 else 0.0
+    return {
+        "prompt_approx_tokens": approx_tokens,
+        "prompt_budget_tokens": budget_tokens,
+        "budget_ratio": ratio,
+        "remaining_tokens": remaining_tokens,
+        "over_budget": approx_tokens > budget_tokens,
+        "section_budgets": worker.get("prompt_section_budgets", {}),
+        "previous_context_path": worker.get("previous_context_path", ""),
+        "previous_context_compression": worker.get("previous_context_compression", {}),
+        "repo_map": worker.get("repo_map", {}),
+    }
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -1507,10 +1530,12 @@ def write_evidence_and_state(
             "patches",
             "guards",
             "checks",
+            "context_pressure",
             "deep_marks",
         ],
         "evidence_ids": [record["evidence_id"] for record in records],
         "deep_mark_count": len(deep_marks),
+        "context_pressure": summary.get("context_pressure", compact_context_pressure(summary)),
         "context_compression": summary["worker"].get("previous_context_compression", {}),
         "repo_map": summary["worker"].get("repo_map", {}),
     }
@@ -1571,6 +1596,7 @@ def redis_session_payload(
         "evidence_path": summary.get("evidence_path"),
         "deep_marks_path": summary.get("deep_marks_path"),
         "guard_summary": summary.get("guard_summary", compact_guard_summary(summary)),
+        "context_pressure": summary.get("context_pressure", compact_context_pressure(summary)),
         "channel_counts": channel_counts,
         "deep_mark_count": state.get("deep_mark_count", 0),
         "evidence_count": evidence_count,
@@ -1630,6 +1656,7 @@ INSERT INTO checkpoints (
   {sql_quote(json_compact({
       'prompt_approx_tokens': summary['worker'].get('prompt_approx_tokens'),
       'prompt_budget_tokens': summary['worker'].get('prompt_budget_tokens'),
+      'context_pressure': summary.get('context_pressure', {}),
       'previous_context_compression': summary['worker'].get('previous_context_compression', {}),
       'repo_map': summary['worker'].get('repo_map', {}),
   }))},
@@ -1844,6 +1871,7 @@ def write_context_summary(task: Task, run_dir: Path, summary: dict[str, Any]) ->
     )
     patch_guard = summary.get("patch_guard", {})
     scope_guard = summary.get("scope_guard", {})
+    context_pressure = summary.get("context_pressure", compact_context_pressure(summary))
     content = f"""# Task Context: {task.task_id}
 
 Updated: {summary['finished_at']}
@@ -1879,6 +1907,13 @@ Worktree: {summary['worktree']}
 - allowed_paths: {json.dumps(scope_guard.get('allowed_paths', []), ensure_ascii=False)}
 - changed_files: {json.dumps(scope_guard.get('changed_files', []), ensure_ascii=False)}
 - output: {scope_guard.get('output_path', 'missing')}
+
+## Context Pressure
+
+- prompt_tokens: {context_pressure.get('prompt_approx_tokens', 'missing')}
+- budget_tokens: {context_pressure.get('prompt_budget_tokens', 'missing')}
+- budget_ratio: {context_pressure.get('budget_ratio', 'missing')}
+- remaining_tokens: {context_pressure.get('remaining_tokens', 'missing')}
 
 ## Failed Checks
 
@@ -2063,6 +2098,9 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "latest_status": summary.get("status") if summary else None,
         "latest_run": summary.get("run_dir") if summary else None,
         "latest_guards": summary.get("guard_summary", compact_guard_summary(summary)) if summary else {},
+        "latest_context_pressure": (
+            summary.get("context_pressure", compact_context_pressure(summary)) if summary else {}
+        ),
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
         "capabilities": capabilities,
@@ -2143,6 +2181,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "scope_guard": scope_guard,
             "checks": checks,
         }
+        summary["context_pressure"] = compact_context_pressure(summary)
         summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
@@ -2224,6 +2263,14 @@ def status() -> int:
             patch_status = guards.get("patch_guard", {}).get("status", "missing")
             scope_status = guards.get("scope_guard", {}).get("status", "missing")
             print(f"latest guards: patch={patch_status} scope={scope_status}")
+        pressure = data.get("context_pressure") or compact_context_pressure(data)
+        if pressure:
+            print(
+                "latest context: "
+                f"tokens={pressure.get('prompt_approx_tokens', 'missing')}/"
+                f"{pressure.get('prompt_budget_tokens', 'missing')} "
+                f"ratio={pressure.get('budget_ratio', 'missing')}"
+            )
     if PROGRESS_PATH.exists():
         progress = json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
         print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")

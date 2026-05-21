@@ -35,3 +35,9 @@ Supervisor progress uses the same evidence boundary. Each completed run stores
 `summary.json.guard_summary`, and `.a9/progress.json.latest_guards` exposes
 patch/scope guard status, changed paths, finding counts, and guard evidence
 paths without inlining raw logs or full validator output.
+
+Context pressure uses the same rule. Each completed run stores
+`summary.json.context_pressure`, and `.a9/progress.json.latest_context_pressure`
+exposes prompt token count, budget, ratio, remaining tokens, section budgets,
+previous-context compression metadata, and repo-map metadata without inlining
+the raw prompt.

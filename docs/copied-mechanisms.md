@@ -173,6 +173,11 @@ Mechanisms to adapt:
   boundary again: raw guard files stay canonical, while operator-facing status
   receives only bounded channel status, changed paths, finding counts, and
   evidence paths.
+- `scripts/a9_supervisor.py`: Codex/Aider-style context pressure is now a
+  compact channel. Each run records `context_pressure` with prompt token count,
+  budget, ratio, remaining tokens, section budgets, previous-context
+  compression metadata, and repo-map metadata. The raw prompt stays on disk;
+  `.a9/progress.json.latest_context_pressure` is only an operator index.
 
 ## Client Skeleton Reference Notes
 

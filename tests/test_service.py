@@ -57,6 +57,14 @@ class ServiceTests(unittest.TestCase):
                 "task_id": "guard-progress-test",
                 "status": "pass",
                 "run_dir": "/tmp/a9-run",
+                "worker": {
+                    "prompt_approx_tokens": 900,
+                    "prompt_budget_tokens": 1000,
+                    "prompt_section_budgets": {"repo_map": 250},
+                    "previous_context_path": "/tmp/context.md",
+                    "previous_context_compression": {"compressed_tokens": 300},
+                    "repo_map": {"approx_tokens": 220, "budget_tokens": 250},
+                },
                 "patch_guard": {
                     "status": "pass",
                     "return_code": 0,
@@ -78,6 +86,8 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(progress["latest_guards"]["patch_guard"]["status"], "pass")
         self.assertEqual(progress["latest_guards"]["scope_guard"]["changed_files"], ["scripts/a9_supervisor.py"])
+        self.assertEqual(progress["latest_context_pressure"]["budget_ratio"], 0.9)
+        self.assertEqual(progress["latest_context_pressure"]["remaining_tokens"], 100)
 
 
 if __name__ == "__main__":

@@ -214,6 +214,38 @@ Do the work.
         self.assertEqual(payload["deep_mark_count"], 20000)
         self.assertLess(len(mod.json_compact(payload)), 2000)
 
+    def test_compact_context_pressure_indexes_token_budget_metadata(self):
+        mod = load_supervisor()
+        summary = {
+            "worker": {
+                "prompt_approx_tokens": 900,
+                "prompt_budget_tokens": 1000,
+                "prompt_section_budgets": {"repo_map": 250},
+                "previous_context_path": "/tmp/context.md",
+                "previous_context_compression": {
+                    "strategy": "aider_tail_preserving_summary",
+                    "original_tokens": 1200,
+                    "compressed_tokens": 300,
+                },
+                "repo_map": {
+                    "strategy": "aider_ranked_symbol_repo_map",
+                    "approx_tokens": 220,
+                    "budget_tokens": 250,
+                },
+                "prompt": "must not be copied",
+            }
+        }
+
+        pressure = mod.compact_context_pressure(summary)
+
+        self.assertEqual(pressure["prompt_approx_tokens"], 900)
+        self.assertEqual(pressure["prompt_budget_tokens"], 1000)
+        self.assertEqual(pressure["budget_ratio"], 0.9)
+        self.assertEqual(pressure["remaining_tokens"], 100)
+        self.assertFalse(pressure["over_budget"])
+        self.assertEqual(pressure["repo_map"]["approx_tokens"], 220)
+        self.assertNotIn("prompt", pressure)
+
     def test_supervisor_fake_worker_end_to_end(self):
         env = os.environ.copy()
         env["A9_SUPERVISOR_WORKER_CMD"] = (
@@ -279,6 +311,10 @@ Do the work.
         self.assertEqual(data["patch_guard"]["status"], "pass")
         self.assertEqual(data["guard_summary"]["patch_guard"]["status"], "pass")
         self.assertIn("findings_count", data["guard_summary"]["patch_guard"])
+        self.assertEqual(
+            data["context_pressure"]["prompt_budget_tokens"],
+            data["worker"]["prompt_budget_tokens"],
+        )
         self.assertTrue(Path(data["patch_guard"]["output_path"]).exists())
         self.assertEqual(data["scope_guard"]["status"], "pass")
         self.assertEqual(data["guard_summary"]["scope_guard"]["status"], "pass")
