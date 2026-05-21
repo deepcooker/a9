@@ -13,6 +13,25 @@ from typing import Any
 import a9_patch_guard
 
 
+def is_blocked_candidate(path: Path) -> bool:
+    return bool(a9_patch_guard.BLOCKED_PARTS.intersection(path.parts))
+
+
+def basename_candidates(root: Path, name: str) -> list[str]:
+    matches: list[str] = []
+    for path in root.rglob(name):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            continue
+        if is_blocked_candidate(rel):
+            continue
+        matches.append(str(rel))
+    return sorted(matches)
+
+
 def similar_lines(search: str, content: str, *, context: int = 3) -> str:
     search_lines = [line for line in search.splitlines() if line.strip()]
     content_lines = content.splitlines()
@@ -63,8 +82,25 @@ def repair_hint_for_block(block: a9_patch_guard.SearchReplaceBlock, content: str
     return "\n".join(parts)
 
 
+def repair_hint_for_path(block: a9_patch_guard.SearchReplaceBlock, message: str, candidates: list[str]) -> str:
+    parts = [
+        f"## SearchReplacePathError: {message} for {block.path}",
+        "<<<<<<< SEARCH",
+        block.search,
+        "=======",
+        block.replace,
+        ">>>>>>> REPLACE",
+        "",
+    ]
+    if candidates:
+        parts.extend(["Candidate files:", *[f"- {item}" for item in candidates], ""])
+    parts.append("Use the full repository-relative path in the next SEARCH/REPLACE block.")
+    return "\n".join(parts)
+
+
 def block_summary(item: dict[str, Any]) -> str:
-    return f"- block {item.get('index')}: {item.get('path')} ({item.get('mode')})"
+    path = item.get("effective_path") or item.get("path")
+    return f"- block {item.get('index')}: {path} ({item.get('mode')})"
 
 
 def build_repair_hint(successful: list[dict[str, Any]], failed: list[dict[str, Any]]) -> str:
@@ -164,6 +200,29 @@ def normalize_wrapped_text(text: str, path: str, section: str) -> tuple[str, lis
     return normalized, normalizations
 
 
+def resolve_apply_path(
+    root: Path,
+    raw_path: str,
+    findings: list[a9_patch_guard.Finding],
+    *,
+    allow_basename: bool,
+) -> tuple[Path | None, str, list[str], list[str]]:
+    resolved = a9_patch_guard.validate_rel_path(root, raw_path, findings)
+    normalizations: list[str] = []
+    candidates: list[str] = []
+    if resolved is None:
+        return None, raw_path, normalizations, candidates
+    if resolved.exists() or not allow_basename or "/" in raw_path or "\\" in raw_path:
+        return resolved, raw_path, normalizations, candidates
+    candidates = basename_candidates(root, Path(raw_path).name)
+    if len(candidates) == 1:
+        effective_path = candidates[0]
+        normalizations.append("path:basename_unique")
+        resolved = a9_patch_guard.validate_rel_path(root, effective_path, findings)
+        return resolved, effective_path, normalizations, candidates
+    return resolved, raw_path, normalizations, candidates
+
+
 def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dict[str, Any]:
     findings: list[a9_patch_guard.Finding] = []
     blocks, parse_findings = a9_patch_guard.parse_search_replace(text)
@@ -176,12 +235,23 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
         return report("search_replace_apply", "fail", applied, findings, dry_run=dry_run)
 
     for index, block in enumerate(blocks, start=1):
-        resolved = a9_patch_guard.validate_rel_path(root, block.path, findings)
+        search_probe, _ = normalize_wrapped_text(block.search, block.path, "search")
+        resolved, effective_path, path_resolution_normalizations, path_candidates = resolve_apply_path(
+            root,
+            block.path,
+            findings,
+            allow_basename=search_probe != "",
+        )
         if resolved is None:
             continue
-        search, search_normalizations = normalize_wrapped_text(block.search, block.path, "search")
-        replace, replace_normalizations = normalize_wrapped_text(block.replace, block.path, "replace")
-        normalizations = (block.path_normalizations or []) + search_normalizations + replace_normalizations
+        search, search_normalizations = normalize_wrapped_text(block.search, effective_path, "search")
+        replace, replace_normalizations = normalize_wrapped_text(block.replace, effective_path, "replace")
+        normalizations = (
+            (block.path_normalizations or [])
+            + path_resolution_normalizations
+            + search_normalizations
+            + replace_normalizations
+        )
 
         current = ""
         creating_file = not resolved.exists() and search == ""
@@ -191,12 +261,33 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
                 continue
             current = resolved.read_text(encoding="utf-8")
         elif not creating_file:
+            if path_candidates:
+                message = f"ambiguous basename; found {len(path_candidates)} candidates"
+            else:
+                message = "target file does not exist"
             findings.append(
                 a9_patch_guard.Finding(
                     "error",
-                    "target file does not exist",
+                    message,
                     block.path,
                 )
+            )
+            applied.append(
+                {
+                    "index": index,
+                    "path": block.path,
+                    "effective_path": effective_path,
+                    "line": block.line,
+                    "mode": "failed",
+                    "search_bytes": len(search.encode("utf-8")),
+                    "replace_bytes": len(replace.encode("utf-8")),
+                    "matches": 0,
+                    "match_strategy": "none",
+                    "fuzz_level": None,
+                    "normalizations": normalizations,
+                    "path_candidates": path_candidates,
+                    "repair_hint": repair_hint_for_path(block, message, path_candidates),
+                }
             )
             continue
 
@@ -223,6 +314,7 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
                     {
                         "index": index,
                         "path": block.path,
+                        "effective_path": effective_path,
                         "line": block.line,
                         "mode": "failed",
                         "search_bytes": len(search.encode("utf-8")),
@@ -263,6 +355,7 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
             {
                 "index": index,
                 "path": block.path,
+                "effective_path": effective_path,
                 "line": block.line,
                 "mode": "create" if creating_file else "replace",
                 "search_bytes": len(search.encode("utf-8")),
@@ -296,7 +389,7 @@ def report(
         "applied": applied,
         "successful_blocks": applied_success,
         "failed_blocks": failed,
-        "touched_files": sorted({item["path"] for item in applied_success}),
+        "touched_files": sorted({item.get("effective_path") or item["path"] for item in applied_success}),
         "repair_hint": build_repair_hint(applied_success, failed),
         "findings": [item.__dict__ for item in findings],
     }

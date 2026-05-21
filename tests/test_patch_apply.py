@@ -228,6 +228,58 @@ gamma
             )
             self.assertEqual(target.read_text(encoding="utf-8"), "gamma\n")
 
+    def test_unique_basename_path_resolves_to_repository_file(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "scripts" / "demo.py"
+            target.parent.mkdir()
+            target.write_text("alpha\n", encoding="utf-8")
+
+            result = mod.apply_search_replace(
+                """demo.py
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+""",
+                root,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["applied"][0]["effective_path"], "scripts/demo.py")
+            self.assertIn("path:basename_unique", result["applied"][0]["normalizations"])
+            self.assertEqual(result["touched_files"], ["scripts/demo.py"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "gamma\n")
+
+    def test_ambiguous_basename_path_fails_with_candidates(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for rel in ("scripts/demo.py", "tests/demo.py"):
+                target = root / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("alpha\n", encoding="utf-8")
+
+            result = mod.apply_search_replace(
+                """demo.py
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+""",
+                root,
+            )
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["applied_count"], 0)
+            self.assertEqual(result["failed_blocks"][0]["path_candidates"], ["scripts/demo.py", "tests/demo.py"])
+            self.assertIn("Candidate files", result["repair_hint"])
+            self.assertEqual((root / "scripts" / "demo.py").read_text(encoding="utf-8"), "alpha\n")
+            self.assertEqual((root / "tests" / "demo.py").read_text(encoding="utf-8"), "alpha\n")
+
     def test_dry_run_does_not_write(self):
         mod = load_patch_apply()
         with tempfile.TemporaryDirectory() as tmp:

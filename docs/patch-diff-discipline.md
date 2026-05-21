@@ -139,3 +139,9 @@ Path lines get the same bounded cleanup before validation: `# file.py`,
 The normalized path still goes through the same repository-relative path guard,
 so traversal, absolute paths, `vendor-src/`, and `reference-projects/` remain
 blocked.
+
+If a worker supplies only a basename like `demo.py`, A9 may resolve it to a
+repository-relative file only when exactly one safe file with that basename
+exists. The result records `effective_path` and `path:basename_unique`. If
+multiple safe candidates exist, apply fails and the repair hint lists candidate
+paths instead of guessing.

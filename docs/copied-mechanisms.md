@@ -218,6 +218,10 @@ Mechanisms to adapt:
   and apply. Lightweight wrappers such as `# file.py`, ``file.py``, `file.py:`,
   and ```python file.py are normalized before the existing repository path
   checks run.
+- `scripts/a9_patch_apply.py`: basename disambiguation copies Aider's valid
+  filename idea with stricter A9 rules. A basename such as `demo.py` resolves
+  only when exactly one safe repository file has that basename; ambiguous
+  basenames fail with candidate paths.
 
 ## Client Skeleton Reference Notes
 
