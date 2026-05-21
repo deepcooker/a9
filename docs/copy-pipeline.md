@@ -41,3 +41,12 @@ Context pressure uses the same rule. Each completed run stores
 exposes prompt token count, budget, ratio, remaining tokens, section budgets,
 previous-context compression metadata, and repo-map metadata without inlining
 the raw prompt.
+
+Git governance is recorded as evidence, not inferred from chat. A passed worker
+diff is committed inside the isolated worktree as an atomic snapshot. A failed,
+timed-out, or repair-needed diff is kept in `patch.diff` and then rolled back
+with git restore/reset/clean so the next attempt starts from a known base.
+`summary.json.git_governance` and `git_governance.json` record the outcome.
+When a task reuses an existing worktree path, the supervisor first resets that
+tree to the current repository HEAD and cleans untracked files. This keeps
+repeat attempts from inheriting stale worker commits or scratch files.

@@ -178,6 +178,16 @@ Mechanisms to adapt:
   budget, ratio, remaining tokens, section budgets, previous-context
   compression metadata, and repo-map metadata. The raw prompt stays on disk;
   `.a9/progress.json.latest_context_pressure` is only an operator index.
+- `scripts/a9_supervisor.py`: Git governance now copies Aider's commit
+  discipline and SWE-agent's reset-to-base environment contract. Accepted
+  worker diffs are committed inside the isolated worktree as an atomic snapshot;
+  failed or repair-needed diffs are preserved as evidence and then rolled back
+  with `restore`, `reset --hard`, and `clean -fdq`. Each run writes
+  `git_governance.json` so long-running automation can audit whether the
+  worktree was committed, rolled back, or left needing operator intervention.
+  Reused worktrees are also reset to the current base before a new attempt, so
+  stale worker commits cannot make a repeated task look like it produced no
+  diff.
 
 ## Client Skeleton Reference Notes
 

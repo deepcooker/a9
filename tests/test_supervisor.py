@@ -464,6 +464,143 @@ Do the work.
             "needs-repair",
         )
 
+    def test_git_governance_commits_passed_worker_diff(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            repo.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (repo / "demo.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True, stdout=subprocess.PIPE)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "user.name=Test",
+                    "commit",
+                    "-m",
+                    "base",
+                ],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            (repo / "demo.txt").write_text("base\nchanged\n", encoding="utf-8")
+            diff = mod.capture_diff(repo, run_dir)
+
+            result = mod.apply_git_governance(
+                repo,
+                run_dir,
+                mod.Task(path=Path("task.md"), task_id="git-pass", prompt="demo"),
+                "pass",
+                diff,
+            )
+
+            self.assertEqual(result["status"], "committed")
+            self.assertTrue(result["commit"])
+            self.assertTrue(Path(result["output_path"]).exists())
+            self.assertEqual(subprocess.run(["git", "status", "--short"], cwd=repo, text=True, stdout=subprocess.PIPE).stdout, "")
+
+    def test_git_governance_rolls_back_failed_worker_diff(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            repo.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (repo / "demo.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True, stdout=subprocess.PIPE)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "user.name=Test",
+                    "commit",
+                    "-m",
+                    "base",
+                ],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            (repo / "demo.txt").write_text("bad\n", encoding="utf-8")
+            (repo / "scratch.txt").write_text("remove me\n", encoding="utf-8")
+            diff = mod.capture_diff(repo, run_dir)
+
+            result = mod.apply_git_governance(
+                repo,
+                run_dir,
+                mod.Task(path=Path("task.md"), task_id="git-fail", prompt="demo"),
+                "needs-repair",
+                diff,
+            )
+
+            self.assertEqual(result["status"], "rolled-back")
+            self.assertTrue(result["rolled_back"])
+            self.assertEqual((repo / "demo.txt").read_text(encoding="utf-8"), "base\n")
+            self.assertFalse((repo / "scratch.txt").exists())
+            self.assertEqual(subprocess.run(["git", "status", "--short"], cwd=repo, text=True, stdout=subprocess.PIPE).stdout, "")
+
+    def test_reset_existing_worktree_returns_to_current_base(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (repo / "demo.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True, stdout=subprocess.PIPE)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "user.name=Test",
+                    "commit",
+                    "-m",
+                    "base",
+                ],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE).stdout.strip()
+            (repo / "demo.txt").write_text("committed worker snapshot\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True, stdout=subprocess.PIPE)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "user.name=Test",
+                    "commit",
+                    "-m",
+                    "worker snapshot",
+                ],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            (repo / "scratch.txt").write_text("stale\n", encoding="utf-8")
+            old_git_head = mod.git_head
+            try:
+                mod.git_head = lambda: base
+                mod.reset_existing_worktree(repo)
+            finally:
+                mod.git_head = old_git_head
+
+            self.assertEqual((repo / "demo.txt").read_text(encoding="utf-8"), "base\n")
+            self.assertFalse((repo / "scratch.txt").exists())
+            self.assertEqual(subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, text=True, stdout=subprocess.PIPE).stdout.strip(), base)
+
     def test_validate_captured_diff_records_patch_guard_json(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

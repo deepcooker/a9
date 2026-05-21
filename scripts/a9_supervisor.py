@@ -664,7 +664,7 @@ def create_worktree(task: Task, attempt: int) -> Path:
     branch_scope = hashlib.sha256(str(WORKTREES_DIR.resolve()).encode("utf-8")).hexdigest()[:10]
     branch = f"a9-supervisor/{task.task_id}-{attempt}-{branch_scope}"
     if worktree.exists():
-        return worktree
+        return reset_existing_worktree(worktree)
     add_args = ["git", "worktree", "add", "-B", branch, str(worktree), "HEAD"]
     result = run_cmd_no_raise(add_args)
     if result.returncode != 0:
@@ -674,6 +674,21 @@ def create_worktree(task: Task, attempt: int) -> Path:
         if "Read-only file system" in result.stdout or "cannot lock ref" in result.stdout:
             return create_isolated_git_copy(worktree)
         raise subprocess.CalledProcessError(result.returncode, add_args, output=result.stdout)
+    return worktree
+
+
+def reset_existing_worktree(worktree: Path) -> Path:
+    """Reuse a stale worker tree only after returning it to the current base."""
+    base_head = git_head()
+    commands = (
+        ["git", "restore", "--staged", "."],
+        ["git", "reset", "--hard", base_head],
+        ["git", "clean", "-fdq"],
+    )
+    for command in commands:
+        result = run_cmd_no_raise(command, cwd=worktree)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
     return worktree
 
 
@@ -1021,6 +1036,77 @@ def validate_scope(diff: dict[str, Any], task: Task, run_dir: Path) -> dict[str,
         }
     result["return_code"] = proc.returncode
     result["output_path"] = str(output_path)
+    write_json(output_path, result)
+    return result
+
+
+def apply_git_governance(worktree: Path, run_dir: Path, task: Task, status: str, diff: dict[str, Any]) -> dict[str, Any]:
+    output_path = run_dir / "git_governance.json"
+    base_head = run_cmd_no_raise(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
+    result: dict[str, Any] = {
+        "status": "skip",
+        "policy": "aider_atomic_commit_sweagent_reset",
+        "base_head": base_head,
+        "diff_bytes": diff.get("diff_bytes", 0),
+        "commit": "",
+        "rolled_back": False,
+        "commands": [],
+        "findings": [],
+        "output_path": str(output_path),
+    }
+
+    if diff.get("diff_bytes", 0) == 0:
+        result["findings"].append({"level": "info", "message": "no worker diff to commit or rollback"})
+        write_json(output_path, result)
+        return result
+
+    if status == "pass":
+        message = f"a9 worker: {task.task_id} attempt snapshot"
+        command = [
+            "git",
+            "-c",
+            "user.email=a9-supervisor@example.invalid",
+            "-c",
+            "user.name=A9 Supervisor",
+            "commit",
+            "-m",
+            message,
+        ]
+        proc = run_cmd_no_raise(command, cwd=worktree)
+        result["commands"].append({"command": " ".join(command), "return_code": proc.returncode})
+        if proc.returncode == 0:
+            result["status"] = "committed"
+            result["commit"] = run_cmd_no_raise(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
+        else:
+            result["status"] = "commit-failed"
+            result["findings"].append(
+                {
+                    "level": "error",
+                    "message": "failed to commit accepted worker diff",
+                    "output_preview": (proc.stdout or "")[-2000:],
+                }
+            )
+        write_json(output_path, result)
+        return result
+
+    for command in (
+        ["git", "restore", "--staged", "."],
+        ["git", "reset", "--hard", "HEAD"],
+        ["git", "clean", "-fdq"],
+    ):
+        proc = run_cmd_no_raise(command, cwd=worktree)
+        result["commands"].append({"command": " ".join(command), "return_code": proc.returncode})
+        if proc.returncode != 0:
+            result["findings"].append(
+                {
+                    "level": "error",
+                    "message": "rollback command failed",
+                    "command": " ".join(command),
+                    "output_preview": (proc.stdout or "")[-2000:],
+                }
+            )
+    result["rolled_back"] = not result["findings"]
+    result["status"] = "rolled-back" if result["rolled_back"] else "rollback-failed"
     write_json(output_path, result)
     return result
 
@@ -1452,6 +1538,15 @@ def write_evidence_and_state(
                 "allowed_paths": summary["scope_guard"].get("allowed_paths", []),
             },
         ),
+        (
+            "git_governance",
+            Path(summary["git_governance"]["output_path"]),
+            {
+                "status": summary["git_governance"].get("status"),
+                "commit": summary["git_governance"].get("commit", ""),
+                "rolled_back": summary["git_governance"].get("rolled_back", False),
+            },
+        ),
         ("context", context_path, {"status": summary["status"]}),
     ]
     for kind, path, metadata in paths:
@@ -1521,6 +1616,7 @@ def write_evidence_and_state(
             ],
             "patches": by_kind.get("patch", []) + by_kind.get("patch_guard", []),
             "guards": by_kind.get("patch_guard", []) + by_kind.get("scope_guard", []),
+            "git_governance": by_kind.get("git_governance", []),
             "checks": by_kind.get("check_log", []),
             "deep_marks": [mark["mark_id"] for mark in deep_marks],
             "memories": [],
@@ -1533,6 +1629,7 @@ def write_evidence_and_state(
             "repo_state",
             "patches",
             "guards",
+            "git_governance",
             "checks",
             "context_pressure",
             "deep_marks",
@@ -1601,6 +1698,7 @@ def redis_session_payload(
         "deep_marks_path": summary.get("deep_marks_path"),
         "guard_summary": summary.get("guard_summary", compact_guard_summary(summary)),
         "context_pressure": summary.get("context_pressure", compact_context_pressure(summary)),
+        "git_governance": summary.get("git_governance", {}),
         "channel_counts": channel_counts,
         "deep_mark_count": state.get("deep_mark_count", 0),
         "evidence_count": evidence_count,
@@ -1875,6 +1973,7 @@ def write_context_summary(task: Task, run_dir: Path, summary: dict[str, Any]) ->
     )
     patch_guard = summary.get("patch_guard", {})
     scope_guard = summary.get("scope_guard", {})
+    git_governance = summary.get("git_governance", {})
     context_pressure = summary.get("context_pressure", compact_context_pressure(summary))
     content = f"""# Task Context: {task.task_id}
 
@@ -1911,6 +2010,13 @@ Worktree: {summary['worktree']}
 - allowed_paths: {json.dumps(scope_guard.get('allowed_paths', []), ensure_ascii=False)}
 - changed_files: {json.dumps(scope_guard.get('changed_files', []), ensure_ascii=False)}
 - output: {scope_guard.get('output_path', 'missing')}
+
+## Git Governance
+
+- status: {git_governance.get('status', 'missing')}
+- commit: {git_governance.get('commit', '')}
+- rolled_back: {git_governance.get('rolled_back', False)}
+- output: {git_governance.get('output_path', 'missing')}
 
 ## Context Pressure
 
@@ -2105,6 +2211,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "latest_context_pressure": (
             summary.get("context_pressure", compact_context_pressure(summary)) if summary else {}
         ),
+        "latest_git_governance": summary.get("git_governance", {}) if summary else {},
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
         "capabilities": capabilities,
@@ -2173,6 +2280,7 @@ def run_one(*, auto_next: bool = False) -> int:
         scope_guard = validate_scope(diff, task, run_dir)
         checks = run_checks(task, worktree, run_dir)
         status = decide_status(worker, diff, checks, patch_guard, scope_guard)
+        git_governance = apply_git_governance(worktree, run_dir, task, status, diff)
         summary = {
             **lease,
             "finished_at": utc_now(),
@@ -2183,6 +2291,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "diff": diff,
             "patch_guard": patch_guard,
             "scope_guard": scope_guard,
+            "git_governance": git_governance,
             "checks": checks,
         }
         summary["context_pressure"] = compact_context_pressure(summary)
@@ -2267,6 +2376,14 @@ def status() -> int:
             patch_status = guards.get("patch_guard", {}).get("status", "missing")
             scope_status = guards.get("scope_guard", {}).get("status", "missing")
             print(f"latest guards: patch={patch_status} scope={scope_status}")
+        git_governance = data.get("git_governance", {})
+        if git_governance:
+            print(
+                "latest git: "
+                f"{git_governance.get('status', 'missing')} "
+                f"commit={git_governance.get('commit', '')} "
+                f"rolled_back={git_governance.get('rolled_back', False)}"
+            )
         pressure = data.get("context_pressure") or compact_context_pressure(data)
         if pressure:
             print(
