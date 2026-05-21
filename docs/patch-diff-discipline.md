@@ -103,3 +103,8 @@ normal diff capture, patch guard, scope guard, checks, and git governance.
 If the worker already modified files directly, deterministic apply is skipped
 and the existing captured-diff path remains in force. If deterministic apply
 fails, the run becomes `needs-repair`.
+
+On apply failure, A9 copies Aider's repair feedback shape: the failed
+SEARCH/REPLACE block, exact error, nearby actual file lines when available, and
+guidance to resend only fixed failed blocks. This repair hint is written into
+`patch_apply.json`, the task context, and the auto-scheduled repair prompt.

@@ -67,6 +67,9 @@ other
 
             self.assertEqual(result["status"], "fail")
             self.assertEqual(result["applied_count"], 0)
+            self.assertEqual(result["failed_count"], 1)
+            self.assertIn("SearchReplaceNoExactMatch", result["repair_hint"])
+            self.assertIn("Did you mean", result["repair_hint"])
             self.assertEqual(target.read_text(encoding="utf-8"), "same\nsame\n")
 
     def test_empty_search_creates_new_file_only(self):

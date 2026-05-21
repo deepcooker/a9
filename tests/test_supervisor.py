@@ -533,6 +533,25 @@ Do the work.
             "needs-repair",
         )
 
+    def test_repair_next_task_includes_patch_apply_hint(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="repair-hint", prompt="demo", phase="implement")
+        summary = {
+            "status": "needs-repair",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/context.md",
+            "patch_apply": {
+                "status": "fail",
+                "repair_hint": "## SearchReplaceNoExactMatch\n<<<<<<< SEARCH\nbad\n=======\nfixed\n>>>>>>> REPLACE",
+            },
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "repair")
+
+        self.assertIn("Patch apply repair hint", prompt)
+        self.assertIn("SearchReplaceNoExactMatch", prompt)
+        self.assertIn("<<<<<<< SEARCH", prompt)
+
     def test_git_governance_commits_passed_worker_diff(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

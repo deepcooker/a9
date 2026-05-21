@@ -197,6 +197,11 @@ Mechanisms to adapt:
   applies clean-worktree edit blocks deterministically, records
   `patch_apply.json`, then sends the resulting diff through patch guard, scope
   guard, checks, and git governance.
+- `scripts/a9_patch_apply.py` plus `scripts/a9_supervisor.py`: failed
+  SEARCH/REPLACE applies now produce Aider-style repair hints. The hint includes
+  the failed block, exact match error, nearby actual file lines when available,
+  and is injected into the next repair task instead of forcing the worker to
+  infer what went wrong.
 
 ## Client Skeleton Reference Notes
 

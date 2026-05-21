@@ -2093,7 +2093,10 @@ Worktree: {summary['worktree']}
 - status: {patch_apply.get('status', 'missing')}
 - return_code: {patch_apply.get('return_code', 'missing')}
 - applied_count: {patch_apply.get('applied_count', 0)}
+- failed_count: {patch_apply.get('failed_count', 0)}
 - output: {patch_apply.get('output_path', 'missing')}
+
+{patch_apply.get('repair_hint', '')}
 
 ## Patch Guard
 
@@ -2184,6 +2187,14 @@ def next_phase_for(status: str, current_phase: str) -> str:
 
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
     focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
+    repair_hint = ""
+    patch_apply = summary.get("patch_apply", {})
+    if summary.get("status") == "needs-repair" and patch_apply.get("repair_hint"):
+        repair_hint = f"""
+Patch apply repair hint:
+
+{patch_apply['repair_hint']}
+"""
     return f"""Continue A9 24-hour automation.
 
 Previous task: {task.task_id}
@@ -2203,6 +2214,7 @@ Core rule:
 
 Copy pipeline phases:
 {focus_lines}
+{repair_hint}
 
 Do not stop after analysis. Make code/docs changes when useful, run checks, and leave a next recommended task.
 """
