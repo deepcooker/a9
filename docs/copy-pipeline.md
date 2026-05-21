@@ -25,3 +25,8 @@ verification of the loop without spending model tokens. The report is written to
 `.a9/soak/latest.json` and a timestamped file under `.a9/soak/reports/`.
 The fake worker is the default; pass `--real-worker` only for deliberate live
 worker testing.
+
+Soak reports include a compact `latest_runs[].guards` view copied from the
+recorded run summaries. This view is only an index: the canonical evidence
+remains each run's `summary.json`, `patch_guard.json`, `scope_guard.json`,
+`evidence.jsonl`, checks, and raw event files.

@@ -161,6 +161,12 @@ Mechanisms to adapt:
   declare `allowed_paths`; every captured worker diff is checked into
   `scope_guard.json`, recorded as guard evidence, added to deep marks as
   `scope_guard_result`, and failed scope validation forces `needs-repair`.
+- `scripts/a9_soak.py`: Codex/LangGraph-style derived run summary for guard
+  evidence. Raw run `summary.json`, `patch_guard.json`, and `scope_guard.json`
+  remain the source of truth, while unattended soak reports copy only compact
+  guard channel fields: status, diff kind, touched files, findings count, and
+  output path. This lets the next record/test worker see whether patch and
+  scope gates passed without replaying raw event logs.
 
 ## Client Skeleton Reference Notes
 

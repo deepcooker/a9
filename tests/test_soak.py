@@ -99,6 +99,55 @@ class SoakTests(unittest.TestCase):
             finally:
                 mod.QUEUE_DIR = original_queue_dir
 
+    def test_latest_run_summaries_include_guard_evidence(self):
+        mod = load_soak()
+        with tempfile.TemporaryDirectory() as tmp:
+            original_runs_dir = mod.RUNS_DIR
+            mod.RUNS_DIR = Path(tmp)
+            run_dir = mod.RUNS_DIR / "run-a"
+            run_dir.mkdir()
+            (run_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "guarded-task",
+                        "status": "pass",
+                        "phase": "test",
+                        "run_dir": str(run_dir),
+                        "patch_guard": {
+                            "status": "pass",
+                            "kind": "unified_diff",
+                            "touched_files": ["scripts/a9_patch_guard.py"],
+                            "findings": [],
+                            "output_path": str(run_dir / "patch_guard.json"),
+                        },
+                        "scope_guard": {
+                            "status": "pass",
+                            "changed_files": ["scripts/a9_scope_guard.py"],
+                            "findings": [],
+                            "output_path": str(run_dir / "scope_guard.json"),
+                        },
+                        "checks": [{"command": "python3 -m unittest", "return_code": 0}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            try:
+                summaries = mod.latest_run_summaries(1)
+
+                self.assertEqual(summaries[0]["guards"]["patch_guard"]["status"], "pass")
+                self.assertEqual(summaries[0]["guards"]["patch_guard"]["findings_count"], 0)
+                self.assertEqual(
+                    summaries[0]["guards"]["patch_guard"]["touched_files"],
+                    ["scripts/a9_patch_guard.py"],
+                )
+                self.assertEqual(summaries[0]["guards"]["scope_guard"]["status"], "pass")
+                self.assertEqual(
+                    summaries[0]["guards"]["scope_guard"]["touched_files"],
+                    ["scripts/a9_scope_guard.py"],
+                )
+            finally:
+                mod.RUNS_DIR = original_runs_dir
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -114,12 +114,25 @@ def latest_run_summaries(limit: int) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for path in summaries[-limit:]:
         data = read_json(path)
+        guard_summary = {}
+        for guard_name in ("patch_guard", "scope_guard"):
+            guard = data.get(guard_name)
+            if isinstance(guard, dict):
+                touched_files = guard.get("touched_files", guard.get("changed_files", []))
+                guard_summary[guard_name] = {
+                    "status": guard.get("status"),
+                    "kind": guard.get("kind"),
+                    "touched_files": touched_files,
+                    "findings_count": len(guard.get("findings", [])),
+                    "output_path": guard.get("output_path"),
+                }
         out.append(
             {
                 "task_id": data.get("task_id"),
                 "status": data.get("status"),
                 "phase": data.get("task", {}).get("phase") or data.get("phase"),
                 "run_dir": data.get("run_dir"),
+                "guards": guard_summary,
                 "checks": [
                     {
                         "command": item.get("command"),
