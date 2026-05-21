@@ -3,6 +3,5 @@ third-party-packages/
 .a9/
 .env
 target/
-vendor-src/
 __pycache__/
 *.pyc

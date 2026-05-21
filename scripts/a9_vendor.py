@@ -33,6 +33,21 @@ LICENSES = {
     "aichat": "MIT OR Apache-2.0",
 }
 
+LICENSE_FILES = {
+    "codex": ["LICENSE"],
+    "aider": ["LICENSE.txt"],
+    "mem0": ["LICENSE"],
+    "langgraph": ["LICENSE"],
+    "openhands": ["LICENSE"],
+    "continue": ["LICENSE"],
+    "swe-agent": ["LICENSE"],
+    "cline": ["LICENSE"],
+    "roo-code": ["LICENSE"],
+    "gemini-cli": ["LICENSE"],
+    "opencode": ["LICENSE"],
+    "aichat": ["LICENSE-APACHE", "LICENSE-MIT"],
+}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -78,11 +93,27 @@ def append_manifest(record: dict[str, Any]) -> None:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def copy_license_files(project: str) -> list[str]:
+    copied: list[str] = []
+    project_root = REFERENCE_DIR / project
+    dest_root = VENDOR_DIR / project
+    for rel in LICENSE_FILES.get(project, []):
+        source = project_root / rel
+        if not source.exists():
+            continue
+        dest = dest_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, dest)
+        copied.append(str(dest.relative_to(ROOT)))
+    return copied
+
+
 def import_source(args: argparse.Namespace) -> int:
     source = validate_source(args.project, args.source)
     project_root = REFERENCE_DIR / args.project
     dest = VENDOR_DIR / args.project / args.source
     copy_tree_or_file(source, dest)
+    copied_license_files = copy_license_files(args.project)
     record = {
         "imported_at": utc_now(),
         "project": args.project,
@@ -93,6 +124,7 @@ def import_source(args: argparse.Namespace) -> int:
         "mode": args.mode,
         "purpose": args.purpose,
         "modified_by_a9": False,
+        "license_files": copied_license_files,
     }
     append_manifest(record)
     print(json.dumps(record, ensure_ascii=False, indent=2))
