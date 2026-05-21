@@ -1756,7 +1756,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "event_summaries": True,
         "copy_session": True,
         "auto_next_scheduler": True,
-        "browser_or_tui_monitor": False,
+        "browser_or_tui_monitor": True,
         "native_rust_worker": False,
         "quant_workflow_templates": False,
         "production_daemon_packaging": True,

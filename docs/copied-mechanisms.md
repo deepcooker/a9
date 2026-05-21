@@ -128,3 +128,7 @@ Mechanisms to adapt:
   daemon packaging inspired by mature service practices. The unit uses
   middleware preflight, restart policy, journal output, and the helper exposes
   unit rendering, install hints, heartbeat/progress status, and health checks.
+- `scripts/a9_page_monitor.py`: Cline/OpenHands-inspired page and TUI monitor.
+  Exported transcript text is treated as a non-canonical observation, hashed for
+  idle/stopped detection, snapshotted, converted into a continuation prompt, and
+  optionally enqueued back into the supervisor loop.

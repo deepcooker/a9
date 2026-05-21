@@ -248,6 +248,7 @@ Implemented now:
 23. `scripts/a9_checkpoint.py copy-session` copies LangGraph's copy-thread capability for A9: fork a completed session into a new session while preserving checkpoint order, channels, token usage, evidence IDs, and rewritten parent links.
 24. `scripts/a9_supervisor.py run-loop --auto-next` now closes the first 24-hour loop: after a task is recorded it can enqueue the next compare/implement/test/record or repair task, and each run writes `.a9/progress.json` plus a concise progress line.
 25. `infra/systemd/a9-supervisor.service` and `scripts/a9_service.py` package the loop as a restartable daemon with middleware preflight, heartbeat JSON, status JSON, and install instructions.
+26. `scripts/a9_page_monitor.py` copies Cline's browser-observation boundary and OpenHands-style lifecycle state: exported page/TUI text is hashed for idle/stopped detection, snapshotted as non-canonical evidence, and optionally enqueued as a supervisor continuation task.
 
 ## Middleware
 
