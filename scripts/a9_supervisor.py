@@ -42,6 +42,16 @@ SECTION_TOKEN_BUDGETS = {
 }
 SUMMARY_MIN_SPLIT = 4
 SUMMARY_MAX_DEPTH = 3
+NOISE_PATTERNS = [
+    re.compile(r"^mysql: \[Warning\] Using a password on the command line interface", re.I),
+    re.compile(r"^\.+$"),
+    re.compile(r"^-+$"),
+    re.compile(r"^=+$"),
+    re.compile(r"^Ran \d+ tests? in [\d.]+s$", re.I),
+    re.compile(r"^OK$"),
+    re.compile(r"^\[.*truncated.*\]$", re.I),
+    re.compile(r"^\.\.\.\[truncated.*\]\.\.\.$", re.I),
+]
 
 
 def utc_now() -> str:
@@ -184,6 +194,27 @@ def truncate_to_token_budget(text: str, budget: int, *, keep: str = "head") -> s
     return text[:remaining] + marker
 
 
+def normalize_context_line(line: str) -> str:
+    return re.sub(r"\s+", " ", line.strip())
+
+
+def is_noise_line(line: str) -> bool:
+    stripped = normalize_context_line(line)
+    if not stripped:
+        return True
+    return any(pattern.search(stripped) for pattern in NOISE_PATTERNS)
+
+
+def append_unique_limited(items: list[str], value: str, seen: set[str], limit: int) -> None:
+    normalized = normalize_context_line(value)
+    if not normalized or normalized in seen or is_noise_line(normalized):
+        return
+    if len(items) >= limit:
+        return
+    seen.add(normalized)
+    items.append(normalized)
+
+
 def text_to_messages(text: str) -> list[dict[str, str]]:
     messages: list[dict[str, str]] = []
     current_role = "user"
@@ -212,6 +243,10 @@ def summarize_messages_deterministic(messages: list[dict[str, str]], budget: int
     bullets: list[str] = []
     references: list[str] = []
     status_lines: list[str] = []
+    heading_seen: set[str] = set()
+    bullet_seen: set[str] = set()
+    reference_seen: set[str] = set()
+    status_seen: set[str] = set()
     file_re = re.compile(r"[\w./-]+\.(?:py|rs|ts|tsx|js|jsx|md|toml|yml|yaml|sql|json)")
     symbol_re = re.compile(r"\b(?:def|class|fn|struct|enum|impl|function|CREATE TABLE|CREATE INDEX)\s+[\w_]+")
 
@@ -219,32 +254,31 @@ def summarize_messages_deterministic(messages: list[dict[str, str]], budget: int
         role = message["role"].upper()
         for line in message["content"].splitlines():
             stripped = line.strip()
-            if not stripped:
+            if is_noise_line(stripped):
                 continue
             if stripped.startswith("#"):
-                headings.append(f"{role}: {stripped}")
+                append_unique_limited(headings, f"{role}: {stripped}", heading_seen, 20)
             if stripped.startswith(("-", "*")):
-                bullets.append(f"{role}: {stripped}")
+                append_unique_limited(bullets, f"{role}: {stripped}", bullet_seen, 30)
             if re.search(r"\b(pass|failed|error|timeout|needs-repair|needs-followup|blocked|TODO|FIXME)\b", stripped, re.I):
-                status_lines.append(f"{role}: {stripped}")
+                append_unique_limited(status_lines, f"{role}: {stripped}", status_seen, 20)
             for match in file_re.finditer(stripped):
-                references.append(f"file:{match.group(0)}")
+                append_unique_limited(references, f"file:{match.group(0)}", reference_seen, 40)
             symbol_match = symbol_re.search(stripped)
             if symbol_match:
-                references.append(f"symbol:{symbol_match.group(0)}")
+                append_unique_limited(references, f"symbol:{symbol_match.group(0)}", reference_seen, 40)
 
-    ordered_refs = list(dict.fromkeys(references))
     parts = [
         "I asked you to continue from compressed A9 context. This summary is deterministic and preserves concrete references.",
     ]
     if status_lines:
-        parts.append("Status signals:\n" + "\n".join(f"- {item}" for item in status_lines[:20]))
-    if ordered_refs:
-        parts.append("Referenced files/symbols:\n" + "\n".join(f"- {item}" for item in ordered_refs[:40]))
+        parts.append("Status signals:\n" + "\n".join(f"- {item}" for item in status_lines))
+    if references:
+        parts.append("Referenced files/symbols:\n" + "\n".join(f"- {item}" for item in references))
     if headings:
-        parts.append("Headings:\n" + "\n".join(f"- {item}" for item in headings[:20]))
+        parts.append("Headings:\n" + "\n".join(f"- {item}" for item in headings))
     if bullets:
-        parts.append("Details:\n" + "\n".join(f"- {item}" for item in bullets[:30]))
+        parts.append("Details:\n" + "\n".join(f"- {item}" for item in bullets))
     if messages:
         recent_tail = messages[-1]["content"]
         parts.append(
@@ -258,12 +292,30 @@ def summarize_messages_deterministic(messages: list[dict[str, str]], budget: int
     return [{"role": "user", "content": truncate_to_token_budget(summary, budget, keep="middle")}]
 
 
+def sanitize_messages_for_context(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    sanitized: list[dict[str, str]] = []
+    for message in messages:
+        seen_lines: set[str] = set()
+        lines: list[str] = []
+        for line in message["content"].splitlines():
+            normalized = normalize_context_line(line)
+            if is_noise_line(normalized) or normalized in seen_lines:
+                continue
+            seen_lines.add(normalized)
+            lines.append(line)
+        content = "\n".join(lines).strip()
+        if content:
+            sanitized.append({"role": message["role"], "content": content})
+    return sanitized
+
+
 def compress_messages_aider_style(
     messages: list[dict[str, str]],
     max_tokens: int,
     *,
     depth: int = 0,
 ) -> list[dict[str, str]]:
+    messages = sanitize_messages_for_context(messages)
     sized = [(approx_token_count(message["content"]), message) for message in messages]
     total = sum(tokens for tokens, _message in sized)
     if total <= max_tokens and depth == 0:
@@ -679,7 +731,7 @@ def extract_deep_marks_from_text(record: dict[str, Any], path: Path) -> list[dic
     text = path.read_text(encoding="utf-8", errors="backslashreplace")
     for line_no, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
-        if not stripped:
+        if is_noise_line(stripped):
             continue
         if stripped.startswith("#"):
             marks.append(
@@ -736,12 +788,17 @@ def extract_deep_marks_from_events(record: dict[str, Any], path: Path) -> list[d
     marks: list[dict[str, Any]] = []
     if not path.exists():
         return marks
+    seen_events: set[str] = set()
     for line_no, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), start=1):
-        if not line.strip():
+        if is_noise_line(line):
             continue
         try:
             payload = json.loads(line)
         except json.JSONDecodeError:
+            normalized = normalize_context_line(line[:500])
+            if normalized in seen_events:
+                continue
+            seen_events.add(normalized)
             marks.append(
                 mark_record(
                     record=record,
@@ -755,13 +812,18 @@ def extract_deep_marks_from_events(record: dict[str, Any], path: Path) -> list[d
             )
             continue
         event_type = payload.get("type") or payload.get("event") or payload.get("msg", {}).get("type")
+        value = json.dumps(payload, ensure_ascii=False)[:1000]
+        normalized = normalize_context_line(f"{event_type}:{value}")
+        if normalized in seen_events:
+            continue
+        seen_events.add(normalized)
         marks.append(
             mark_record(
                 record=record,
                 index=len(marks) + 1,
                 kind="event",
                 label=str(event_type or "unknown"),
-                value=json.dumps(payload, ensure_ascii=False)[:1000],
+                value=value,
                 weight=1.0,
                 metadata={"line": line_no},
             )

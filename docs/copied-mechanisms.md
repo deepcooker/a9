@@ -101,3 +101,7 @@ Mechanisms to adapt:
   task runs. Each new run reads the previous completed checkpoint and writes it
   as `parent_checkpoint_id`, enabling channel-history reconstruction across
   supervisor attempts and 24-hour continuations.
+- `scripts/a9_supervisor.py`: Noise-gated context compression and mark
+  extraction. Obvious command/test/client warnings, truncation markers, repeated
+  lines, and duplicate events are filtered from prompt summaries and long-term
+  deep marks while raw evidence files remain untouched.

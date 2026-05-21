@@ -81,7 +81,37 @@ Do the work.
         self.assertIn("RECENT_SENTINEL keep this exact tail detail", rendered)
         self.assertIn("scripts/module_0.py", rendered)
         self.assertIn("tests/test_0.py", rendered)
-        self.assertLess(len(compressed), len(messages))
+        self.assertLess(len(rendered), len(mod.render_messages(messages)))
+
+    def test_context_compression_removes_noise_and_dedupes(self):
+        mod = load_supervisor()
+        messages = [
+            {
+                "role": "user",
+                "content": "\n".join(
+                    [
+                        "mysql: [Warning] Using a password on the command line interface can be insecure.",
+                        "....",
+                        "Ran 4 tests in 1.234s",
+                        "OK",
+                        "- status pass",
+                        "- status pass",
+                        "- touched scripts/noise_filter.py",
+                        "- touched scripts/noise_filter.py",
+                        "RECENT_NOISE_SENTINEL keep this",
+                    ]
+                ),
+            }
+        ]
+
+        rendered = mod.render_messages(mod.compress_messages_aider_style(messages, 120))
+
+        self.assertNotIn("mysql: [Warning]", rendered)
+        self.assertNotIn("Ran 4 tests", rendered)
+        self.assertNotIn("\nOK", rendered)
+        self.assertEqual(rendered.count("- status pass"), 1)
+        self.assertEqual(rendered.count("scripts/noise_filter.py"), 1)
+        self.assertIn("RECENT_NOISE_SENTINEL keep this", rendered)
 
     def test_supervisor_fake_worker_end_to_end(self):
         env = os.environ.copy()

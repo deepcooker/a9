@@ -242,6 +242,7 @@ Implemented now:
 17. `scripts/a9_checkpoint.py channel-history` copies LangGraph's delta-channel history idea: reconstruct one channel through checkpoint lineage with a seed plus ordered writes, so future prompts can fetch narrow context instead of replaying whole sessions.
 18. `scripts/a9_supervisor.py` now copies Aider's history compression shape: old context is compressed into explicit file/symbol/status references while the recent tail stays verbatim, and compression metadata is persisted with the checkpoint.
 19. Supervisor checkpoints now link to the previous completed checkpoint for the same task, copying LangGraph's parent lineage requirement so 24-hour continuation can traverse state instead of relying on one chat window.
+20. Supervisor prompt compression and deep-mark extraction now gate obvious noise: command warnings, pytest separators, truncation markers, repeated lines, and duplicate events stay in raw evidence but no longer pollute summaries or long-term marks.
 
 ## Middleware
 
