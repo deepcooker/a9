@@ -30,3 +30,8 @@ Soak reports include a compact `latest_runs[].guards` view copied from the
 recorded run summaries. This view is only an index: the canonical evidence
 remains each run's `summary.json`, `patch_guard.json`, `scope_guard.json`,
 `evidence.jsonl`, checks, and raw event files.
+
+Supervisor progress uses the same evidence boundary. Each completed run stores
+`summary.json.guard_summary`, and `.a9/progress.json.latest_guards` exposes
+patch/scope guard status, changed paths, finding counts, and guard evidence
+paths without inlining raw logs or full validator output.

@@ -153,6 +153,67 @@ Do the work.
         self.assertEqual(summary["tool"], "web_run")
         self.assertTrue(summary["has_meta"])
 
+    def test_compact_guard_summary_indexes_full_guard_evidence(self):
+        mod = load_supervisor()
+        summary = {
+            "patch_guard": {
+                "status": "pass",
+                "return_code": 0,
+                "kind": "unified_diff",
+                "touched_files": ["scripts/a9_supervisor.py"],
+                "findings": [{"level": "info"}],
+                "output_path": "/tmp/patch_guard.json",
+                "large_raw_field": "not copied",
+            },
+            "scope_guard": {
+                "status": "fail",
+                "return_code": 1,
+                "changed_files": ["secret.env"],
+                "allowed_paths": ["scripts/"],
+                "findings": [{"level": "error"}, {"level": "error"}],
+                "output_path": "/tmp/scope_guard.json",
+            },
+        }
+
+        guards = mod.compact_guard_summary(summary)
+
+        self.assertEqual(guards["patch_guard"]["status"], "pass")
+        self.assertEqual(guards["patch_guard"]["findings_count"], 1)
+        self.assertEqual(guards["patch_guard"]["touched_files"], ["scripts/a9_supervisor.py"])
+        self.assertEqual(guards["scope_guard"]["status"], "fail")
+        self.assertEqual(guards["scope_guard"]["findings_count"], 2)
+        self.assertEqual(guards["scope_guard"]["changed_files"], ["secret.env"])
+        self.assertNotIn("large_raw_field", guards["patch_guard"])
+
+    def test_redis_session_payload_keeps_state_by_reference(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="redis-payload", prompt="demo")
+        summary = {
+            "status": "pass",
+            "finished_at": "2026-05-21T00:00:00+00:00",
+            "run_dir": "/tmp/a9-run",
+            "evidence_path": "/tmp/a9-run/evidence.jsonl",
+            "deep_marks_path": "/tmp/a9-run/deep_marks.jsonl",
+            "patch_guard": {"status": "pass", "findings": []},
+            "scope_guard": {"status": "pass", "findings": []},
+        }
+        state = {
+            "checkpoint_id": "checkpoint-1",
+            "deep_mark_count": 20000,
+            "channels": {
+                "deep_marks": [f"mark-{index}" for index in range(20000)],
+                "checks": ["check-1"],
+            },
+        }
+
+        payload = mod.redis_session_payload(task, summary, state, evidence_count=12)
+
+        self.assertNotIn("state", payload)
+        self.assertEqual(payload["state_path"], "/tmp/a9-run/state.json")
+        self.assertEqual(payload["channel_counts"]["deep_marks"], 20000)
+        self.assertEqual(payload["deep_mark_count"], 20000)
+        self.assertLess(len(mod.json_compact(payload)), 2000)
+
     def test_supervisor_fake_worker_end_to_end(self):
         env = os.environ.copy()
         env["A9_SUPERVISOR_WORKER_CMD"] = (
@@ -216,8 +277,11 @@ Do the work.
         self.assertEqual(data["phase"], "implement")
         self.assertGreater(data["diff"]["diff_bytes"], 0)
         self.assertEqual(data["patch_guard"]["status"], "pass")
+        self.assertEqual(data["guard_summary"]["patch_guard"]["status"], "pass")
+        self.assertIn("findings_count", data["guard_summary"]["patch_guard"])
         self.assertTrue(Path(data["patch_guard"]["output_path"]).exists())
         self.assertEqual(data["scope_guard"]["status"], "pass")
+        self.assertEqual(data["guard_summary"]["scope_guard"]["status"], "pass")
         self.assertEqual(data["scope_guard"]["allowed_paths"], ["worker-output.txt"])
         self.assertTrue(Path(data["scope_guard"]["output_path"]).exists())
         self.assertIn("persistence", data)

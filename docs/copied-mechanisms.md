@@ -167,6 +167,12 @@ Mechanisms to adapt:
   guard channel fields: status, diff kind, touched files, findings count, and
   output path. This lets the next record/test worker see whether patch and
   scope gates passed without replaying raw event logs.
+- `scripts/a9_supervisor.py`: the same derived guard evidence view is now
+  written into each run `summary.json` as `guard_summary` and surfaced through
+  `.a9/progress.json` as `latest_guards`. This copies the Codex/LangGraph
+  boundary again: raw guard files stay canonical, while operator-facing status
+  receives only bounded channel status, changed paths, finding counts, and
+  evidence paths.
 
 ## Client Skeleton Reference Notes
 

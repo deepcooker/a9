@@ -50,6 +50,35 @@ class ServiceTests(unittest.TestCase):
         heartbeat = json.loads(mod.DAEMON_HEARTBEAT_PATH.read_text(encoding="utf-8"))
         self.assertEqual(heartbeat["detail"], "service-test")
 
+    def test_service_progress_includes_compact_guard_status(self):
+        mod = load_supervisor()
+        progress = mod.service_progress(
+            {
+                "task_id": "guard-progress-test",
+                "status": "pass",
+                "run_dir": "/tmp/a9-run",
+                "patch_guard": {
+                    "status": "pass",
+                    "return_code": 0,
+                    "kind": "unified_diff",
+                    "touched_files": ["scripts/a9_supervisor.py"],
+                    "findings": [],
+                    "output_path": "/tmp/patch_guard.json",
+                },
+                "scope_guard": {
+                    "status": "pass",
+                    "return_code": 0,
+                    "changed_files": ["scripts/a9_supervisor.py"],
+                    "allowed_paths": ["scripts/"],
+                    "findings": [],
+                    "output_path": "/tmp/scope_guard.json",
+                },
+            }
+        )
+
+        self.assertEqual(progress["latest_guards"]["patch_guard"]["status"], "pass")
+        self.assertEqual(progress["latest_guards"]["scope_guard"]["changed_files"], ["scripts/a9_supervisor.py"])
+
 
 if __name__ == "__main__":
     unittest.main()

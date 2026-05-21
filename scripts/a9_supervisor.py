@@ -670,7 +670,36 @@ def create_worktree(task: Task, attempt: int) -> Path:
         run_cmd_no_raise(["git", "worktree", "prune"])
         result = run_cmd_no_raise(add_args)
     if result.returncode != 0:
+        if "Read-only file system" in result.stdout or "cannot lock ref" in result.stdout:
+            return create_isolated_git_copy(worktree)
         raise subprocess.CalledProcessError(result.returncode, add_args, output=result.stdout)
+    return worktree
+
+
+def create_isolated_git_copy(worktree: Path) -> Path:
+    """Fallback for sandboxes that cannot mutate the shared git metadata."""
+    if worktree.exists():
+        return worktree
+    worktree.mkdir(parents=True, exist_ok=True)
+    for rel in git_tracked_files():
+        src = ROOT / rel
+        dst = worktree / rel
+        if not src.is_file():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    commands = [
+        ["git", "init"],
+        ["git", "config", "user.email", "a9-supervisor@example.invalid"],
+        ["git", "config", "user.name", "A9 Supervisor"],
+        ["git", "add", "-A"],
+        ["git", "commit", "-m", "baseline"],
+    ]
+    for command in commands:
+        result = run_cmd_no_raise(command, cwd=worktree)
+        if result.returncode != 0:
+            raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
     return worktree
 
 
@@ -1039,6 +1068,28 @@ def decide_status(
     if diff["diff_bytes"] == 0:
         return "needs-followup"
     return "pass"
+
+
+def compact_guard_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    guards: dict[str, Any] = {}
+    for guard_name in ("patch_guard", "scope_guard"):
+        guard = summary.get(guard_name)
+        if not isinstance(guard, dict):
+            continue
+        item: dict[str, Any] = {
+            "status": guard.get("status"),
+            "return_code": guard.get("return_code"),
+            "findings_count": len(guard.get("findings", [])),
+            "output_path": guard.get("output_path"),
+        }
+        if guard_name == "patch_guard":
+            item["kind"] = guard.get("kind")
+            item["touched_files"] = guard.get("touched_files", [])
+        if guard_name == "scope_guard":
+            item["changed_files"] = guard.get("changed_files", [])
+            item["allowed_paths"] = guard.get("allowed_paths", [])
+        guards[guard_name] = item
+    return guards
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -1498,6 +1549,34 @@ def redis_available() -> bool:
     return redis_cli(["PING"]).stdout.strip().endswith("PONG")
 
 
+def redis_session_payload(
+    task: Task,
+    summary: dict[str, Any],
+    state: dict[str, Any],
+    evidence_count: int,
+) -> dict[str, Any]:
+    channel_counts = {
+        name: len(value) if isinstance(value, list) else 1
+        for name, value in state.get("channels", {}).items()
+    }
+    return {
+        "session_id": task.task_id,
+        "current_checkpoint_id": state["checkpoint_id"],
+        "status": summary["status"],
+        "updated_at": summary["finished_at"],
+        "run_id": Path(summary["run_dir"]).name,
+        "run_dir": summary["run_dir"],
+        "summary_path": str(Path(summary["run_dir"]) / "summary.json"),
+        "state_path": str(Path(summary["run_dir"]) / "state.json"),
+        "evidence_path": summary.get("evidence_path"),
+        "deep_marks_path": summary.get("deep_marks_path"),
+        "guard_summary": summary.get("guard_summary", compact_guard_summary(summary)),
+        "channel_counts": channel_counts,
+        "deep_mark_count": state.get("deep_mark_count", 0),
+        "evidence_count": evidence_count,
+    }
+
+
 def mysql_available() -> bool:
     result = run_cmd_no_raise(
         [
@@ -1633,9 +1712,15 @@ def persist_redis(
     errors: list[str] = []
 
     def call(args: list[str]) -> None:
-        result = redis_cli(args)
+        try:
+            result = redis_cli(args)
+        except OSError as exc:
+            errors.append(f"{args[0]} failed before redis-cli: {exc}")
+            return
         if result.returncode != 0:
             errors.append(result.stdout.strip())
+
+    session_payload = redis_session_payload(task, summary, state, len(evidence))
 
     call(
         [
@@ -1661,16 +1746,7 @@ def persist_redis(
             "JSON.SET",
             f"a9:session:{task.task_id}",
             "$",
-            json_compact(
-                {
-                    "session_id": task.task_id,
-                    "current_checkpoint_id": checkpoint_id,
-                    "status": summary["status"],
-                    "updated_at": summary["finished_at"],
-                    "run_id": run_id,
-                    "state": state,
-                }
-            ),
+            json_compact(session_payload),
         ]
     )
     for item in evidence:
@@ -1986,6 +2062,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "latest_task_id": summary.get("task_id") if summary else None,
         "latest_status": summary.get("status") if summary else None,
         "latest_run": summary.get("run_dir") if summary else None,
+        "latest_guards": summary.get("guard_summary", compact_guard_summary(summary)) if summary else {},
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
         "capabilities": capabilities,
@@ -2066,6 +2143,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "scope_guard": scope_guard,
             "checks": checks,
         }
+        summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
         evidence_path, state_path, deep_marks_path, evidence, state, deep_marks = write_evidence_and_state(
@@ -2141,6 +2219,11 @@ def status() -> int:
     if latest:
         data = json.loads(latest[-1].read_text(encoding="utf-8"))
         print(f"latest: {data['task_id']} {data['status']} {data['run_dir']}")
+        guards = data.get("guard_summary") or compact_guard_summary(data)
+        if guards:
+            patch_status = guards.get("patch_guard", {}).get("status", "missing")
+            scope_status = guards.get("scope_guard", {}).get("status", "missing")
+            print(f"latest guards: patch={patch_status} scope={scope_status}")
     if PROGRESS_PATH.exists():
         progress = json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
         print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
