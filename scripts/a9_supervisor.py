@@ -657,7 +657,8 @@ Hard rules:
 
 def create_worktree(task: Task, attempt: int) -> Path:
     worktree = WORKTREES_DIR / f"{task.task_id}-attempt-{attempt}"
-    branch = f"a9-supervisor/{task.task_id}-{attempt}"
+    branch_scope = hashlib.sha256(str(WORKTREES_DIR.resolve()).encode("utf-8")).hexdigest()[:10]
+    branch = f"a9-supervisor/{task.task_id}-{attempt}-{branch_scope}"
     if worktree.exists():
         return worktree
     add_args = ["git", "worktree", "add", "-B", branch, str(worktree), "HEAD"]

@@ -1,0 +1,70 @@
+# A9 Patch / Diff Discipline
+
+## Position
+
+A9 should not accept a worker's free-form claim that code was changed. Patch
+execution must be bounded, checkable, and backed by evidence.
+
+This document is a mechanism adaptation, not copied source. The local reference
+files are Apache-2.0 under `docs/vendor-strategy.md`:
+
+- `vendor-src/aider/aider/history.py`
+- `vendor-src/aider/aider/repomap.py`
+
+## Aider Mechanisms Extracted
+
+- Keep edits small enough that the old text can be matched exactly.
+- Treat recent high-fidelity context as more valuable than broad old context.
+- Use repo maps and symbols to choose context instead of dumping full
+  repositories.
+- Maintain a token budget separately for chat/history and repository context.
+- Fail closed when an edit target is ambiguous, missing, or outside the allowed
+  workspace.
+
+## A9 Rules
+
+1. A worker patch must be represented as structured edit text, preferably
+   Aider-style `SEARCH/REPLACE` blocks or a unified diff.
+2. A `SEARCH` block must match the current target file exactly once before any
+   edit is applied.
+3. Patch paths must be repository-relative. Absolute paths and `..` traversal
+   are invalid.
+4. Reference and vendor areas are read-only for ordinary implementation patches:
+   `vendor-src/` and `reference-projects/` are blocked unless a task explicitly
+   enters the vendor import flow.
+5. Patch validation result must be recorded as evidence before execution.
+6. A failed patch validation is a repair event, not a reason to continue adding
+   features.
+
+## Prototype
+
+`scripts/a9_patch_guard.py` validates:
+
+- Aider-style blocks:
+
+```text
+path/to/file.py
+<<<<<<< SEARCH
+old exact text
+=======
+new text
+>>>>>>> REPLACE
+```
+
+- Unified diffs with basic file path, hunk, and changed-line sanity checks.
+
+Example:
+
+```bash
+python3 scripts/a9_patch_guard.py proposed.patch --root .
+```
+
+The command prints JSON with `status`, touched files, and findings. Exit code is
+zero only when validation passes.
+
+## Next Code Step
+
+Wire `scripts/a9_patch_guard.py` into the supervisor run evidence path so worker
+patches are validated before checks are marked pass. The first integration can
+guard recorded diff artifacts only; actual patch application can remain a later
+bounded task.

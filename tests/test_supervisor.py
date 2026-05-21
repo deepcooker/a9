@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -165,34 +166,46 @@ Do the work.
         task_id = "selftest-supervisor"
         queue_path = ROOT / ".a9" / "tasks" / "queue" / f"{task_id}.md"
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
-        if queue_path.exists():
-            queue_path.unlink()
-        if done_path.exists():
-            done_path.unlink()
-        for path in (ROOT / ".a9" / "tasks" / "queue").glob("auto-*-selftest-supervisor-*.md"):
-            path.unlink()
+        queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
-        subprocess.run(
-            [
-                str(SUPERVISOR_PATH),
-                "enqueue",
-                task_id,
-                "fake task",
-                "--check",
-                "test -f worker-output.txt",
-                "--timeout-seconds",
-                "60",
-                "--idle-timeout-seconds",
-                "20",
-                "--max-attempts",
-                "1",
-            ],
-            cwd=ROOT,
-            check=True,
-        )
-        subprocess.run([str(SUPERVISOR_PATH), "run-one"], cwd=ROOT, check=True, env=env)
-        data = json.loads(done_path.read_text(encoding="utf-8"))
+        with tempfile.TemporaryDirectory() as held_tmp:
+            held_dir = Path(held_tmp)
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            held_paths = []
+            for path in queue_dir.glob("*.md"):
+                held_path = held_dir / path.name
+                shutil.move(str(path), str(held_path))
+                held_paths.append((held_path, path))
+            try:
+                if done_path.exists():
+                    done_path.unlink()
+                subprocess.run(
+                    [
+                        str(SUPERVISOR_PATH),
+                        "enqueue",
+                        task_id,
+                        "fake task",
+                        "--check",
+                        "test -f worker-output.txt",
+                        "--timeout-seconds",
+                        "60",
+                        "--idle-timeout-seconds",
+                        "20",
+                        "--max-attempts",
+                        "1",
+                    ],
+                    cwd=ROOT,
+                    check=True,
+                )
+                subprocess.run([str(SUPERVISOR_PATH), "run-one"], cwd=ROOT, check=True, env=env)
+                data = json.loads(done_path.read_text(encoding="utf-8"))
+            finally:
+                queue_path.unlink(missing_ok=True)
+                for path in queue_dir.glob("auto-*-selftest-supervisor-*.md"):
+                    path.unlink()
+                for held_path, original_path in held_paths:
+                    if held_path.exists() and not original_path.exists():
+                        shutil.move(str(held_path), str(original_path))
         self.assertEqual(data["status"], "pass")
         self.assertEqual(data["phase"], "implement")
         self.assertGreater(data["diff"]["diff_bytes"], 0)
@@ -326,6 +339,14 @@ Do the work.
         self.assertEqual(mod.next_phase_for("pass", "record"), "reference_scan")
         self.assertEqual(mod.next_phase_for("needs-repair", "implement"), "repair")
         self.assertEqual(mod.next_phase_for("needs-followup", "test"), "test")
+
+    def test_worktree_branch_name_is_scoped_to_worktree_root(self):
+        mod = load_supervisor()
+        task_id = "branch-scope"
+        branch_scope = mod.hashlib.sha256(str(mod.WORKTREES_DIR.resolve()).encode("utf-8")).hexdigest()[:10]
+        expected_branch = f"a9-supervisor/{task_id}-1-{branch_scope}"
+
+        self.assertIn(branch_scope, expected_branch)
 
 
 if __name__ == "__main__":

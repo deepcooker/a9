@@ -146,6 +146,11 @@ Mechanisms to adapt:
   under `.a9/client/sessions`, loads `.a9/client/config.json`, submits work to
   the existing supervisor queue, refreshes status from durable done-state, and
   creates continuation tasks instead of treating chat text as canonical state.
+- `scripts/a9_patch_guard.py` and `docs/patch-diff-discipline.md`: Aider-inspired
+  patch discipline prototype. A9 now has a small validator for structured
+  `SEARCH/REPLACE` edits and unified diff path sanity, enforcing exact unique
+  matches, repository-relative paths, and read-only vendor/reference boundaries
+  before patch execution is trusted.
 
 ## Client Skeleton Reference Notes
 
