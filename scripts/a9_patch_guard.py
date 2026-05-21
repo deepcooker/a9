@@ -96,7 +96,7 @@ def parse_search_replace(text: str) -> tuple[list[SearchReplaceBlock], list[Find
     while index < len(lines):
         stripped = lines[index].strip()
         if stripped != "<<<<<<< SEARCH":
-            if stripped:
+            if stripped and not stripped.startswith("```"):
                 last_nonempty = (index + 1, stripped)
             index += 1
             continue

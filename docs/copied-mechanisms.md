@@ -149,8 +149,9 @@ Mechanisms to adapt:
 - `scripts/a9_patch_guard.py` and `docs/patch-diff-discipline.md`: Aider-inspired
   patch discipline prototype. A9 now has a small validator for structured
   `SEARCH/REPLACE` edits and unified diff path sanity, enforcing exact unique
-  matches, repository-relative paths, and read-only vendor/reference boundaries
-  before patch execution is trusted.
+  matches, repository-relative paths, read-only vendor/reference boundaries, and
+  Aider's documented path-before-markdown-fence edit-block variant before patch
+  execution is trusted.
 - `scripts/a9_supervisor.py`: patch guard evidence integration. Every recorded
   worker diff is validated into `patch_guard.json`, stored as durable evidence
   in the checkpoint patch channel, and failed validation forces `needs-repair`

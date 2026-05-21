@@ -44,6 +44,29 @@ gamma
         self.assertEqual(result["kind"], "search_replace")
         self.assertEqual(result["touched_files"], ["scripts/demo.py"])
 
+    def test_search_replace_accepts_path_before_markdown_fence(self):
+        mod = load_patch_guard()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "scripts" / "demo.py"
+            target.parent.mkdir()
+            target.write_text("alpha\nbeta\n", encoding="utf-8")
+
+            patch = """scripts/demo.py
+```python
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+```
+"""
+            result = mod.validate(patch, root, "auto")
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["kind"], "search_replace")
+        self.assertEqual(result["touched_files"], ["scripts/demo.py"])
+
     def test_search_replace_rejects_ambiguous_match(self):
         mod = load_patch_guard()
         with tempfile.TemporaryDirectory() as tmp:

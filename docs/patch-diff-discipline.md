@@ -51,6 +51,9 @@ new text
 >>>>>>> REPLACE
 ```
 
+  It also accepts the documented Aider variant where the path line is followed
+  by an opening markdown code fence before `<<<<<<< SEARCH`.
+
 - Unified diffs with basic file path, hunk, and changed-line sanity checks.
 
 Example:
