@@ -32,7 +32,13 @@ RUNNING_DIR = STATE_DIR / "tasks" / "running"
 DONE_DIR = STATE_DIR / "tasks" / "done"
 RUNS_DIR = STATE_DIR / "runs"
 WORKTREES_DIR = STATE_DIR / "worktrees"
+PROGRESS_PATH = STATE_DIR / "progress.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
+DEFAULT_NEXT_CHECKS = [
+    "python3 -m unittest tests/test_supervisor.py tests/test_memory.py tests/test_checkpoint.py",
+    "cargo build --workspace",
+]
+PHASE_ORDER = ["compare", "implement", "test", "record"]
 SECTION_TOKEN_BUDGETS = {
     "doctrine": 5000,
     "task": 4000,
@@ -102,6 +108,7 @@ class Task:
     path: Path
     task_id: str
     prompt: str
+    phase: str = "implement"
     timeout_seconds: int = 3600
     idle_timeout_seconds: int = 300
     max_attempts: int = 2
@@ -147,6 +154,7 @@ def parse_task(path: Path) -> Task:
         path=path,
         task_id=task_id,
         prompt=body.strip(),
+        phase=str(meta.get("phase", "implement")),
         timeout_seconds=int(meta.get("timeout_seconds", 3600)),
         idle_timeout_seconds=int(meta.get("idle_timeout_seconds", 300)),
         max_attempts=int(meta.get("max_attempts", 2)),
@@ -1635,11 +1643,164 @@ def previous_task_checkpoint_id(task: Task) -> str | None:
     return str(checkpoint_id) if checkpoint_id else None
 
 
-def run_one() -> int:
+def next_phase_for(status: str, current_phase: str) -> str:
+    if status == "needs-repair" or status.startswith("retryable-"):
+        return "repair"
+    if status == "needs-followup":
+        return current_phase or "implement"
+    if current_phase not in PHASE_ORDER:
+        return "compare"
+    index = PHASE_ORDER.index(current_phase)
+    return PHASE_ORDER[(index + 1) % len(PHASE_ORDER)]
+
+
+def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
+    return f"""Continue A9 24-hour automation.
+
+Previous task: {task.task_id}
+Previous phase: {task.phase}
+Previous status: {summary['status']}
+Previous run: {summary['run_dir']}
+Previous context: {summary['context_path']}
+
+Phase: {phase}
+
+Core rule:
+- Continue copying mature open-source mechanisms before inventing.
+- Inspect local reference projects under `/root/a9/reference-projects`.
+- Record copied source/license obligations in docs/vendor records when adding new references.
+- Implement one concrete, testable improvement toward the 24-hour A9 service.
+- Run the declared checks.
+
+Focus by phase:
+- compare: inspect Codex/Aider/LangGraph/mem0/OpenHands/Continue/SWE-agent style mechanisms and choose one concrete mechanism.
+- implement: adapt the selected mechanism into A9 with bounded scope.
+- test: strengthen automated verification and regression coverage.
+- repair: fix the previous failed checks or missing evidence.
+- record: update docs/evidence/progress so the next worker can continue without chat context.
+
+Do not stop after analysis. Make code/docs changes when useful, run checks, and leave a next recommended task.
+"""
+
+
+def enqueue_task_file(
+    task_id: str,
+    prompt: str,
+    *,
+    phase: str = "implement",
+    checks: list[str] | None = None,
+    timeout_seconds: int = 3600,
+    idle_timeout_seconds: int = 300,
+    max_attempts: int = 2,
+) -> Path:
+    ensure_dirs()
+    clean_id = slugify(task_id)
+    path = QUEUE_DIR / f"{clean_id}.md"
+    suffix = 1
+    while path.exists():
+        suffix += 1
+        path = QUEUE_DIR / f"{clean_id}-{suffix}.md"
+    checks = checks or []
+    checks_text = "\n".join(f'  - "{item}"' for item in checks)
+    frontmatter = [
+        "---",
+        f'id: "{path.stem}"',
+        f'phase: "{phase}"',
+        f"timeout_seconds: {timeout_seconds}",
+        f"idle_timeout_seconds: {idle_timeout_seconds}",
+        f"max_attempts: {max_attempts}",
+        "checks:",
+        checks_text,
+        "---",
+        "",
+        prompt.strip(),
+        "",
+    ]
+    path.write_text("\n".join(frontmatter), encoding="utf-8")
+    return path
+
+
+def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
+    if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:
+        return None
+    phase = next_phase_for(summary["status"], task.phase)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    task_id = f"auto-{phase}-{task.task_id}-{timestamp}"
+    return enqueue_task_file(
+        task_id,
+        next_task_prompt(task, summary, phase),
+        phase=phase,
+        checks=DEFAULT_NEXT_CHECKS,
+        timeout_seconds=3600,
+        idle_timeout_seconds=300,
+        max_attempts=2,
+    )
+
+
+def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path | None = None) -> dict[str, Any]:
+    ensure_dirs()
+    completed_runs = len(list(RUNS_DIR.glob("*/summary.json")))
+    done_tasks = len(list(DONE_DIR.glob("*.json")))
+    queued_tasks = len(list(QUEUE_DIR.glob("*.md")))
+    running_tasks = len(list(RUNNING_DIR.glob("*.json")))
+    capabilities = {
+        "middleware_mysql_redis": True,
+        "rust_gateway_streams": True,
+        "supervisor_queue_loop": True,
+        "evidence_state_deep_marks": True,
+        "checkpoint_lineage_channel_history": True,
+        "memory_adapter": True,
+        "context_compression_noise_gating": True,
+        "repo_map": True,
+        "event_summaries": True,
+        "copy_session": True,
+        "auto_next_scheduler": True,
+        "browser_or_tui_monitor": False,
+        "native_rust_worker": False,
+        "quant_workflow_templates": False,
+        "production_daemon_packaging": False,
+    }
+    done_capabilities = sum(1 for value in capabilities.values() if value)
+    progress = {
+        "updated_at": utc_now(),
+        "service": "a9-24h-automation",
+        "stage": "auto-loop-mvp" if next_task_path else "supervisor-mvp",
+        "progress_percent": round(done_capabilities / len(capabilities) * 100, 1),
+        "completed_runs": completed_runs,
+        "done_tasks": done_tasks,
+        "queued_tasks": queued_tasks,
+        "running_tasks": running_tasks,
+        "latest_task_id": summary.get("task_id") if summary else None,
+        "latest_status": summary.get("status") if summary else None,
+        "latest_run": summary.get("run_dir") if summary else None,
+        "next_task_path": str(next_task_path) if next_task_path else "",
+        "auto_next_scheduled": next_task_path is not None,
+        "capabilities": capabilities,
+        "next_goal": "Add production daemon packaging, browser/TUI idle monitor, native Rust worker, and quant-specific task templates.",
+    }
+    write_json(PROGRESS_PATH, progress)
+    return progress
+
+
+def print_service_progress(progress: dict[str, Any]) -> None:
+    print(
+        "24h automation progress: "
+        f"{progress['progress_percent']}% "
+        f"stage={progress['stage']} "
+        f"queued={progress['queued_tasks']} "
+        f"done={progress['done_tasks']} "
+        f"latest={progress['latest_task_id']}:{progress['latest_status']}"
+    )
+    if progress.get("next_task_path"):
+        print(f"next task: {progress['next_task_path']}")
+
+
+def run_one(*, auto_next: bool = False) -> int:
     ensure_dirs()
     task = next_task()
     if not task:
         print("No queued tasks.")
+        print_service_progress(service_progress())
         return 0
 
     attempt = 1
@@ -1694,8 +1855,10 @@ def run_one() -> int:
         lease_path.unlink(missing_ok=True)
         target_task_path = DONE_DIR / task.path.name
         shutil.move(str(task.path), str(target_task_path))
+        next_task_path = schedule_next_task(task, summary) if auto_next else None
         print(f"{task.task_id}: {status}")
         print(f"run: {run_dir}")
+        print_service_progress(service_progress(summary, next_task_path))
         return 0 if status in {"pass", "needs-followup", "needs-repair"} else 1
 
     return 1
@@ -1709,7 +1872,7 @@ def run_loop(args: argparse.Namespace) -> int:
         if not task:
             print("No queued tasks.")
             return 0
-        code = run_one()
+        code = run_one(auto_next=args.auto_next)
         completed += 1
         if code != 0 and not args.keep_going_on_error:
             return code
@@ -1719,26 +1882,15 @@ def run_loop(args: argparse.Namespace) -> int:
 
 
 def enqueue(args: argparse.Namespace) -> int:
-    ensure_dirs()
-    task_id = slugify(args.task_id)
-    path = QUEUE_DIR / f"{task_id}.md"
-    if path.exists():
-        raise SystemExit(f"Task already exists: {path}")
-    checks = "\n".join(f'  - "{item}"' for item in args.check)
-    frontmatter = [
-        "---",
-        f'id: "{task_id}"',
-        f"timeout_seconds: {args.timeout_seconds}",
-        f"idle_timeout_seconds: {args.idle_timeout_seconds}",
-        f"max_attempts: {args.max_attempts}",
-        "checks:",
-        checks,
-        "---",
-        "",
-        args.prompt.strip(),
-        "",
-    ]
-    path.write_text("\n".join(frontmatter), encoding="utf-8")
+    path = enqueue_task_file(
+        args.task_id,
+        args.prompt,
+        phase=args.phase,
+        checks=args.check,
+        timeout_seconds=args.timeout_seconds,
+        idle_timeout_seconds=args.idle_timeout_seconds,
+        max_attempts=args.max_attempts,
+    )
     print(path)
     return 0
 
@@ -1752,6 +1904,9 @@ def status() -> int:
     if latest:
         data = json.loads(latest[-1].read_text(encoding="utf-8"))
         print(f"latest: {data['task_id']} {data['status']} {data['run_dir']}")
+    if PROGRESS_PATH.exists():
+        progress = json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
+        print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
     return 0
 
 
@@ -1765,17 +1920,20 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 supervisor")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
-    sub.add_parser("run-one")
+    run_one_parser = sub.add_parser("run-one")
+    run_one_parser.add_argument("--auto-next", action="store_true")
     sub.add_parser("status")
 
     loop_parser = sub.add_parser("run-loop")
     loop_parser.add_argument("--sleep-seconds", type=float, default=5.0)
     loop_parser.add_argument("--max-tasks", type=int, default=0)
     loop_parser.add_argument("--keep-going-on-error", action="store_true")
+    loop_parser.add_argument("--auto-next", action="store_true")
 
     enqueue_parser = sub.add_parser("enqueue")
     enqueue_parser.add_argument("task_id")
     enqueue_parser.add_argument("prompt")
+    enqueue_parser.add_argument("--phase", default="implement")
     enqueue_parser.add_argument("--check", action="append", default=[])
     enqueue_parser.add_argument("--timeout-seconds", type=int, default=3600)
     enqueue_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
@@ -1785,7 +1943,7 @@ def main(argv: list[str]) -> int:
     if args.command == "init":
         return init()
     if args.command == "run-one":
-        return run_one()
+        return run_one(auto_next=args.auto_next)
     if args.command == "run-loop":
         return run_loop(args)
     if args.command == "status":

@@ -120,3 +120,7 @@ Mechanisms to adapt:
   adapted for A9. It copies all checkpoints from one session into another,
   rewrites checkpoint IDs and parent links, preserves channel/token/evidence
   JSON, leaves the source untouched, and publishes RedisJSON hot state.
+- `scripts/a9_supervisor.py run-loop --auto-next`: supervisor record-to-next
+  loop. Each completed task can schedule the next compare/implement/test/record
+  or repair task, and every run writes `.a9/progress.json` with stable 24-hour
+  automation capability progress.
