@@ -35,6 +35,7 @@ WORKTREES_DIR = STATE_DIR / "worktrees"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
+DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
 DEFAULT_NEXT_CHECKS = [
     "python3 -m unittest tests/test_supervisor.py tests/test_memory.py tests/test_checkpoint.py",
     "cargo build --workspace",
@@ -719,10 +720,13 @@ def build_worker_cmd(
             .replace("{worktree}", shlex.quote(str(worktree)))
         )
         return ["bash", "-lc", formatted]
+    model = os.getenv("A9_SUPERVISOR_MODEL", DEFAULT_WORKER_MODEL)
     return [
         "codex",
         "exec",
         "--json",
+        "--model",
+        model,
         "-C",
         str(worktree),
         "--output-last-message",
