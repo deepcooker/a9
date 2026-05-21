@@ -36,7 +36,7 @@ Codex is the most important source-level reference because the hard parts are no
 - Local session logs that can become training traces.
 - Configurable model providers and tool surfaces.
 
-The A9 version should copy these mechanisms conceptually, then specialize them for trading engineering: `TRADE_AGENTS.md`, backtests, risk checks, data-leak checks, replay tests, and audit trails.
+The A9 version should copy these mechanisms conceptually, then specialize them for our private 24-hour agent service before any domain-specific model work.
 
 ## Supervisor Design
 
@@ -206,7 +206,7 @@ Each task prompt should force evidence:
 ```text
 You are running inside the A9 supervisor.
 
-Phase: compare/design/implement/test/review.
+Phase: reference_scan/mechanism_extract/vendor_import/implement/test/record/repair.
 Use reference projects only from /root/a9/reference-projects.
 Do not copy code without recording license obligations.
 Before editing, write a short plan.
@@ -250,6 +250,7 @@ Implemented now:
 25. `infra/systemd/a9-supervisor.service` and `scripts/a9_service.py` package the loop as a restartable daemon with middleware preflight, heartbeat JSON, status JSON, and install instructions.
 26. `scripts/a9_page_monitor.py` copies Cline's browser-observation boundary and OpenHands-style lifecycle state: exported page/TUI text is hashed for idle/stopped detection, snapshotted as non-canonical evidence, and optionally enqueued as a supervisor continuation task.
 27. `crates/a9-worker` is the first native Rust worker wrapper: it leases one Redis Stream task, writes lifecycle heartbeats, runs a bounded command with task env vars, emits started/completed/failed events, and acks the task.
+28. `scripts/a9_supervisor.py` now has explicit copy-pipeline templates: reference scan, mechanism extraction, vendor import, implementation, tests, record, and repair.
 
 ## Middleware
 
@@ -270,7 +271,7 @@ Redis hot-path pieces to copy from the mature ecosystem:
 
 Rust is the intended implementation language for the stable gateway and governance layer. It should own queue consumption, Redis stream handling, lease transitions, timeout/retry/dead-letter logic, concurrency limits, heartbeats, durable state transitions, and MySQL/Redis consistency.
 
-Python remains a first-class runtime for model-facing and personalization logic. It should own fast-changing business logic: prompt assembly policy, memory extraction prompts, personalization rules, model/provider adapters, reference-mechanism analysis, quant-domain reasoning, and experiment scripts.
+Python remains a first-class runtime for model-facing and personalization logic. It should own fast-changing business logic: prompt assembly policy, memory extraction prompts, personalization rules, model/provider adapters, reference-mechanism analysis, and experiment scripts.
 
 The production split is:
 

@@ -1,0 +1,21 @@
+# A9 Copy Pipeline
+
+This is the default 24-hour automation loop. It is domain-neutral; quant work is
+future business logic, not the current service milestone.
+
+Phases:
+
+1. `reference_scan`: inspect mature local reference projects and choose one
+   concrete mechanism.
+2. `mechanism_extract`: document the moving parts, contracts, failure modes,
+   context behavior, and cost controls.
+3. `vendor_import`: copy licensed source slices into `vendor-src/` and record
+   source, commit, purpose, and license obligations.
+4. `implement`: adapt the mechanism into A9 with bounded code or docs changes.
+5. `test`: add or strengthen automated verification.
+6. `record`: update docs, evidence, progress, and next task state.
+7. `repair`: fix failed checks or missing evidence before returning to the
+   current phase.
+
+The supervisor schedules these phases through `run-loop --auto-next`. A worker
+must not stop at analysis when code, tests, or durable records are needed.

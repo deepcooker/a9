@@ -3,7 +3,7 @@
 ## Position
 
 A9's core method is to copy mature open-source mechanisms, then modify them for
-our own 24-hour agent and quant-model workflow.
+our own 24-hour private agent service.
 
 Open-source projects are not only references. If the license allows it, A9 may
 copy source files or modules into an A9-controlled vendor area and modify them.

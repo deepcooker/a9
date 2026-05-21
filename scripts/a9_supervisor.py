@@ -39,7 +39,23 @@ DEFAULT_NEXT_CHECKS = [
     "python3 -m unittest tests/test_supervisor.py tests/test_memory.py tests/test_checkpoint.py",
     "cargo build --workspace",
 ]
-PHASE_ORDER = ["compare", "implement", "test", "record"]
+PHASE_ORDER = [
+    "reference_scan",
+    "mechanism_extract",
+    "vendor_import",
+    "implement",
+    "test",
+    "record",
+]
+PHASE_FOCUS = {
+    "reference_scan": "Inspect mature local reference projects and pick one concrete mechanism worth copying.",
+    "mechanism_extract": "Explain the copied mechanism's moving parts, contracts, failure modes, and token/cost behavior.",
+    "vendor_import": "Import or update licensed source slices under vendor-src and record license/source metadata.",
+    "implement": "Adapt the selected mechanism into A9 with bounded code or docs changes.",
+    "test": "Strengthen automated verification and regression coverage for the copied mechanism.",
+    "repair": "Fix the previous failed checks, incomplete implementation, or missing evidence.",
+    "record": "Update docs, evidence, and progress so the next worker can continue without chat context.",
+}
 SECTION_TOKEN_BUDGETS = {
     "doctrine": 5000,
     "task": 4000,
@@ -1656,6 +1672,7 @@ def next_phase_for(status: str, current_phase: str) -> str:
 
 
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
+    focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
     return f"""Continue A9 24-hour automation.
 
 Previous task: {task.task_id}
@@ -1673,12 +1690,8 @@ Core rule:
 - Implement one concrete, testable improvement toward the 24-hour A9 service.
 - Run the declared checks.
 
-Focus by phase:
-- compare: inspect Codex/Aider/LangGraph/mem0/OpenHands/Continue/SWE-agent style mechanisms and choose one concrete mechanism.
-- implement: adapt the selected mechanism into A9 with bounded scope.
-- test: strengthen automated verification and regression coverage.
-- repair: fix the previous failed checks or missing evidence.
-- record: update docs/evidence/progress so the next worker can continue without chat context.
+Copy pipeline phases:
+{focus_lines}
 
 Do not stop after analysis. Make code/docs changes when useful, run checks, and leave a next recommended task.
 """
@@ -1758,7 +1771,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "auto_next_scheduler": True,
         "browser_or_tui_monitor": True,
         "native_rust_worker": True,
-        "quant_workflow_templates": False,
+        "copy_pipeline_templates": True,
         "production_daemon_packaging": True,
     }
     done_capabilities = sum(1 for value in capabilities.values() if value)
@@ -1777,7 +1790,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
         "capabilities": capabilities,
-        "next_goal": "Add quant-specific task templates and wire them into the 24-hour scheduler.",
+        "next_goal": "Run the copy pipeline under the daemon for longer unattended soak tests.",
     }
     write_json(PROGRESS_PATH, progress)
     return progress

@@ -279,14 +279,14 @@ Do the work.
             "lineage-test:checkpoint:1",
         )
 
-    def test_schedule_next_task_creates_followup_with_progress(self):
+    def test_schedule_next_task_creates_copy_pipeline_followup_with_progress(self):
         mod = load_supervisor()
         mod.ensure_dirs()
         task = mod.Task(
             path=mod.DONE_DIR / "auto-source.md",
             task_id="auto-source",
             prompt="copy the next mature mechanism",
-            phase="compare",
+            phase="reference_scan",
         )
         summary = {
             "task_id": task.task_id,
@@ -299,18 +299,32 @@ Do the work.
         self.assertIsNotNone(next_path)
         assert next_path is not None
         text = next_path.read_text(encoding="utf-8")
-        self.assertIn('phase: "implement"', text)
+        self.assertIn('phase: "mechanism_extract"', text)
         self.assertIn("Continue A9 24-hour automation", text)
+        self.assertIn("Copy pipeline phases", text)
+        self.assertIn("vendor_import", text)
         self.assertIn("python3 -m unittest", text)
 
         progress = mod.service_progress(summary, next_path)
         self.assertEqual(progress["stage"], "auto-loop-mvp")
         self.assertTrue(progress["capabilities"]["auto_next_scheduler"])
+        self.assertTrue(progress["capabilities"]["copy_pipeline_templates"])
         self.assertTrue(progress["auto_next_scheduled"])
         self.assertTrue(progress["capabilities"]["production_daemon_packaging"])
+        self.assertEqual(progress["progress_percent"], 100.0)
         self.assertTrue(mod.PROGRESS_PATH.exists())
 
         next_path.unlink(missing_ok=True)
+
+    def test_copy_pipeline_phase_order(self):
+        mod = load_supervisor()
+
+        self.assertEqual(mod.next_phase_for("pass", "reference_scan"), "mechanism_extract")
+        self.assertEqual(mod.next_phase_for("pass", "mechanism_extract"), "vendor_import")
+        self.assertEqual(mod.next_phase_for("pass", "vendor_import"), "implement")
+        self.assertEqual(mod.next_phase_for("pass", "record"), "reference_scan")
+        self.assertEqual(mod.next_phase_for("needs-repair", "implement"), "repair")
+        self.assertEqual(mod.next_phase_for("needs-followup", "test"), "test")
 
 
 if __name__ == "__main__":

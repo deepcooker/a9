@@ -136,3 +136,7 @@ Mechanisms to adapt:
   workers: lease one task from a consumer group, heartbeat lifecycle state,
   execute a bounded worker command, emit started/completed/failed events, and
   ack the stream entry so production orchestration is Rust-first.
+- `scripts/a9_supervisor.py`: explicit copy-pipeline templates for the default
+  24-hour loop. The scheduler now cycles through reference scan, mechanism
+  extraction, vendor import, implementation, test, and record phases, with a
+  repair phase for failed checks.
