@@ -134,13 +134,19 @@ Final answer must include:
 
 ## First MVP
 
-Do this before building a full Rust supervisor:
+Implemented now:
 
-1. Create task queue directories.
-2. Write a Bash or Python watchdog that runs one task at a time with `codex exec --json`.
-3. Store event logs under `runs/`.
-4. Require every task to produce a patch or a `needs-human` blocker.
-5. Add max runtime and max attempts.
-6. Push traces to git or object storage.
+1. `scripts/a9_supervisor.py init` creates queue, running, done, runs, and worktree directories.
+2. `scripts/a9_supervisor.py enqueue ...` creates markdown tasks with timeout, idle timeout, attempts, and checks.
+3. `scripts/a9_supervisor.py run-one` runs one task with `codex exec --json`.
+4. `scripts/a9_supervisor.py run-loop` keeps consuming queued tasks.
+5. Every run stores `prompt.md`, `events.jsonl`, `stderr.log`, `final.md`, `patch.diff`, check logs, and `summary.json`.
+6. Each task runs in an isolated git worktree under `.a9/worktrees`.
+7. The supervisor classifies results as `pass`, `needs-followup`, `needs-repair`, or retryable failures.
+
+Verified:
+
+- Fake worker end-to-end test passes.
+- Real Codex worker can create a file in an isolated worktree after removing the deprecated `use_legacy_landlock` setting from Codex config.
 
 After this works, port the supervisor to Rust and replace `codex exec` with the A9 native agent worker.
