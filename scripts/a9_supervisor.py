@@ -2094,6 +2094,7 @@ Worktree: {summary['worktree']}
 - return_code: {patch_apply.get('return_code', 'missing')}
 - applied_count: {patch_apply.get('applied_count', 0)}
 - failed_count: {patch_apply.get('failed_count', 0)}
+- partial_success: {patch_apply.get('partial_success', False)}
 - output: {patch_apply.get('output_path', 'missing')}
 
 {patch_apply.get('repair_hint', '')}

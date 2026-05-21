@@ -202,6 +202,10 @@ Mechanisms to adapt:
   the failed block, exact match error, nearby actual file lines when available,
   and is injected into the next repair task instead of forcing the worker to
   infer what went wrong.
+- `scripts/a9_patch_apply.py`: partial success is explicit. Multiple edit
+  blocks can report `successful_blocks` and `failed_blocks`, with repair hints
+  warning not to duplicate successful edits when a retained worktree already has
+  them.
 
 ## Client Skeleton Reference Notes
 

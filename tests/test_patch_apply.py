@@ -90,6 +90,40 @@ other
             self.assertEqual(result["applied"][0]["mode"], "create")
             self.assertEqual((root / "docs" / "new.md").read_text(encoding="utf-8"), "# New\n")
 
+    def test_partial_success_reports_successful_and_failed_blocks(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "demo.py"
+            target.write_text("alpha\nsame\nsame\n", encoding="utf-8")
+
+            result = mod.apply_search_replace(
+                """demo.py
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+demo.py
+<<<<<<< SEARCH
+same
+=======
+other
+>>>>>>> REPLACE
+""",
+                root,
+            )
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["applied_count"], 1)
+            self.assertEqual(result["failed_count"], 1)
+            self.assertTrue(result["partial_success"])
+            self.assertEqual(result["successful_blocks"][0]["index"], 1)
+            self.assertEqual(result["failed_blocks"][0]["index"], 2)
+            self.assertIn("Do not resend successful blocks", result["repair_hint"])
+            self.assertIn("block 1: demo.py", result["repair_hint"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "gamma\nsame\nsame\n")
+
     def test_dry_run_does_not_write(self):
         mod = load_patch_apply()
         with tempfile.TemporaryDirectory() as tmp:

@@ -542,13 +542,16 @@ Do the work.
             "context_path": "/tmp/context.md",
             "patch_apply": {
                 "status": "fail",
-                "repair_hint": "## SearchReplaceNoExactMatch\n<<<<<<< SEARCH\nbad\n=======\nfixed\n>>>>>>> REPLACE",
+                "partial_success": True,
+                "repair_hint": "# Partial SEARCH/REPLACE result\nDo not resend successful blocks\n## SearchReplaceNoExactMatch\n<<<<<<< SEARCH\nbad\n=======\nfixed\n>>>>>>> REPLACE",
             },
         }
 
         prompt = mod.next_task_prompt(task, summary, "repair")
 
         self.assertIn("Patch apply repair hint", prompt)
+        self.assertIn("Partial SEARCH/REPLACE result", prompt)
+        self.assertIn("Do not resend successful blocks", prompt)
         self.assertIn("SearchReplaceNoExactMatch", prompt)
         self.assertIn("<<<<<<< SEARCH", prompt)
 

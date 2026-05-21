@@ -108,3 +108,10 @@ On apply failure, A9 copies Aider's repair feedback shape: the failed
 SEARCH/REPLACE block, exact error, nearby actual file lines when available, and
 guidance to resend only fixed failed blocks. This repair hint is written into
 `patch_apply.json`, the task context, and the auto-scheduled repair prompt.
+
+When some blocks apply and later blocks fail, `patch_apply.json` records
+`partial_success`, `successful_blocks`, and `failed_blocks`. The repair hint
+lists successful blocks separately to prevent duplicate application. In the
+supervisor path, git governance may roll back the failed run, so the next worker
+must check target content and the block metadata before deciding whether to
+resend a successful block.

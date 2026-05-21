@@ -63,6 +63,31 @@ def repair_hint_for_block(block: a9_patch_guard.SearchReplaceBlock, content: str
     return "\n".join(parts)
 
 
+def block_summary(item: dict[str, Any]) -> str:
+    return f"- block {item.get('index')}: {item.get('path')} ({item.get('mode')})"
+
+
+def build_repair_hint(successful: list[dict[str, Any]], failed: list[dict[str, Any]]) -> str:
+    hints = [item["repair_hint"] for item in failed if item.get("repair_hint")]
+    if successful and failed:
+        prefix = [
+            "# Partial SEARCH/REPLACE result",
+            f"- applied_blocks: {len(successful)}",
+            f"- failed_blocks: {len(failed)}",
+            "",
+            "Successful blocks:",
+            *[block_summary(item) for item in successful],
+            "",
+            "In a retained worktree, Do not resend successful blocks.",
+            "In A9 supervisor repair, failed runs may be rolled back by git governance; check target content and this metadata before resending blocks.",
+            "If a repeated SEARCH no longer matches but REPLACE already exists, treat that block as already applied.",
+            "",
+            "Failed blocks to fix:",
+        ]
+        return "\n".join(prefix + hints)
+    return "\n\n".join(hints)
+
+
 def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dict[str, Any]:
     findings: list[a9_patch_guard.Finding] = []
     blocks, parse_findings = a9_patch_guard.parse_search_replace(text)
@@ -161,16 +186,18 @@ def report(
 ) -> dict[str, Any]:
     applied_success = [item for item in applied if item.get("mode") != "failed"]
     failed = [item for item in applied if item.get("mode") == "failed"]
-    repair_hints = [item["repair_hint"] for item in failed if item.get("repair_hint")]
     return {
         "status": status,
         "kind": kind,
         "dry_run": dry_run,
         "applied_count": len(applied_success),
         "failed_count": len(failed),
+        "partial_success": bool(applied_success and failed),
         "applied": applied,
+        "successful_blocks": applied_success,
+        "failed_blocks": failed,
         "touched_files": sorted({item["path"] for item in applied_success}),
-        "repair_hint": "\n\n".join(repair_hints),
+        "repair_hint": build_repair_hint(applied_success, failed),
         "findings": [item.__dict__ for item in findings],
     }
 
