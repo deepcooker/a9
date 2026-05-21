@@ -4,7 +4,7 @@
 
 Build a 24-hour coding/research worker around Codex-like agents. The worker should keep running comparison, copying-by-design, implementation, testing, and validation tasks without waiting for a human after every small step.
 
-Do not monitor the terminal UI. Treat the agent as a non-interactive worker and supervise it through task files, JSON logs, git state, timeouts, and test results.
+The hard problem is context continuity. Page/TUI monitoring is useful because it can keep a live human conversation moving, but it must not be the only source of truth. Durable context has to live outside the model window in task files, JSON logs, git state, summaries, patches, test results, and reference notes.
 
 ## Reference Projects
 
@@ -42,9 +42,9 @@ The A9 version should copy these mechanisms conceptually, then specialize them f
 
 ### Core Rule
 
-Use `codex exec --json` or our own future Rust agent worker. Do not scrape the interactive TUI.
+Use `codex exec --json` or our own future Rust agent worker for production runs. Do not make UI scraping the only source of truth.
 
-The TUI is for humans. The supervisor should run deterministic jobs and inspect machine-readable outputs.
+The TUI/page is for humans and emergency continuity. The supervisor should run deterministic jobs and inspect machine-readable outputs.
 
 ### Components
 
@@ -65,6 +65,80 @@ The TUI is for humans. The supervisor should run deterministic jobs and inspect 
 
 6. Watchdog
    A small daemon that starts jobs, reads heartbeats, kills stuck workers, retries bounded failures, and schedules the next phase.
+
+7. Context store
+   Durable memory outside the model window. It contains doctrine summaries, reference notes, repo maps, task state, traces, patches, check logs, and rolling summaries.
+
+## Context Management
+
+The system must not depend on one long chat context. Each new worker run reconstructs the needed prompt from durable state.
+
+### Context Layers
+
+1. Static doctrine
+   `需求.md`, `codex.md`, `TRADE_AGENTS.md`, `AGENTS.md`, architecture docs, and risk rules.
+
+2. Reference notes
+   Short extracted notes from `reference-projects/*`, not raw whole repositories. Each note records source project, file path, mechanism, license, and how A9 may adapt it.
+
+3. Repo state
+   Current git commit, current diff, selected files, tests, failures, and module map.
+
+4. Task state
+   Objective, phase, attempts, previous run summaries, blockers, and decisions already made.
+
+5. Trace memory
+   `events.jsonl`, `final.md`, `patch.diff`, `checks/*.log`, plus compact `summary.json` generated after each run.
+
+6. Rolling summary
+   A human-readable `context.md` per task that gets updated after every run. The next attempt reads this first.
+
+### Prompt Reconstruction
+
+Each worker run should receive only:
+
+- doctrine summary
+- current task objective and phase
+- last successful or failed run summary
+- relevant reference notes
+- relevant repo files or repo map slice
+- current patch and test status
+- hard stop conditions
+
+This copies Codex's context-compaction spirit without relying on an invisible browser/chat context.
+
+### Page Monitoring Role
+
+Page monitoring is useful for one case: a human is already deep in a live Codex/ChatGPT conversation and wants a watcher to notice that the assistant stopped and submit the next continuation prompt.
+
+Allowed page-monitor behavior:
+
+- Detect idle/stopped state.
+- Snapshot visible transcript when possible.
+- Append a short continuation prompt.
+- Export or copy the conversation into local markdown periodically.
+- Hand off exported markdown into the durable context store.
+
+Not allowed as the only architecture:
+
+- Treating the browser transcript as the only memory.
+- Depending on DOM selectors as the source of task truth.
+- Letting a page monitor execute code or merge patches without supervisor trace.
+
+Best architecture:
+
+```text
+Browser/TUI monitor
+  -> exports transcript/summary
+  -> context store
+  -> supervisor task
+  -> codex exec/native worker
+  -> trace + tests + diff
+  -> updated context summary
+  -> optional browser continuation
+```
+
+The page monitor solves live continuity. The supervisor solves repeatability and 24-hour reliability.
 
 ## Task State Machine
 

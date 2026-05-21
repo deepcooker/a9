@@ -287,6 +287,70 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def read_text_if_exists(path: Path, limit: int = 4000) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="backslashreplace")
+    if len(text) > limit:
+        return text[:limit] + "\n...[truncated]\n"
+    return text
+
+
+def write_context_summary(task: Task, run_dir: Path, summary: dict[str, Any]) -> Path:
+    final_text = read_text_if_exists(Path(summary["worker"]["final_path"]), limit=3000).strip()
+    diff_text = read_text_if_exists(Path(summary["diff"]["diff_path"]), limit=3000).strip()
+    failed_checks = [item for item in summary["checks"] if item["return_code"] != 0]
+    checks_text = "\n".join(
+        f"- `{item['command']}` -> {item['return_code']} ({item['output_path']})"
+        for item in summary["checks"]
+    )
+    content = f"""# Task Context: {task.task_id}
+
+Updated: {summary['finished_at']}
+Status: {summary['status']}
+Attempt: {summary['attempt']}
+Worktree: {summary['worktree']}
+
+## Objective
+
+{task.prompt}
+
+## Worker Result
+
+- return_code: {summary['worker']['return_code']}
+- timed_out: {summary['worker']['timed_out']}
+- idle_timed_out: {summary['worker']['idle_timed_out']}
+- events: {json.dumps(summary['worker']['event_counts'], ensure_ascii=False)}
+
+## Checks
+
+{checks_text or '- none'}
+
+## Failed Checks
+
+{json.dumps(failed_checks, ensure_ascii=False, indent=2)}
+
+## Final Message
+
+{final_text or '(empty)'}
+
+## Patch Preview
+
+```diff
+{diff_text or '(empty)'}
+```
+
+## Next Continuation Prompt
+
+Continue this task from the durable context above. If status is `needs-repair`, inspect the failed checks and patch, then produce a minimal repair. If status is `needs-followup`, make the next concrete progress step. If status is `pass`, propose the next task in the same project direction.
+"""
+    context_path = run_dir / "context.md"
+    context_path.write_text(content, encoding="utf-8")
+    task_context_path = STATE_DIR / "tasks" / "done" / f"{task.task_id}.context.md"
+    task_context_path.write_text(content, encoding="utf-8")
+    return context_path
+
+
 def run_one() -> int:
     ensure_dirs()
     task = next_task()
@@ -324,6 +388,8 @@ def run_one() -> int:
             "diff": diff,
             "checks": checks,
         }
+        context_path = write_context_summary(task, run_dir, summary)
+        summary["context_path"] = str(context_path)
         write_json(run_dir / "summary.json", summary)
 
         retryable = status.startswith("retryable-")
