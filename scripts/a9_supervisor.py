@@ -660,7 +660,13 @@ def create_worktree(task: Task, attempt: int) -> Path:
     branch = f"a9-supervisor/{task.task_id}-{attempt}"
     if worktree.exists():
         return worktree
-    run_cmd(["git", "worktree", "add", "-B", branch, str(worktree), "HEAD"], capture=True)
+    add_args = ["git", "worktree", "add", "-B", branch, str(worktree), "HEAD"]
+    result = run_cmd_no_raise(add_args)
+    if result.returncode != 0:
+        run_cmd_no_raise(["git", "worktree", "prune"])
+        result = run_cmd_no_raise(add_args)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, add_args, output=result.stdout)
     return worktree
 
 

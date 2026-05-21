@@ -140,3 +140,36 @@ Mechanisms to adapt:
   24-hour loop. The scheduler now cycles through reference scan, mechanism
   extraction, vendor import, implementation, test, and record phases, with a
   repair phase for failed checks.
+- `crates/a9-client`: minimal Rust client entry inspired by Codex session
+  governance, Aider context boundaries, LangGraph thread/checkpoint lineage,
+  and Cline/OpenHands adapter boundaries. It keeps user-facing session state
+  under `.a9/client/sessions`, loads `.a9/client/config.json`, submits work to
+  the existing supervisor queue, refreshes status from durable done-state, and
+  creates continuation tasks instead of treating chat text as canonical state.
+
+## Client Skeleton Reference Notes
+
+Local source slices reviewed before implementing `crates/a9-client`:
+
+- Codex: `vendor-src/codex/codex-rs/core/src/context_manager/history.rs` and
+  `vendor-src/codex/codex-rs/core/src/compact.rs`. Borrowed the boundary that
+  raw ordered history/session state is durable, prompt construction is a
+  derived view, and compaction/continuation should be explicit work with status.
+- Aider: `vendor-src/aider/aider/history.py` and
+  `vendor-src/aider/aider/repomap.py`. Borrowed the token-control rule that the
+  client should pass bounded task prompts and rely on repo maps/supervisor
+  context assembly rather than dumping reference source into the CLI.
+- LangGraph: `vendor-src/langgraph/libs/checkpoint/langgraph/checkpoint/base/__init__.py`.
+  Borrowed stable thread/session IDs, parent lineage, and durable status lookup
+  as the resume model.
+- Cline/OpenHands boundary, represented locally by
+  `vendor-src/cline/src/core/task/tools/handlers/BrowserToolHandler.ts`: UI or
+  tool streams are adapters. The A9 client therefore submits to the supervisor
+  and reads canonical `.a9/tasks/done` state instead of becoming the canonical
+  agent loop itself.
+
+License obligations for these local references remain the existing vendored
+ones: Codex, Aider, Cline, and mem0 are Apache-2.0 slices in this repository;
+LangGraph is MIT. Keep the corresponding license files in `vendor-src/*` and
+preserve notices when copying source-level code. The `a9-client` implementation
+is an adaptation of mechanisms, not a pasted source copy.
