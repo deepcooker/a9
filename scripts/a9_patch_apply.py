@@ -147,6 +147,23 @@ def replace_with_strategy(current: str, search: str, replace: str) -> tuple[str,
     return replace_exact(current, search, replace) or replace_leading_whitespace(current, search, replace)
 
 
+def normalize_wrapped_text(text: str, path: str, section: str) -> tuple[str, list[str]]:
+    normalizations: list[str] = []
+    if not text:
+        return text, normalizations
+    lines = text.splitlines()
+    if lines and lines[0].strip() == path:
+        lines = lines[1:]
+        normalizations.append(f"{section}:filename_line")
+    if len(lines) >= 2 and lines[0].strip().startswith("```") and lines[-1].strip().startswith("```"):
+        lines = lines[1:-1]
+        normalizations.append(f"{section}:fence")
+    normalized = "\n".join(lines)
+    if normalized and text.endswith("\n"):
+        normalized += "\n"
+    return normalized, normalizations
+
+
 def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dict[str, Any]:
     findings: list[a9_patch_guard.Finding] = []
     blocks, parse_findings = a9_patch_guard.parse_search_replace(text)
@@ -162,9 +179,12 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
         resolved = a9_patch_guard.validate_rel_path(root, block.path, findings)
         if resolved is None:
             continue
+        search, search_normalizations = normalize_wrapped_text(block.search, block.path, "search")
+        replace, replace_normalizations = normalize_wrapped_text(block.replace, block.path, "replace")
+        normalizations = search_normalizations + replace_normalizations
 
         current = ""
-        creating_file = not resolved.exists() and block.search == ""
+        creating_file = not resolved.exists() and search == ""
         if resolved.exists():
             if not resolved.is_file():
                 findings.append(a9_patch_guard.Finding("error", "target path is not a file", block.path))
@@ -180,17 +200,17 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
             )
             continue
 
-        if block.search == "" and not creating_file:
+        if search == "" and not creating_file:
             findings.append(a9_patch_guard.Finding("error", "empty SEARCH is only allowed for new files", block.path))
             continue
 
         if creating_file:
-            new_content = block.replace
+            new_content = replace
             match_meta = {"matches": 0, "match_strategy": "new_file", "fuzz_level": 0}
         else:
-            replacement = replace_with_strategy(current, block.search, block.replace)
+            replacement = replace_with_strategy(current, search, replace)
             if replacement is None:
-                exact_matches = current.count(block.search)
+                exact_matches = current.count(search)
                 message = f"SEARCH content must match exactly once; found {exact_matches}"
                 findings.append(
                     a9_patch_guard.Finding(
@@ -205,11 +225,12 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
                         "path": block.path,
                         "line": block.line,
                         "mode": "failed",
-                        "search_bytes": len(block.search.encode("utf-8")),
-                        "replace_bytes": len(block.replace.encode("utf-8")),
+                        "search_bytes": len(search.encode("utf-8")),
+                        "replace_bytes": len(replace.encode("utf-8")),
                         "matches": exact_matches,
                         "match_strategy": "none",
                         "fuzz_level": None,
+                        "normalizations": normalizations,
                         "repair_hint": repair_hint_for_block(block, current, message),
                     }
                 )
@@ -226,6 +247,14 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
                     block.path,
                 )
             )
+        if normalizations:
+            findings.append(
+                a9_patch_guard.Finding(
+                    "warning",
+                    "normalized wrapped SEARCH/REPLACE content: " + ", ".join(normalizations),
+                    block.path,
+                )
+            )
 
         if not dry_run:
             resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -236,8 +265,9 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
                 "path": block.path,
                 "line": block.line,
                 "mode": "create" if creating_file else "replace",
-                "search_bytes": len(block.search.encode("utf-8")),
-                "replace_bytes": len(block.replace.encode("utf-8")),
+                "search_bytes": len(search.encode("utf-8")),
+                "replace_bytes": len(replace.encode("utf-8")),
+                "normalizations": normalizations,
                 **match_meta,
             }
         )

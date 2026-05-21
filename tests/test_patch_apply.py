@@ -172,6 +172,37 @@ gamma
             self.assertEqual(result["applied_count"], 0)
             self.assertEqual(target.read_text(encoding="utf-8"), "    alpha\nalpha\n")
 
+    def test_normalizes_filename_and_fence_wrapping(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "demo.py"
+            target.write_text("alpha\n", encoding="utf-8")
+
+            result = mod.apply_search_replace(
+                """demo.py
+<<<<<<< SEARCH
+demo.py
+```python
+alpha
+```
+=======
+```python
+gamma
+```
+>>>>>>> REPLACE
+""",
+                root,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(
+                result["applied"][0]["normalizations"],
+                ["search:filename_line", "search:fence", "replace:fence"],
+            )
+            self.assertIn("normalized wrapped", result["findings"][0]["message"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "gamma\n")
+
     def test_dry_run_does_not_write(self):
         mod = load_patch_apply()
         with tempfile.TemporaryDirectory() as tmp:

@@ -210,6 +210,10 @@ Mechanisms to adapt:
   whitespace recovery only. Exact match still wins; indentation-only recovery is
   recorded as `match_strategy=leading_whitespace`, `fuzz_level=1`, with a
   warning. Edit-distance fuzzy matching stays disabled.
+- `scripts/a9_patch_apply.py`: wrapped edit blocks now copy Aider's filename
+  and fence cleanup. A leading target filename and one outer triple-backtick
+  fence pair can be stripped before matching, with `normalizations` recorded in
+  the block evidence.
 
 ## Client Skeleton Reference Notes
 

@@ -124,3 +124,12 @@ apply a block only when every searched non-empty line matches after stripping
 leading whitespace and the target block has one consistent indentation offset.
 The result records `match_strategy=leading_whitespace` and `fuzz_level=1`, and
 adds a warning finding. Arbitrary edit-distance fuzzy matching remains disabled.
+
+## Wrapped Block Normalization
+
+A9 also copies Aider's common wrapper cleanup for model output. Before matching,
+the apply engine can remove a leading filename line that exactly equals the
+target path, and remove one outer pair of triple-backtick fences. These changes
+are recorded per block in `normalizations`, such as `search:filename_line` or
+`replace:fence`, and also produce a warning finding. The engine does not strip
+arbitrary prose or nested wrappers.
