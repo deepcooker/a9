@@ -84,6 +84,17 @@ enum ReconnectLifecycleEvent {
     ExhaustedRetries { max_retries: u32 },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GatewayReconnectDecision {
+    phase: &'static str,
+    action: &'static str,
+    error_class: &'static str,
+    attempt: u32,
+    delay_ms: u64,
+    policy_budget_remaining: u32,
+    origin: &'static str,
+}
+
 impl DefaultReconnectBackoff {
     fn classify_failure(error: &std::io::Error) -> RedisFailureKind {
         match error.kind() {
@@ -211,6 +222,24 @@ fn stream_error_action(kind: RedisFailureKind) -> StreamErrorAction {
 }
 
 fn emit_decision_evidence(addr: &str, max_retries: u32, event: ReconnectLifecycleEvent) {
+    for decision in decisions_from_lifecycle_event(max_retries, event) {
+        emit_gateway_decision(
+            addr,
+            decision.phase,
+            decision.action,
+            decision.error_class,
+            decision.attempt,
+            decision.delay_ms,
+            decision.policy_budget_remaining,
+            decision.origin,
+        );
+    }
+}
+
+fn decisions_from_lifecycle_event(
+    max_retries: u32,
+    event: ReconnectLifecycleEvent,
+) -> Vec<GatewayReconnectDecision> {
     match event {
         ReconnectLifecycleEvent::FailureClassified {
             attempt,
@@ -223,53 +252,53 @@ fn emit_decision_evidence(addr: &str, max_retries: u32, event: ReconnectLifecycl
             } else {
                 0
             };
-            emit_gateway_decision(
-                addr,
-                "connect",
-                action.as_str(),
-                kind.error_class(error_kind),
+            let mut decisions = Vec::with_capacity(2);
+            decisions.push(GatewayReconnectDecision {
+                phase: "connect",
+                action: action.as_str(),
+                error_class: kind.error_class(error_kind),
                 attempt,
                 delay_ms,
-                max_retries.saturating_sub(attempt),
-                "connect_error",
-            );
+                policy_budget_remaining: max_retries.saturating_sub(attempt),
+                origin: "connect_error",
+            });
             let stream_action = stream_error_action(kind);
-            emit_gateway_decision(
-                addr,
-                "stream",
-                stream_action.as_str(),
-                kind.error_class(error_kind),
+            decisions.push(GatewayReconnectDecision {
+                phase: "stream",
+                action: stream_action.as_str(),
+                error_class: kind.error_class(error_kind),
                 attempt,
-                0,
-                max_retries.saturating_sub(attempt),
-                "stream_error",
-            );
+                delay_ms: 0,
+                policy_budget_remaining: max_retries.saturating_sub(attempt),
+                origin: "stream_error",
+            });
+            decisions
         }
         ReconnectLifecycleEvent::RetryScheduled { attempt, delay_ms } => {
-            emit_gateway_decision(
-                addr,
-                "connect",
-                ConnectErrorAction::Reconnect.as_str(),
-                "unknown",
+            vec![GatewayReconnectDecision {
+                phase: "connect",
+                action: ConnectErrorAction::Reconnect.as_str(),
+                error_class: "unknown",
                 attempt,
                 delay_ms,
-                max_retries.saturating_sub(attempt),
-                "connect_error",
-            );
+                policy_budget_remaining: max_retries.saturating_sub(attempt),
+                origin: "connect_error",
+            }]
         }
         ReconnectLifecycleEvent::ExhaustedRetries { max_retries } => {
-            emit_gateway_decision(
-                addr,
-                "connect",
-                ConnectErrorAction::Terminate.as_str(),
-                "unknown",
-                max_retries,
-                0,
-                0,
-                "connect_error",
-            );
+            vec![GatewayReconnectDecision {
+                phase: "connect",
+                action: ConnectErrorAction::Terminate.as_str(),
+                error_class: "unknown",
+                attempt: max_retries,
+                delay_ms: 0,
+                policy_budget_remaining: 0,
+                origin: "connect_error",
+            }]
         }
-        ReconnectLifecycleEvent::AttemptStarted { .. } | ReconnectLifecycleEvent::AttemptSucceeded { .. } => {}
+        ReconnectLifecycleEvent::AttemptStarted { .. } | ReconnectLifecycleEvent::AttemptSucceeded { .. } => {
+            Vec::new()
+        }
     }
 }
 
@@ -696,5 +725,41 @@ mod tests {
             RedisFailureKind::Terminal.error_class(ErrorKind::InvalidData),
             "protocol"
         );
+    }
+
+    #[test]
+    fn decision_events_preserve_connect_and_stream_action_domains_for_retryable_failures() {
+        let decisions = decisions_from_lifecycle_event(
+            3,
+            ReconnectLifecycleEvent::FailureClassified {
+                attempt: 0,
+                kind: RedisFailureKind::Retryable,
+                error_kind: ErrorKind::TimedOut,
+            },
+        );
+
+        assert_eq!(decisions.len(), 2);
+        assert_eq!(decisions[0].phase, "connect");
+        assert_eq!(decisions[0].action, ConnectErrorAction::Reconnect.as_str());
+        assert_eq!(decisions[1].phase, "stream");
+        assert_eq!(decisions[1].action, StreamErrorAction::Continue.as_str());
+    }
+
+    #[test]
+    fn decision_events_preserve_connect_and_stream_action_domains_for_terminal_failures() {
+        let decisions = decisions_from_lifecycle_event(
+            3,
+            ReconnectLifecycleEvent::FailureClassified {
+                attempt: 0,
+                kind: RedisFailureKind::Terminal,
+                error_kind: ErrorKind::PermissionDenied,
+            },
+        );
+
+        assert_eq!(decisions.len(), 2);
+        assert_eq!(decisions[0].phase, "connect");
+        assert_eq!(decisions[0].action, ConnectErrorAction::Terminate.as_str());
+        assert_eq!(decisions[1].phase, "stream");
+        assert_eq!(decisions[1].action, StreamErrorAction::Reconnect.as_str());
     }
 }
