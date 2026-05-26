@@ -508,6 +508,8 @@ mod tests {
     use super::*;
     use std::cell::Cell;
     use std::io::ErrorKind;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
 
     #[derive(Default)]
     struct NoopBackoff;
@@ -761,5 +763,121 @@ mod tests {
         assert_eq!(decisions[0].action, ConnectErrorAction::Terminate.as_str());
         assert_eq!(decisions[1].phase, "stream");
         assert_eq!(decisions[1].action, StreamErrorAction::Reconnect.as_str());
+    }
+
+    fn parse_resp_array(input: &[u8]) -> Option<Vec<String>> {
+        if input.first().copied()? != b'*' {
+            return None;
+        }
+        let mut idx = 1usize;
+        let count_end = input[idx..].windows(2).position(|w| w == b"\r\n")? + idx;
+        let count = std::str::from_utf8(&input[idx..count_end]).ok()?.parse::<usize>().ok()?;
+        idx = count_end + 2;
+        let mut parts = Vec::with_capacity(count);
+        for _ in 0..count {
+            if input.get(idx).copied()? != b'$' {
+                return None;
+            }
+            idx += 1;
+            let len_end = input[idx..].windows(2).position(|w| w == b"\r\n")? + idx;
+            let len = std::str::from_utf8(&input[idx..len_end]).ok()?.parse::<usize>().ok()?;
+            idx = len_end + 2;
+            let part_end = idx.checked_add(len)?;
+            let part = std::str::from_utf8(input.get(idx..part_end)?).ok()?.to_string();
+            parts.push(part);
+            idx = part_end;
+            if input.get(idx..idx + 2)? != b"\r\n" {
+                return None;
+            }
+            idx += 2;
+        }
+        Some(parts)
+    }
+
+    fn field<'a>(parts: &'a [String], key: &str) -> Option<&'a str> {
+        let mut i = 0usize;
+        while i + 1 < parts.len() {
+            if parts[i] == key {
+                return Some(parts[i + 1].as_str());
+            }
+            i += 1;
+        }
+        None
+    }
+
+    #[test]
+    fn transcript_preserves_failure_then_retry_order_and_typed_domains() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake redis listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let (tx, rx) = mpsc::channel::<Vec<Vec<String>>>();
+        let server = std::thread::spawn(move || {
+            let mut captured = Vec::new();
+            for _ in 0..3 {
+                let (mut stream, _) = listener.accept().expect("accept fake redis client");
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).expect("read redis command");
+                let parts = parse_resp_array(&buf[..n]).expect("parse RESP array command");
+                captured.push(parts);
+                stream.write_all(b"+OK\r\n").expect("reply +OK");
+            }
+            tx.send(captured).expect("send transcript");
+        });
+
+        let failure = decisions_from_lifecycle_event(
+            3,
+            ReconnectLifecycleEvent::FailureClassified {
+                attempt: 0,
+                kind: RedisFailureKind::Retryable,
+                error_kind: ErrorKind::TimedOut,
+            },
+        );
+        let retry = decisions_from_lifecycle_event(
+            3,
+            ReconnectLifecycleEvent::RetryScheduled {
+                attempt: 1,
+                delay_ms: 125,
+            },
+        );
+        for decision in failure.into_iter().chain(retry.into_iter()) {
+            emit_gateway_decision(
+                &addr.to_string(),
+                decision.phase,
+                decision.action,
+                decision.error_class,
+                decision.attempt,
+                decision.delay_ms,
+                decision.policy_budget_remaining,
+                decision.origin,
+            );
+        }
+
+        server.join().expect("fake redis server exits");
+        let transcript = rx.recv().expect("receive transcript");
+        assert_eq!(transcript.len(), 3);
+
+        assert_eq!(transcript[0][0], "XADD");
+        assert_eq!(field(&transcript[0], "phase"), Some("connect"));
+        assert_eq!(
+            field(&transcript[0], "action"),
+            Some(ConnectErrorAction::Reconnect.as_str())
+        );
+        assert_eq!(field(&transcript[0], "origin"), Some("connect_error"));
+        assert_eq!(field(&transcript[0], "error_class"), Some("timeout"));
+
+        assert_eq!(field(&transcript[1], "phase"), Some("stream"));
+        assert_eq!(
+            field(&transcript[1], "action"),
+            Some(StreamErrorAction::Continue.as_str())
+        );
+        assert_eq!(field(&transcript[1], "origin"), Some("stream_error"));
+        assert_eq!(field(&transcript[1], "error_class"), Some("timeout"));
+
+        assert_eq!(field(&transcript[2], "phase"), Some("connect"));
+        assert_eq!(
+            field(&transcript[2], "action"),
+            Some(ConnectErrorAction::Reconnect.as_str())
+        );
+        assert_eq!(field(&transcript[2], "origin"), Some("connect_error"));
+        assert_eq!(field(&transcript[2], "error_class"), Some("unknown"));
     }
 }
