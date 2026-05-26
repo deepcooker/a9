@@ -150,6 +150,18 @@ Failure modes to preserve in A9 adaptation:
   re-init.
 - Missing reconnect lifecycle events hides degraded state from control plane.
 
+Typed reconnect action contract extracted for A9:
+
+- Connect path uses `ConnectErrorAction` only:
+  `Reconnect | Terminate`.
+- Stream path uses `StreamErrorAction` only:
+  `Continue | Reconnect`.
+- A9 evidence should always record `phase` and `action` together so the
+  action-domain is auditable and machine-routable.
+- Minimum reconnect evidence keys:
+  `kind, phase, action, error_class, attempt, delay_ms, policy_budget_remaining,
+  flow_id, flow_revision, origin, ts`.
+
 Source evidence:
 
 - `reference-projects/barter-rs` is present locally in the controller repo.

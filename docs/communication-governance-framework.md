@@ -186,6 +186,50 @@ Reference paths (declared source-of-truth for this mechanism):
 - `reference-projects/barter-rs/barter-data/src/streams/reconnect/mod.rs`
 - `reference-projects/barter-rs/barter-data/src/streams/consumer.rs`
 - `reference-projects/barter-rs/LICENSE`
+- `reference-projects/barter-rs/barter-integration/src/socket/on_connect_err.rs`
+- `reference-projects/barter-rs/barter-integration/src/socket/on_stream_err.rs`
+- `reference-projects/barter-rs/barter-integration/src/socket/backoff.rs`
+
+Typed action contract to copy into A9:
+
+1. Connect error action (from `on_connect_err.rs`):
+   `ConnectErrorAction = Reconnect | Terminate`.
+2. Stream error action (from `on_stream_err.rs`):
+   `StreamErrorAction = Continue | Reconnect`.
+3. Backoff contract (from `backoff.rs`):
+   reconnect delay is a typed function of `reconnection_attempt`, bounded by a
+   max cap; attempt `0` can be immediate.
+
+A9 normalized reconnect decision table:
+
+1. Connect init fails and policy says retry:
+   `phase=connect`, `action=Reconnect`, stream keeps waiting for next init.
+2. Connect init fails and policy budget exhausted:
+   `phase=connect`, `action=Terminate`, flow transitions to failed/waiting.
+3. Stream item error is recoverable:
+   `phase=stream`, `action=Continue`, keep current stream and emit error item.
+4. Stream item error is terminal:
+   `phase=stream`, `action=Reconnect`, terminate current stream and trigger
+   outer reconnect loop.
+
+A9 machine-readable evidence schema (minimum fields):
+
+```json
+{
+  "kind": "gateway_reconnect_decision",
+  "phase": "connect|stream",
+  "action": "reconnect|terminate|continue",
+  "error_class": "timeout|io|protocol|auth|rate_limit|unknown",
+  "attempt": 0,
+  "delay_ms": 0,
+  "policy_budget_remaining": 0,
+  "flow_id": "optional",
+  "flow_revision": 0,
+  "node_id": "optional",
+  "origin": "connect_error|stream_error|manual_resume",
+  "ts": "iso8601"
+}
+```
 
 Failure modes A9 must keep machine-readable:
 
@@ -202,6 +246,10 @@ Failure modes A9 must keep machine-readable:
    reconnect transitions must emit explicit lifecycle events
    (`reconnecting`/origin) so control plane can reflect degraded state and
    approval flows can pause/resume safely.
+5. Wrong action-domain mapping:
+   `ConnectErrorAction::Terminate` accidentally mapped to stream `continue`, or
+   `StreamErrorAction::Reconnect` accidentally mapped to connect terminate path,
+   causing silent deadlock or premature task death.
 
 Adaptation target for A9 gateway/node stack:
 
@@ -211,6 +259,8 @@ Adaptation target for A9 gateway/node stack:
   jitter only after baseline behavior is proven in soak runs.
 - Bind terminal/recoverable classification to existing typed failure buckets so
   repair routing is automatic.
+- Keep action domain explicit in evidence (`phase=connect|stream`) so repair
+  automation can route failures to retry tuning vs stream error taxonomy fixes.
 
 Verification note:
 
