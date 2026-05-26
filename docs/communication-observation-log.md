@@ -123,6 +123,16 @@ Observed issues:
    - This directly addresses the Spark `status: "pass"` rollback without making
      the envelope guard loose.
 
+12. Broad approval/wait/resume test target tripped worker budget.
+   - `auto-test-implement-worker-envelope-normalizati-49e6db0b8c-20260526T181508Z`
+     attempted to inspect large portions of `tests/test_supervisor.py` and
+     `tests/test_middleware.py`.
+   - It exceeded the worker event byte budget before final output:
+     `retryable-worker-budget`, no patch, no final envelope.
+   - Intervention: do not retry this broad test target as-is. Split into exact
+     harness-sized tasks, or first fix the scheduler/prompt to turn `next_slice`
+     into narrowly scoped work.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.

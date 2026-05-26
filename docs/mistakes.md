@@ -83,6 +83,23 @@
   主仓绝对路径并允许只读访问。
 - 后续 reference_scan 产物要落成可被 worker worktree 读取的 evidence/slice，而不是只靠文字路径。
 
+## 2026-05-27：不要把编排级测试目标一次性丢给 worker
+
+现象：
+
+- `auto-test-implement-worker-envelope-normalizati-49e6db0b8c-20260526T181508Z`
+  要验证 strict template + approval/wait/resume + normalization + flow revision。
+- worker 开始读 `tests/test_supervisor.py` 和 `tests/test_middleware.py` 的大段片段，
+  事件输出超过预算，最终 `retryable-worker-budget`，没有 patch 和 final envelope。
+
+修正：
+
+- 编排级测试必须拆成小 harness：一次只验证一个边界，例如
+  `needs_approval -> set_managed_flow_wait`。
+- 如果目标涉及 `run_one`，prompt 必须给出已有函数名、行号附近和 monkeypatch 策略，
+  禁止通读测试文件。
+- 更根本的修复是让 auto-next 根据 `next_slice` 生成窄任务，而不是让 worker 自己解释大目标。
+
 ## 2026-05-27：不要在普通队列上并发跑同一类 worker
 
 现象：
