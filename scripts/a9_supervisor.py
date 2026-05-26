@@ -37,10 +37,12 @@ WORKER_TMP_DIR = STATE_DIR / "tmp"
 EXTERNAL_SESSIONS_DIR = STATE_DIR / "external_sessions"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
+AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
 DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
+DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
 BLOCKED_WORKER_COMMAND_PATTERNS = [
     "codex exec",
     "a9_supervisor.py run-one",
@@ -1668,6 +1670,16 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def json_compact(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -3067,6 +3079,10 @@ Core rule:
 - Record copied source/license obligations in docs/vendor records when adding new references.
 - Implement one concrete, testable improvement toward the 24-hour A9 service.
 - Run the declared checks.
+- Keep the task bounded; do not broaden beyond the task file's allowed paths.
+- If `strict_worker_envelope: true` is present, final output must include:
+  {{"protocolVersion":1,"ok":true,"status":"ok","output":{{"changed_files":[],"copied_mechanisms":[],"tests":[],"next_slice":""}}}}
+  Valid status values are only `ok`, `needs_approval`, and `cancelled`.
 
 Copy pipeline phases:
 {focus_lines}
@@ -3074,6 +3090,72 @@ Copy pipeline phases:
 
 Do not stop after analysis. Make code/docs changes when useful, run checks, and leave a next recommended task.
 """
+
+
+def auto_loop_failure_limit() -> int:
+    value = os.getenv("A9_AUTO_LOOP_FAILURE_LIMIT")
+    if not value:
+        return DEFAULT_AUTO_LOOP_FAILURE_LIMIT
+    try:
+        return max(1, int(value))
+    except ValueError:
+        return DEFAULT_AUTO_LOOP_FAILURE_LIMIT
+
+
+def auto_loop_failure_kind(summary: dict[str, Any]) -> str:
+    status = str(summary.get("status") or "")
+    worker_failure = summary.get("worker_failure", {})
+    failure_status = str(worker_failure.get("status") or "") if isinstance(worker_failure, dict) else ""
+    if status.startswith("retryable-"):
+        return status
+    if failure_status.startswith("retryable-"):
+        return failure_status
+    if status in {"needs-repair", "worker-failed", "failed"}:
+        return status
+    envelope = summary.get("worker_envelope", {})
+    if isinstance(envelope, dict) and envelope.get("status") == "fail":
+        return "worker-envelope-fail"
+    return ""
+
+
+def update_auto_loop_guard(summary: dict[str, Any]) -> dict[str, Any]:
+    ensure_dirs()
+    kind = auto_loop_failure_kind(summary)
+    previous = read_json_file(AUTO_LOOP_GUARD_PATH)
+    limit = auto_loop_failure_limit()
+    if kind:
+        consecutive = int(previous.get("consecutive_failures") or 0) + 1
+        state = {
+            "status": "tripped" if consecutive >= limit else "watching",
+            "consecutive_failures": consecutive,
+            "failure_limit": limit,
+            "latest_failure": kind,
+            "latest_task_id": summary.get("task_id", ""),
+            "latest_run_dir": summary.get("run_dir", ""),
+            "updated_at": utc_now(),
+        }
+    else:
+        state = {
+            "status": "ok",
+            "consecutive_failures": 0,
+            "failure_limit": limit,
+            "latest_failure": "",
+            "latest_task_id": summary.get("task_id", ""),
+            "latest_run_dir": summary.get("run_dir", ""),
+            "updated_at": utc_now(),
+        }
+    write_json(AUTO_LOOP_GUARD_PATH, state)
+    return state
+
+
+def auto_loop_guard_blocks_next(summary: dict[str, Any] | None = None) -> bool:
+    if summary is not None:
+        state = summary.get("auto_loop_guard", {})
+        return isinstance(state, dict) and state.get("status") == "tripped"
+    state = {}
+    if not state:
+        state = read_json_file(AUTO_LOOP_GUARD_PATH)
+    return state.get("status") == "tripped"
 
 
 def enqueue_task_file(
@@ -3121,6 +3203,8 @@ def enqueue_task_file(
 def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if flow_transition_blocks_next(summary):
         return None
+    if auto_loop_guard_blocks_next(summary):
+        return None
     if task.phase == SESSION_REFRESH_PHASE:
         return schedule_next_session_refresh_task(task, summary)
     if task.phase == SESSION_CLOSE_READING_PHASE:
@@ -3137,7 +3221,8 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         checks=DEFAULT_NEXT_CHECKS,
         timeout_seconds=3600,
         idle_timeout_seconds=300,
-        max_attempts=2,
+        max_attempts=1,
+        allowed_paths=task.allowed_paths,
     )
 
 
@@ -3272,6 +3357,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "already_applied_detection": True,
         "rollback_aware_repair_prompt": True,
         "worker_event_budget_gate": True,
+        "auto_loop_failure_circuit_breaker": True,
         "external_session_refresh_route": True,
         "external_session_close_reading_route": True,
     }
@@ -3306,6 +3392,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
             "already_applied_detection",
             "rollback_aware_repair_prompt",
             "worker_event_budget_gate",
+            "auto_loop_failure_circuit_breaker",
         ],
     }
     group_progress = {}
@@ -3336,6 +3423,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         ),
         "latest_git_governance": summary.get("git_governance", {}) if summary else {},
         "latest_worker_failure": summary.get("worker_failure", {}) if summary else {},
+        "auto_loop_guard": summary.get("auto_loop_guard", read_json_file(AUTO_LOOP_GUARD_PATH)) if summary else read_json_file(AUTO_LOOP_GUARD_PATH),
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
         "capabilities": capabilities,
@@ -4017,6 +4105,7 @@ def run_one(*, auto_next: bool = False) -> int:
                 evidence_id=state["checkpoint_id"],
             )
         summary["flow_transition"] = flow_transition
+        summary["auto_loop_guard"] = update_auto_loop_guard(summary)
         write_json(run_dir / "summary.json", summary)
 
         retryable = status.startswith("retryable-")
@@ -4055,6 +4144,10 @@ def run_loop(args: argparse.Namespace) -> int:
         write_daemon_heartbeat("sleeping", detail=f"last_code={code}")
         if code != 0 and not args.keep_going_on_error:
             return code
+        if args.auto_next and auto_loop_guard_blocks_next():
+            write_daemon_heartbeat("guard-tripped", detail="auto-loop failure limit reached")
+            print("Auto-loop guard tripped; stopping run-loop.")
+            return code if code != 0 else 1
         if args.max_tasks and completed >= args.max_tasks:
             return code
         time.sleep(args.sleep_seconds)

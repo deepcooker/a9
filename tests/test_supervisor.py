@@ -1173,6 +1173,7 @@ index 0000000..3e75765
             task_id="auto-source",
             prompt="copy the next mature mechanism",
             phase="reference_scan",
+            allowed_paths=["scripts/a9_control_api.py", "tests/test_control_api.py"],
         )
         summary = {
             "task_id": task.task_id,
@@ -1190,6 +1191,10 @@ index 0000000..3e75765
         self.assertIn("Copy pipeline phases", text)
         self.assertIn("vendor_import", text)
         self.assertIn("python3 -m unittest", text)
+        self.assertIn("strict_worker_envelope", text)
+        self.assertIn('protocolVersion":1', text)
+        self.assertIn('  - "scripts/a9_control_api.py"', text)
+        self.assertIn('max_attempts: 1', text)
 
         progress = mod.service_progress(summary, next_path)
         self.assertEqual(progress["stage"], "auto-loop-mvp")
@@ -1203,11 +1208,80 @@ index 0000000..3e75765
         self.assertTrue(progress["capabilities"]["already_applied_detection"])
         self.assertTrue(progress["capabilities"]["rollback_aware_repair_prompt"])
         self.assertTrue(progress["capabilities"]["worker_event_budget_gate"])
+        self.assertTrue(progress["capabilities"]["auto_loop_failure_circuit_breaker"])
         self.assertEqual(progress["capability_groups"]["governance"]["percent"], 100.0)
         self.assertEqual(progress["progress_percent"], 100.0)
         self.assertTrue(mod.PROGRESS_PATH.exists())
 
         next_path.unlink(missing_ok=True)
+
+    def test_auto_loop_guard_trips_after_consecutive_failures_and_resets_on_pass(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = mod.AUTO_LOOP_GUARD_PATH
+            old_limit = os.environ.get("A9_AUTO_LOOP_FAILURE_LIMIT")
+            mod.AUTO_LOOP_GUARD_PATH = Path(tmp) / "auto_loop_guard.json"
+            os.environ["A9_AUTO_LOOP_FAILURE_LIMIT"] = "2"
+            try:
+                first = mod.update_auto_loop_guard(
+                    {
+                        "task_id": "task-1",
+                        "run_dir": "/tmp/run-1",
+                        "status": "retryable-worker-budget",
+                        "worker_failure": {"status": "retryable-worker-budget"},
+                    }
+                )
+                self.assertEqual(first["status"], "watching")
+                self.assertFalse(mod.auto_loop_guard_blocks_next({"auto_loop_guard": first}))
+
+                second = mod.update_auto_loop_guard(
+                    {
+                        "task_id": "task-2",
+                        "run_dir": "/tmp/run-2",
+                        "status": "needs-repair",
+                    }
+                )
+                self.assertEqual(second["status"], "tripped")
+                self.assertTrue(mod.auto_loop_guard_blocks_next({"auto_loop_guard": second}))
+
+                reset = mod.update_auto_loop_guard(
+                    {
+                        "task_id": "task-3",
+                        "run_dir": "/tmp/run-3",
+                        "status": "pass",
+                    }
+                )
+                self.assertEqual(reset["status"], "ok")
+                self.assertEqual(reset["consecutive_failures"], 0)
+            finally:
+                mod.AUTO_LOOP_GUARD_PATH = old_path
+                if old_limit is None:
+                    os.environ.pop("A9_AUTO_LOOP_FAILURE_LIMIT", None)
+                else:
+                    os.environ["A9_AUTO_LOOP_FAILURE_LIMIT"] = old_limit
+
+    def test_schedule_next_task_blocks_when_auto_loop_guard_tripped(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-source.md",
+            task_id="auto-source",
+            prompt="copy the next mature mechanism",
+            phase="reference_scan",
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "needs-repair",
+            "run_dir": str(mod.RUNS_DIR / "auto-source-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-source-run" / "context.md"),
+            "auto_loop_guard": {
+                "status": "tripped",
+                "consecutive_failures": 2,
+                "failure_limit": 2,
+                "latest_failure": "needs-repair",
+            },
+        }
+
+        self.assertIsNone(mod.schedule_next_task(task, summary))
 
     def test_session_refresh_prompt_parser_accepts_key_value_spec(self):
         mod = load_supervisor()
