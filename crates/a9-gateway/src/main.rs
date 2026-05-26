@@ -21,9 +21,53 @@ enum RedisFailureKind {
     Terminal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectErrorAction {
+    Reconnect,
+    Terminate,
+}
+
+impl ConnectErrorAction {
+    fn as_str(&self) -> &'static str {
+        match self {
+            ConnectErrorAction::Reconnect => "reconnect",
+            ConnectErrorAction::Terminate => "terminate",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamErrorAction {
+    Continue,
+    Reconnect,
+}
+
+impl StreamErrorAction {
+    fn as_str(&self) -> &'static str {
+        match self {
+            StreamErrorAction::Continue => "continue",
+            StreamErrorAction::Reconnect => "reconnect",
+        }
+    }
+}
+
 impl RedisFailureKind {
     fn is_retryable(&self) -> bool {
         matches!(self, RedisFailureKind::Retryable)
+    }
+
+    fn error_class(&self, kind: std::io::ErrorKind) -> &'static str {
+        match kind {
+            std::io::ErrorKind::TimedOut => "timeout",
+            std::io::ErrorKind::InvalidData | std::io::ErrorKind::Unsupported => "protocol",
+            std::io::ErrorKind::PermissionDenied => "auth",
+            std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::NotConnected
+            | std::io::ErrorKind::Interrupted => "io",
+            _ => "unknown",
+        }
     }
 }
 
@@ -142,11 +186,131 @@ fn redis_roundtrip(addr: &str, parts: &[String]) -> std::io::Result<String> {
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         .unwrap_or(3);
-    redis_roundtrip_with_retries(
+    redis_roundtrip_with_retries_observer(
         || redis_roundtrip_once(addr, parts),
         &DefaultReconnectBackoff,
         retries,
+        |event| emit_decision_evidence(addr, retries, event),
     )
+}
+
+fn connect_error_action(kind: RedisFailureKind, attempt: u32, max_retries: u32) -> ConnectErrorAction {
+    if kind.is_retryable() && attempt < max_retries {
+        ConnectErrorAction::Reconnect
+    } else {
+        ConnectErrorAction::Terminate
+    }
+}
+
+fn stream_error_action(kind: RedisFailureKind) -> StreamErrorAction {
+    if kind.is_retryable() {
+        StreamErrorAction::Continue
+    } else {
+        StreamErrorAction::Reconnect
+    }
+}
+
+fn emit_decision_evidence(addr: &str, max_retries: u32, event: ReconnectLifecycleEvent) {
+    match event {
+        ReconnectLifecycleEvent::FailureClassified {
+            attempt,
+            kind,
+            error_kind,
+        } => {
+            let action = connect_error_action(kind, attempt, max_retries);
+            let delay_ms = if action == ConnectErrorAction::Reconnect {
+                DefaultReconnectBackoff.delay(attempt + 1).as_millis() as u64
+            } else {
+                0
+            };
+            emit_gateway_decision(
+                addr,
+                "connect",
+                action.as_str(),
+                kind.error_class(error_kind),
+                attempt,
+                delay_ms,
+                max_retries.saturating_sub(attempt),
+                "connect_error",
+            );
+            let stream_action = stream_error_action(kind);
+            emit_gateway_decision(
+                addr,
+                "stream",
+                stream_action.as_str(),
+                kind.error_class(error_kind),
+                attempt,
+                0,
+                max_retries.saturating_sub(attempt),
+                "stream_error",
+            );
+        }
+        ReconnectLifecycleEvent::RetryScheduled { attempt, delay_ms } => {
+            emit_gateway_decision(
+                addr,
+                "connect",
+                ConnectErrorAction::Reconnect.as_str(),
+                "unknown",
+                attempt,
+                delay_ms,
+                max_retries.saturating_sub(attempt),
+                "connect_error",
+            );
+        }
+        ReconnectLifecycleEvent::ExhaustedRetries { max_retries } => {
+            emit_gateway_decision(
+                addr,
+                "connect",
+                ConnectErrorAction::Terminate.as_str(),
+                "unknown",
+                max_retries,
+                0,
+                0,
+                "connect_error",
+            );
+        }
+        ReconnectLifecycleEvent::AttemptStarted { .. } | ReconnectLifecycleEvent::AttemptSucceeded { .. } => {}
+    }
+}
+
+fn emit_gateway_decision(
+    addr: &str,
+    phase: &str,
+    action: &str,
+    error_class: &str,
+    attempt: u32,
+    delay_ms: u64,
+    policy_budget_remaining: u32,
+    origin: &str,
+) {
+    let _ = redis_roundtrip_once(
+        addr,
+        &[
+            "XADD".to_string(),
+            EVENT_STREAM.to_string(),
+            "*".to_string(),
+            "type".to_string(),
+            "gateway_reconnect_decision".to_string(),
+            "kind".to_string(),
+            "gateway_reconnect_decision".to_string(),
+            "phase".to_string(),
+            phase.to_string(),
+            "action".to_string(),
+            action.to_string(),
+            "error_class".to_string(),
+            error_class.to_string(),
+            "attempt".to_string(),
+            attempt.to_string(),
+            "delay_ms".to_string(),
+            delay_ms.to_string(),
+            "policy_budget_remaining".to_string(),
+            policy_budget_remaining.to_string(),
+            "origin".to_string(),
+            origin.to_string(),
+            "ts".to_string(),
+            now_ms(),
+        ],
+    );
 }
 
 fn cmd(parts: &[&str]) -> Vec<String> {
@@ -488,5 +652,49 @@ mod tests {
             events.last(),
             Some(ReconnectLifecycleEvent::ExhaustedRetries { max_retries: 2 })
         ));
+    }
+
+    #[test]
+    fn connect_action_contract_is_typed() {
+        assert_eq!(
+            connect_error_action(RedisFailureKind::Retryable, 0, 3),
+            ConnectErrorAction::Reconnect
+        );
+        assert_eq!(
+            connect_error_action(RedisFailureKind::Retryable, 3, 3),
+            ConnectErrorAction::Terminate
+        );
+        assert_eq!(
+            connect_error_action(RedisFailureKind::Terminal, 0, 3),
+            ConnectErrorAction::Terminate
+        );
+    }
+
+    #[test]
+    fn stream_action_contract_is_typed() {
+        assert_eq!(
+            stream_error_action(RedisFailureKind::Retryable),
+            StreamErrorAction::Continue
+        );
+        assert_eq!(
+            stream_error_action(RedisFailureKind::Terminal),
+            StreamErrorAction::Reconnect
+        );
+    }
+
+    #[test]
+    fn failure_kind_maps_to_machine_error_classes() {
+        assert_eq!(
+            RedisFailureKind::Retryable.error_class(ErrorKind::TimedOut),
+            "timeout"
+        );
+        assert_eq!(
+            RedisFailureKind::Terminal.error_class(ErrorKind::PermissionDenied),
+            "auth"
+        );
+        assert_eq!(
+            RedisFailureKind::Terminal.error_class(ErrorKind::InvalidData),
+            "protocol"
+        );
     }
 }
