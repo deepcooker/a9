@@ -1283,6 +1283,23 @@ def normalize_worker_envelope_status(status: Any, ok: Any) -> tuple[str, str | N
     return raw, None
 
 
+def normalize_worker_envelope_protocol_version(protocol_version: Any, ok: Any) -> tuple[Any, Any | None]:
+    if ok is not True:
+        return protocol_version, None
+    alias_map = {
+        "1": 1,
+        "1.0": 1,
+        "a9.strict_worker_envelope.v1": 1,
+    }
+    if protocol_version in {1, "1"}:
+        return 1, "1" if protocol_version == "1" else None
+    if isinstance(protocol_version, str):
+        canonical = alias_map.get(protocol_version.strip().lower())
+        if canonical is not None:
+            return canonical, protocol_version
+    return protocol_version, None
+
+
 def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     output_path = run_dir / "worker_envelope.json"
     final_path = Path(worker["final_path"])
@@ -1316,8 +1333,18 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
 
     envelope = candidates[-1]
     result["envelope"] = envelope
-    protocol_version = envelope.get("protocolVersion")
     ok = envelope.get("ok")
+    protocol_version, normalized_protocol_from = normalize_worker_envelope_protocol_version(
+        envelope.get("protocolVersion"), ok
+    )
+    if normalized_protocol_from is not None:
+        envelope["protocolVersion"] = protocol_version
+        result["findings"].append(
+            {
+                "level": "info",
+                "message": f"normalized protocolVersion alias from {normalized_protocol_from!r} to {protocol_version!r}",
+            }
+        )
     status, normalized_from = normalize_worker_envelope_status(envelope.get("status"), ok)
     if normalized_from is not None:
         envelope["status"] = status
