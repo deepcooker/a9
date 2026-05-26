@@ -806,6 +806,30 @@ Do the work.
 
         self.assertEqual(mod.decide_status(worker, diff, []), "retryable-worker-budget")
 
+    def test_next_task_prompt_inlines_worker_next_slice(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="scan", prompt="demo", phase="reference_scan")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "next_slice": "mechanism_extract: formalize reconnect backoff",
+                        "copied_mechanisms": [{"mechanism": "Barter reconnect stream"}],
+                        "changed_files": [],
+                    }
+                }
+            },
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "mechanism_extract")
+
+        self.assertIn("Previous worker output:", prompt)
+        self.assertIn("mechanism_extract: formalize reconnect backoff", prompt)
+        self.assertIn("Barter reconnect stream", prompt)
+
     def test_retryable_worker_failure_short_circuits_checks(self):
         mod = load_supervisor()
 

@@ -3050,8 +3050,28 @@ def flow_status_for_task(phase: str, status: str) -> str:
     return f"{phase}_{slugify(status).replace('-', '_')}"
 
 
+def worker_output_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    envelope = summary.get("worker_envelope", {})
+    if not isinstance(envelope, dict):
+        return {}
+    payload = envelope.get("envelope", {})
+    if not isinstance(payload, dict):
+        return {}
+    output = payload.get("output", {})
+    return output if isinstance(output, dict) else {"raw_output": output}
+
+
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
     focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
+    worker_output = worker_output_from_summary(summary)
+    previous_output_lines = ""
+    if worker_output:
+        previous_output_lines = f"""
+Previous worker output:
+- next_slice: {bounded_inline(worker_output.get('next_slice', ''), 700)}
+- copied_mechanisms: {bounded_inline(json.dumps(worker_output.get('copied_mechanisms', []), ensure_ascii=False), 1200)}
+- changed_files: {bounded_inline(json.dumps(worker_output.get('changed_files', []), ensure_ascii=False), 500)}
+"""
     phase_lines = ""
     if phase == "reference_scan":
         phase_lines = """
@@ -3099,6 +3119,7 @@ Previous phase: {task.phase}
 Previous status: {summary['status']}
 Previous run: {summary['run_dir']}
 Previous context: {summary['context_path']}
+{previous_output_lines}
 
 Phase: {phase}
 {flow_lines}
