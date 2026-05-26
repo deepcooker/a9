@@ -1061,6 +1061,24 @@ Do the work.
         self.assertIn("mechanism_extract: formalize reconnect backoff", prompt)
         self.assertIn("Barter reconnect stream", prompt)
 
+    def test_next_task_prompt_enforces_worker_prompt_discipline(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="test-discipline", prompt="demo", phase="test")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "test: keep checks bounded"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "test")
+
+        self.assertIn("Declared checks are authoritative", prompt)
+        self.assertIn("Do not add pytest or cargo unless they are explicitly declared", prompt)
+        self.assertIn("Do not read `docs/session-raw-summary.md`", prompt)
+        self.assertIn("raw session logs", prompt)
+        self.assertIn("Use `rg -n` first", prompt)
+
     def test_retryable_worker_failure_short_circuits_checks(self):
         mod = load_supervisor()
 
