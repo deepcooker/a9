@@ -165,6 +165,16 @@ Observed issues:
    - Intervention: monitor manually applied the patch and kept the generated
      repair task out of the queue.
 
+16. ProtocolVersion normalization repaired the repeated rollback class.
+   - `implement-envelope-protocol-normalization-20260526T185800Z` added a
+     bounded protocolVersion alias normalizer near the status alias normalizer.
+   - Accepted aliases are intentionally narrow and recorded as info findings:
+     numeric `1`, string `1`, string `1.0`, and
+     `a9.strict_worker_envelope.v1`.
+   - Follow-up test workers added no-error and dual-alias regressions.
+   - Targeted strict-envelope tests passed locally; the auto-generated pytest
+     follow-up was superseded because pytest is not installed in this runtime.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
@@ -181,9 +191,9 @@ Next monitoring target:
 - Treat "wide-read budget failure in tiny test tasks" as a supervisor prompt
   governance bug. Next slices should either provide exact line anchors or make
   the worker output SEARCH/REPLACE directly from a smaller context packet.
-- Treat `protocolVersion` drift as the next strict-envelope governance bug:
-  status aliases are normalized, but protocol aliases still roll back good
-  patches.
+- ProtocolVersion drift is now covered by supervisor tests. The remaining
+  governance issue is worker prompt discipline: even bounded test tasks still
+  sometimes read raw session docs and try pytest before unittest.
 - Then return to the five communication blocks: node state machine, Redis
   Streams production governance, multi-machine onboarding, SSE replay, and
   communication metrics/soak.

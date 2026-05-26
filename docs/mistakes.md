@@ -341,3 +341,15 @@
 
 - good patch + bad envelope 是治理问题，不是业务失败。
 - 同类 envelope 漂移连续出现时，优先修 supervisor 协议治理，再继续堆功能。
+
+结果：
+
+- `implement-envelope-protocol-normalization-20260526T185800Z` 已修复：
+  `protocolVersion` 现在允许窄别名并记录 info finding。
+- 覆盖了 `1.0`、`a9.strict_worker_envelope.v1`、非法协议仍失败，以及
+  protocol/status 双 alias 同时归一化的回归。
+
+仍未解决：
+
+- worker 仍会在 test 任务里先尝试 pytest；当前运行环境没有 pytest。
+- worker 仍会习惯性读取 raw session close-reading，即使任务明确禁止。
