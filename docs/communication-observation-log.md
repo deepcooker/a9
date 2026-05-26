@@ -75,6 +75,20 @@ Observed issues:
    - Need: stricter phase prompts and smaller reference snippets before any
      24-hour unattended run.
 
+6. Deep-mark Redis persistence can delay completion.
+   - `auto-test-auto-implement-supervisor-flow-sequen-0be8c09108-20260526T173025Z`
+     finished worker/check/git quickly, then spent extra time writing many
+     `deep_mark` records through per-record `docker exec ... redis-cli JSON.SET`.
+   - It eventually completed, but this is a runtime hot-path smell.
+   - Need: batch Redis writes or move deep-mark persistence out of the blocking
+     `run-one` finish path before unattended multi-hour loops.
+
+7. Auto-next phase routing repeated on supervisor sequence tests.
+   - Worker `next_slice` asked for `test: add negative auto-next coverage...`.
+   - Supervisor queued `reference_scan`.
+   - Intervention: changed the queued task back to `phase: test` and narrowed
+     checks to `python3 -m unittest tests/test_supervisor.py tests/test_middleware.py`.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
@@ -82,9 +96,13 @@ Current communication state after this observation:
 - Terminal stop-path coverage exists: terminal failure classification emits no
   `RetryScheduled` lifecycle event.
 - `cargo test -p a9-gateway` passes with `17` tests.
+- Middleware and supervisor managed-flow sequence gates are implemented and
+  covered by `python3 -m unittest tests/test_supervisor.py tests/test_middleware.py`
+  with `71` tests.
 
 Next monitoring target:
 
-- Return to the five communication blocks: node state machine, Redis Streams
-  production governance, multi-machine onboarding, SSE replay, and communication
+- Finish the current managed-flow negative auto-next test, then return to the
+  five communication blocks: node state machine, Redis Streams production
+  governance, multi-machine onboarding, SSE replay, and communication
   metrics/soak.

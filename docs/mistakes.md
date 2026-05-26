@@ -15,6 +15,26 @@
 - 后续 supervisor 应支持从 `next_slice` 的 `test:` / `implement:` /
   `repair:` 前缀推导下一阶段，但必须保留 allowed_paths 和 policy guard。
 
+补充：
+
+- `auto-test-auto-implement-supervisor-flow-sequen-0be8c09108-20260526T173025Z`
+  后再次复现：worker 要求 `test:`，auto-next 排成 `reference_scan`。
+- 监控者已把队列任务改回 `phase: test`，并收窄到 supervisor/middleware 检查。
+
+## 2026-05-27：deep mark 不应该阻塞 run-one 完成
+
+现象：
+
+- supervisor worker、guard、check、git commit 已完成后，`run-one` 卡在大量
+  `docker exec a9-redis redis-cli JSON.SET a9:deep_mark...` 写入上。
+- 本次最终完成，但暴露出 per-record docker exec 写 RedisJSON 是阻塞热路径。
+
+修正：
+
+- deep mark 持久化要批量写，或转成异步/后台补写。
+- `run-one` 完成路径只应该同步写最小 checkpoint、summary、evidence pointer。
+- 多小时无人值守前，必须修这个慢路径，否则长任务会被持久化噪音拖住。
+
 ## 2026-05-27：不要在普通队列上并发跑同一类 worker
 
 现象：
