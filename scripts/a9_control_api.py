@@ -923,6 +923,30 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
     result["consumer_probe_status"] = "ok"
     result["consumer_probe_reason"] = "healthy"
     result["top_consumers"] = top_consumers
+    result["thresholds_version"] = "redis_streams_v1"
+    action = "continue"
+    action_reason = "none"
+    if lag >= 1000:
+        action = "intervene"
+        action_reason = "lag_critical"
+    else:
+        total_pending = parse_int(result.get("pending"), default=0)
+        highest_pending = top_consumers[0]["pending"] if top_consumers else 0
+        highest_idle = top_consumers[0]["idle"] if top_consumers else 0
+        if total_pending > 0 and highest_idle >= 30000 and highest_pending > 0:
+            action = "intervene"
+            action_reason = "pending_stuck"
+        elif total_pending > 0 and highest_pending / total_pending >= 0.8:
+            action = "intervene"
+            action_reason = "pending_skew"
+        elif lag >= 100:
+            action = "watch"
+            action_reason = "lag_warn"
+        elif total_pending > 0:
+            action = "watch"
+            action_reason = "pending_stuck"
+    result["stream_action"] = action
+    result["stream_action_reason"] = action_reason
     return result
 
 

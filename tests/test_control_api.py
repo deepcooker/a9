@@ -246,6 +246,9 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["tasks_stream"]["entries_read"], 100)
         self.assertEqual(status["tasks_stream"]["consumer_probe_status"], "ok")
         self.assertEqual(status["tasks_stream"]["consumer_probe_reason"], "healthy")
+        self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
+        self.assertEqual(status["tasks_stream"]["stream_action"], "watch")
+        self.assertEqual(status["tasks_stream"]["stream_action_reason"], "pending_stuck")
         self.assertEqual(
             status["tasks_stream"]["top_consumers"],
             [
@@ -254,6 +257,108 @@ class ControlApiTests(unittest.TestCase):
                 {"name": "worker-c", "pending": 1, "idle": 99},
             ],
         )
+
+    def test_node_status_tasks_stream_probe_sets_continue_action_when_healthy(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("1\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\na9-worker\nconsumers\n2\nentries-read\n100\nlag\n3\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("0\n1740000001-0\n1740000010-0\n\n0\n")
+            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
+                return FakeProc("name\nworker-a\npending\n0\nidle\n12\nname\nworker-b\npending\n0\nidle\n35\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            status = mod.node_status(Path("/tmp/a9-test-nodes-empty"))
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
+        self.assertEqual(status["tasks_stream"]["stream_action"], "continue")
+        self.assertEqual(status["tasks_stream"]["stream_action_reason"], "none")
+
+    def test_node_status_tasks_stream_probe_sets_watch_action_on_lag_warn(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("1\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\na9-worker\nconsumers\n1\nentries-read\n9\nlag\n100\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("0\n1740000001-0\n1740000010-0\n\n0\n")
+            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
+                return FakeProc("name\nworker-a\npending\n0\nidle\n12\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            status = mod.node_status(Path("/tmp/a9-test-nodes-empty"))
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
+        self.assertEqual(status["tasks_stream"]["stream_action"], "watch")
+        self.assertEqual(status["tasks_stream"]["stream_action_reason"], "lag_warn")
+
+    def test_node_status_tasks_stream_probe_sets_intervene_action_on_stuck_pending(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("1\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\na9-worker\nconsumers\n2\nentries-read\n20\nlag\n10\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("5\n1740000001-0\n1740000010-0\nworker-a\n5\n")
+            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
+                return FakeProc("name\nworker-a\npending\n5\nidle\n30000\nname\nworker-b\npending\n0\nidle\n20\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            status = mod.node_status(Path("/tmp/a9-test-nodes-empty"))
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
+        self.assertEqual(status["tasks_stream"]["stream_action"], "intervene")
+        self.assertEqual(status["tasks_stream"]["stream_action_reason"], "pending_stuck")
 
     def test_node_status_tasks_stream_probe_degrades_consumer_probe_only(self):
         mod = load_control_api()
