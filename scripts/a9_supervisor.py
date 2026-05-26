@@ -4180,6 +4180,9 @@ def run_one(*, auto_next: bool = False) -> int:
         if task.path.exists():
             shutil.move(str(task.path), str(target_task_path))
         next_task_path = schedule_next_task(task, summary) if auto_next else None
+        if auto_next:
+            write_json(run_dir / "summary.json", summary)
+            write_json(done_path, summary)
         print(f"{task.task_id}: {status}")
         print(f"run: {run_dir}")
         print_service_progress(service_progress(summary, next_task_path))
