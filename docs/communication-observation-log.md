@@ -79,13 +79,12 @@ Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
 - Fake Redis transcript coverage exists for retryable and terminal paths.
-- `cargo test -p a9-gateway` passes with `16` tests.
-- Next queued task is focused on terminal stop-path: no retry-scheduled transcript
-  event after terminal failure classification.
+- Terminal stop-path coverage exists: terminal failure classification emits no
+  `RetryScheduled` lifecycle event.
+- `cargo test -p a9-gateway` passes with `17` tests.
 
 Next monitoring target:
 
-- Run the focused stop-path test slice.
-- If it passes, merge and then return to the five communication blocks:
-  node state machine, Redis Streams production governance, multi-machine
-  onboarding, SSE replay, and communication metrics/soak.
+- Return to the five communication blocks: node state machine, Redis Streams
+  production governance, multi-machine onboarding, SSE replay, and communication
+  metrics/soak.
