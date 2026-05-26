@@ -157,8 +157,8 @@ Redis ecosystem:
    `status=degraded,error_code=cursor_gap` with `stream_oldest_id`,
    `stream_newest_id`, and `next_last_id` for client cursor reset. Control
    clients can use `scripts/a9_control_api.py:event_replay_reset_decision` to
-   produce bounded actions (`reset_cursor`, `retry_without_cursor`,
-   `keep_cursor`) from replay responses.
+   convert replay responses into bounded actions: `reset_cursor`,
+   `retry_without_cursor`, or `keep_cursor`.
 6. Backpressure:
    bounded stream reads, trim policy, dead-letter stream, retry budget, and
    error-class counters.

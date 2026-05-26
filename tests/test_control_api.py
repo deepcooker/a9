@@ -363,10 +363,11 @@ class ControlApiTests(unittest.TestCase):
             {
                 "status": "degraded",
                 "error_code": "cursor_gap",
-                "next_last_id": "bad-id",
+                "next_last_id": "bad-cursor",
             }
         )
         self.assertEqual(decision["action"], "retry_without_cursor")
+        self.assertEqual(decision["reason"], "cursor_gap_without_valid_next_last_id")
         self.assertEqual(decision["next_last_id"], "")
 
     def test_event_replay_reset_decision_keeps_cursor_when_no_gap(self):
@@ -374,11 +375,39 @@ class ControlApiTests(unittest.TestCase):
         decision = mod.event_replay_reset_decision(
             {
                 "status": "ok",
-                "next_last_id": "1740000004-0",
+                "next_last_id": "1740000008-0",
             }
         )
         self.assertEqual(decision["action"], "keep_cursor")
-        self.assertEqual(decision["next_last_id"], "1740000004-0")
+        self.assertEqual(decision["reason"], "no_cursor_reset_needed")
+        self.assertEqual(decision["next_last_id"], "1740000008-0")
+
+    def test_read_events_cursor_gap_response_feeds_reset_decision(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args[:3] == ["--raw", "XRANGE", "a9:events"] and args[3].startswith("("):
+                return FakeProc("")
+            if args == ["--raw", "XRANGE", "a9:events", "-", "+", "COUNT", "1"]:
+                return FakeProc("1740000005-0\ntype\ntask_started\n")
+            if args == ["--raw", "XREVRANGE", "a9:events", "+", "-", "COUNT", "1"]:
+                return FakeProc("1740000010-0\ntype\ntask_done\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            response = mod.read_events("1740000004-0", limit=5)
+        finally:
+            mod.redis_cli = original_redis
+        decision = mod.event_replay_reset_decision(response)
+        self.assertEqual(decision["action"], "reset_cursor")
+        self.assertEqual(decision["next_last_id"], "1740000010-0")
 
     def test_probe_node_uses_remote_probe_and_registers_result(self):
         mod = load_control_api()
