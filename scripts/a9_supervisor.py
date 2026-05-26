@@ -1266,6 +1266,20 @@ def is_worker_envelope_candidate(value: dict[str, Any]) -> bool:
     return "status" in value or "error" in value or "requiresApproval" in value
 
 
+def normalize_worker_envelope_status(status: Any, ok: Any) -> tuple[str, str | None]:
+    raw = str(status or "")
+    if ok is not True:
+        return raw, None
+    alias_map = {
+        "pass": "ok",
+        "success": "ok",
+    }
+    canonical = alias_map.get(raw.strip().lower())
+    if canonical:
+        return canonical, raw
+    return raw, None
+
+
 def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     output_path = run_dir / "worker_envelope.json"
     final_path = Path(worker["final_path"])
@@ -1301,7 +1315,15 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
     result["envelope"] = envelope
     protocol_version = envelope.get("protocolVersion")
     ok = envelope.get("ok")
-    status = str(envelope.get("status") or "")
+    status, normalized_from = normalize_worker_envelope_status(envelope.get("status"), ok)
+    if normalized_from is not None:
+        envelope["status"] = status
+        result["findings"].append(
+            {
+                "level": "info",
+                "message": f"normalized status alias from {normalized_from!r} to {status!r}",
+            }
+        )
     if protocol_version not in {1, "1"}:
         result["findings"].append({"level": "error", "message": "protocolVersion must be 1"})
     if not isinstance(ok, bool):
@@ -1329,7 +1351,8 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
                     )
         elif status == "ok" and "output" in envelope and not isinstance(envelope.get("output"), (dict, list)):
             result["findings"].append({"level": "error", "message": "output must be an object or list when present"})
-        if result["findings"]:
+        has_error_finding = any(item.get("level") == "error" for item in result["findings"])
+        if has_error_finding:
             result["status"] = "fail"
         elif status == "needs_approval":
             result["status"] = "needs-approval"

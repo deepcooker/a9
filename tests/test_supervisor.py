@@ -667,6 +667,80 @@ Do the work.
 
         self.assertEqual(envelope["status"], "pass")
 
+    def test_worker_envelope_status_alias_pass_normalizes_to_ok(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                'done\n{"protocolVersion":1,"ok":true,"status":"pass","output":{"changed_files":[]}}\n',
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+            status = mod.decide_status(worker, {"diff_bytes": 120}, [], worker_envelope=envelope)
+
+        self.assertEqual(envelope["status"], "pass")
+        self.assertEqual(envelope["envelope"]["status"], "ok")
+        self.assertEqual(status, "pass")
+        self.assertTrue(
+            any("normalized status alias" in finding.get("message", "") for finding in envelope.get("findings", []))
+        )
+
+    def test_worker_envelope_status_alias_success_normalizes_to_ok(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                'done\n{"protocolVersion":1,"ok":true,"status":"success","output":{"changed_files":[]}}\n',
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+            status = mod.decide_status(worker, {"diff_bytes": 120}, [], worker_envelope=envelope)
+
+        self.assertEqual(envelope["status"], "pass")
+        self.assertEqual(envelope["envelope"]["status"], "ok")
+        self.assertEqual(status, "pass")
+
+    def test_worker_envelope_invalid_status_still_fails(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                'done\n{"protocolVersion":1,"ok":true,"status":"done","output":{"changed_files":[]}}\n',
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+            status = mod.decide_status(worker, {"diff_bytes": 120}, [], worker_envelope=envelope)
+
+        self.assertEqual(envelope["status"], "fail")
+        self.assertEqual(status, "needs-repair")
+        self.assertTrue(
+            any("status must be ok, needs_approval, or cancelled" in finding.get("message", "") for finding in envelope["findings"])
+        )
+
     def test_no_diff_diagnostic_task_can_pass(self):
         mod = load_supervisor()
         worker = {"timed_out": False, "idle_timed_out": False, "budget_stopped": False, "return_code": 0}
