@@ -22,9 +22,11 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / ".a9"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
-UNIT_PATH = ROOT / "infra" / "systemd" / "a9-supervisor.service"
+SUPERVISOR_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-supervisor.service"
+CONTROL_API_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-control-api.service"
 PROCESS_MARKERS = {
     "supervisor": "a9_supervisor.py run-loop",
+    "control-api": "a9_control_api.py serve",
     "worker": "codex exec --json",
 }
 
@@ -62,6 +64,8 @@ def parse_process_table(text: str) -> list[dict[str, Any]]:
         ppid = int(parts[1]) if parts[1].isdigit() else 0
         etime = parts[2]
         cmd = parts[3]
+        if "codex-linux-sandbox" in cmd or cmd.startswith("bwrap "):
+            continue
         kind = ""
         for name, marker in PROCESS_MARKERS.items():
             if marker in cmd:
@@ -85,7 +89,7 @@ def iso_now() -> str:
 
 
 def unit_text() -> str:
-    return UNIT_PATH.read_text(encoding="utf-8")
+    return SUPERVISOR_UNIT_PATH.read_text(encoding="utf-8")
 
 
 def status(_: argparse.Namespace) -> int:
@@ -96,7 +100,10 @@ def status(_: argparse.Namespace) -> int:
     payload = {
         "checked_at": iso_now(),
         "service": "a9-supervisor",
-        "unit_path": str(UNIT_PATH),
+        "unit_paths": {
+            "supervisor": str(SUPERVISOR_UNIT_PATH),
+            "control_api": str(CONTROL_API_UNIT_PATH),
+        },
         "progress": progress,
         "heartbeat": heartbeat,
         "processes": running_processes(),
@@ -105,6 +112,76 @@ def status(_: argparse.Namespace) -> int:
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if middleware.returncode == 0 and supervisor_status.returncode == 0 else 1
+
+
+def git_writable() -> dict[str, Any]:
+    probe = ROOT / ".git" / ".a9-write-probe"
+    try:
+        probe.write_text("ok\n", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return {"status": "pass", "writable": True, "path": str(ROOT / ".git")}
+    except OSError as exc:
+        return {"status": "fail", "writable": False, "path": str(ROOT / ".git"), "error": str(exc)}
+
+
+def readiness(_: argparse.Namespace) -> int:
+    progress = read_json(PROGRESS_PATH)
+    heartbeat = read_json(HEARTBEAT_PATH)
+    processes = running_processes()
+    middleware = run([str(ROOT / "scripts" / "a9_middleware.py"), "status"])
+    supervisor_status = run([str(ROOT / "scripts" / "a9_supervisor.py"), "status"])
+    git_probe = git_writable()
+    groups = progress.get("capability_groups", {})
+    group_percents = {name: item.get("percent", 0) for name, item in groups.items()}
+    blockers: list[str] = []
+    warnings: list[str] = []
+    if middleware.returncode != 0:
+        blockers.append("middleware status failed")
+    if supervisor_status.returncode != 0:
+        blockers.append("supervisor status failed")
+    if progress.get("progress_percent", 0) < 100:
+        blockers.append("capability progress is below 100%")
+    if any(value < 100 for value in group_percents.values()):
+        blockers.append("one or more capability groups are below 100%")
+    if any(item["kind"] == "worker" for item in processes):
+        blockers.append("worker process is already running")
+    if any(item["kind"] == "supervisor" for item in processes):
+        warnings.append("supervisor run-loop is already running")
+    if not git_probe["writable"]:
+        warnings.append("git metadata is not writable; code can run but commits/pushes need a writable git environment")
+    if progress.get("queued_tasks", 0) == 0:
+        warnings.append("no queued tasks")
+
+    if blockers:
+        mode = "not_ready"
+        recommendation = "Fix blockers before running automation."
+    elif warnings:
+        mode = "bounded_ready"
+        recommendation = "Run bounded automation first, for example: scripts/a9_supervisor.py run-loop --auto-next --max-tasks 1"
+    else:
+        mode = "daemon_ready"
+        recommendation = "Ready for daemon trial: scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error"
+
+    payload = {
+        "checked_at": iso_now(),
+        "service": "a9-24h-automation",
+        "mode": mode,
+        "blockers": blockers,
+        "warnings": warnings,
+        "recommendation": recommendation,
+        "progress_percent": progress.get("progress_percent"),
+        "capability_groups": group_percents,
+        "queued_tasks": progress.get("queued_tasks"),
+        "running_tasks": progress.get("running_tasks"),
+        "done_tasks": progress.get("done_tasks"),
+        "heartbeat_state": heartbeat.get("state", ""),
+        "processes": processes,
+        "git": git_probe,
+        "middleware_return_code": middleware.returncode,
+        "supervisor_return_code": supervisor_status.returncode,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if mode in {"bounded_ready", "daemon_ready"} else 1
 
 
 def ps_cmd(_: argparse.Namespace) -> int:
@@ -151,10 +228,14 @@ def install_hint(_: argparse.Namespace) -> int:
         "\n".join(
             [
                 "sudo cp infra/systemd/a9-supervisor.service /etc/systemd/system/a9-supervisor.service",
+                "sudo cp infra/systemd/a9-control-api.service /etc/systemd/system/a9-control-api.service",
                 "sudo systemctl daemon-reload",
                 "sudo systemctl enable --now a9-supervisor",
+                "sudo systemctl enable --now a9-control-api",
                 "sudo systemctl status a9-supervisor",
+                "sudo systemctl status a9-control-api",
                 "journalctl -u a9-supervisor -f",
+                "journalctl -u a9-control-api -f",
             ]
         )
     )
@@ -165,6 +246,7 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 service helper")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
+    sub.add_parser("readiness")
     sub.add_parser("ps")
     stop_parser = sub.add_parser("stop")
     stop_parser.add_argument("--all", action="store_true", help="also stop direct codex worker children")
@@ -174,6 +256,8 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     if args.command == "status":
         return status(args)
+    if args.command == "readiness":
+        return readiness(args)
     if args.command == "ps":
         return ps_cmd(args)
     if args.command == "stop":

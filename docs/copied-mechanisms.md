@@ -40,6 +40,83 @@ Mechanisms to adapt:
 - Semantic + keyword + entity boost rank fusion.
 - Rerank hook after initial retrieval.
 
+### OpenClaw / Lobster
+
+Local references:
+
+- `reference-projects/openclaw/`
+- `reference-projects/mem0/openclaw/`
+
+License status:
+
+- `reference-projects/openclaw` is the full OpenClaw repository, MIT licensed,
+  cloned from `https://github.com/openclaw/openclaw.git` at commit
+  `229490a4892460fd439fcde3b94265ae68b5e779`.
+- `reference-projects/mem0/openclaw` is the mem0 OpenClaw plugin slice,
+  Apache-2.0 licensed.
+
+Mechanisms to adapt:
+
+- Lobster taskflow and runner contracts:
+  `reference-projects/openclaw/extensions/lobster/src/`.
+- Policy gate state and CLI:
+  `reference-projects/openclaw/extensions/policy/src/`.
+- OpenClaw extension/plugin shape:
+  `reference-projects/openclaw/extensions/*/openclaw.plugin.json`.
+- Memory-core budgets, recall tracking, dreaming, repair, citations, and
+  prompt sections:
+  `reference-projects/openclaw/extensions/memory-core/src/`.
+- Memory-wiki corpus, claim health, query, apply, and prompt-section patterns:
+  `reference-projects/openclaw/extensions/memory-wiki/src/`.
+- Agent-friendly CLI commands with JSON output.
+- Skills-mode memory protocols: triage, recall, and dream.
+- Auto-recall before prompt construction and auto-capture after agent turns.
+- Per-agent and subagent namespace isolation.
+- Tool/event telemetry around memory operations.
+
+Correction:
+
+- Aider remains the edit/repo-map reference.
+- OpenClaw/Lobster is the lobster reference line.
+
+### Barter-rs
+
+Local reference:
+
+- `reference-projects/barter-rs/`
+
+License status:
+
+- `reference-projects/barter-rs` is MIT licensed, cloned from
+  `https://github.com/barter-rs/barter-rs.git` at commit
+  `33e56188e2095781331f85aa3d7f88e251eec65a`.
+
+Mechanisms to adapt:
+
+- Reconnect backoff:
+  `reference-projects/barter-rs/barter-integration/src/socket/backoff.rs`.
+- Typed connect error actions:
+  `reference-projects/barter-rs/barter-integration/src/socket/on_connect_err.rs`.
+- Typed stream error actions:
+  `reference-projects/barter-rs/barter-integration/src/socket/on_stream_err.rs`.
+- Reconnecting socket lifecycle events and timeouts:
+  `reference-projects/barter-rs/barter-integration/src/socket/mod.rs` and
+  `reference-projects/barter-rs/barter-integration/src/socket/update.rs`.
+- Audit state replica:
+  `reference-projects/barter-rs/barter/src/engine/audit/state_replica.rs`.
+- External command boundary:
+  `reference-projects/barter-rs/barter/src/engine/command.rs`.
+- Disconnect strategy:
+  `reference-projects/barter-rs/barter/src/strategy/on_disconnect.rs`.
+
+A9 adaptation target:
+
+- Communication governance, not trading logic.
+- Rust gateway retry/backoff and Redis roundtrip hardening.
+- Node heartbeat state machine and reconnect evidence.
+- Future SSE/WebSocket replay layer should use Barter-rs-style lifecycle
+  events: connected, item, reconnecting, stream error, terminated.
+
 ### Aider
 
 Copied files:
@@ -128,10 +205,6 @@ Mechanisms to adapt:
   daemon packaging inspired by mature service practices. The unit uses
   middleware preflight, restart policy, journal output, and the helper exposes
   unit rendering, install hints, heartbeat/progress status, and health checks.
-- `scripts/a9_page_monitor.py`: Cline/OpenHands-inspired page and TUI monitor.
-  Exported transcript text is treated as a non-canonical observation, hashed for
-  idle/stopped detection, snapshotted, converted into a continuation prompt, and
-  optionally enqueued back into the supervisor loop.
 - `crates/a9-worker`: Redis Streams worker wrapper shaped after mature queue
   workers: lease one task from a consumer group, heartbeat lifecycle state,
   execute a bounded worker command, emit started/completed/failed events, and
@@ -222,6 +295,19 @@ Mechanisms to adapt:
   filename idea with stricter A9 rules. A basename such as `demo.py` resolves
   only when exactly one safe repository file has that basename; ambiguous
   basenames fail with candidate paths.
+- `scripts/a9_patch_apply.py`: repeated repair loops now copy Aider's
+  already-applied intuition as structured evidence. If `SEARCH` is gone but
+  `REPLACE` exists exactly once, the block is marked `already_applied` and
+  succeeds without writing; multiple `REPLACE` occurrences remain a failed,
+  ambiguous edit.
+- `scripts/a9_supervisor.py`: patch-apply repair prompts now carry structured
+  block metadata instead of only prose. `already_applied_count`, successful
+  block lines, and failed block lines tell the next worker which edits are
+  already handled and which ones still need a fixed SEARCH/REPLACE block.
+- `scripts/a9_supervisor.py`: repair prompts now combine patch-apply metadata
+  with git governance. A retained failed worktree tells the worker not to resend
+  successful blocks; a rolled-back failed worktree tells it to inspect current
+  file content before deciding whether those blocks must be resent.
 
 ## Client Skeleton Reference Notes
 

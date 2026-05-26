@@ -16,7 +16,7 @@ backtests, risk gates, and trajectory memory.
 
 ## Original Thesis
 
-The core operating philosophy from `Gemini.md`, `需求.md`, and `codex.md` is:
+The core operating philosophy from `原始想法需求.md` is:
 
 - Find the strongest comparable mature project.
 - Copy mature mechanisms before inventing.

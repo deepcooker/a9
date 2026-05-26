@@ -32,14 +32,27 @@ RUNNING_DIR = STATE_DIR / "tasks" / "running"
 DONE_DIR = STATE_DIR / "tasks" / "done"
 RUNS_DIR = STATE_DIR / "runs"
 WORKTREES_DIR = STATE_DIR / "worktrees"
+WORKER_CODEX_HOME = STATE_DIR / "codex-home"
+WORKER_TMP_DIR = STATE_DIR / "tmp"
+EXTERNAL_SESSIONS_DIR = STATE_DIR / "external_sessions"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
+DEFAULT_MAX_WORKER_EVENTS = 80
+DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
+BLOCKED_WORKER_COMMAND_PATTERNS = [
+    "codex exec",
+    "a9_supervisor.py run-one",
+    "a9_supervisor.py run-loop",
+]
 DEFAULT_NEXT_CHECKS = [
     "python3 -m unittest tests/test_supervisor.py tests/test_memory.py tests/test_checkpoint.py",
     "cargo build --workspace",
 ]
+SESSION_REFRESH_PHASE = "session_refresh"
+SESSION_CLOSE_READING_PHASE = "session_close_reading"
+FLOW_KEY_PREFIX = "a9:flow:"
 PHASE_ORDER = [
     "reference_scan",
     "mechanism_extract",
@@ -56,6 +69,8 @@ PHASE_FOCUS = {
     "test": "Strengthen automated verification and regression coverage for the copied mechanism.",
     "repair": "Fix the previous failed checks, incomplete implementation, or missing evidence.",
     "record": "Update docs, evidence, and progress so the next worker can continue without chat context.",
+    SESSION_REFRESH_PHASE: "Index and extract external Codex/operator sessions without calling an AI worker.",
+    SESSION_CLOSE_READING_PHASE: "Append bounded external-session close-reading notes from extracted evidence.",
 }
 SECTION_TOKEN_BUDGETS = {
     "doctrine": 5000,
@@ -77,6 +92,25 @@ NOISE_PATTERNS = [
     re.compile(r"^\[.*truncated.*\]$", re.I),
     re.compile(r"^\.\.\.\[truncated.*\]\.\.\.$", re.I),
 ]
+WORKER_NETWORK_ERROR_PATTERNS = [
+    re.compile(r"\bConnection reset by peer\b", re.I),
+    re.compile(r"\bConnection refused\b", re.I),
+    re.compile(r"\bConnection timed out\b", re.I),
+    re.compile(r"\bTLS handshake\b", re.I),
+    re.compile(r"\bwebsocket\b.*\b(error|closed|disconnect|reset)\b", re.I),
+    re.compile(r"\bReconnecting\.\.\.", re.I),
+    re.compile(r"\bnetwork\b.*\b(error|unreachable|reset|timeout)\b", re.I),
+]
+WORKER_STARTUP_ERROR_PATTERNS = [
+    re.compile(r"\bapp-server\b.*\b(init|initiali[sz]e|startup|start)\b.*\b(fail|error|timeout)\b", re.I),
+    re.compile(r"\bfailed to (start|initialize|initialise)\b", re.I),
+    re.compile(r"\bNo such file or directory\b.*\bcodex\b", re.I),
+    re.compile(r"\bpermission denied\b", re.I),
+]
+WORKER_BROKEN_PIPE_PATTERNS = [
+    re.compile(r"\bBroken pipe\b", re.I),
+    re.compile(r"\bEPIPE\b", re.I),
+]
 
 
 def utc_now() -> str:
@@ -86,6 +120,15 @@ def utc_now() -> str:
 def slugify(value: str) -> str:
     value = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
     return value.strip("-") or f"task-{int(time.time())}"
+
+
+def compact_task_ref(value: str, *, limit: int = 48) -> str:
+    clean = slugify(value)
+    if len(clean) <= limit:
+        return clean
+    digest = hashlib.sha256(clean.encode("utf-8")).hexdigest()[:10]
+    head = clean[: max(8, limit - len(digest) - 1)].rstrip("-")
+    return f"{head}-{digest}"
 
 
 def run_cmd(
@@ -117,7 +160,16 @@ def run_cmd_no_raise(args: list[str], *, cwd: Path = ROOT) -> subprocess.Complet
 
 
 def ensure_dirs() -> None:
-    for path in [QUEUE_DIR, RUNNING_DIR, DONE_DIR, RUNS_DIR, WORKTREES_DIR]:
+    for path in [
+        QUEUE_DIR,
+        RUNNING_DIR,
+        DONE_DIR,
+        RUNS_DIR,
+        WORKTREES_DIR,
+        WORKER_CODEX_HOME,
+        WORKER_TMP_DIR,
+        EXTERNAL_SESSIONS_DIR,
+    ]:
         path.mkdir(parents=True, exist_ok=True)
 
 
@@ -490,7 +542,9 @@ def score_repo_file(rel_path: str, symbols: list[str], terms: set[str]) -> int:
     lower_path = rel_path.lower()
     score = 0
     important_names = {
-        "agent-supervisor.md",
+        "AGENTS.md",
+        "docs/project.md",
+        "docs/communication-governance-framework.md",
         "docs/copied-mechanisms.md",
         "scripts/a9_supervisor.py",
         "scripts/a9_checkpoint.py",
@@ -576,7 +630,7 @@ def build_context_packet(task: Task) -> dict[str, Any]:
         }
 
     doctrine_parts = []
-    for path in [ROOT / "需求.md", ROOT / "codex.md", ROOT / "session-governance.md"]:
+    for path in [ROOT / "原始想法需求.md", ROOT / "session-governance.md"]:
         text = read_budgeted(path, max(512, section_budgets["doctrine"] // 3), keep="head")
         if text:
             doctrine_parts.append(f"## {path.name}\n\n{text}")
@@ -631,6 +685,8 @@ Hard rules:
 - Cite local source paths when borrowing ideas from reference projects.
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
 - Final answer must include files changed, reference ideas used, commands run, test result, and next recommended task.
+- If the task asks for `strict_worker_envelope: true`, the final answer must include a JSON object
+  shaped like OpenClaw/Lobster tool envelopes: protocolVersion, ok, status/output or error.
 """,
         section_budgets["contract"],
     )
@@ -672,13 +728,28 @@ def create_worktree(task: Task, attempt: int) -> Path:
         result = run_cmd_no_raise(add_args)
     if result.returncode != 0:
         if "Read-only file system" in result.stdout or "cannot lock ref" in result.stdout:
-            return create_isolated_git_copy(worktree)
+            worktree = create_isolated_git_copy(worktree)
+            hydrate_worker_reference_slices(worktree)
+            return worktree
         raise subprocess.CalledProcessError(result.returncode, add_args, output=result.stdout)
+    hydrate_worker_reference_slices(worktree)
     return worktree
 
 
 def reset_existing_worktree(worktree: Path) -> Path:
     """Reuse a stale worker tree only after returning it to the current base."""
+    try:
+        is_supervisor_worktree = worktree.resolve().is_relative_to(WORKTREES_DIR.resolve())
+    except AttributeError:
+        try:
+            worktree.resolve().relative_to(WORKTREES_DIR.resolve())
+            is_supervisor_worktree = True
+        except ValueError:
+            is_supervisor_worktree = False
+    if is_supervisor_worktree and (worktree / ".git").is_dir():
+        worktree = create_isolated_git_copy(worktree, replace_existing=True)
+        hydrate_worker_reference_slices(worktree)
+        return worktree
     base_head = git_head()
     commands = (
         ["git", "restore", "--staged", "."],
@@ -688,14 +759,21 @@ def reset_existing_worktree(worktree: Path) -> Path:
     for command in commands:
         result = run_cmd_no_raise(command, cwd=worktree)
         if result.returncode != 0:
+            if "Read-only file system" in result.stdout or "cannot lock" in result.stdout:
+                worktree = create_isolated_git_copy(worktree, replace_existing=True)
+                hydrate_worker_reference_slices(worktree)
+                return worktree
             raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
+    hydrate_worker_reference_slices(worktree)
     return worktree
 
 
-def create_isolated_git_copy(worktree: Path) -> Path:
+def create_isolated_git_copy(worktree: Path, *, replace_existing: bool = False) -> Path:
     """Fallback for sandboxes that cannot mutate the shared git metadata."""
     if worktree.exists():
-        return worktree
+        if not replace_existing:
+            return worktree
+        shutil.rmtree(worktree)
     worktree.mkdir(parents=True, exist_ok=True)
     for rel in git_tracked_files():
         src = ROOT / rel
@@ -719,6 +797,47 @@ def create_isolated_git_copy(worktree: Path) -> Path:
     return worktree
 
 
+def worker_reference_slices() -> list[str]:
+    return [
+        "reference-projects/openclaw/extensions/lobster",
+        "reference-projects/openclaw/extensions/policy",
+        "reference-projects/openclaw/extensions/memory-core",
+        "reference-projects/openclaw/extensions/memory-wiki",
+        "vendor-src",
+    ]
+
+
+def hydrate_worker_reference_slices(worktree: Path) -> list[str]:
+    """Copy small local reference slices into isolated worker trees.
+
+    Full reference-projects is intentionally large. A9 workers only need bounded
+    source slices for copying mechanisms, and copying avoids write-through
+    symlink damage to the operator's reference checkout.
+    """
+    copied: list[str] = []
+    ignore = shutil.ignore_patterns(
+        ".git",
+        "node_modules",
+        "dist",
+        "build",
+        ".next",
+        "coverage",
+        "__pycache__",
+    )
+    for rel in worker_reference_slices():
+        src = ROOT / rel
+        dst = worktree / rel
+        if not src.exists() or dst.exists():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.is_dir():
+            shutil.copytree(src, dst, ignore=ignore)
+        elif src.is_file():
+            shutil.copy2(src, dst)
+        copied.append(rel)
+    return copied
+
+
 def build_worker_cmd(
     task: Task,
     worktree: Path,
@@ -736,10 +855,16 @@ def build_worker_cmd(
         )
         return ["bash", "-lc", formatted]
     model = os.getenv("A9_SUPERVISOR_MODEL", DEFAULT_WORKER_MODEL)
+    prepare_worker_codex_home()
     return [
+        "env",
+        f"CODEX_HOME={WORKER_CODEX_HOME}",
+        f"HOME={WORKER_CODEX_HOME}",
+        f"TMPDIR={WORKER_TMP_DIR}",
         "codex",
         "exec",
         "--json",
+        "--ephemeral",
         "--model",
         model,
         "-C",
@@ -748,6 +873,17 @@ def build_worker_cmd(
         str(final_path),
         prompt_text,
     ]
+
+
+def prepare_worker_codex_home() -> None:
+    """Give nested Codex workers a writable home inside ignored A9 state."""
+    ensure_dirs()
+    source_home = Path(os.getenv("A9_SOURCE_CODEX_HOME", str(Path.home() / ".codex")))
+    for name in ("auth.json", "config.toml"):
+        src = source_home / name
+        dst = WORKER_CODEX_HOME / name
+        if src.exists() and not dst.exists():
+            shutil.copy2(src, dst)
 
 
 def classify_event(line: str) -> str | None:
@@ -766,6 +902,22 @@ def parse_event_payload(line: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def aggregate_token_usage(event_summaries: list[dict[str, Any]]) -> dict[str, int]:
+    fields = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")
+    totals = {field: 0 for field in fields}
+    for summary in event_summaries:
+        usage = summary.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        for field in fields:
+            value = usage.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[field] += value
+    totals["uncached_input_tokens"] = max(0, totals["input_tokens"] - totals["cached_input_tokens"])
+    totals["total_tokens"] = totals["input_tokens"] + totals["output_tokens"] + totals["reasoning_output_tokens"]
+    return totals
+
+
 def summarize_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     event_type = payload.get("type") or payload.get("event") or payload.get("msg", {}).get("type")
     if not event_type:
@@ -780,7 +932,9 @@ def summarize_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
         summary["label"] = "turn_completed"
         summary["usage"] = usage
         summary["input_tokens"] = usage.get("input_tokens")
+        summary["cached_input_tokens"] = usage.get("cached_input_tokens")
         summary["output_tokens"] = usage.get("output_tokens")
+        summary["reasoning_output_tokens"] = usage.get("reasoning_output_tokens")
         return summary
     if event_type == "turn.failed":
         error = payload.get("error") or {}
@@ -836,6 +990,24 @@ def summarize_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     return summary
 
 
+def worker_budget_limit(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return default
+
+
+def blocked_worker_command(command: str) -> str:
+    normalized = " ".join(command.split())
+    for pattern in BLOCKED_WORKER_COMMAND_PATTERNS:
+        if pattern in normalized:
+            return pattern
+    return ""
+
+
 def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     prompt_path = run_dir / "prompt.md"
     raw_task_path = run_dir / "raw_task.md"
@@ -855,6 +1027,12 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     seen_event_summaries: set[str] = set()
     timed_out = False
     idle_timed_out = False
+    budget_stopped = False
+    budget_reason = ""
+    event_count = 0
+    event_bytes = 0
+    max_events = worker_budget_limit("A9_WORKER_MAX_EVENTS", DEFAULT_MAX_WORKER_EVENTS)
+    max_event_bytes = worker_budget_limit("A9_WORKER_MAX_EVENT_BYTES", DEFAULT_MAX_WORKER_EVENT_BYTES)
 
     with events_path.open("w", encoding="utf-8") as events, stderr_path.open(
         "w", encoding="utf-8"
@@ -884,6 +1062,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                 line = proc.stdout.readline()
                 if line:
                     last_output = time.monotonic()
+                    event_count += 1
+                    event_bytes += len(line.encode("utf-8"))
                     events.write(line)
                     events.flush()
                     event_type = classify_event(line)
@@ -897,6 +1077,23 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             if fingerprint not in seen_event_summaries:
                                 seen_event_summaries.add(fingerprint)
                                 event_summaries.append(event_summary)
+                        if event_summary and event_summary.get("item_type") == "command_execution":
+                            blocked = blocked_worker_command(str(event_summary.get("command", "")))
+                            if blocked:
+                                budget_stopped = True
+                                budget_reason = f"blocked nested worker command: {blocked}"
+                                proc.kill()
+                                break
+                    if event_count > max_events:
+                        budget_stopped = True
+                        budget_reason = f"worker event count exceeded {max_events}"
+                        proc.kill()
+                        break
+                    if event_bytes > max_event_bytes:
+                        budget_stopped = True
+                        budget_reason = f"worker event bytes exceeded {max_event_bytes}"
+                        proc.kill()
+                        break
                 elif proc.poll() is not None:
                     break
             elif proc.poll() is not None:
@@ -908,11 +1105,17 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         for item in event_summaries:
             summaries.write(json.dumps(item, ensure_ascii=False) + "\n")
 
+    actual_token_usage = aggregate_token_usage(event_summaries)
     return {
         "command": cmd,
         "return_code": return_code,
         "timed_out": timed_out,
         "idle_timed_out": idle_timed_out,
+        "budget_stopped": budget_stopped,
+        "budget_reason": budget_reason,
+        "event_count": event_count,
+        "event_bytes": event_bytes,
+        "event_budget": {"max_events": max_events, "max_event_bytes": max_event_bytes},
         "event_counts": event_counts,
         "event_summary_count": len(event_summaries),
         "events_path": str(events_path),
@@ -920,6 +1123,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "stderr_path": str(stderr_path),
         "final_path": str(final_path),
         "raw_task_path": str(raw_task_path),
+        "actual_token_usage": actual_token_usage,
         "prompt_approx_tokens": context_packet["approx_tokens"],
         "prompt_budget_tokens": context_packet["budget_tokens"],
         "prompt_section_budgets": context_packet["section_budgets"],
@@ -1010,6 +1214,105 @@ def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir:
     result["return_code"] = proc.returncode
     result["output_path"] = str(output_path)
     result["patch_path"] = str(patch_path)
+    write_json(output_path, result)
+    return result
+
+
+def find_json_objects(text: str) -> list[dict[str, Any]]:
+    objects: list[dict[str, Any]] = []
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
+        try:
+            value, _ = decoder.raw_decode(text[match.start() :])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            objects.append(value)
+    return objects
+
+
+def is_worker_envelope_candidate(value: dict[str, Any]) -> bool:
+    if "ok" not in value:
+        return False
+    if "protocolVersion" in value:
+        return True
+    return "status" in value or "error" in value or "requiresApproval" in value
+
+
+def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    output_path = run_dir / "worker_envelope.json"
+    final_path = Path(worker["final_path"])
+    fields = parse_key_value_prompt(task.prompt)
+    required = parse_bool_field(fields, "strict_worker_envelope", False)
+    result: dict[str, Any] = {
+        "status": "skip",
+        "kind": "worker_envelope",
+        "required": required,
+        "output_path": str(output_path),
+        "findings": [],
+    }
+    if not final_path.exists():
+        result["status"] = "fail" if required else "skip"
+        result["findings"].append({"level": "error" if required else "info", "message": "final message missing"})
+        write_json(output_path, result)
+        return result
+
+    text = final_path.read_text(encoding="utf-8", errors="backslashreplace")
+    candidates = [item for item in find_json_objects(text) if is_worker_envelope_candidate(item)]
+    if not candidates:
+        result["status"] = "fail" if required else "skip"
+        result["findings"].append(
+            {
+                "level": "error" if required else "info",
+                "message": "no worker envelope JSON object found",
+            }
+        )
+        write_json(output_path, result)
+        return result
+
+    envelope = candidates[-1]
+    result["envelope"] = envelope
+    protocol_version = envelope.get("protocolVersion")
+    ok = envelope.get("ok")
+    status = str(envelope.get("status") or "")
+    if protocol_version not in {1, "1"}:
+        result["findings"].append({"level": "error", "message": "protocolVersion must be 1"})
+    if not isinstance(ok, bool):
+        result["findings"].append({"level": "error", "message": "ok must be boolean"})
+    if ok is False:
+        error = envelope.get("error")
+        if not isinstance(error, dict) or not error.get("message"):
+            result["findings"].append({"level": "error", "message": "error envelope must include error.message"})
+        result["status"] = "fail"
+    elif ok is True:
+        if status not in {"ok", "needs_approval", "cancelled"}:
+            result["findings"].append({"level": "error", "message": "status must be ok, needs_approval, or cancelled"})
+        if status == "needs_approval":
+            approval = envelope.get("requiresApproval")
+            if not isinstance(approval, dict):
+                result["findings"].append({"level": "error", "message": "needs_approval requires requiresApproval object"})
+            else:
+                if approval.get("type") != "approval_request":
+                    result["findings"].append({"level": "error", "message": "requiresApproval.type must be approval_request"})
+                if not approval.get("prompt"):
+                    result["findings"].append({"level": "error", "message": "requiresApproval.prompt is required"})
+                if not approval.get("resumeToken") and not approval.get("approvalId"):
+                    result["findings"].append(
+                        {"level": "error", "message": "requiresApproval needs resumeToken or approvalId"}
+                    )
+        elif status == "ok" and "output" in envelope and not isinstance(envelope.get("output"), list):
+            result["findings"].append({"level": "error", "message": "output must be a list when present"})
+        if result["findings"]:
+            result["status"] = "fail"
+        elif status == "needs_approval":
+            result["status"] = "needs-approval"
+        elif status == "cancelled":
+            result["status"] = "fail"
+        else:
+            result["status"] = "pass"
+    else:
+        result["status"] = "fail"
+
     write_json(output_path, result)
     return result
 
@@ -1221,11 +1524,16 @@ def decide_status(
     patch_guard: dict[str, Any] | None = None,
     scope_guard: dict[str, Any] | None = None,
     patch_apply: dict[str, Any] | None = None,
+    worker_envelope: dict[str, Any] | None = None,
+    allow_no_diff: bool = False,
 ) -> str:
-    if worker["timed_out"] or worker["idle_timed_out"]:
-        return "retryable-timeout"
-    if worker["return_code"] != 0:
-        return "retryable-worker-failed"
+    failure = classify_worker_failure(worker)
+    if failure.get("status"):
+        return str(failure["status"])
+    if worker_envelope and worker_envelope.get("status") == "needs-approval":
+        return "needs-approval"
+    if worker_envelope and worker_envelope.get("status") == "fail":
+        return "needs-repair"
     if patch_apply and patch_apply.get("status") == "fail":
         return "needs-repair"
     if patch_guard and patch_guard.get("status") == "fail":
@@ -1236,8 +1544,21 @@ def decide_status(
     if failed_checks:
         return "needs-repair"
     if diff["diff_bytes"] == 0:
+        if allow_no_diff:
+            return "pass"
         return "needs-followup"
     return "pass"
+
+
+def task_allows_no_diff(task: Task) -> bool:
+    fields = parse_key_value_prompt(task.prompt)
+    if parse_bool_field(fields, "allow_no_diff", False):
+        return True
+    if "expected_file_changes" in fields and not parse_bool_field(fields, "expected_file_changes", True):
+        return True
+    if "expect_file_changes" in fields and not parse_bool_field(fields, "expect_file_changes", True):
+        return True
+    return re.search(r"\bdo not (modify|change|edit) files\b|\bno file changes\b", task.prompt, re.I) is not None
 
 
 def compact_guard_summary(summary: dict[str, Any]) -> dict[str, Any]:
@@ -1278,11 +1599,69 @@ def compact_context_pressure(summary: dict[str, Any]) -> dict[str, Any]:
         "budget_ratio": ratio,
         "remaining_tokens": remaining_tokens,
         "over_budget": approx_tokens > budget_tokens,
+        "actual_token_usage": worker.get("actual_token_usage", {}),
         "section_budgets": worker.get("prompt_section_budgets", {}),
         "previous_context_path": worker.get("previous_context_path", ""),
         "previous_context_compression": worker.get("previous_context_compression", {}),
         "repo_map": worker.get("repo_map", {}),
     }
+
+
+def patch_apply_block_line(item: dict[str, Any]) -> str:
+    path = item.get("effective_path") or item.get("path") or "unknown"
+    mode = item.get("mode", "unknown")
+    index = item.get("index", "?")
+    strategy = item.get("match_strategy", "unknown")
+    replace_matches = item.get("replace_matches")
+    suffix = f", replace_matches={replace_matches}" if replace_matches is not None else ""
+    return f"- block {index}: {path} mode={mode} strategy={strategy}{suffix}"
+
+
+def format_patch_apply_repair_hint(
+    patch_apply: dict[str, Any],
+    git_governance: dict[str, Any] | None = None,
+) -> str:
+    if not patch_apply:
+        return ""
+    git_governance = git_governance or {}
+    rolled_back = bool(git_governance.get("rolled_back"))
+    successful = patch_apply.get("successful_blocks") or []
+    failed = patch_apply.get("failed_blocks") or []
+    lines = [
+        "Patch apply repair metadata:",
+        f"- status: {patch_apply.get('status', 'missing')}",
+        f"- applied_count: {patch_apply.get('applied_count', 0)}",
+        f"- already_applied_count: {patch_apply.get('already_applied_count', 0)}",
+        f"- success_count: {patch_apply.get('success_count', len(successful))}",
+        f"- failed_count: {patch_apply.get('failed_count', len(failed))}",
+        f"- partial_success: {patch_apply.get('partial_success', False)}",
+        f"- git_governance_status: {git_governance.get('status', 'missing')}",
+        f"- git_rolled_back: {rolled_back}",
+    ]
+    if successful:
+        if rolled_back:
+            success_guidance = (
+                "Successful blocks were recorded before git governance rolled the run back; "
+                "inspect current file content before deciding whether to resend them."
+            )
+        else:
+            success_guidance = (
+                "Successful blocks already handled; do not resend them unless the current file content proves "
+                "they were rolled back."
+            )
+        lines.extend(
+            [
+                "",
+                success_guidance,
+                *[patch_apply_block_line(item) for item in successful],
+            ]
+        )
+    if failed:
+        lines.extend(["", "Failed blocks that need repair:", *[patch_apply_block_line(item) for item in failed]])
+    repair_hint = patch_apply.get("repair_hint", "")
+    if repair_hint:
+        lines.extend(["", "Patch apply repair hint:", "", repair_hint])
+    return "\n".join(lines)
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -1291,6 +1670,14 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def json_compact(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def stable_json(payload: Any) -> str:
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def sql_quote(value: Any) -> str:
@@ -1313,6 +1700,117 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def create_policy_attestation(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    output_path = run_dir / "policy_attestation.json"
+    fields = parse_key_value_prompt(task.prompt)
+    policy = {
+        "scope": "a9-supervisor-run",
+        "allowed_paths": task.allowed_paths,
+        "checks": task.checks,
+        "phase": task.phase,
+        "strict_worker_envelope": parse_bool_field(fields, "strict_worker_envelope", False),
+        "worker_model": os.getenv("A9_SUPERVISOR_MODEL", DEFAULT_WORKER_MODEL),
+        "guards": ["worker_envelope", "patch_guard", "scope_guard", "checks", "git_governance"],
+    }
+    workspace = {
+        "diff": {
+            "path": summary.get("diff", {}).get("diff_path", ""),
+            "bytes": summary.get("diff", {}).get("diff_bytes", 0),
+        },
+        "worker_envelope": {
+            "status": summary.get("worker_envelope", {}).get("status"),
+            "required": summary.get("worker_envelope", {}).get("required", False),
+        },
+        "patch_apply": {
+            "status": summary.get("patch_apply", {}).get("status"),
+            "applied_count": summary.get("patch_apply", {}).get("applied_count", 0),
+            "failed_count": summary.get("patch_apply", {}).get("failed_count", 0),
+        },
+        "patch_guard": {
+            "status": summary.get("patch_guard", {}).get("status"),
+            "touched_files": summary.get("patch_guard", {}).get("touched_files", []),
+        },
+        "scope_guard": {
+            "status": summary.get("scope_guard", {}).get("status"),
+            "changed_files": summary.get("scope_guard", {}).get("changed_files", []),
+            "allowed_paths": summary.get("scope_guard", {}).get("allowed_paths", []),
+        },
+        "checks": [
+            {
+                "command": item.get("command", ""),
+                "return_code": item.get("return_code"),
+                "output_path": item.get("output_path", ""),
+            }
+            for item in summary.get("checks", [])
+        ],
+        "git_governance": {
+            "status": summary.get("git_governance", {}).get("status"),
+            "commit": summary.get("git_governance", {}).get("commit", ""),
+            "rolled_back": summary.get("git_governance", {}).get("rolled_back", False),
+        },
+    }
+    findings = []
+    for guard_name in ("worker_envelope", "patch_apply", "patch_guard", "scope_guard", "git_governance"):
+        guard = summary.get(guard_name, {})
+        if isinstance(guard, dict):
+            for finding in guard.get("findings", []) or []:
+                findings.append({"source": guard_name, **finding})
+    for index, check in enumerate(summary.get("checks", []), start=1):
+        if check.get("return_code") != 0:
+            findings.append(
+                {
+                    "source": "check",
+                    "level": "error",
+                    "message": "check failed",
+                    "index": index,
+                    "command": check.get("command", ""),
+                    "return_code": check.get("return_code"),
+                }
+            )
+    ok = summary.get("status") in {"pass", "needs-followup", "needs-approval"}
+    policy_hash = sha256_text(stable_json(policy))
+    workspace_hash = sha256_text(stable_json(workspace))
+    findings_hash = sha256_text(stable_json(findings))
+    attestation = {
+        "checked_at": utc_now(),
+        "ok": ok,
+        "policy": {
+            "path": "a9://supervisor/runtime-policy",
+            "hash": policy_hash,
+            "snapshot": policy,
+        },
+        "workspace": {
+            "scope": "policy",
+            "hash": workspace_hash,
+            "evidence": workspace,
+        },
+        "findings": findings,
+        "findingsHash": findings_hash,
+        "attestationHash": sha256_text(
+            stable_json(
+                {
+                    "ok": ok,
+                    "policyHash": policy_hash,
+                    "workspaceHash": workspace_hash,
+                    "findingsHash": findings_hash,
+                }
+            )
+        ),
+        "source": "openclaw_policy_attestation_shape",
+    }
+    write_json(output_path, attestation)
+    return {
+        "status": "pass" if ok else "fail",
+        "output_path": str(output_path),
+        "policy_hash": policy_hash,
+        "workspace_hash": workspace_hash,
+        "findings_hash": findings_hash,
+        "attestation_hash": attestation["attestationHash"],
+        "findings_count": len(findings),
+        "source": "reference-projects/openclaw/extensions/policy/src/policy-state.ts",
+    }
 
 
 def evidence_record(
@@ -1599,13 +2097,25 @@ def write_evidence_and_state(
         ("stderr", Path(summary["worker"]["stderr_path"]), {}),
         ("final_message", Path(summary["worker"]["final_path"]), {}),
         (
+            "worker_envelope",
+            Path(summary["worker_envelope"]["output_path"]),
+            {
+                "status": summary["worker_envelope"].get("status"),
+                "required": summary["worker_envelope"].get("required", False),
+            },
+        ),
+        (
             "patch_apply",
             Path(summary["patch_apply"]["output_path"]),
             {
                 "status": summary["patch_apply"].get("status"),
                 "return_code": summary["patch_apply"].get("return_code"),
                 "applied_count": summary["patch_apply"].get("applied_count", 0),
+                "already_applied_count": summary["patch_apply"].get("already_applied_count", 0),
+                "success_count": summary["patch_apply"].get("success_count", 0),
+                "failed_count": summary["patch_apply"].get("failed_count", 0),
                 "touched_files": summary["patch_apply"].get("touched_files", []),
+                "referenced_files": summary["patch_apply"].get("referenced_files", []),
             },
         ),
         ("patch", Path(summary["diff"]["diff_path"]), {"diff_bytes": summary["diff"]["diff_bytes"]}),
@@ -1637,9 +2147,22 @@ def write_evidence_and_state(
                 "rolled_back": summary["git_governance"].get("rolled_back", False),
             },
         ),
+        (
+            "policy_attestation",
+            Path(summary["policy_attestation"]["output_path"]),
+            {
+                "status": summary["policy_attestation"].get("status"),
+                "policy_hash": summary["policy_attestation"].get("policy_hash"),
+                "workspace_hash": summary["policy_attestation"].get("workspace_hash"),
+                "findings_hash": summary["policy_attestation"].get("findings_hash"),
+                "attestation_hash": summary["policy_attestation"].get("attestation_hash"),
+            },
+        ),
         ("context", context_path, {"status": summary["status"]}),
     ]
     for kind, path, metadata in paths:
+        if not str(path):
+            continue
         record = evidence_record(
             run_id=run_id,
             checkpoint_id=checkpoint_id,
@@ -1698,6 +2221,7 @@ def write_evidence_and_state(
             "messages": by_kind.get("final_message", []) + by_kind.get("context", []),
             "tool_events": by_kind.get("events", []) + by_kind.get("stderr", []),
             "event_summaries": by_kind.get("event_summary", []),
+            "worker_envelopes": by_kind.get("worker_envelope", []),
             "repo_state": [
                 {
                     "repo_head": summary["repo_head"],
@@ -1707,6 +2231,7 @@ def write_evidence_and_state(
             "patches": by_kind.get("patch_apply", []) + by_kind.get("patch", []) + by_kind.get("patch_guard", []),
             "guards": by_kind.get("patch_guard", []) + by_kind.get("scope_guard", []),
             "git_governance": by_kind.get("git_governance", []),
+            "policy_attestations": by_kind.get("policy_attestation", []),
             "checks": by_kind.get("check_log", []),
             "deep_marks": [mark["mark_id"] for mark in deep_marks],
             "memories": [],
@@ -1716,10 +2241,12 @@ def write_evidence_and_state(
             "messages",
             "tool_events",
             "event_summaries",
+            "worker_envelopes",
             "repo_state",
             "patches",
             "guards",
             "git_governance",
+            "policy_attestations",
             "checks",
             "context_pressure",
             "deep_marks",
@@ -1765,6 +2292,132 @@ def redis_available() -> bool:
     return redis_cli(["PING"]).stdout.strip().endswith("PONG")
 
 
+def redis_flow_key(flow_id: str) -> str:
+    return f"{FLOW_KEY_PREFIX}{flow_id}"
+
+
+def transition_managed_flow(
+    *,
+    flow_id: str,
+    expected_revision: int | None,
+    next_status: str,
+    actor: str,
+    reason: str,
+    evidence_id: str,
+) -> dict[str, Any]:
+    if not flow_id:
+        return {"enabled": False, "status": "skipped", "reason": "missing_flow_id"}
+    if expected_revision is None:
+        return {"enabled": False, "status": "skipped", "reason": "missing_expected_revision", "flow_id": flow_id}
+    if not redis_available():
+        return {"enabled": True, "status": "unavailable", "flow_id": flow_id}
+
+    result = redis_cli(
+        [
+            "FCALL",
+            "transition_flow",
+            "1",
+            redis_flow_key(flow_id),
+            str(expected_revision),
+            next_status,
+            actor,
+            reason,
+            evidence_id,
+            utc_now(),
+        ]
+    )
+    output = result.stdout.strip()
+    payload: dict[str, Any] | None = None
+    if output.startswith("{"):
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError:
+            payload = None
+    status = "pass" if payload and result.returncode == 0 else "fail"
+    if "revision_mismatch" in output or "flow_not_found" in output:
+        status = "fail"
+    return {
+        "enabled": True,
+        "status": status,
+        "flow_id": flow_id,
+        "expected_revision": expected_revision,
+        "next_status": next_status,
+        "return_code": result.returncode,
+        "output": output,
+        "revision": payload.get("revision") if payload else None,
+        "flow_status": payload.get("status") if payload else "",
+    }
+
+
+def set_managed_flow_wait(
+    *,
+    flow_id: str,
+    expected_revision: int | None,
+    worker_envelope: dict[str, Any],
+    policy_attestation: dict[str, Any] | None = None,
+    actor: str,
+    evidence_id: str,
+) -> dict[str, Any]:
+    if not flow_id:
+        return {"enabled": False, "status": "skipped", "reason": "missing_flow_id"}
+    if expected_revision is None:
+        return {"enabled": False, "status": "skipped", "reason": "missing_expected_revision", "flow_id": flow_id}
+    if not redis_available():
+        return {"enabled": True, "status": "unavailable", "flow_id": flow_id, "kind": "flow_wait"}
+    envelope = worker_envelope.get("envelope") if isinstance(worker_envelope, dict) else {}
+    approval = envelope.get("requiresApproval") if isinstance(envelope, dict) else {}
+    if not isinstance(approval, dict):
+        return {"enabled": True, "status": "fail", "flow_id": flow_id, "reason": "missing_requiresApproval"}
+    prompt = str(approval.get("prompt") or "Worker requested approval.")
+    approval_id = str(approval.get("approvalId") or "")
+    resume_token = str(approval.get("resumeToken") or "")
+    policy_hash = str((policy_attestation or {}).get("attestation_hash") or "")
+    waiting_step = "worker_needs_approval"
+    if policy_hash:
+        waiting_step = f"{waiting_step}:policy:{policy_hash[:12]}"
+    result = redis_cli(
+        [
+            "FCALL",
+            "set_waiting_flow",
+            "1",
+            redis_flow_key(flow_id),
+            str(expected_revision),
+            actor,
+            prompt,
+            approval_id,
+            resume_token,
+            waiting_step,
+            utc_now(),
+        ]
+    )
+    output = result.stdout.strip()
+    payload: dict[str, Any] | None = None
+    if output.startswith("{"):
+        try:
+            payload = json.loads(output)
+        except json.JSONDecodeError:
+            payload = None
+    status = "pass" if payload and result.returncode == 0 else "fail"
+    if "revision_mismatch" in output or "flow_not_found" in output:
+        status = "fail"
+    return {
+        "enabled": True,
+        "kind": "flow_wait",
+        "status": status,
+        "flow_id": flow_id,
+        "expected_revision": expected_revision,
+        "next_status": "waiting",
+        "return_code": result.returncode,
+        "output": output,
+        "revision": payload.get("revision") if payload else None,
+        "flow_status": payload.get("status") if payload else "",
+        "approval_id": approval_id,
+        "resume_token_present": bool(resume_token),
+        "policy_attestation_hash": policy_hash,
+        "evidence_id": evidence_id,
+    }
+
+
 def redis_session_payload(
     task: Task,
     summary: dict[str, Any],
@@ -1789,6 +2442,8 @@ def redis_session_payload(
         "guard_summary": summary.get("guard_summary", compact_guard_summary(summary)),
         "context_pressure": summary.get("context_pressure", compact_context_pressure(summary)),
         "git_governance": summary.get("git_governance", {}),
+        "policy_attestation": summary.get("policy_attestation", {}),
+        "actual_token_usage": summary.get("worker", {}).get("actual_token_usage", {}),
         "channel_counts": channel_counts,
         "deep_mark_count": state.get("deep_mark_count", 0),
         "evidence_count": evidence_count,
@@ -1848,6 +2503,7 @@ INSERT INTO checkpoints (
   {sql_quote(json_compact({
       'prompt_approx_tokens': summary['worker'].get('prompt_approx_tokens'),
       'prompt_budget_tokens': summary['worker'].get('prompt_budget_tokens'),
+      'actual_token_usage': summary['worker'].get('actual_token_usage', {}),
       'context_pressure': summary.get('context_pressure', {}),
       'previous_context_compression': summary['worker'].get('previous_context_compression', {}),
       'repo_map': summary['worker'].get('repo_map', {}),
@@ -2053,6 +2709,62 @@ def read_text_if_exists(path: Path, limit: int = 4000) -> str:
     return text
 
 
+def worker_failure_text(worker: dict[str, Any], limit: int = 12000) -> str:
+    parts: list[str] = []
+    for key in ("budget_reason",):
+        if worker.get(key):
+            parts.append(str(worker[key]))
+    for key in ("event_summaries_path", "stderr_path", "final_path"):
+        raw_path = worker.get(key)
+        if not raw_path:
+            continue
+        path = Path(str(raw_path))
+        parts.append(read_text_if_exists(path, limit=limit // 3))
+    return "\n".join(part for part in parts if part).strip()[:limit]
+
+
+def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
+    if worker.get("budget_stopped"):
+        return {
+            "status": "retryable-worker-budget",
+            "category": "budget",
+            "reason": worker.get("budget_reason", "worker budget stopped"),
+            "matched_pattern": "budget_stopped",
+        }
+    if worker.get("timed_out") or worker.get("idle_timed_out"):
+        return {
+            "status": "retryable-timeout",
+            "category": "timeout",
+            "reason": "worker timed out" if worker.get("timed_out") else "worker idle timed out",
+            "matched_pattern": "timed_out" if worker.get("timed_out") else "idle_timed_out",
+        }
+    if worker.get("return_code", 0) == 0:
+        return {"status": "", "category": "", "reason": "", "matched_pattern": ""}
+
+    text = worker_failure_text(worker)
+    patterns = [
+        ("retryable-worker-network", WORKER_NETWORK_ERROR_PATTERNS),
+        ("retryable-worker-startup", WORKER_STARTUP_ERROR_PATTERNS),
+        ("retryable-worker-broken-pipe", WORKER_BROKEN_PIPE_PATTERNS),
+    ]
+    for status, compiled in patterns:
+        for pattern in compiled:
+            match = pattern.search(text)
+            if match:
+                return {
+                    "status": status,
+                    "category": status.removeprefix("retryable-worker-"),
+                    "reason": match.group(0),
+                    "matched_pattern": pattern.pattern,
+                }
+    return {
+        "status": "retryable-worker-failed",
+        "category": "worker-failed",
+        "reason": f"worker return_code={worker.get('return_code')}",
+        "matched_pattern": "return_code",
+    }
+
+
 def write_context_summary(task: Task, run_dir: Path, summary: dict[str, Any]) -> Path:
     final_text = read_text_if_exists(Path(summary["worker"]["final_path"]), limit=3000).strip()
     diff_text = read_text_if_exists(Path(summary["diff"]["diff_path"]), limit=3000).strip()
@@ -2066,6 +2778,7 @@ def write_context_summary(task: Task, run_dir: Path, summary: dict[str, Any]) ->
     scope_guard = summary.get("scope_guard", {})
     git_governance = summary.get("git_governance", {})
     context_pressure = summary.get("context_pressure", compact_context_pressure(summary))
+    patch_apply_repair = format_patch_apply_repair_hint(patch_apply, git_governance)
     content = f"""# Task Context: {task.task_id}
 
 Updated: {summary['finished_at']}
@@ -2082,6 +2795,13 @@ Worktree: {summary['worktree']}
 - return_code: {summary['worker']['return_code']}
 - timed_out: {summary['worker']['timed_out']}
 - idle_timed_out: {summary['worker']['idle_timed_out']}
+- budget_stopped: {summary['worker'].get('budget_stopped', False)}
+- budget_reason: {summary['worker'].get('budget_reason', '')}
+- failure_status: {summary.get('worker_failure', {}).get('status', '')}
+- failure_category: {summary.get('worker_failure', {}).get('category', '')}
+- failure_reason: {summary.get('worker_failure', {}).get('reason', '')}
+- event_count: {summary['worker'].get('event_count', 0)}
+- event_bytes: {summary['worker'].get('event_bytes', 0)}
 - events: {json.dumps(summary['worker']['event_counts'], ensure_ascii=False)}
 
 ## Checks
@@ -2094,10 +2814,13 @@ Worktree: {summary['worktree']}
 - return_code: {patch_apply.get('return_code', 'missing')}
 - applied_count: {patch_apply.get('applied_count', 0)}
 - failed_count: {patch_apply.get('failed_count', 0)}
+- already_applied_count: {patch_apply.get('already_applied_count', 0)}
+- success_count: {patch_apply.get('success_count', 0)}
 - partial_success: {patch_apply.get('partial_success', False)}
+- referenced_files: {json.dumps(patch_apply.get('referenced_files', []), ensure_ascii=False)}
 - output: {patch_apply.get('output_path', 'missing')}
 
-{patch_apply.get('repair_hint', '')}
+{patch_apply_repair}
 
 ## Patch Guard
 
@@ -2175,6 +2898,118 @@ def previous_task_checkpoint_id(task: Task) -> str | None:
     return str(checkpoint_id) if checkpoint_id else None
 
 
+def parse_session_refresh_spec(prompt: str) -> dict[str, Any]:
+    fields = parse_key_value_prompt(prompt)
+    session_path = (
+        fields.get("source_session_path")
+        or fields.get("session_jsonl")
+        or fields.get("session_path")
+        or fields.get("path")
+    )
+    missing = [
+        name
+        for name, value in [
+            ("source_session_path", session_path),
+            ("from_turn", fields.get("from_turn")),
+            ("to_turn", fields.get("to_turn")),
+        ]
+        if not value
+    ]
+    if missing:
+        raise ValueError(f"missing session_refresh fields: {', '.join(missing)}")
+
+    try:
+        from_turn = int(str(fields["from_turn"]))
+        to_turn = int(str(fields["to_turn"]))
+        batch_size = int(str(fields.get("batch_size", "10")))
+    except ValueError as exc:
+        raise ValueError("from_turn, to_turn, and batch_size must be integers") from exc
+    if from_turn < 1 or to_turn < from_turn:
+        raise ValueError("from_turn must be >= 1 and to_turn must be >= from_turn")
+    if batch_size < 1:
+        raise ValueError("batch_size must be >= 1")
+    auto_continue = parse_bool_field(fields, "auto_continue", True)
+    auto_close_reading = parse_bool_field(fields, "auto_close_reading", True)
+
+    return {
+        "source_session_path": session_path,
+        "from_turn": from_turn,
+        "to_turn": to_turn,
+        "batch_size": batch_size,
+        "auto_continue": auto_continue,
+        "auto_close_reading": auto_close_reading,
+        "close_reading_doc": fields.get("close_reading_doc", "docs/session-raw-close-reading.md"),
+        "summary_doc": fields.get("summary_doc", "docs/session-raw-summary.md"),
+        "flow_id": fields.get("flow_id", ""),
+        "flow_expected_revision": parse_optional_int(fields.get("flow_expected_revision")),
+    }
+
+
+def parse_bool_field(fields: dict[str, str], name: str, default: bool) -> bool:
+    if name not in fields:
+        return default
+    return str(fields[name]).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def parse_optional_int(value: str | None) -> int | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if normalized == "" or normalized.lower() in {"none", "null"}:
+        return None
+    return int(normalized)
+
+
+def parse_key_value_prompt(prompt: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in prompt.splitlines():
+        match = re.match(r"^\s*([A-Za-z0-9_-]+)\s*[:=]\s*(.+?)\s*$", line)
+        if not match:
+            continue
+        key = match.group(1).strip().lower().replace("-", "_")
+        fields[key] = match.group(2).strip().strip('"').strip("'")
+    return fields
+
+
+def parse_session_close_reading_spec(prompt: str) -> dict[str, Any]:
+    fields = parse_key_value_prompt(prompt)
+    extract_path = fields.get("extract_path") or fields.get("path")
+    if not extract_path:
+        raise ValueError("missing session_close_reading fields: extract_path")
+    spec: dict[str, Any] = {
+        "extract_path": extract_path,
+        "close_reading_doc": fields.get("close_reading_doc", "docs/session-raw-close-reading.md"),
+        "summary_doc": fields.get("summary_doc", "docs/session-raw-summary.md"),
+        "source_session_path": fields.get("source_session_path", ""),
+        "auto_continue": parse_bool_field(fields, "auto_continue", True),
+        "auto_close_reading": parse_bool_field(fields, "auto_close_reading", True),
+        "flow_id": fields.get("flow_id", ""),
+        "flow_expected_revision": parse_optional_int(fields.get("flow_expected_revision")),
+    }
+    for name in ("to_turn", "user_turn_count", "batch_size"):
+        if fields.get(name):
+            try:
+                spec[name] = int(str(fields[name]))
+            except ValueError as exc:
+                raise ValueError(f"{name} must be an integer") from exc
+    return spec
+
+
+def parse_task_flow_spec(prompt: str) -> dict[str, Any]:
+    fields = parse_key_value_prompt(prompt)
+    return {
+        "flow_id": fields.get("flow_id", ""),
+        "flow_expected_revision": parse_optional_int(fields.get("flow_expected_revision")),
+    }
+
+
+def bounded_inline(text: str, limit: int = 500) -> str:
+    normalized = re.sub(r"\s+", " ", str(text)).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3] + "..."
+
+
 def next_phase_for(status: str, current_phase: str) -> str:
     if status == "needs-repair" or status.startswith("retryable-"):
         return "repair"
@@ -2186,15 +3021,34 @@ def next_phase_for(status: str, current_phase: str) -> str:
     return PHASE_ORDER[(index + 1) % len(PHASE_ORDER)]
 
 
+def flow_status_for_task(phase: str, status: str) -> str:
+    if status == "pass":
+        return f"{phase}_done"
+    if status == "needs-followup":
+        return f"{phase}_followup"
+    if status == "needs-repair":
+        return f"{phase}_needs_repair"
+    if status.startswith("retryable-"):
+        return f"{phase}_retryable"
+    return f"{phase}_{slugify(status).replace('-', '_')}"
+
+
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
     focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
     repair_hint = ""
     patch_apply = summary.get("patch_apply", {})
-    if summary.get("status") == "needs-repair" and patch_apply.get("repair_hint"):
+    patch_apply_hint = format_patch_apply_repair_hint(patch_apply, summary.get("git_governance", {}))
+    if summary.get("status") == "needs-repair" and patch_apply_hint:
         repair_hint = f"""
-Patch apply repair hint:
-
-{patch_apply['repair_hint']}
+{patch_apply_hint}
+"""
+    flow = summary.get("flow_transition", {})
+    flow_lines = ""
+    if isinstance(flow, dict) and flow.get("flow_id") and flow.get("revision") is not None:
+        flow_lines = f"""
+Managed flow:
+- flow_id: {flow['flow_id']}
+- flow_expected_revision: {flow['revision']}
 """
     return f"""Continue A9 24-hour automation.
 
@@ -2205,6 +3059,7 @@ Previous run: {summary['run_dir']}
 Previous context: {summary['context_path']}
 
 Phase: {phase}
+{flow_lines}
 
 Core rule:
 - Continue copying mature open-source mechanisms before inventing.
@@ -2264,6 +3119,12 @@ def enqueue_task_file(
 
 
 def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
+    if flow_transition_blocks_next(summary):
+        return None
+    if task.phase == SESSION_REFRESH_PHASE:
+        return schedule_next_session_refresh_task(task, summary)
+    if task.phase == SESSION_CLOSE_READING_PHASE:
+        return schedule_next_session_close_reading_task(task, summary)
     if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:
         return None
     phase = next_phase_for(summary["status"], task.phase)
@@ -2278,6 +3139,109 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         idle_timeout_seconds=300,
         max_attempts=2,
     )
+
+
+def flow_transition_blocks_next(summary: dict[str, Any]) -> bool:
+    transition = summary.get("flow_transition")
+    if not isinstance(transition, dict):
+        return False
+    return bool(transition.get("enabled")) and transition.get("status") == "fail"
+
+
+def schedule_next_session_refresh_task(task: Task, summary: dict[str, Any]) -> Path | None:
+    if summary.get("status") != "pass":
+        return None
+    refresh = summary.get("session_refresh", {})
+    if refresh.get("auto_close_reading", True) and refresh.get("extract_path"):
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        parent_ref = compact_task_ref(task.task_id)
+        task_id = f"auto-session-close-reading-{parent_ref}-{refresh.get('from_turn')}-{refresh.get('to_turn')}-{timestamp}"
+        prompt = f"""extract_path: {refresh['extract_path']}
+close_reading_doc: {refresh.get('close_reading_doc', 'docs/session-raw-close-reading.md')}
+summary_doc: {refresh.get('summary_doc', 'docs/session-raw-summary.md')}
+source_session_path: {refresh['source_session_path']}
+to_turn: {refresh['to_turn']}
+user_turn_count: {refresh['user_turn_count']}
+batch_size: {refresh.get('batch_size', 10)}
+auto_continue: {str(refresh.get('auto_continue', True)).lower()}
+auto_close_reading: true
+flow_id: {refresh.get('flow_id', '')}
+flow_expected_revision: {refresh.get('flow_revision', '')}
+
+Continue the managed external session flow. Append bounded deterministic close-reading notes,
+then let the close-reading route decide whether to schedule the next session_refresh range.
+"""
+        return enqueue_task_file(
+            task_id,
+            prompt,
+            phase=SESSION_CLOSE_READING_PHASE,
+            checks=[],
+            timeout_seconds=120,
+            idle_timeout_seconds=120,
+            max_attempts=1,
+        )
+    return schedule_next_session_refresh_range(task.task_id, refresh)
+
+
+def schedule_next_session_refresh_range(parent_task_id: str, refresh: dict[str, Any]) -> Path | None:
+    if not refresh.get("auto_continue", True):
+        return None
+    try:
+        current_to = int(refresh["to_turn"])
+        user_turn_count = int(refresh["user_turn_count"])
+        batch_size = max(1, int(refresh.get("batch_size", 10)))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if current_to >= user_turn_count:
+        return None
+
+    next_from = current_to + 1
+    next_to = min(current_to + batch_size, user_turn_count)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    parent_ref = compact_task_ref(parent_task_id)
+    task_id = f"auto-session-refresh-{parent_ref}-{next_from}-{next_to}-{timestamp}"
+    prompt = f"""source_session_path: {refresh['source_session_path']}
+from_turn: {next_from}
+to_turn: {next_to}
+batch_size: {batch_size}
+auto_continue: true
+auto_close_reading: {str(refresh.get('auto_close_reading', True)).lower()}
+close_reading_doc: {refresh.get('close_reading_doc', 'docs/session-raw-close-reading.md')}
+summary_doc: {refresh.get('summary_doc', 'docs/session-raw-summary.md')}
+flow_id: {refresh.get('flow_id', '')}
+flow_expected_revision: {refresh.get('flow_revision', '')}
+
+Continue bounded external Codex/operator session refresh. Keep this route deterministic:
+do not call a model, do not run a worker, and do not enter the copy-project pipeline.
+"""
+    return enqueue_task_file(
+        task_id,
+        prompt,
+        phase=SESSION_REFRESH_PHASE,
+        checks=[],
+        timeout_seconds=120,
+        idle_timeout_seconds=120,
+        max_attempts=1,
+    )
+
+
+def schedule_next_session_close_reading_task(task: Task, summary: dict[str, Any]) -> Path | None:
+    if summary.get("status") != "pass":
+        return None
+    reading = summary.get("session_close_reading", {})
+    refresh = {
+        "source_session_path": reading.get("source_session_path"),
+        "to_turn": reading.get("to_turn"),
+        "user_turn_count": reading.get("user_turn_count"),
+        "batch_size": reading.get("batch_size", 10),
+        "auto_continue": reading.get("auto_continue", True),
+        "auto_close_reading": reading.get("auto_close_reading", True),
+        "close_reading_doc": reading.get("close_reading_doc", "docs/session-raw-close-reading.md"),
+        "summary_doc": reading.get("summary_doc", "docs/session-raw-summary.md"),
+        "flow_id": reading.get("flow_id", ""),
+        "flow_revision": reading.get("flow_revision"),
+    }
+    return schedule_next_session_refresh_range(task.task_id, refresh)
 
 
 def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path | None = None) -> dict[str, Any]:
@@ -2304,7 +3268,55 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "production_daemon_packaging": True,
         "patch_guard_evidence": True,
         "scope_guard_evidence": True,
+        "deterministic_search_replace_apply": True,
+        "already_applied_detection": True,
+        "rollback_aware_repair_prompt": True,
+        "worker_event_budget_gate": True,
+        "external_session_refresh_route": True,
+        "external_session_close_reading_route": True,
     }
+    capability_groups = {
+        "runtime": [
+            "middleware_mysql_redis",
+            "rust_gateway_streams",
+            "supervisor_queue_loop",
+            "native_rust_worker",
+            "production_daemon_packaging",
+        ],
+        "context": [
+            "evidence_state_deep_marks",
+            "checkpoint_lineage_channel_history",
+            "memory_adapter",
+            "context_compression_noise_gating",
+            "repo_map",
+            "event_summaries",
+            "copy_session",
+            "external_session_refresh_route",
+            "external_session_close_reading_route",
+        ],
+        "automation": [
+            "auto_next_scheduler",
+            "browser_or_tui_monitor",
+            "copy_pipeline_templates",
+        ],
+        "governance": [
+            "patch_guard_evidence",
+            "scope_guard_evidence",
+            "deterministic_search_replace_apply",
+            "already_applied_detection",
+            "rollback_aware_repair_prompt",
+            "worker_event_budget_gate",
+        ],
+    }
+    group_progress = {}
+    for group, names in capability_groups.items():
+        done = sum(1 for name in names if capabilities.get(name))
+        group_progress[group] = {
+            "done": done,
+            "total": len(names),
+            "percent": round(done / len(names) * 100, 1) if names else 0.0,
+            "capabilities": {name: capabilities.get(name, False) for name in names},
+        }
     done_capabilities = sum(1 for value in capabilities.values() if value)
     progress = {
         "updated_at": utc_now(),
@@ -2323,9 +3335,11 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
             summary.get("context_pressure", compact_context_pressure(summary)) if summary else {}
         ),
         "latest_git_governance": summary.get("git_governance", {}) if summary else {},
+        "latest_worker_failure": summary.get("worker_failure", {}) if summary else {},
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
         "capabilities": capabilities,
+        "capability_groups": group_progress,
         "next_goal": "Run the copy pipeline under the daemon for longer unattended soak tests.",
     }
     write_json(PROGRESS_PATH, progress)
@@ -2357,6 +3371,549 @@ def print_service_progress(progress: dict[str, Any]) -> None:
     )
     if progress.get("next_task_path"):
         print(f"next task: {progress['next_task_path']}")
+    groups = progress.get("capability_groups", {})
+    if groups:
+        rendered = " ".join(f"{name}={item.get('percent', 0)}%" for name, item in sorted(groups.items()))
+        print(f"capability groups: {rendered}")
+
+
+def write_session_refresh_context(task: Task, run_dir: Path, summary: dict[str, Any]) -> Path:
+    refresh = summary.get("session_refresh", {})
+    content = f"""# Session Refresh Context: {task.task_id}
+
+Updated: {summary['finished_at']}
+Status: {summary['status']}
+Phase: {task.phase}
+Run: {summary['run_dir']}
+
+## Boundary
+
+This route is deterministic supervisor work. It indexes/extracts an external
+Codex/operator session and does not call the Codex worker or any model API.
+
+## Source
+
+- source_session_path: {refresh.get('source_session_path', '')}
+- from_turn: {refresh.get('from_turn', '')}
+- to_turn: {refresh.get('to_turn', '')}
+- batch_size: {refresh.get('batch_size', '')}
+- auto_continue: {refresh.get('auto_continue', '')}
+- auto_close_reading: {refresh.get('auto_close_reading', '')}
+- flow_id: {refresh.get('flow_id', '')}
+- flow_revision: {refresh.get('flow_revision', '')}
+- user_turn_count: {refresh.get('user_turn_count', '')}
+- jsonl_lines: {refresh.get('jsonl_lines', '')}
+- approx_lines: {refresh.get('approx_lines', '')}
+
+## Outputs
+
+- index_path: {refresh.get('index_path', '')}
+- extract_path: {refresh.get('extract_path', '')}
+- output_path: {refresh.get('output_path', '')}
+- return_code: {refresh.get('return_code', '')}
+"""
+    context_path = run_dir / "context.md"
+    context_path.write_text(content, encoding="utf-8")
+    return context_path
+
+
+def write_session_refresh_evidence_and_state(
+    task: Task,
+    run_dir: Path,
+    summary: dict[str, Any],
+    context_path: Path,
+) -> tuple[Path, Path, Path, list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    run_id = Path(summary["run_dir"]).name
+    checkpoint_id = f"{run_id}:checkpoint:{summary['attempt']}"
+    refresh = summary.get("session_refresh", {})
+    records: list[dict[str, Any]] = []
+    paths = [
+        ("raw_task", refresh.get("raw_task_path", ""), {"task_id": task.task_id}),
+        (
+            "session_refresh_output",
+            refresh.get("output_path", ""),
+            {
+                "return_code": refresh.get("return_code"),
+                "source_session_path": refresh.get("source_session_path"),
+                "from_turn": refresh.get("from_turn"),
+                "to_turn": refresh.get("to_turn"),
+            },
+        ),
+        ("external_session_index", refresh.get("index_path", ""), {"session_id": refresh.get("session_id")}),
+        (
+            "external_session_extract",
+            refresh.get("extract_path", ""),
+            {
+                "session_id": refresh.get("session_id"),
+                "from_turn": refresh.get("from_turn"),
+                "to_turn": refresh.get("to_turn"),
+            },
+        ),
+        ("context", context_path, {"status": summary["status"]}),
+    ]
+    for kind, raw_path, metadata in paths:
+        if not str(raw_path):
+            continue
+        path = Path(raw_path)
+        record = evidence_record(
+            run_id=run_id,
+            checkpoint_id=checkpoint_id,
+            kind=kind,
+            path=path,
+            metadata=metadata,
+        )
+        if record:
+            record["session_id"] = task.task_id
+            records.append(record)
+
+    evidence_path = run_dir / "evidence.jsonl"
+    with evidence_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    deep_marks: list[dict[str, Any]] = []
+    for record in records:
+        deep_marks.extend(extract_deep_marks(record))
+    deep_marks_path = run_dir / "deep_marks.jsonl"
+    with deep_marks_path.open("w", encoding="utf-8") as handle:
+        for mark in deep_marks:
+            handle.write(json.dumps(mark, ensure_ascii=False) + "\n")
+
+    by_kind: dict[str, list[str]] = {}
+    for record in records:
+        by_kind.setdefault(record["kind"], []).append(record["evidence_id"])
+
+    state = {
+        "checkpoint_id": checkpoint_id,
+        "session_id": task.task_id,
+        "parent_checkpoint_id": summary.get("parent_checkpoint_id"),
+        "step": summary["attempt"],
+        "source": SESSION_REFRESH_PHASE,
+        "created_at": utc_now(),
+        "status": summary["status"],
+        "channels": {
+            "task": by_kind.get("raw_task", []),
+            "external_session": by_kind.get("external_session_index", []) + by_kind.get("external_session_extract", []),
+            "messages": by_kind.get("context", []),
+            "tool_events": by_kind.get("session_refresh_output", []),
+            "repo_state": [{"repo_head": summary["repo_head"]}],
+            "deep_marks": [mark["mark_id"] for mark in deep_marks],
+            "memories": [],
+        },
+        "updated_channels": ["task", "external_session", "messages", "tool_events", "repo_state", "deep_marks"],
+        "evidence_ids": [record["evidence_id"] for record in records],
+        "deep_mark_count": len(deep_marks),
+    }
+    state_path = run_dir / "state.json"
+    write_json(state_path, state)
+    return evidence_path, state_path, deep_marks_path, records, state, deep_marks
+
+
+def build_close_reading_notes(extract: dict[str, Any], extract_path: Path) -> tuple[str, str]:
+    from_turn = extract.get("from_turn")
+    to_turn = extract.get("to_turn")
+    approx_lines = extract.get("approx_lines", "")
+    source_session_path = extract.get("source_session_path", "")
+    session_id = extract.get("session_id", "")
+    heading = f"## Auto Close Reading: Turn {from_turn}-{to_turn}"
+    lines = [
+        heading,
+        "",
+        "Source:",
+        "",
+        f"- session: `{source_session_path}`",
+        f"- session_id: `{session_id}`",
+        f"- extract: `{extract_path}`",
+        f"- approx JSONL lines: `{approx_lines}`",
+        f"- generated_at: `{utc_now()}`",
+        "",
+        "Boundary:",
+        "",
+        "- deterministic extraction only; no model call",
+        "- preserves raw wording previews and tool evidence",
+        "- does not replace human/worker deep interpretation",
+        "",
+    ]
+    summary_lines = [
+        f"- turn {from_turn}-{to_turn}: external session extract `{extract_path}` lines `{approx_lines}`.",
+    ]
+    for item in extract.get("turns", []):
+        turn = item.get("turn")
+        user_line = item.get("user_line")
+        user_text = bounded_inline(item.get("user_text", ""), 700)
+        assistants = item.get("assistant_messages") or []
+        tool_calls = item.get("tool_calls") or []
+        tool_names = [str(call.get("name") or "unknown") for call in tool_calls]
+        lines.extend(
+            [
+                f"### Turn {turn}",
+                "",
+                "Original user intent:",
+                "",
+                f"- line `{user_line}`: {user_text}",
+                "",
+                "Execution evidence:",
+                "",
+                f"- assistant_messages: `{len(assistants)}`",
+                f"- tool_calls: `{len(tool_calls)}`"
+                + (f" ({', '.join(tool_names[:10])})" if tool_names else ""),
+                f"- tool_outputs: `{item.get('tool_output_count', 0)}`",
+                "",
+            ]
+        )
+        if assistants:
+            lines.extend(["Assistant preview:", "", f"- {bounded_inline(assistants[-1], 700)}", ""])
+        summary_lines.append(f"- turn {turn}, line {user_line}: {bounded_inline(user_text, 180)}")
+    return "\n".join(lines).rstrip() + "\n", "\n".join(summary_lines).rstrip() + "\n"
+
+
+def append_once(path: Path, marker: str, content: str) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if marker in existing:
+        return False
+    separator = "\n\n" if existing.strip() else ""
+    path.write_text(existing.rstrip() + separator + content, encoding="utf-8")
+    return True
+
+
+def write_session_close_reading_context(task: Task, run_dir: Path, summary: dict[str, Any]) -> Path:
+    reading = summary.get("session_close_reading", {})
+    content = f"""# Session Close Reading Context: {task.task_id}
+
+Updated: {summary['finished_at']}
+Status: {summary['status']}
+Phase: {task.phase}
+Run: {summary['run_dir']}
+
+## Boundary
+
+This route consumes a bounded external-session extract and appends deterministic
+notes. It does not call Codex, any worker, or any model API.
+
+## Inputs
+
+- extract_path: {reading.get('extract_path', '')}
+- from_turn: {reading.get('from_turn', '')}
+- to_turn: {reading.get('to_turn', '')}
+- user_turn_count: {reading.get('user_turn_count', '')}
+- batch_size: {reading.get('batch_size', '')}
+- auto_continue: {reading.get('auto_continue', '')}
+- auto_close_reading: {reading.get('auto_close_reading', '')}
+- flow_id: {reading.get('flow_id', '')}
+- flow_revision: {reading.get('flow_revision', '')}
+- approx_lines: {reading.get('approx_lines', '')}
+
+## Outputs
+
+- close_reading_doc: {reading.get('close_reading_doc', '')}
+- summary_doc: {reading.get('summary_doc', '')}
+- close_reading_appended: {reading.get('close_reading_appended', '')}
+- summary_appended: {reading.get('summary_appended', '')}
+"""
+    context_path = run_dir / "context.md"
+    context_path.write_text(content, encoding="utf-8")
+    return context_path
+
+
+def write_session_close_reading_evidence_and_state(
+    task: Task,
+    run_dir: Path,
+    summary: dict[str, Any],
+    context_path: Path,
+) -> tuple[Path, Path, Path, list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    run_id = Path(summary["run_dir"]).name
+    checkpoint_id = f"{run_id}:checkpoint:{summary['attempt']}"
+    reading = summary.get("session_close_reading", {})
+    records: list[dict[str, Any]] = []
+    paths = [
+        ("raw_task", reading.get("raw_task_path", ""), {"task_id": task.task_id}),
+        ("external_session_extract", reading.get("extract_path", ""), {"session_id": reading.get("session_id")}),
+        ("close_reading_doc", reading.get("close_reading_doc", ""), {"appended": reading.get("close_reading_appended")}),
+        ("close_reading_summary", reading.get("summary_doc", ""), {"appended": reading.get("summary_appended")}),
+        ("context", context_path, {"status": summary["status"]}),
+    ]
+    for kind, raw_path, metadata in paths:
+        if not str(raw_path):
+            continue
+        record = evidence_record(
+            run_id=run_id,
+            checkpoint_id=checkpoint_id,
+            kind=kind,
+            path=Path(raw_path),
+            metadata=metadata,
+        )
+        if record:
+            record["session_id"] = task.task_id
+            records.append(record)
+
+    evidence_path = run_dir / "evidence.jsonl"
+    with evidence_path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    deep_marks: list[dict[str, Any]] = []
+    for record in records:
+        deep_marks.extend(extract_deep_marks(record))
+    deep_marks_path = run_dir / "deep_marks.jsonl"
+    with deep_marks_path.open("w", encoding="utf-8") as handle:
+        for mark in deep_marks:
+            handle.write(json.dumps(mark, ensure_ascii=False) + "\n")
+
+    by_kind: dict[str, list[str]] = {}
+    for record in records:
+        by_kind.setdefault(record["kind"], []).append(record["evidence_id"])
+    state = {
+        "checkpoint_id": checkpoint_id,
+        "session_id": task.task_id,
+        "parent_checkpoint_id": summary.get("parent_checkpoint_id"),
+        "step": summary["attempt"],
+        "source": SESSION_CLOSE_READING_PHASE,
+        "created_at": utc_now(),
+        "status": summary["status"],
+        "channels": {
+            "task": by_kind.get("raw_task", []),
+            "external_session": by_kind.get("external_session_extract", []),
+            "messages": by_kind.get("context", []) + by_kind.get("close_reading_doc", []),
+            "summaries": by_kind.get("close_reading_summary", []),
+            "repo_state": [{"repo_head": summary["repo_head"]}],
+            "deep_marks": [mark["mark_id"] for mark in deep_marks],
+            "memories": [],
+        },
+        "updated_channels": ["task", "external_session", "messages", "summaries", "repo_state", "deep_marks"],
+        "evidence_ids": [record["evidence_id"] for record in records],
+        "deep_mark_count": len(deep_marks),
+    }
+    state_path = run_dir / "state.json"
+    write_json(state_path, state)
+    return evidence_path, state_path, deep_marks_path, records, state, deep_marks
+
+
+def run_session_refresh_task(task: Task, *, auto_next: bool = False) -> int:
+    attempt = 1
+    run_id = f"{task.task_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-a{attempt}"
+    run_dir = RUNS_DIR / run_id
+    run_dir.mkdir(parents=True)
+    lease = {
+        "task_id": task.task_id,
+        "attempt": attempt,
+        "started_at": utc_now(),
+        "run_dir": str(run_dir),
+        "worktree": "",
+        "repo_head": git_head(),
+        "parent_checkpoint_id": previous_task_checkpoint_id(task),
+    }
+    lease_path = RUNNING_DIR / f"{task.task_id}.json"
+    write_json(lease_path, lease)
+    raw_task_path = run_dir / "raw_task.md"
+    raw_task_path.write_text(task.path.read_text(encoding="utf-8"), encoding="utf-8")
+    output_path = run_dir / "session_refresh.json"
+
+    refresh: dict[str, Any] = {
+        "raw_task_path": str(raw_task_path),
+        "output_path": str(output_path),
+        "return_code": 1,
+        "called_model": False,
+        "called_worker": False,
+    }
+    status = "needs-repair"
+    try:
+        spec = parse_session_refresh_spec(task.prompt)
+        source_path = Path(spec["source_session_path"])
+        if not source_path.is_absolute():
+            source_path = ROOT / source_path
+        refresh.update({**spec, "source_session_path": str(source_path)})
+        result = run_cmd_no_raise(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "a9_session_refresh.py"),
+                "refresh",
+                str(source_path),
+                "--from-turn",
+                str(spec["from_turn"]),
+                "--to-turn",
+                str(spec["to_turn"]),
+                "--batch-size",
+                str(spec["batch_size"]),
+                "--out-dir",
+                str(EXTERNAL_SESSIONS_DIR),
+            ]
+        )
+        refresh["return_code"] = result.returncode
+        output_path.write_text(result.stdout, encoding="utf-8")
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            refresh.update(data)
+            status = "pass"
+    except (ValueError, json.JSONDecodeError) as exc:
+        refresh["error"] = str(exc)
+        output_path.write_text(json.dumps(refresh, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    summary = {
+        **lease,
+        "finished_at": utc_now(),
+        "status": status,
+        "phase": task.phase,
+        "task_path": str(task.path),
+        "session_refresh": refresh,
+        "checks": [],
+        "guard_summary": {},
+        "context_pressure": {},
+        "persistence": {"mysql": {"status": "skipped"}, "redis": {"status": "skipped"}},
+    }
+    context_path = write_session_refresh_context(task, run_dir, summary)
+    summary["context_path"] = str(context_path)
+    evidence_path, state_path, deep_marks_path, evidence, state, deep_marks = write_session_refresh_evidence_and_state(
+        task, run_dir, summary, context_path
+    )
+    summary["evidence_path"] = str(evidence_path)
+    summary["state_path"] = str(state_path)
+    summary["deep_marks_path"] = str(deep_marks_path)
+    summary["evidence_count"] = len(evidence)
+    summary["deep_mark_count"] = len(deep_marks)
+    summary["checkpoint_id"] = state["checkpoint_id"]
+    flow_transition = transition_managed_flow(
+        flow_id=str(refresh.get("flow_id") or ""),
+        expected_revision=refresh.get("flow_expected_revision"),
+        next_status="refreshed" if status == "pass" else "refresh_failed",
+        actor="a9_supervisor",
+        reason=f"{task.phase}:{status}",
+        evidence_id=summary["checkpoint_id"],
+    )
+    summary["flow_transition"] = flow_transition
+    if flow_transition.get("revision") is not None:
+        refresh["flow_revision"] = flow_transition["revision"]
+    elif refresh.get("flow_expected_revision") is not None:
+        refresh["flow_revision"] = refresh.get("flow_expected_revision")
+    write_json(run_dir / "summary.json", summary)
+
+    done_path = DONE_DIR / f"{task.task_id}.json"
+    write_json(done_path, summary)
+    lease_path.unlink(missing_ok=True)
+    target_task_path = DONE_DIR / task.path.name
+    if task.path.exists():
+        shutil.move(str(task.path), str(target_task_path))
+    next_task_path = schedule_next_task(task, summary) if auto_next else None
+    print(f"{task.task_id}: {status}")
+    print(f"run: {run_dir}")
+    print_service_progress(service_progress(summary, next_task_path))
+    return 0 if status in {"pass", "needs-repair"} else 1
+
+
+def run_session_close_reading_task(task: Task, *, auto_next: bool = False) -> int:
+    attempt = 1
+    run_id = f"{task.task_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-a{attempt}"
+    run_dir = RUNS_DIR / run_id
+    run_dir.mkdir(parents=True)
+    lease = {
+        "task_id": task.task_id,
+        "attempt": attempt,
+        "started_at": utc_now(),
+        "run_dir": str(run_dir),
+        "worktree": "",
+        "repo_head": git_head(),
+        "parent_checkpoint_id": previous_task_checkpoint_id(task),
+    }
+    lease_path = RUNNING_DIR / f"{task.task_id}.json"
+    write_json(lease_path, lease)
+    raw_task_path = run_dir / "raw_task.md"
+    raw_task_path.write_text(task.path.read_text(encoding="utf-8"), encoding="utf-8")
+    reading: dict[str, Any] = {
+        "raw_task_path": str(raw_task_path),
+        "called_model": False,
+        "called_worker": False,
+    }
+    status = "needs-repair"
+    try:
+        spec = parse_session_close_reading_spec(task.prompt)
+        extract_path = Path(spec["extract_path"])
+        close_doc = Path(spec["close_reading_doc"])
+        summary_doc = Path(spec["summary_doc"])
+        if not extract_path.is_absolute():
+            extract_path = ROOT / extract_path
+        if not close_doc.is_absolute():
+            close_doc = ROOT / close_doc
+        if not summary_doc.is_absolute():
+            summary_doc = ROOT / summary_doc
+        extract = json.loads(extract_path.read_text(encoding="utf-8"))
+        notes, summary_notes = build_close_reading_notes(extract, extract_path)
+        marker = f"## Auto Close Reading: Turn {extract.get('from_turn')}-{extract.get('to_turn')}"
+        summary_marker = f"- turn {extract.get('from_turn')}-{extract.get('to_turn')}: external session extract"
+        close_appended = append_once(close_doc, marker, notes)
+        summary_appended = append_once(summary_doc, summary_marker, "\n## Auto Session Extract Index\n\n" + summary_notes)
+        reading.update(
+            {
+                **spec,
+                "extract_path": str(extract_path),
+                "close_reading_doc": str(close_doc),
+                "summary_doc": str(summary_doc),
+                "session_id": extract.get("session_id"),
+                "source_session_path": spec.get("source_session_path") or extract.get("source_session_path"),
+                "from_turn": extract.get("from_turn"),
+                "to_turn": spec.get("to_turn") or extract.get("to_turn"),
+                "user_turn_count": spec.get("user_turn_count"),
+                "batch_size": spec.get("batch_size", 10),
+                "auto_continue": spec.get("auto_continue", True),
+                "auto_close_reading": spec.get("auto_close_reading", True),
+                "approx_lines": extract.get("approx_lines"),
+                "turn_count": len(extract.get("turns", [])),
+                "close_reading_appended": close_appended,
+                "summary_appended": summary_appended,
+            }
+        )
+        status = "pass"
+    except (ValueError, json.JSONDecodeError, OSError) as exc:
+        reading["error"] = str(exc)
+
+    summary = {
+        **lease,
+        "finished_at": utc_now(),
+        "status": status,
+        "phase": task.phase,
+        "task_path": str(task.path),
+        "session_close_reading": reading,
+        "checks": [],
+        "guard_summary": {},
+        "context_pressure": {},
+        "persistence": {"mysql": {"status": "skipped"}, "redis": {"status": "skipped"}},
+    }
+    context_path = write_session_close_reading_context(task, run_dir, summary)
+    summary["context_path"] = str(context_path)
+    evidence_path, state_path, deep_marks_path, evidence, state, deep_marks = write_session_close_reading_evidence_and_state(
+        task, run_dir, summary, context_path
+    )
+    summary["evidence_path"] = str(evidence_path)
+    summary["state_path"] = str(state_path)
+    summary["deep_marks_path"] = str(deep_marks_path)
+    summary["evidence_count"] = len(evidence)
+    summary["deep_mark_count"] = len(deep_marks)
+    summary["checkpoint_id"] = state["checkpoint_id"]
+    flow_transition = transition_managed_flow(
+        flow_id=str(reading.get("flow_id") or ""),
+        expected_revision=reading.get("flow_expected_revision"),
+        next_status="close_read" if status == "pass" else "close_read_failed",
+        actor="a9_supervisor",
+        reason=f"{task.phase}:{status}",
+        evidence_id=summary["checkpoint_id"],
+    )
+    summary["flow_transition"] = flow_transition
+    if flow_transition.get("revision") is not None:
+        reading["flow_revision"] = flow_transition["revision"]
+    elif reading.get("flow_expected_revision") is not None:
+        reading["flow_revision"] = reading.get("flow_expected_revision")
+    write_json(run_dir / "summary.json", summary)
+
+    done_path = DONE_DIR / f"{task.task_id}.json"
+    write_json(done_path, summary)
+    lease_path.unlink(missing_ok=True)
+    target_task_path = DONE_DIR / task.path.name
+    if task.path.exists():
+        shutil.move(str(task.path), str(target_task_path))
+    next_task_path = schedule_next_task(task, summary) if auto_next else None
+    print(f"{task.task_id}: {status}")
+    print(f"run: {run_dir}")
+    print_service_progress(service_progress(summary, next_task_path))
+    return 0 if status in {"pass", "needs-repair"} else 1
 
 
 def run_one(*, auto_next: bool = False) -> int:
@@ -2366,6 +3923,10 @@ def run_one(*, auto_next: bool = False) -> int:
         print("No queued tasks.")
         print_service_progress(service_progress())
         return 0
+    if task.phase == SESSION_REFRESH_PHASE:
+        return run_session_refresh_task(task, auto_next=auto_next)
+    if task.phase == SESSION_CLOSE_READING_PHASE:
+        return run_session_close_reading_task(task, auto_next=auto_next)
 
     attempt = 1
     while attempt <= task.max_attempts:
@@ -2386,12 +3947,23 @@ def run_one(*, auto_next: bool = False) -> int:
         write_json(lease_path, lease)
 
         worker = run_worker(task, worktree, run_dir)
+        worker_envelope = validate_worker_envelope(task, worker, run_dir)
         patch_apply = apply_worker_search_replace(worker, worktree, run_dir)
         diff = capture_diff(worktree, run_dir)
         patch_guard = validate_captured_diff(diff, worktree, run_dir)
         scope_guard = validate_scope(diff, task, run_dir)
         checks = run_checks(task, worktree, run_dir)
-        status = decide_status(worker, diff, checks, patch_guard, scope_guard, patch_apply)
+        status = decide_status(
+            worker,
+            diff,
+            checks,
+            patch_guard,
+            scope_guard,
+            patch_apply,
+            worker_envelope,
+            allow_no_diff=task_allows_no_diff(task),
+        )
+        worker_failure = classify_worker_failure(worker)
         git_governance = apply_git_governance(worktree, run_dir, task, status, diff)
         summary = {
             **lease,
@@ -2400,6 +3972,8 @@ def run_one(*, auto_next: bool = False) -> int:
             "phase": task.phase,
             "task_path": str(task.path),
             "worker": worker,
+            "worker_failure": worker_failure,
+            "worker_envelope": worker_envelope,
             "patch_apply": patch_apply,
             "diff": diff,
             "patch_guard": patch_guard,
@@ -2407,6 +3981,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "git_governance": git_governance,
             "checks": checks,
         }
+        summary["policy_attestation"] = create_policy_attestation(task, run_dir, summary)
         summary["context_pressure"] = compact_context_pressure(summary)
         summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)
@@ -2418,6 +3993,30 @@ def run_one(*, auto_next: bool = False) -> int:
         summary["state_path"] = str(state_path)
         summary["deep_marks_path"] = str(deep_marks_path)
         summary["persistence"] = persist_run_state(task, summary, evidence, state, deep_marks)
+        task_flow = parse_task_flow_spec(task.prompt)
+        if status == "needs-approval":
+            flow_transition = set_managed_flow_wait(
+                flow_id=str(task_flow.get("flow_id") or ""),
+                expected_revision=task_flow.get("flow_expected_revision"),
+                worker_envelope=worker_envelope,
+                policy_attestation=summary["policy_attestation"],
+                actor="a9_supervisor",
+                evidence_id=state["checkpoint_id"],
+            )
+        else:
+            policy_hash = str(summary["policy_attestation"].get("attestation_hash") or "")
+            reason = f"{task.phase}:{status}"
+            if policy_hash:
+                reason = f"{reason}:policy:{policy_hash[:12]}"
+            flow_transition = transition_managed_flow(
+                flow_id=str(task_flow.get("flow_id") or ""),
+                expected_revision=task_flow.get("flow_expected_revision"),
+                next_status=flow_status_for_task(task.phase, status),
+                actor="a9_supervisor",
+                reason=reason,
+                evidence_id=state["checkpoint_id"],
+            )
+        summary["flow_transition"] = flow_transition
         write_json(run_dir / "summary.json", summary)
 
         retryable = status.startswith("retryable-")
@@ -2429,12 +4028,13 @@ def run_one(*, auto_next: bool = False) -> int:
         write_json(done_path, summary)
         lease_path.unlink(missing_ok=True)
         target_task_path = DONE_DIR / task.path.name
-        shutil.move(str(task.path), str(target_task_path))
+        if task.path.exists():
+            shutil.move(str(task.path), str(target_task_path))
         next_task_path = schedule_next_task(task, summary) if auto_next else None
         print(f"{task.task_id}: {status}")
         print(f"run: {run_dir}")
         print_service_progress(service_progress(summary, next_task_path))
-        return 0 if status in {"pass", "needs-followup", "needs-repair"} else 1
+        return 0 if status in {"pass", "needs-followup", "needs-repair", "needs-approval"} else 1
 
     return 1
 
@@ -2480,7 +4080,7 @@ def status() -> int:
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
     print(f"running: {len(list(RUNNING_DIR.glob('*.json')))}")
     print(f"done: {len(list(DONE_DIR.glob('*.json')))}")
-    latest = sorted(RUNS_DIR.glob("*/summary.json"))
+    latest = sorted(RUNS_DIR.glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
     if latest:
         data = json.loads(latest[-1].read_text(encoding="utf-8"))
         print(f"latest: {data['task_id']} {data['status']} {data['run_dir']}")
@@ -2505,9 +4105,23 @@ def status() -> int:
                 f"{pressure.get('prompt_budget_tokens', 'missing')} "
                 f"ratio={pressure.get('budget_ratio', 'missing')}"
             )
+            usage = pressure.get("actual_token_usage") or data.get("worker", {}).get("actual_token_usage", {})
+            if usage:
+                print(
+                    "latest actual tokens: "
+                    f"input={usage.get('input_tokens', 0)} "
+                    f"cached={usage.get('cached_input_tokens', 0)} "
+                    f"uncached={usage.get('uncached_input_tokens', 0)} "
+                    f"output={usage.get('output_tokens', 0)} "
+                    f"reasoning={usage.get('reasoning_output_tokens', 0)}"
+                )
     if PROGRESS_PATH.exists():
         progress = json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
         print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
+        groups = progress.get("capability_groups", {})
+        if groups:
+            rendered = " ".join(f"{name}={item.get('percent', 0)}%" for name, item in sorted(groups.items()))
+            print(f"24h groups: {rendered}")
     return 0
 
 

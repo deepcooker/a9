@@ -197,7 +197,7 @@ Mechanisms to copy:
 The prompt builder should assemble context from channels, not from a monolithic transcript.
 
 1. Load session and current checkpoint.
-2. Load hard doctrine: `需求.md`, `codex.md`, `TRADE_AGENTS.md`, `AGENTS.md`.
+2. Load hard doctrine: `原始想法需求.md`, `TRADE_AGENTS.md`, `AGENTS.md`.
 3. Load task state and last N high-fidelity events.
 4. Load exact failed check logs and latest patch if present.
 5. Load repo map slice for affected files.
@@ -297,6 +297,204 @@ Mem0 is Apache-2.0 and can be directly introduced or forked. A9's current path i
 - Later, optionally install `mem0ai` as a Python plugin or vendor a modified fork if its internals need deeper changes.
 
 This avoids putting a heavy Python memory framework inside the Rust governance hot path while still copying Mem0's mature memory semantics.
+
+## Raw Session Refresh Task
+
+Manual raw-session close reading proved the mechanism, but it should not remain
+a chat-only habit. A9 needs a dedicated 24-hour task type for it:
+
+```text
+session_refresh
+  -> locate raw Codex session JSONL
+  -> record session path, turn count, and approximate line index
+  -> read the next bounded turn range
+  -> extract original intent, execution detail, correction, and drift reason
+  -> update close-reading and rolling-summary docs
+  -> write deep marks and evidence links
+  -> stop before context or output becomes too large
+```
+
+This task must be bounded. The manual run exposed a failure mode: a long
+close-reading turn triggered context compaction and tool/output fragility. The
+operator had to run `/compact` and continue. A9 should copy that lesson:
+
+- Do not ask one worker to read an entire long session.
+- Default batch size is 10 user turns or less.
+- If output is truncated, re-extract only the missing turn range.
+- If context pressure crosses the budget, stop and write a continuation task.
+- The continuation task must include the raw session path, last completed turn,
+  next turn range, and approximate JSONL line numbers.
+
+The session refresh worker is allowed to update docs and evidence. It is not
+allowed to infer missing details from memory when the raw JSONL can be read.
+
+Current deterministic route:
+
+```bash
+python3 scripts/a9_supervisor.py enqueue raw-refresh \
+  --phase session_refresh \
+  $'source_session_path: /path/to/rollout.jsonl\nfrom_turn: 110\nto_turn: 114\nbatch_size: 10\nauto_continue: true'
+python3 scripts/a9_supervisor.py run-one --auto-next
+
+scripts/a9_session_refresh.py index /path/to/rollout.jsonl
+scripts/a9_session_refresh.py extract /path/to/rollout.jsonl --from-turn 110 --to-turn 114
+scripts/a9_session_refresh.py refresh /path/to/rollout.jsonl --from-turn 110 --to-turn 114
+```
+
+`session_refresh` is a supervisor route, not an AI worker phase. It calls the
+deterministic parser, writes run evidence/state, and does not call Codex or any
+model API. It also does not schedule `reference_scan -> mechanism_extract -> ...`
+follow-ups; project copying remains a separate pipeline. With `--auto-next` and
+`auto_continue: true`, it schedules only the next bounded `session_refresh`
+range, stopping automatically when `to_turn` reaches the indexed user-turn
+count.
+
+Close-reading import is also a separate deterministic route:
+
+```bash
+python3 scripts/a9_supervisor.py enqueue raw-close-reading \
+  --phase session_close_reading \
+  $'extract_path: .a9/external_sessions/<external_session_id>/turns-110-114.json\nclose_reading_doc: docs/session-raw-close-reading.md\nsummary_doc: docs/session-raw-summary.md'
+python3 scripts/a9_supervisor.py run-one
+```
+
+`session_close_reading` consumes a bounded extract and appends evidence-indexed
+notes to the raw close-reading docs. It is intentionally shallow: it preserves
+turns, line numbers, raw user wording previews, assistant/tool counts, and
+evidence paths. It does not claim deep semantic judgment and does not call a
+model. Deeper interpretation remains a separate worker/evaluator step.
+
+With `--auto-next`, the external-session mini-flow is:
+
+```text
+session_refresh(turn N-M)
+  -> session_close_reading(extract N-M)
+  -> session_refresh(turn M+1-K)
+  -> ...
+  -> stop when M reaches user_turn_count
+```
+
+This copies OpenClaw-style routing discipline at A9 scale: every transition is
+phase-specific, evidence-backed, and bounded. It never falls through into the
+project copying pipeline.
+
+`refresh` writes:
+
+```text
+.a9/external_sessions/<external_session_id>/index.json
+.a9/external_sessions/<external_session_id>/turns-<from>-<to>.json
+```
+
+These files are evidence inputs for close-reading docs and future MySQL/Redis
+indexes. They are not mem0 memories.
+
+## Two Session Families
+
+A9 must separate two session families.
+
+### External Codex/Operator Session
+
+This is the session produced by the human + Codex window, for example:
+
+```text
+/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl
+```
+
+Its purpose is governance and doctrine extraction:
+
+- recover original intent after compaction
+- preserve why decisions changed
+- extract project doctrine, mistakes, next steps, and architecture boundaries
+- cite turns and approximate JSONL line numbers
+
+This session is not the A9 worker runtime. It is an external evidence source
+imported by a `session_refresh` task.
+
+### A9 Runtime Session
+
+This is the session produced by A9 itself while running 24-hour tasks:
+
+```text
+.a9/tasks/queue
+.a9/tasks/running
+.a9/tasks/done
+.a9/runs/<task>-<timestamp>-a<attempt>/
+```
+
+Its purpose is execution governance:
+
+- task/flow state
+- worker prompt and events
+- tool outputs
+- patches and apply metadata
+- checks, guard findings, git governance
+- retry, repair, budget stop, approval/wait/resume
+
+This session is controlled by A9 runtime and must eventually move through
+managed flows, Redis Functions, strict worker envelopes, and policy
+attestation.
+
+### Relationship
+
+The external Codex/operator session can create doctrine and tasks for A9. A9
+runtime sessions execute those tasks and produce new evidence. They should be
+linked, not merged:
+
+```text
+external_session(turns, decisions)
+  -> session_refresh evidence/deep_marks
+  -> doctrine/task updates
+  -> A9 runtime task/flow/run
+  -> runtime evidence/checks/patches
+```
+
+Storage should keep separate IDs:
+
+- `external_session_id`
+- `operator_turn`
+- `source_session_path`
+- `a9_task_id`
+- `a9_run_id`
+- `flow_id`
+
+Do not confuse an imported Codex turn with an A9 worker run.
+
+## Storage Boundary For Sessions And Memory
+
+Raw sessions do not belong in mem0.
+
+The correct split is:
+
+- Raw JSONL session files remain immutable evidence on disk or object storage.
+- MySQL is the canonical index for sessions, checkpoints, evidence rows, turn
+  ranges, line offsets, source paths, hashes, and close-reading records.
+- Redis Stack is the hot control plane and retrieval index: latest session
+  state, deep marks, flow state, budgets, retry state, and search indexes.
+- mem0-style memory stores only extracted long-term facts, preferences,
+  decisions, procedures, risks, and reference mechanisms.
+
+This distinction matters because raw sessions are large, ordered, and
+audit-oriented. mem0 memories are small, semantic, supersedable, and
+retrieval-oriented. Putting raw sessions into mem0 would mix evidence storage
+with memory recall and would recreate the same compaction/detail-loss problem.
+
+Every mem0 memory derived from a session must cite evidence:
+
+```json
+{
+  "memory": "OpenClaw/Lobster is A9's runtime/managed-flow primary reference.",
+  "memory_type": "decision",
+  "evidence_ids": ["session:<id>:turn:95"],
+  "metadata": {
+    "source_session_path": "/root/.codex/sessions/...",
+    "turn": 95,
+    "approx_line": 8330
+  }
+}
+```
+
+The prompt builder should recall mem0 memories for speed, then follow
+`evidence_ids` back to MySQL/files when exact wording or chronology matters.
 
 Python owns the model-facing business path:
 

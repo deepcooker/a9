@@ -172,6 +172,60 @@ gamma
             self.assertEqual(result["applied_count"], 0)
             self.assertEqual(target.read_text(encoding="utf-8"), "    alpha\nalpha\n")
 
+    def test_already_applied_replace_is_success_without_writing(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "demo.py"
+            target.write_text("gamma\n", encoding="utf-8")
+
+            result = mod.apply_search_replace(
+                """demo.py
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+""",
+                root,
+            )
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["applied_count"], 0)
+            self.assertEqual(result["already_applied_count"], 1)
+            self.assertEqual(result["success_count"], 1)
+            self.assertEqual(result["successful_blocks"][0]["mode"], "already_applied")
+            self.assertEqual(result["successful_blocks"][0]["replace_matches"], 1)
+            self.assertEqual(result["touched_files"], [])
+            self.assertEqual(result["referenced_files"], ["demo.py"])
+            self.assertIn("already applied", result["findings"][0]["message"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "gamma\n")
+
+    def test_already_applied_ambiguous_replace_still_fails(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "demo.py"
+            target.write_text("gamma\ngamma\n", encoding="utf-8")
+
+            result = mod.apply_search_replace(
+                """demo.py
+<<<<<<< SEARCH
+alpha
+=======
+gamma
+>>>>>>> REPLACE
+""",
+                root,
+            )
+
+            self.assertEqual(result["status"], "fail")
+            self.assertEqual(result["applied_count"], 0)
+            self.assertEqual(result["already_applied_count"], 0)
+            self.assertEqual(result["failed_count"], 1)
+            self.assertIn("REPLACE appears 2 times", result["failed_blocks"][0]["repair_hint"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "gamma\ngamma\n")
+
     def test_normalizes_filename_and_fence_wrapping(self):
         mod = load_patch_apply()
         with tempfile.TemporaryDirectory() as tmp:

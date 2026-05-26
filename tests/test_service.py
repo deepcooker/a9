@@ -90,6 +90,22 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(payload["dry_run"])
         self.assertEqual(payload["target"], "supervisor")
 
+    def test_service_readiness_returns_run_mode_json(self):
+        result = subprocess.run(
+            [str(SERVICE_PATH), "readiness"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertIn(result.returncode, (0, 1), result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertIn(payload["mode"], {"not_ready", "bounded_ready", "daemon_ready"})
+        self.assertIn("blockers", payload)
+        self.assertIn("warnings", payload)
+        self.assertIn("recommendation", payload)
+        self.assertIn("git", payload)
+
     def test_daemon_heartbeat_is_json(self):
         mod = load_supervisor()
         payload = mod.write_daemon_heartbeat("test", detail="service-test")
@@ -135,6 +151,16 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(progress["latest_guards"]["scope_guard"]["changed_files"], ["scripts/a9_supervisor.py"])
         self.assertEqual(progress["latest_context_pressure"]["budget_ratio"], 0.9)
         self.assertEqual(progress["latest_context_pressure"]["remaining_tokens"], 100)
+        self.assertEqual(progress["capability_groups"]["runtime"]["percent"], 100.0)
+        self.assertEqual(progress["capability_groups"]["context"]["percent"], 100.0)
+        self.assertEqual(progress["capability_groups"]["automation"]["percent"], 100.0)
+        self.assertEqual(progress["capability_groups"]["governance"]["percent"], 100.0)
+        self.assertTrue(
+            progress["capability_groups"]["governance"]["capabilities"]["rollback_aware_repair_prompt"]
+        )
+        self.assertTrue(
+            progress["capability_groups"]["governance"]["capabilities"]["worker_event_budget_gate"]
+        )
 
 
 if __name__ == "__main__":

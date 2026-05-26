@@ -1,6 +1,7 @@
 use std::env;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const TASK_STREAM: &str = "a9:tasks";
@@ -18,7 +19,14 @@ fn encode_command(parts: &[String]) -> Vec<u8> {
     out
 }
 
-fn redis_roundtrip(addr: &str, parts: &[String]) -> std::io::Result<String> {
+fn reconnect_backoff(attempt: u32) -> Duration {
+    match attempt {
+        0 => Duration::ZERO,
+        n => Duration::from_millis(2u64.pow(n.min(15)) + 10),
+    }
+}
+
+fn redis_roundtrip_once(addr: &str, parts: &[String]) -> std::io::Result<String> {
     let mut stream = TcpStream::connect(addr)?;
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     stream.set_write_timeout(Some(Duration::from_secs(3)))?;
@@ -26,6 +34,26 @@ fn redis_roundtrip(addr: &str, parts: &[String]) -> std::io::Result<String> {
     let mut buf = vec![0; 65536];
     let n = stream.read(&mut buf)?;
     Ok(String::from_utf8_lossy(&buf[..n]).to_string())
+}
+
+fn redis_roundtrip(addr: &str, parts: &[String]) -> std::io::Result<String> {
+    let retries = env::var("A9_REDIS_RETRIES")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(3);
+    let mut last_error = None;
+    for attempt in 0..=retries {
+        if attempt > 0 {
+            thread::sleep(reconnect_backoff(attempt));
+        }
+        match redis_roundtrip_once(addr, parts) {
+            Ok(response) => return Ok(response),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::Other, "redis roundtrip failed")
+    }))
 }
 
 fn cmd(parts: &[&str]) -> Vec<String> {
@@ -187,4 +215,27 @@ fn main() -> std::io::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_first_attempt_is_immediate() {
+        assert_eq!(reconnect_backoff(0), Duration::ZERO);
+    }
+
+    #[test]
+    fn backoff_is_exponential_with_small_constant_delay() {
+        assert_eq!(reconnect_backoff(1), Duration::from_millis(12));
+        assert_eq!(reconnect_backoff(2), Duration::from_millis(14));
+        assert_eq!(reconnect_backoff(3), Duration::from_millis(18));
+    }
+
+    #[test]
+    fn backoff_is_capped_at_barter_rs_style_exponent() {
+        assert_eq!(reconnect_backoff(15), Duration::from_millis(32778));
+        assert_eq!(reconnect_backoff(99), Duration::from_millis(32778));
+    }
 }

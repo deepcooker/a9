@@ -116,6 +116,22 @@ supervisor path, git governance may roll back the failed run, so the next worker
 must check target content and the block metadata before deciding whether to
 resend a successful block.
 
+If `SEARCH` no longer matches but `REPLACE` already exists exactly once in the
+target file, A9 treats the block as `already_applied`: the run gets warning
+evidence, no file write happens, and the block counts as successful for repair
+purposes. If `REPLACE` appears multiple times, the block still fails because the
+engine cannot prove which occurrence came from the intended edit.
+
+The supervisor carries this state into the next repair prompt as structured
+metadata: `applied_count`, `already_applied_count`, `success_count`,
+`failed_count`, git governance status, rollback status, successful block lines,
+and failed block lines. This copies the Aider repair-loop discipline again while
+respecting A9's git governance: if the failed run was retained, a worker should
+repair only failed blocks and should not resend blocks already recorded as
+`replace`, `create`, or `already_applied`; if git governance rolled the run
+back, the worker must inspect current file content before deciding whether those
+successful blocks need to be sent again.
+
 ## Controlled Fuzz
 
 A9 copies only Aider's lowest-risk flexible match: missing or extra leading

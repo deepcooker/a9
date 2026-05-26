@@ -302,7 +302,47 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
             replacement = replace_with_strategy(current, search, replace)
             if replacement is None:
                 exact_matches = current.count(search)
-                message = f"SEARCH content must match exactly once; found {exact_matches}"
+                replace_matches = current.count(replace) if replace else 0
+                if replace_matches == 1:
+                    findings.append(
+                        a9_patch_guard.Finding(
+                            "warning",
+                            "SEARCH missing but REPLACE already exists exactly once; treating block as already applied",
+                            block.path,
+                        )
+                    )
+                    if normalizations:
+                        findings.append(
+                            a9_patch_guard.Finding(
+                                "warning",
+                                "normalized wrapped SEARCH/REPLACE content: " + ", ".join(normalizations),
+                                block.path,
+                            )
+                        )
+                    applied.append(
+                        {
+                            "index": index,
+                            "path": block.path,
+                            "effective_path": effective_path,
+                            "line": block.line,
+                            "mode": "already_applied",
+                            "search_bytes": len(search.encode("utf-8")),
+                            "replace_bytes": len(replace.encode("utf-8")),
+                            "matches": exact_matches,
+                            "replace_matches": replace_matches,
+                            "match_strategy": "already_applied",
+                            "fuzz_level": 0,
+                            "normalizations": normalizations,
+                        }
+                    )
+                    continue
+                if replace_matches > 1:
+                    message = (
+                        f"SEARCH content must match exactly once; found {exact_matches}; "
+                        f"REPLACE appears {replace_matches} times"
+                    )
+                else:
+                    message = f"SEARCH content must match exactly once; found {exact_matches}"
                 findings.append(
                     a9_patch_guard.Finding(
                         "error",
@@ -320,6 +360,7 @@ def apply_search_replace(text: str, root: Path, *, dry_run: bool = False) -> dic
                         "search_bytes": len(search.encode("utf-8")),
                         "replace_bytes": len(replace.encode("utf-8")),
                         "matches": exact_matches,
+                        "replace_matches": replace_matches,
                         "match_strategy": "none",
                         "fuzz_level": None,
                         "normalizations": normalizations,
@@ -378,18 +419,23 @@ def report(
     dry_run: bool,
 ) -> dict[str, Any]:
     applied_success = [item for item in applied if item.get("mode") != "failed"]
+    written = [item for item in applied_success if item.get("mode") in {"create", "replace"}]
+    already_applied = [item for item in applied_success if item.get("mode") == "already_applied"]
     failed = [item for item in applied if item.get("mode") == "failed"]
     return {
         "status": status,
         "kind": kind,
         "dry_run": dry_run,
-        "applied_count": len(applied_success),
+        "applied_count": len(written),
+        "already_applied_count": len(already_applied),
+        "success_count": len(applied_success),
         "failed_count": len(failed),
         "partial_success": bool(applied_success and failed),
         "applied": applied,
         "successful_blocks": applied_success,
         "failed_blocks": failed,
-        "touched_files": sorted({item.get("effective_path") or item["path"] for item in applied_success}),
+        "touched_files": sorted({item.get("effective_path") or item["path"] for item in written}),
+        "referenced_files": sorted({item.get("effective_path") or item["path"] for item in applied_success}),
         "repair_hint": build_repair_hint(applied_success, failed),
         "findings": [item.__dict__ for item in findings],
     }
