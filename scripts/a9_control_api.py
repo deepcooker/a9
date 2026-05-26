@@ -940,15 +940,16 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
         result["consumer_probe_reason"] = "xinfo_consumers_malformed"
         set_stream_action(pending_total=total)
         return result
+    consumer_rows = [
+        {
+            "name": row.get("name", ""),
+            "pending": parse_int(row.get("pending"), default=0),
+            "idle": parse_int(row.get("idle"), default=0),
+        }
+        for row in rows
+    ]
     top_consumers = sorted(
-        (
-            {
-                "name": row.get("name", ""),
-                "pending": parse_int(row.get("pending"), default=0),
-                "idle": parse_int(row.get("idle"), default=0),
-            }
-            for row in rows
-        ),
+        consumer_rows,
         key=lambda item: item["pending"],
         reverse=True,
     )[:TASKS_STREAM_TOP_CONSUMERS_LIMIT]
@@ -956,7 +957,7 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
     result["consumer_probe_reason"] = "healthy"
     result["top_consumers"] = top_consumers
     highest_pending = top_consumers[0]["pending"] if top_consumers else 0
-    highest_idle = max((item["idle"] for item in top_consumers if item["pending"] > 0), default=0)
+    highest_idle = max((item["idle"] for item in consumer_rows if item["pending"] > 0), default=0)
     set_stream_action(pending_total=total, top_pending=highest_pending, top_idle=highest_idle)
     return result
 

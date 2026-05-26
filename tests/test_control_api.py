@@ -556,7 +556,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["tasks_stream"]["stream_action"], "watch")
         self.assertEqual(status["tasks_stream"]["stream_action_reason"], "pending_stuck")
 
-    def test_node_status_tasks_stream_probe_uses_highest_idle_among_pending_consumers(self):
+    def test_node_status_tasks_stream_probe_uses_highest_idle_among_all_pending_consumers_before_top_cap(self):
         mod = load_control_api()
 
         class FakeProc:
@@ -572,11 +572,16 @@ class ControlApiTests(unittest.TestCase):
             if args == ["XLEN", "a9:events"]:
                 return FakeProc("1\n")
             if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
-                return FakeProc("name\na9-worker\nconsumers\n2\nentries-read\n20\nlag\n4\n")
+                return FakeProc("name\na9-worker\nconsumers\n4\nentries-read\n20\nlag\n4\n")
             if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
-                return FakeProc("6\n1740000001-0\n1740000010-0\nworker-a\n5\nworker-b\n1\n")
+                return FakeProc("6\n1740000001-0\n1740000010-0\nworker-a\n2\nworker-b\n2\nworker-c\n1\nworker-d\n1\n")
             if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
-                return FakeProc("name\nworker-a\npending\n5\nidle\n100\nname\nworker-b\npending\n1\nidle\n30000\n")
+                return FakeProc(
+                    "name\nworker-a\npending\n2\nidle\n100\n"
+                    "name\nworker-b\npending\n2\nidle\n200\n"
+                    "name\nworker-c\npending\n1\nidle\n1000\n"
+                    "name\nworker-d\npending\n1\nidle\n30000\n"
+                )
             raise AssertionError(f"unexpected redis args: {args}")
 
         original_redis = mod.redis_cli
@@ -588,6 +593,15 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(status["tasks_stream"]["status"], "ok")
         self.assertEqual(status["tasks_stream"]["reason"], "healthy")
+        self.assertEqual(len(status["tasks_stream"]["top_consumers"]), 3)
+        self.assertEqual(
+            status["tasks_stream"]["top_consumers"],
+            [
+                {"name": "worker-a", "pending": 2, "idle": 100},
+                {"name": "worker-b", "pending": 2, "idle": 200},
+                {"name": "worker-c", "pending": 1, "idle": 1000},
+            ],
+        )
         self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
         self.assertEqual(status["tasks_stream"]["stream_action"], "intervene")
         self.assertEqual(status["tasks_stream"]["stream_action_reason"], "pending_stuck")
