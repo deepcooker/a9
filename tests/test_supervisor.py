@@ -1676,6 +1676,71 @@ flow_expected_revision: None
 
         self.assertIsNone(mod.schedule_next_task(task, summary))
 
+    def test_session_auto_next_blocked_by_managed_flow_sequence_gate_fail(self):
+        mod = load_supervisor()
+
+        refresh_task = mod.Task(
+            path=mod.DONE_DIR / "refresh.md",
+            task_id="refresh",
+            prompt="source_session_path: /tmp/session.jsonl\nfrom_turn: 1\nto_turn: 1",
+            phase=mod.SESSION_REFRESH_PHASE,
+        )
+        refresh_summary = {
+            "task_id": refresh_task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "refresh-run"),
+            "context_path": str(mod.RUNS_DIR / "refresh-run" / "context.md"),
+            "flow_transition": {
+                "enabled": True,
+                "status": "fail",
+                "terminal_reason": "sequence_gap",
+                "flow_status": "quarantined",
+            },
+            "session_refresh": {
+                "source_session_path": "/tmp/session.jsonl",
+                "from_turn": 1,
+                "to_turn": 1,
+                "batch_size": 1,
+                "auto_continue": True,
+                "auto_close_reading": True,
+                "user_turn_count": 2,
+                "extract_path": "/tmp/session/turns-1-1.json",
+            },
+        }
+
+        self.assertIsNone(mod.schedule_next_task(refresh_task, refresh_summary))
+
+        close_task = mod.Task(
+            path=mod.DONE_DIR / "close.md",
+            task_id="close",
+            prompt="extract_path: /tmp/session/turns-1-1.json",
+            phase=mod.SESSION_CLOSE_READING_PHASE,
+        )
+        close_summary = {
+            "task_id": close_task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "close-run"),
+            "context_path": str(mod.RUNS_DIR / "close-run" / "context.md"),
+            "flow_transition": {
+                "enabled": True,
+                "status": "fail",
+                "terminal_reason": "",
+                "flow_status": "quarantined",
+            },
+            "session_close_reading": {
+                "source_session_path": "/tmp/session.jsonl",
+                "to_turn": 1,
+                "batch_size": 1,
+                "auto_continue": True,
+                "auto_close_reading": True,
+                "user_turn_count": 2,
+                "close_reading_doc": "docs/session-raw-close-reading.md",
+                "summary_doc": "docs/session-raw-summary.md",
+            },
+        }
+
+        self.assertIsNone(mod.schedule_next_task(close_task, close_summary))
+
     def test_copy_pipeline_next_prompt_carries_managed_flow_revision(self):
         mod = load_supervisor()
         task = mod.Task(

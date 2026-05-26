@@ -97,6 +97,16 @@ Observed issues:
    - Intervention: requeued a hard-bounded repair task that explicitly forbids
      raw session docs, service status probing, and reference scans for this slice.
 
+9. Spark completed the patch but failed strict envelope.
+   - Hard-bounded `gpt-5.3-codex-spark` repair avoided raw-doc explosion and
+     added the right negative test.
+   - It wrote `status: "pass"` instead of the allowed `ok`, so worker envelope
+     validation failed and git governance rolled the diff back.
+   - The declared supervisor/middleware checks still passed with `72` tests.
+   - Intervention: monitor manually applied the verified minimal patch and
+     recorded that Spark is useful for small edits but unreliable for strict
+     envelope protocol unless the supervisor can auto-normalize or repair it.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.

@@ -49,6 +49,21 @@
 - 只有 session 精读任务才读 raw session 文档，而且必须按 turn/行号小批次读取。
 - 监控者应在 repair task 里显式禁止 raw docs、service ps、reference scan，除非任务目标就是这些内容。
 
+## 2026-05-27：Spark 小模型会做对 patch 但写错 strict envelope
+
+现象：
+
+- `gpt-5.3-codex-spark` 在硬边界 repair/test 任务中补出了正确负向测试。
+- 但是 final JSON 写成 `status: "pass"`，不是允许的 `ok|needs_approval|cancelled`。
+- supervisor 正确判定 `worker_envelope=fail`，并按治理规则 rollback 了 diff。
+
+修正：
+
+- Spark 可以用于低风险小 patch 试跑，但严格协议任务不能直接信任。
+- 后续可以抄 OpenClaw/Lobster 的 tool-envelope normalization：在安全条件下把
+  `pass/success` 归一到 `ok`，否则自动排 envelope-repair，不浪费已通过测试的 patch。
+- 当前由监控者手工接管：只接受已通过 guard/check 的最小 patch。
+
 ## 2026-05-27：不要在普通队列上并发跑同一类 worker
 
 现象：
