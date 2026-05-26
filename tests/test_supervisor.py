@@ -789,6 +789,7 @@ Do the work.
         self.assertTrue(
             any("normalized protocolVersion alias" in finding.get("message", "") for finding in envelope.get("findings", []))
         )
+        self.assertFalse(any(finding.get("level") == "error" for finding in envelope.get("findings", [])))
 
     def test_worker_envelope_protocol_version_alias_named_v1_normalizes_to_1(self):
         mod = load_supervisor()
