@@ -882,14 +882,43 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
         "consumer_count": parse_int(group.get("consumers"), default=0),
         "entries_read": parse_int(group.get("entries-read"), default=0),
     }
+    result["thresholds_version"] = "redis_streams_v1"
+
+    def set_stream_action(*, pending_total: int | None, top_pending: int = 0, top_idle: int = 0) -> None:
+        action = "continue"
+        action_reason = "none"
+        if lag >= 1000:
+            action = "intervene"
+            action_reason = "lag_critical"
+        else:
+            total_pending = pending_total if pending_total is not None else 0
+            if total_pending > 0 and top_idle >= 30000 and top_pending > 0:
+                action = "intervene"
+                action_reason = "pending_stuck"
+            elif total_pending > 0 and top_pending / total_pending >= 0.8:
+                action = "intervene"
+                action_reason = "pending_skew"
+            elif lag >= 100:
+                action = "watch"
+                action_reason = "lag_warn"
+            elif total_pending > 0:
+                action = "watch"
+                action_reason = "pending_stuck"
+        result["stream_action"] = action
+        result["stream_action_reason"] = action_reason
+
     if pending.returncode != 0:
         result["status"] = "degraded"
         result["reason"] = "xpending_failed"
+        result["stream_action"] = "watch"
+        result["stream_action_reason"] = "xpending_failed"
         return result
     total = parse_xpending_total(pending.stdout)
     if total is None or total < 0:
         result["status"] = "degraded"
         result["reason"] = "invalid_pending"
+        result["stream_action"] = "watch"
+        result["stream_action_reason"] = "invalid_pending"
         return result
     result["pending"] = total
     try:
@@ -898,15 +927,18 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
         result["consumer_probe_status"] = "degraded"
         result["consumer_probe_reason"] = "xinfo_consumers_probe_error"
         result["consumer_probe_error"] = str(exc)
+        set_stream_action(pending_total=total)
         return result
     if consumers.returncode != 0:
         result["consumer_probe_status"] = "degraded"
         result["consumer_probe_reason"] = "xinfo_consumers_failed"
+        set_stream_action(pending_total=total)
         return result
     rows = parse_xinfo_consumers_rows(consumers.stdout)
     if xinfo_consumers_rows_malformed(consumers.stdout, rows):
         result["consumer_probe_status"] = "degraded"
         result["consumer_probe_reason"] = "xinfo_consumers_malformed"
+        set_stream_action(pending_total=total)
         return result
     top_consumers = sorted(
         (
@@ -923,30 +955,9 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
     result["consumer_probe_status"] = "ok"
     result["consumer_probe_reason"] = "healthy"
     result["top_consumers"] = top_consumers
-    result["thresholds_version"] = "redis_streams_v1"
-    action = "continue"
-    action_reason = "none"
-    if lag >= 1000:
-        action = "intervene"
-        action_reason = "lag_critical"
-    else:
-        total_pending = parse_int(result.get("pending"), default=0)
-        highest_pending = top_consumers[0]["pending"] if top_consumers else 0
-        highest_idle = top_consumers[0]["idle"] if top_consumers else 0
-        if total_pending > 0 and highest_idle >= 30000 and highest_pending > 0:
-            action = "intervene"
-            action_reason = "pending_stuck"
-        elif total_pending > 0 and highest_pending / total_pending >= 0.8:
-            action = "intervene"
-            action_reason = "pending_skew"
-        elif lag >= 100:
-            action = "watch"
-            action_reason = "lag_warn"
-        elif total_pending > 0:
-            action = "watch"
-            action_reason = "pending_stuck"
-    result["stream_action"] = action
-    result["stream_action_reason"] = action_reason
+    highest_pending = top_consumers[0]["pending"] if top_consumers else 0
+    highest_idle = top_consumers[0]["idle"] if top_consumers else 0
+    set_stream_action(pending_total=total, top_pending=highest_pending, top_idle=highest_idle)
     return result
 
 
