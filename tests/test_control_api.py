@@ -143,6 +143,47 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["nodes"][0]["connection_state"], "online")
         self.assertEqual(status["nodes"][0]["connection_action"], "continue")
 
+    def test_api_nodes_endpoint_includes_connection_action_fields(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "node/a",
+                    "host": "worker-a",
+                    "ssh_target": "root@worker-a",
+                    "capabilities": {"python3": "/usr/bin/python3"},
+                },
+                root=root,
+            )
+            mod.heartbeat_node({"node_id": "node/a", "status": "online", "message": "ready"}, root=root)
+
+            captured = {"status": None, "payload": None}
+
+            class DummyHandler:
+                path = "/api/nodes"
+                headers = {}
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["payload"] = payload
+
+                def write_sse(self, status, payload):
+                    raise AssertionError("write_sse should not be used for /api/nodes")
+
+            original_node_status = mod.node_status
+            mod.node_status = lambda: original_node_status(root)
+            try:
+                mod.ControlHandler.do_GET(DummyHandler())
+            finally:
+                mod.node_status = original_node_status
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["count"], 1)
+        node = captured["payload"]["nodes"][0]
+        self.assertEqual(node["connection_action"], "continue")
+        self.assertEqual(node["connection_action_reason"], "heartbeat_fresh")
+
     def test_enrich_node_connection_marks_stale_and_offline(self):
         mod = load_control_api()
         original_now = mod.utc_now_dt
