@@ -214,10 +214,10 @@ Adaptation target for A9 gateway/node stack:
 
 Verification note:
 
-- This repository currently lacks local `reference-projects/barter-rs/*`
-  content. Mechanism text above is captured from the bounded task packet's
-  selected mechanism list; next `reference_scan` slice should import or mount
-  the declared paths and append exact line-level evidence.
+- `reference-projects/barter-rs` is present locally in the controller repo.
+- The mechanism text above was checked against bounded snippets from the
+  declared Barter-rs paths. A9 should copy the reconnect/backoff/error-event
+  mechanism, not the trading-domain stream implementation.
 
 ## First Worker Slice
 

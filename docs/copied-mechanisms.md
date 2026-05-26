@@ -150,12 +150,15 @@ Failure modes to preserve in A9 adaptation:
   re-init.
 - Missing reconnect lifecycle events hides degraded state from control plane.
 
-Evidence gap (must repair in next reference_sync slice):
+Source evidence:
 
-- The paths above are the declared source-of-truth, but current worktree does
-  not contain `reference-projects/barter-rs/*`; this slice records the contract
-  from bounded task packet mechanism selection and marks source snippet
-  verification as pending.
+- `reference-projects/barter-rs` is present locally in the controller repo.
+- The mechanism above was checked against bounded snippets from
+  `barter-data/src/streams/reconnect/stream.rs`,
+  `barter-data/src/streams/reconnect/mod.rs`, and
+  `barter-data/src/streams/consumer.rs`.
+- Next implementation slice should copy only the behavior, not Barter-rs
+  trading-domain code.
 
 ### Aider
 
