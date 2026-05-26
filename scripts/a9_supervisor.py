@@ -3496,6 +3496,8 @@ def schedule_next_session_close_reading_task(task: Task, summary: dict[str, Any]
         "summary_doc": reading.get("summary_doc", "docs/session-raw-summary.md"),
         "flow_id": reading.get("flow_id", ""),
         "flow_revision": reading.get("flow_revision"),
+        "flow_last_seq": reading.get("flow_last_seq"),
+        "flow_next_seq": reading.get("flow_next_seq"),
     }
     return schedule_next_session_refresh_range(task.task_id, refresh)
 

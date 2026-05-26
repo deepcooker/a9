@@ -1773,6 +1773,8 @@ flow_expected_revision: None
                 "summary_doc": "docs/session-raw-summary.md",
                 "flow_id": "flow-test",
                 "flow_revision": 3,
+                "flow_last_seq": 21,
+                "flow_next_seq": 22,
             },
         }
 
@@ -1788,6 +1790,8 @@ flow_expected_revision: None
             self.assertIn("auto_continue: true", text)
             self.assertIn("flow_id: flow-test", text)
             self.assertIn("flow_expected_revision: 3", text)
+            self.assertIn("flow_expected_last_seq: 21", text)
+            self.assertIn("flow_sequence: 22", text)
             self.assertNotIn("Copy pipeline phases", text)
         finally:
             next_path.unlink(missing_ok=True)
@@ -1817,6 +1821,8 @@ flow_expected_revision: None
                 "summary_doc": "docs/session-raw-summary.md",
                 "flow_id": "flow-test",
                 "flow_revision": 4,
+                "flow_last_seq": 22,
+                "flow_next_seq": 23,
             },
         }
 
@@ -1831,6 +1837,8 @@ flow_expected_revision: None
             self.assertIn("auto_close_reading: true", text)
             self.assertIn("flow_id: flow-test", text)
             self.assertIn("flow_expected_revision: 4", text)
+            self.assertIn("flow_expected_last_seq: 22", text)
+            self.assertIn("flow_sequence: 23", text)
             self.assertNotIn("Copy pipeline phases", text)
         finally:
             next_path.unlink(missing_ok=True)
