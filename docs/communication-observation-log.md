@@ -89,6 +89,14 @@ Observed issues:
    - Intervention: changed the queued task back to `phase: test` and narrowed
      checks to `python3 -m unittest tests/test_supervisor.py tests/test_middleware.py`.
 
+8. Raw-session tail reads can still trip worker budget.
+   - The corrected negative-test task still began by reading
+     `docs/session-raw-summary.md` and `docs/session-raw-close-reading.md`.
+   - It exceeded the worker event byte budget before producing a final envelope:
+     `retryable-worker-budget`, `event_bytes=131092`.
+   - Intervention: requeued a hard-bounded repair task that explicitly forbids
+     raw session docs, service status probing, and reference scans for this slice.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.

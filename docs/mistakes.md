@@ -35,6 +35,20 @@
 - `run-one` 完成路径只应该同步写最小 checkpoint、summary、evidence pointer。
 - 多小时无人值守前，必须修这个慢路径，否则长任务会被持久化噪音拖住。
 
+## 2026-05-27：测试切片不要习惯性读 raw session 文档
+
+现象：
+
+- `repair/test` 任务只需要补 supervisor 负向单测，但 worker 先读
+  `docs/session-raw-summary.md` 和 `docs/session-raw-close-reading.md` 的大段尾部。
+- 输出事件超过 `120000` bytes，触发 `retryable-worker-budget`，最终 envelope 缺失。
+
+修正：
+
+- 代码/测试修复任务默认不读 raw session 文档。
+- 只有 session 精读任务才读 raw session 文档，而且必须按 turn/行号小批次读取。
+- 监控者应在 repair task 里显式禁止 raw docs、service ps、reference scan，除非任务目标就是这些内容。
+
 ## 2026-05-27：不要在普通队列上并发跑同一类 worker
 
 现象：
