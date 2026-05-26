@@ -597,6 +597,36 @@ mod tests {
     }
 
     #[test]
+    fn retry_policy_terminal_stop_path_emits_no_retry_scheduled_event() {
+        let attempts = Cell::new(0);
+        let mut events = Vec::new();
+        let result = redis_roundtrip_with_retries_observer(
+            || {
+                attempts.set(attempts.get() + 1);
+                Err(std::io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "permission denied",
+                ))
+            },
+            &NoopBackoff,
+            3,
+            |event| events.push(event),
+        );
+
+        assert!(result.is_err());
+        assert_eq!(attempts.get(), 1);
+        assert!(events
+            .iter()
+            .any(|event| matches!(event, ReconnectLifecycleEvent::FailureClassified { kind: RedisFailureKind::Terminal, .. })));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, ReconnectLifecycleEvent::RetryScheduled { .. })),
+            "terminal stop-path must not emit retry-scheduled lifecycle events"
+        );
+    }
+
+    #[test]
     fn retry_policy_keeps_retrying_retryable_failures() {
         let attempts = Cell::new(0);
         let result = redis_roundtrip_with_retries(
