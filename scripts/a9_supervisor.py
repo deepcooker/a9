@@ -3062,7 +3062,9 @@ Managed flow:
 - flow_id: {flow['flow_id']}
 - flow_expected_revision: {flow['revision']}
 """
-    return f"""Continue A9 24-hour automation.
+    return f"""strict_worker_envelope: true
+
+Continue A9 24-hour automation.
 
 Previous task: {task.task_id}
 Previous phase: {task.phase}
