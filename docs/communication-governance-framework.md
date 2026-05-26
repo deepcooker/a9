@@ -169,7 +169,23 @@ Redis ecosystem:
    `retry_without_cursor`, or `keep_cursor`.
 6. Backpressure:
    bounded stream reads, trim policy, dead-letter stream, retry budget, and
-   error-class counters.
+   error-class counters. Pending/lag evidence contract for Redis Streams
+   consumer groups (start with `a9:tasks`):
+   `XINFO GROUPS a9:tasks` as group-level snapshot (`name`, `consumers`,
+   `pending`, `last-delivered-id`, `entries-read`, `lag`) plus
+   `XPENDING a9:tasks <group>` as pending ownership snapshot
+   (`total`, `smallest_id`, `largest_id`, per-consumer counts). A9 should emit
+   typed status from these raw fields:
+   `status=ok|degraded|offline`,
+   `reason=none|lag_warn|lag_critical|pending_stuck|pending_skew|no_group|redis_unavailable`,
+   and evidence fields:
+   `stream`, `group`, `sampled_at`, `lag`, `pending_total`, `consumers`,
+   `oldest_pending_id`, `newest_pending_id`, `pending_by_consumer`.
+   First thresholds to implement:
+   `lag_warn >= 100`, `lag_critical >= 1000`,
+   `pending_stuck` when oldest pending idle exceeds `30000ms`,
+   `pending_skew` when max consumer pending share exceeds `0.8`.
+   Thresholds must be config-backed and versioned in evidence metadata.
 7. Multi-terminal onboarding:
    a node helper registers itself, reports capabilities, keeps heartbeat, and
    accepts typed work after policy gate. SSH/tmux is only used for bootstrap or
@@ -258,6 +274,50 @@ Adaptation target for A9 gateway/node stack:
 - Keep reconnect policy deterministic now (125ms * 2 capped at 60000ms); add
   jitter only after baseline behavior is proven in soak runs.
 - Bind terminal/recoverable classification to existing typed failure buckets so
+  action routing stays deterministic under retry pressure.
+
+## Redis Streams Pending/Lag Evidence Contract (XINFO GROUPS + XPENDING)
+
+Reference mechanism intent to copy:
+
+- Redis Streams consumer-group introspection as machine evidence, not logs.
+- Two-command bounded probe: `XINFO GROUPS` for lag/pending headline and
+  `XPENDING` for ownership/stuck analysis.
+- Degraded-state output uses typed thresholds, not ad-hoc text.
+
+Bounded contract (phase-1 stream: `a9:tasks`):
+
+1. Probe inputs:
+   `stream=a9:tasks`, `group=<configured task group>`.
+2. Probe reads:
+   `XINFO GROUPS a9:tasks` then `XPENDING a9:tasks <group>`.
+3. Probe output fields:
+   `status`, `reason`, `lag`, `pending_total`, `consumers`,
+   `oldest_pending_id`, `newest_pending_id`, `pending_by_consumer`,
+   `thresholds_version`, `sampled_at`.
+4. Degraded thresholds:
+   `lag_warn >= 100`, `lag_critical >= 1000`,
+   `pending_idle_critical_ms >= 30000`,
+   `pending_skew_ratio >= 0.8`.
+5. Missing-data policy:
+   missing stream/group -> `status=degraded`, `reason=no_group`;
+   Redis command failure -> `status=offline`, `reason=redis_unavailable`.
+
+Failure modes to keep machine-readable:
+
+1. Lag-only blind spot: `lag` normal but `pending_total` and idle age rising.
+2. Ownership skew: one consumer holds most pending IDs, hiding worker stall.
+3. Empty-group false health: stream exists but expected group missing.
+4. XPENDING parse drift: shape/field mismatch silently drops stuck evidence.
+5. Threshold drift: changed limits without version tags breaks comparability.
+
+Token/cost behavior:
+
+- Fixed two commands per sample keeps probe bounded.
+- Keep per-consumer detail bounded to top-N (suggest `N=8`) in API responses;
+  full raw command output stays in evidence artifacts, not prompt context.
+- On repeated failures, emit summarized counters and sample at backoff cadence,
+  not per-request spam.
   repair routing is automatic.
 - Keep action domain explicit in evidence (`phase=connect|stream`) so repair
   automation can route failures to retry tuning vs stream error taxonomy fixes.

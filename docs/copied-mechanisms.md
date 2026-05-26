@@ -172,6 +172,30 @@ Typed reconnect action contract extracted for A9:
   `kind, phase, action, error_class, attempt, delay_ms, policy_budget_remaining,
   flow_id, flow_revision, origin, ts`.
 
+Redis Streams pending/lag evidence contract extracted for A9:
+
+- Source mechanism family: Redis Streams consumer-group observability via
+  `XINFO GROUPS` + `XPENDING` on the same stream/group sample window.
+- First bounded scope: `a9:tasks` stream, configured task consumer group.
+- Required evidence keys:
+  `stream, group, sampled_at, status, reason, lag, pending_total, consumers,
+  oldest_pending_id, newest_pending_id, pending_by_consumer, thresholds_version`.
+- Typed degraded reasons:
+  `lag_warn | lag_critical | pending_stuck | pending_skew | no_group | redis_unavailable`.
+- First threshold profile to implement:
+  `lag_warn >= 100`, `lag_critical >= 1000`,
+  `pending_idle_critical_ms >= 30000`, `pending_skew_ratio >= 0.8`.
+- Cost-control rule:
+  probe uses exactly two Redis reads per sample (`XINFO GROUPS`, `XPENDING`),
+  and per-consumer payload is capped (top-N) in control API output.
+
+Failure modes to preserve in A9 adaptation:
+
+- Group exists but `last-delivered-id` not advancing while pending grows.
+- Healthy lag hides stuck pending ownership without idle-age checks.
+- Consumer imbalance causes hidden starvation unless skew ratio is surfaced.
+- Missing threshold versioning breaks cross-run comparability.
+
 Source evidence:
 
 - `reference-projects/barter-rs` is present locally in the controller repo.
@@ -181,6 +205,12 @@ Source evidence:
   `barter-data/src/streams/consumer.rs`.
 - Next implementation slice should copy only the behavior, not Barter-rs
   trading-domain code.
+- Next implementation slice:
+  implement node/control status exposure for this contract in
+  `scripts/a9_control_api.py` (new helper and `/api/nodes` payload extension),
+  add typed threshold/config plumbing in `scripts/a9_supervisor.py` if needed,
+  and cover with `tests/test_control_api.py` plus
+  `tests/test_supervisor.py` threshold-shape checks.
 
 ### Aider
 
