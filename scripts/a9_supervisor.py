@@ -2341,6 +2341,8 @@ def transition_managed_flow(
     actor: str,
     reason: str,
     evidence_id: str,
+    expected_last_seq: int | None = None,
+    sequence: int | None = None,
 ) -> dict[str, Any]:
     if not flow_id:
         return {"enabled": False, "status": "skipped", "reason": "missing_flow_id"}
@@ -2361,6 +2363,8 @@ def transition_managed_flow(
             reason,
             evidence_id,
             utc_now(),
+            "" if expected_last_seq is None else str(expected_last_seq),
+            "" if sequence is None else str(sequence),
         ]
     )
     output = result.stdout.strip()
@@ -2373,16 +2377,34 @@ def transition_managed_flow(
     status = "pass" if payload and result.returncode == 0 else "fail"
     if "revision_mismatch" in output or "flow_not_found" in output:
         status = "fail"
+    if "sequence_mismatch" in output:
+        status = "fail"
+    if payload and payload.get("terminal_reason") == "sequence_gap":
+        status = "fail"
+    if payload and payload.get("status") == "quarantined":
+        status = "fail"
+    if (
+        status == "pass"
+        and sequence is not None
+        and payload
+        and payload.get("revision") == expected_revision
+        and int(payload.get("last_seq", 0)) >= sequence
+    ):
+        status = "skipped"
     return {
         "enabled": True,
         "status": status,
         "flow_id": flow_id,
         "expected_revision": expected_revision,
+        "expected_last_seq": expected_last_seq,
+        "sequence": sequence,
         "next_status": next_status,
         "return_code": result.returncode,
         "output": output,
         "revision": payload.get("revision") if payload else None,
+        "last_seq": payload.get("last_seq") if payload else None,
         "flow_status": payload.get("status") if payload else "",
+        "terminal_reason": payload.get("terminal_reason") if payload else "",
     }
 
 
@@ -2983,6 +3005,8 @@ def parse_session_refresh_spec(prompt: str) -> dict[str, Any]:
         "summary_doc": fields.get("summary_doc", "docs/session-raw-summary.md"),
         "flow_id": fields.get("flow_id", ""),
         "flow_expected_revision": parse_optional_int(fields.get("flow_expected_revision")),
+        "flow_expected_last_seq": parse_optional_int(fields.get("flow_expected_last_seq")),
+        "flow_sequence": parse_optional_int(fields.get("flow_sequence")),
     }
 
 
@@ -3026,6 +3050,8 @@ def parse_session_close_reading_spec(prompt: str) -> dict[str, Any]:
         "auto_close_reading": parse_bool_field(fields, "auto_close_reading", True),
         "flow_id": fields.get("flow_id", ""),
         "flow_expected_revision": parse_optional_int(fields.get("flow_expected_revision")),
+        "flow_expected_last_seq": parse_optional_int(fields.get("flow_expected_last_seq")),
+        "flow_sequence": parse_optional_int(fields.get("flow_sequence")),
     }
     for name in ("to_turn", "user_turn_count", "batch_size"):
         if fields.get(name):
@@ -3041,6 +3067,8 @@ def parse_task_flow_spec(prompt: str) -> dict[str, Any]:
     return {
         "flow_id": fields.get("flow_id", ""),
         "flow_expected_revision": parse_optional_int(fields.get("flow_expected_revision")),
+        "flow_expected_last_seq": parse_optional_int(fields.get("flow_expected_last_seq")),
+        "flow_sequence": parse_optional_int(fields.get("flow_sequence")),
     }
 
 
@@ -3123,10 +3151,17 @@ Phase-specific bounds:
     flow = summary.get("flow_transition", {})
     flow_lines = ""
     if isinstance(flow, dict) and flow.get("flow_id") and flow.get("revision") is not None:
+        next_seq_line = ""
+        if flow.get("last_seq") is not None:
+            next_seq_line = (
+                f"- flow_expected_last_seq: {flow['last_seq']}\n"
+                f"- flow_sequence: {int(flow['last_seq']) + 1}"
+            )
         flow_lines = f"""
 Managed flow:
 - flow_id: {flow['flow_id']}
 - flow_expected_revision: {flow['revision']}
+{next_seq_line}
 """
     record_lines = ""
     if summary.get("deterministic_record_path"):
@@ -3384,6 +3419,8 @@ auto_continue: {str(refresh.get('auto_continue', True)).lower()}
 auto_close_reading: true
 flow_id: {refresh.get('flow_id', '')}
 flow_expected_revision: {refresh.get('flow_revision', '')}
+flow_expected_last_seq: {refresh.get('flow_last_seq', '')}
+flow_sequence: {refresh.get('flow_next_seq', '')}
 
 Continue the managed external session flow. Append bounded deterministic close-reading notes,
 then let the close-reading route decide whether to schedule the next session_refresh range.
@@ -3427,6 +3464,8 @@ close_reading_doc: {refresh.get('close_reading_doc', 'docs/session-raw-close-rea
 summary_doc: {refresh.get('summary_doc', 'docs/session-raw-summary.md')}
 flow_id: {refresh.get('flow_id', '')}
 flow_expected_revision: {refresh.get('flow_revision', '')}
+flow_expected_last_seq: {refresh.get('flow_last_seq', '')}
+flow_sequence: {refresh.get('flow_next_seq', '')}
 
 Continue bounded external Codex/operator session refresh. Keep this route deterministic:
 do not call a model, do not run a worker, and do not enter the copy-project pipeline.
@@ -3996,6 +4035,8 @@ def run_session_refresh_task(task: Task, *, auto_next: bool = False) -> int:
     flow_transition = transition_managed_flow(
         flow_id=str(refresh.get("flow_id") or ""),
         expected_revision=refresh.get("flow_expected_revision"),
+        expected_last_seq=refresh.get("flow_expected_last_seq"),
+        sequence=refresh.get("flow_sequence"),
         next_status="refreshed" if status == "pass" else "refresh_failed",
         actor="a9_supervisor",
         reason=f"{task.phase}:{status}",
@@ -4006,6 +4047,12 @@ def run_session_refresh_task(task: Task, *, auto_next: bool = False) -> int:
         refresh["flow_revision"] = flow_transition["revision"]
     elif refresh.get("flow_expected_revision") is not None:
         refresh["flow_revision"] = refresh.get("flow_expected_revision")
+    if flow_transition.get("last_seq") is not None:
+        refresh["flow_last_seq"] = flow_transition["last_seq"]
+        try:
+            refresh["flow_next_seq"] = int(flow_transition["last_seq"]) + 1
+        except (TypeError, ValueError):
+            refresh["flow_next_seq"] = ""
     write_json(run_dir / "summary.json", summary)
 
     done_path = DONE_DIR / f"{task_ref}.json"
@@ -4113,6 +4160,8 @@ def run_session_close_reading_task(task: Task, *, auto_next: bool = False) -> in
     flow_transition = transition_managed_flow(
         flow_id=str(reading.get("flow_id") or ""),
         expected_revision=reading.get("flow_expected_revision"),
+        expected_last_seq=reading.get("flow_expected_last_seq"),
+        sequence=reading.get("flow_sequence"),
         next_status="close_read" if status == "pass" else "close_read_failed",
         actor="a9_supervisor",
         reason=f"{task.phase}:{status}",
@@ -4123,6 +4172,12 @@ def run_session_close_reading_task(task: Task, *, auto_next: bool = False) -> in
         reading["flow_revision"] = flow_transition["revision"]
     elif reading.get("flow_expected_revision") is not None:
         reading["flow_revision"] = reading.get("flow_expected_revision")
+    if flow_transition.get("last_seq") is not None:
+        reading["flow_last_seq"] = flow_transition["last_seq"]
+        try:
+            reading["flow_next_seq"] = int(flow_transition["last_seq"]) + 1
+        except (TypeError, ValueError):
+            reading["flow_next_seq"] = ""
     write_json(run_dir / "summary.json", summary)
 
     done_path = DONE_DIR / f"{task_ref}.json"
@@ -4238,6 +4293,8 @@ def run_one(*, auto_next: bool = False) -> int:
             flow_transition = transition_managed_flow(
                 flow_id=str(task_flow.get("flow_id") or ""),
                 expected_revision=task_flow.get("flow_expected_revision"),
+                expected_last_seq=task_flow.get("flow_expected_last_seq"),
+                sequence=task_flow.get("flow_sequence"),
                 next_status=flow_status_for_task(task.phase, status),
                 actor="a9_supervisor",
                 reason=reason,

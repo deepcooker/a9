@@ -1487,6 +1487,115 @@ flow_expected_revision: None
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["revision"], 3)
 
+    def test_transition_managed_flow_passes_sequence_gate_args(self):
+        mod = load_supervisor()
+        original_available = mod.redis_available
+        original_cli = mod.redis_cli
+        captured_args = []
+
+        def fake_available():
+            return True
+
+        def fake_cli(args):
+            captured_args.extend(args)
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout='{"flow_id":"flow-test","status":"running","revision":3,"last_seq":11}\n',
+            )
+
+        try:
+            mod.redis_available = fake_available
+            mod.redis_cli = fake_cli
+            result = mod.transition_managed_flow(
+                flow_id="flow-test",
+                expected_revision=2,
+                expected_last_seq=10,
+                sequence=11,
+                next_status="running",
+                actor="test",
+                reason="unit",
+                evidence_id="e1",
+            )
+        finally:
+            mod.redis_available = original_available
+            mod.redis_cli = original_cli
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(captured_args[-2:], ["10", "11"])
+
+    def test_transition_managed_flow_marks_stale_sequence_as_skipped(self):
+        mod = load_supervisor()
+        original_available = mod.redis_available
+        original_cli = mod.redis_cli
+
+        def fake_available():
+            return True
+
+        def fake_cli(args):
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout='{"flow_id":"flow-test","status":"running","revision":2,"last_seq":11}\n',
+            )
+
+        try:
+            mod.redis_available = fake_available
+            mod.redis_cli = fake_cli
+            result = mod.transition_managed_flow(
+                flow_id="flow-test",
+                expected_revision=2,
+                expected_last_seq=11,
+                sequence=11,
+                next_status="running",
+                actor="test",
+                reason="stale",
+                evidence_id="e1",
+            )
+        finally:
+            mod.redis_available = original_available
+            mod.redis_cli = original_cli
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["revision"], 2)
+        self.assertEqual(result["last_seq"], 11)
+
+    def test_transition_managed_flow_sequence_gap_blocks_auto_next(self):
+        mod = load_supervisor()
+        original_available = mod.redis_available
+        original_cli = mod.redis_cli
+
+        def fake_available():
+            return True
+
+        def fake_cli(args):
+            return subprocess.CompletedProcess(
+                args,
+                0,
+                stdout='{"flow_id":"flow-test","status":"quarantined","revision":3,"last_seq":1,"terminal_reason":"sequence_gap"}\n',
+            )
+
+        try:
+            mod.redis_available = fake_available
+            mod.redis_cli = fake_cli
+            result = mod.transition_managed_flow(
+                flow_id="flow-test",
+                expected_revision=2,
+                expected_last_seq=1,
+                sequence=3,
+                next_status="running",
+                actor="test",
+                reason="gap",
+                evidence_id="e1",
+            )
+        finally:
+            mod.redis_available = original_available
+            mod.redis_cli = original_cli
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["terminal_reason"], "sequence_gap")
+        self.assertTrue(mod.flow_transition_blocks_next({"flow_transition": result}))
+
     def test_set_managed_flow_wait_uses_worker_approval_envelope(self):
         mod = load_supervisor()
         original_available = mod.redis_available
@@ -1602,10 +1711,14 @@ flow_expected_revision: None
     def test_task_flow_spec_parser_reads_managed_flow_fields(self):
         mod = load_supervisor()
 
-        spec = mod.parse_task_flow_spec("flow_id: copy-flow\nflow_expected_revision: 7\nbody")
+        spec = mod.parse_task_flow_spec(
+            "flow_id: copy-flow\nflow_expected_revision: 7\nflow_expected_last_seq: 13\nflow_sequence: 14\nbody"
+        )
 
         self.assertEqual(spec["flow_id"], "copy-flow")
         self.assertEqual(spec["flow_expected_revision"], 7)
+        self.assertEqual(spec["flow_expected_last_seq"], 13)
+        self.assertEqual(spec["flow_sequence"], 14)
 
     def test_session_refresh_phase_does_not_schedule_copy_pipeline_followup(self):
         mod = load_supervisor()
