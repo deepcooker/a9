@@ -956,7 +956,7 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
     result["consumer_probe_reason"] = "healthy"
     result["top_consumers"] = top_consumers
     highest_pending = top_consumers[0]["pending"] if top_consumers else 0
-    highest_idle = top_consumers[0]["idle"] if top_consumers else 0
+    highest_idle = max((item["idle"] for item in top_consumers if item["pending"] > 0), default=0)
     set_stream_action(pending_total=total, top_pending=highest_pending, top_idle=highest_idle)
     return result
 
