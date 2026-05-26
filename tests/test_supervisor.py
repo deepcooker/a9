@@ -171,6 +171,17 @@ Do the work.
             lobster = source_root / "reference-projects" / "openclaw" / "extensions" / "lobster" / "src"
             lobster.mkdir(parents=True)
             (lobster / "lobster-core.d.ts").write_text("type LobsterToolEnvelope = {}\n", encoding="utf-8")
+            barter_socket = (
+                source_root / "reference-projects" / "barter-rs" / "barter-integration" / "src" / "socket"
+            )
+            barter_socket.mkdir(parents=True)
+            (barter_socket / "mod.rs").write_text("pub mod reconnect;\n", encoding="utf-8")
+            barter_audit = source_root / "reference-projects" / "barter-rs" / "barter" / "src" / "engine" / "audit"
+            barter_audit.mkdir(parents=True)
+            (barter_audit / "mod.rs").write_text("pub struct AuditEngine;\n", encoding="utf-8")
+            barter_strategy = source_root / "reference-projects" / "barter-rs" / "barter" / "src" / "strategy"
+            barter_strategy.mkdir(parents=True)
+            (barter_strategy / "mod.rs").write_text("pub trait Strategy {};\n", encoding="utf-8")
             vendor = source_root / "vendor-src"
             vendor.mkdir()
             (vendor / "manifest.json").write_text("{}\n", encoding="utf-8")
@@ -184,6 +195,9 @@ Do the work.
                 mod.ROOT = original_root
 
             self.assertIn("reference-projects/openclaw/extensions/lobster", copied)
+            self.assertIn("reference-projects/barter-rs/barter-integration/src/socket", copied)
+            self.assertIn("reference-projects/barter-rs/barter/src/engine/audit", copied)
+            self.assertIn("reference-projects/barter-rs/barter/src/strategy", copied)
             self.assertIn("vendor-src", copied)
             self.assertTrue(
                 (
@@ -194,6 +208,40 @@ Do the work.
                     / "lobster"
                     / "src"
                     / "lobster-core.d.ts"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "barter-rs"
+                    / "barter-integration"
+                    / "src"
+                    / "socket"
+                    / "mod.rs"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "barter-rs"
+                    / "barter"
+                    / "src"
+                    / "engine"
+                    / "audit"
+                    / "mod.rs"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "barter-rs"
+                    / "barter"
+                    / "src"
+                    / "strategy"
+                    / "mod.rs"
                 ).exists()
             )
             self.assertFalse((worktree / "reference-projects" / "openclaw" / ".git").exists())
