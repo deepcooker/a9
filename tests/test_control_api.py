@@ -263,6 +263,68 @@ class ControlApiTests(unittest.TestCase):
         self.assertIn("invalid last_id format", result["error"])
         self.assertEqual(calls, [])
 
+    def test_read_events_marks_cursor_gap_when_stream_non_empty_but_no_replay(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            if args[:3] == ["--raw", "XRANGE", "a9:events"] and args[3].startswith("("):
+                return FakeProc("")
+            if args == ["--raw", "XRANGE", "a9:events", "-", "+", "COUNT", "1"]:
+                return FakeProc("1740000005-0\ntype\ntask_started\n")
+            if args == ["--raw", "XREVRANGE", "a9:events", "+", "-", "COUNT", "1"]:
+                return FakeProc("1740000010-0\ntype\ntask_done\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.read_events("1740000004-0", limit=5)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "cursor_gap")
+        self.assertEqual(result["stream_oldest_id"], "1740000005-0")
+        self.assertEqual(result["stream_newest_id"], "1740000010-0")
+        self.assertEqual(result["next_last_id"], "1740000010-0")
+        self.assertEqual(result["events"], [])
+        self.assertEqual(calls[0], ["--raw", "XRANGE", "a9:events", "(1740000004-0", "+", "COUNT", "5"])
+
+    def test_read_events_keeps_ok_empty_when_stream_is_empty(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args[:3] == ["--raw", "XRANGE", "a9:events"] and args[3].startswith("("):
+                return FakeProc("")
+            if args == ["--raw", "XRANGE", "a9:events", "-", "+", "COUNT", "1"]:
+                return FakeProc("")
+            if args == ["--raw", "XREVRANGE", "a9:events", "+", "-", "COUNT", "1"]:
+                return FakeProc("")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.read_events("1740000004-0", limit=5)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["events"], [])
+        self.assertEqual(result["next_last_id"], "1740000004-0")
+
     def test_resolve_event_last_id_uses_query_then_header(self):
         mod = load_control_api()
         self.assertEqual(mod._resolve_event_last_id("1740000001-0", "1740000002-0"), "1740000001-0")

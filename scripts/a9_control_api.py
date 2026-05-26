@@ -208,6 +208,39 @@ def read_events(last_id: str | None = None, *, count: int = 100, limit: int | No
         }
 
     events = parse_xrange_events(proc.stdout)
+    if last_id and not events:
+        # Detect replay cursor gaps after stream trim/rotation: client cursor is valid
+        # syntax but points outside the currently replayable window.
+        try:
+            oldest_proc = redis_cli(["--raw", "XRANGE", EVENTS_STREAM_KEY, "-", "+", "COUNT", "1"])
+            newest_proc = redis_cli(["--raw", "XREVRANGE", EVENTS_STREAM_KEY, "+", "-", "COUNT", "1"])
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {
+                "status": "degraded",
+                "stream": EVENTS_STREAM_KEY,
+                "error": str(exc),
+                "last_id": last_id,
+                "requested_count": requested,
+                "events": [],
+            }
+        if oldest_proc.returncode == 0 and newest_proc.returncode == 0:
+            oldest_events = parse_xrange_events(oldest_proc.stdout)
+            newest_events = parse_xrange_events(newest_proc.stdout)
+            if oldest_events and newest_events:
+                oldest_id = oldest_events[0]["id"]
+                newest_id = newest_events[0]["id"]
+                return {
+                    "status": "degraded",
+                    "stream": EVENTS_STREAM_KEY,
+                    "error": "cursor_gap: last_id is outside current replay window",
+                    "error_code": "cursor_gap",
+                    "last_id": last_id,
+                    "requested_count": requested,
+                    "events": [],
+                    "stream_oldest_id": oldest_id,
+                    "stream_newest_id": newest_id,
+                    "next_last_id": newest_id,
+                }
     return {
         "status": "ok",
         "stream": EVENTS_STREAM_KEY,

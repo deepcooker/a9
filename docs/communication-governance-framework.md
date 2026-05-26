@@ -152,7 +152,10 @@ Redis ecosystem:
    First slice exposes `a9:events` through `/api/events` with JSON tail and
    `format=sse` output, using explicit cursor precedence (`last_id` query first,
    then `Last-Event-ID` request header), with degraded output when cursor format
-   is invalid or Redis is unavailable.
+   is invalid or Redis is unavailable. If `last_id` is syntactically valid but
+   replay returns empty while stream is non-empty, API returns
+   `status=degraded,error_code=cursor_gap` with `stream_oldest_id`,
+   `stream_newest_id`, and `next_last_id` for client cursor reset.
 6. Backpressure:
    bounded stream reads, trim policy, dead-letter stream, retry budget, and
    error-class counters.
