@@ -107,6 +107,22 @@ Observed issues:
      recorded that Spark is useful for small edits but unreliable for strict
      envelope protocol unless the supervisor can auto-normalize or repair it.
 
+10. Reference projects are not visible inside worker worktrees by default.
+   - `implement-worker-envelope-normalization-20260526T175650Z` was told to read
+     `reference-projects/openhands/frontend/src/types/v1/type-guards.ts`.
+   - The worker worktree did not contain that path, so the read failed.
+   - The implementation still succeeded from the selected mechanism, but this
+     weakens the "copy first" loop.
+   - Need: supervisor should hydrate selected reference slices into worker
+     worktrees, or pass absolute read-only reference paths that are available
+     outside the git worktree.
+
+11. Envelope normalization fixed one real rollback class.
+   - Worker commit `c7a0400` normalizes safe aliases `pass/success -> ok` only
+     when `ok=true`, records an info finding, and leaves invalid statuses failing.
+   - This directly addresses the Spark `status: "pass"` rollback without making
+     the envelope guard loose.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.

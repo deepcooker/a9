@@ -64,6 +64,25 @@
   `pass/success` 归一到 `ok`，否则自动排 envelope-repair，不浪费已通过测试的 patch。
 - 当前由监控者手工接管：只接受已通过 guard/check 的最小 patch。
 
+进展：
+
+- `implement-worker-envelope-normalization-20260526T175650Z` 已实现受限归一化：
+  `ok=true` 且 `status in {pass, success}` 时归一为 `ok`，并记录 info finding。
+- 非法状态仍失败，`needs_approval/cancelled` 语义不变。
+
+## 2026-05-27：worker worktree 看不到参考项目路径
+
+现象：
+
+- 任务指定读取 `reference-projects/openhands/frontend/src/types/v1/type-guards.ts`。
+- worker 在隔离 worktree 中读不到该路径，`sed` 报 `No such file or directory`。
+
+修正：
+
+- supervisor 不能只在 prompt 里给参考路径；需要 hydrate reference slice，或传入
+  主仓绝对路径并允许只读访问。
+- 后续 reference_scan 产物要落成可被 worker worktree 读取的 evidence/slice，而不是只靠文字路径。
+
 ## 2026-05-27：不要在普通队列上并发跑同一类 worker
 
 现象：
