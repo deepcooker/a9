@@ -298,3 +298,25 @@
 
 - 24h loop 的默认模型优先稳定和工具兼容，不优先省 token。
 - 模型/tool 兼容失败不算业务任务失败，修完默认配置后要重置 auto-loop guard，再继续跑。
+
+## 2026-05-27：小任务也会因为宽读爆掉 event budget
+
+错误：
+
+- `auto-test-implement-next-slice-phase-routing-20-9a2b4b7e9f-20260526T182928Z`
+  已经被监控者收窄到一个 regression test。
+- worker 仍然用多个大范围 `sed` 读取
+  `tests/test_supervisor.py` 和 `scripts/a9_supervisor.py`，最终
+  `event_bytes=124875`，触发 `retryable-worker-budget`。
+- 没有 final、没有 envelope、没有 patch，说明问题不是代码能力，而是上下文读取纪律。
+
+纠正：
+
+- 监控者直接补最小测试，避免 24 小时队列卡在同一类失败。
+- 后续 test/repair worker prompt 要给精确 symbol 或行锚，不要只说“bounded”。
+
+规则：
+
+- 小任务必须小上下文：优先 `rg` 精确定位，再读 80 行以内的窗口。
+- 如果 worker 两次在同类窄任务上预算失败，监控者接管补丁，并把失败模式写入
+  supervisor prompt/任务模板治理。

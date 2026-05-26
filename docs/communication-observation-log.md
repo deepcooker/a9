@@ -133,6 +133,18 @@ Observed issues:
      harness-sized tasks, or first fix the scheduler/prompt to turn `next_slice`
      into narrowly scoped work.
 
+13. Even a narrowed test task can blow the event budget when the worker uses
+    wide file reads.
+   - `auto-test-implement-next-slice-phase-routing-20-9a2b4b7e9f-20260526T182928Z`
+     was manually narrowed to `python3 -m unittest tests/test_supervisor.py` and
+     only the `needs-followup` `next_slice` routing regression.
+   - The worker still read multiple broad `sed` ranges from
+     `tests/test_supervisor.py` and `scripts/a9_supervisor.py`.
+   - It exceeded the worker event byte budget before final output:
+     `retryable-worker-budget`, `event_bytes=124875`, no diff and no envelope.
+   - Intervention: monitor added the missing minimal regression test directly.
+     The targeted three-test slice passed.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
@@ -146,7 +158,9 @@ Current communication state after this observation:
 
 Next monitoring target:
 
-- Finish the current managed-flow negative auto-next test, then return to the
-  five communication blocks: node state machine, Redis Streams production
-  governance, multi-machine onboarding, SSE replay, and communication
-  metrics/soak.
+- Treat "wide-read budget failure in tiny test tasks" as a supervisor prompt
+  governance bug. Next slices should either provide exact line anchors or make
+  the worker output SEARCH/REPLACE directly from a smaller context packet.
+- Then return to the five communication blocks: node state machine, Redis
+  Streams production governance, multi-machine onboarding, SSE replay, and
+  communication metrics/soak.
