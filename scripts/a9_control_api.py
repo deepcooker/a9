@@ -39,6 +39,7 @@ PHONE_CONTROL_GROUPS = {
     "remote": ["nodes.bootstrap.execute", "nodes.remote.install", "nodes.remote.repair", "nodes.tmux.ensure"],
 }
 KNOWN_CONTROL_COMMANDS = sorted({cmd for commands in PHONE_CONTROL_GROUPS.values() for cmd in commands})
+EVENTS_STREAM_KEY = "a9:events"
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -108,6 +109,102 @@ def redis_available() -> bool:
     except (OSError, subprocess.TimeoutExpired):
         return False
     return proc.returncode == 0 and "PONG" in proc.stdout
+
+
+def _looks_like_stream_id(value: str) -> bool:
+    return bool(re.fullmatch(r"\d+-\d+", value))
+
+
+def parse_xrange_events(output: str) -> list[dict[str, Any]]:
+    text = (output or "").strip()
+    if not text:
+        return []
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if payload is not None:
+        if isinstance(payload, dict):
+            payload = [payload]
+        if not isinstance(payload, list):
+            return []
+        events: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, list) or len(item) < 2:
+                continue
+            fields: dict[str, Any] = {}
+            fields_raw = item[1]
+            if isinstance(fields_raw, dict):
+                fields = {str(key): value for key, value in fields_raw.items()}
+            elif isinstance(fields_raw, list):
+                for index in range(0, len(fields_raw), 2):
+                    if index + 1 >= len(fields_raw):
+                        break
+                    fields[str(fields_raw[index])] = fields_raw[index + 1]
+            events.append({"id": str(item[0]), "fields": fields})
+        return events
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    events: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(lines):
+        event_id = lines[idx]
+        idx += 1
+        fields: dict[str, Any] = {}
+        while idx + 1 < len(lines):
+            key = lines[idx]
+            if _looks_like_stream_id(key):
+                break
+            fields[key] = lines[idx + 1]
+            idx += 2
+        events.append({"id": event_id, "fields": fields})
+    return events
+
+
+def read_events(last_id: str | None = None, *, count: int = 100, limit: int | None = None) -> dict[str, Any]:
+    requested = max(1, int(limit) if limit is not None else int(count))
+    start = "-" if not last_id else f"({last_id}"
+    try:
+        proc = redis_cli(["--raw", "XRANGE", EVENTS_STREAM_KEY, start, "+", "COUNT", str(requested)])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "degraded",
+            "stream": EVENTS_STREAM_KEY,
+            "error": str(exc),
+            "last_id": last_id,
+            "requested_count": requested,
+            "events": [],
+        }
+
+    if proc.returncode != 0:
+        return {
+            "status": "degraded",
+            "stream": EVENTS_STREAM_KEY,
+            "error": proc.stdout.strip() or "redis command failed",
+            "last_id": last_id,
+            "requested_count": requested,
+            "events": [],
+        }
+
+    events = parse_xrange_events(proc.stdout)
+    return {
+        "status": "ok",
+        "stream": EVENTS_STREAM_KEY,
+        "count": len(events),
+        "requested_count": requested,
+        "last_id": last_id,
+        "events": events,
+        "next_last_id": events[-1]["id"] if events else (last_id or ""),
+    }
+
+
+def events_to_sse(payload: dict[str, Any]) -> bytes:
+    chunks = []
+    for event in payload.get("events", []):
+        chunks.append(f"id: {event.get('id')}\n")
+        chunks.append(f"data: {json.dumps(event, ensure_ascii=False)}\n\n")
+    return "".join(chunks).encode("utf-8")
 
 
 def latest_run_summary(root: Path = ROOT) -> dict[str, Any] | None:
@@ -371,11 +468,17 @@ def controller_discovery() -> dict[str, Any]:
             "submit": "/api/submit",
             "runtime_run_one": "/api/runtime/run-one",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
+            "events": "/api/events",
         },
         "runtime": {
             "ssh_bootstrap": True,
             "redis_streams_target": True,
             "worker_claim_ready": False,
+        },
+        "events": {
+            "url": "/api/events",
+            "formats": ["json", "sse"],
+            "query": ["last_id", "limit", "count", "format=sse"],
         },
     }
 
@@ -1141,6 +1244,17 @@ class ControlHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def write_sse(self, status: int, payload: dict[str, Any]) -> None:
+        body = events_to_sse(payload)
+        self.send_response(status)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -1178,6 +1292,14 @@ class ControlHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", ["10"])[0])
                 source = query.get("source_session_path", [None])[0]
                 self.write_json(200, operator_tail(source, limit=limit))
+            elif parsed.path == "/api/events":
+                last_id = query.get("last_id", [None])[0]
+                limit = int(query.get("limit", query.get("count", ["100"]))[0])
+                payload = read_events(last_id, limit=limit)
+                if query.get("format", ["json"])[0] == "sse":
+                    self.write_sse(200, payload)
+                else:
+                    self.write_json(200, payload)
             elif parsed.path == "/api/runs/latest":
                 self.write_json(200, run_summary("latest", compact=query.get("compact", ["0"])[0] in {"1", "true"}))
             elif parsed.path.startswith("/api/runs/") and parsed.path.endswith("/summary"):

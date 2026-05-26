@@ -149,6 +149,8 @@ Redis ecosystem:
    retain local file fallback if Redis is unavailable.
 5. Event replay:
    stream IDs and `Last-Event-ID` for SSE; never rely on volatile UI state.
+   First slice exposes `a9:events` through `/api/events` with JSON tail and
+   `format=sse` output, plus degraded behavior when Redis is unavailable.
 6. Backpressure:
    bounded stream reads, trim policy, dead-letter stream, retry budget, and
    error-class counters.

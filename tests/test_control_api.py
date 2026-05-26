@@ -193,6 +193,69 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(any(call[:2] == ["XADD", "a9:heartbeats"] for call in calls))
         self.assertTrue(any(call[:2] == ["TS.ADD", "a9:ts:heartbeat"] for call in calls))
 
+    def test_parse_xrange_events_accepts_raw_and_json_shapes(self):
+        mod = load_control_api()
+        raw = "1740000000-0\ntype\ntask_started\ntask_id\nt1\n1740000001-0\ntype\ntask_done\n"
+        parsed = mod.parse_xrange_events(raw)
+        self.assertEqual(parsed[0]["id"], "1740000000-0")
+        self.assertEqual(parsed[0]["fields"]["type"], "task_started")
+        self.assertEqual(parsed[0]["fields"]["task_id"], "t1")
+        self.assertEqual(parsed[1]["fields"]["type"], "task_done")
+
+        json_shape = json.dumps([["1740000002-0", ["type", "task_failed", "reason", "timeout"]]])
+        parsed_json = mod.parse_xrange_events(json_shape)
+        self.assertEqual(parsed_json[0]["id"], "1740000002-0")
+        self.assertEqual(parsed_json[0]["fields"]["reason"], "timeout")
+
+    def test_read_events_replays_after_last_id_with_degraded_fallback(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            return FakeProc("1740000001-0\ntype\ntask_done\n")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.read_events("1740000000-0", limit=5)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["events"][0]["fields"]["type"], "task_done")
+        self.assertEqual(calls[0], ["--raw", "XRANGE", "a9:events", "(1740000000-0", "+", "COUNT", "5"])
+
+        def failing_redis(args, *, timeout=2):
+            return FakeProc("redis unavailable", 1)
+
+        mod.redis_cli = failing_redis
+        try:
+            degraded = mod.read_events(limit=1)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(degraded["status"], "degraded")
+        self.assertEqual(degraded["events"], [])
+
+    def test_events_to_sse_uses_stream_id_and_json_data(self):
+        mod = load_control_api()
+        body = mod.events_to_sse(
+            {
+                "events": [
+                    {"id": "1740000000-0", "fields": {"type": "task_started", "task_id": "t1"}},
+                ]
+            }
+        ).decode("utf-8")
+        self.assertIn("id: 1740000000-0\n", body)
+        self.assertIn('data: {"id": "1740000000-0"', body)
+        self.assertTrue(body.endswith("\n\n"))
+
     def test_probe_node_uses_remote_probe_and_registers_result(self):
         mod = load_control_api()
 

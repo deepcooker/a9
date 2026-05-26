@@ -118,8 +118,11 @@ A9 adaptation target:
   `crates/a9-gateway/src/main.rs`, copied from Barter-rs typed
   backoff/error-action structure.
 - Node heartbeat state machine and reconnect evidence.
-- Future SSE/WebSocket replay layer should use Barter-rs-style lifecycle
-  events: connected, item, reconnecting, stream error, terminated.
+- SSE replay slice exposes Redis Stream `a9:events` through `/api/events` as
+  JSON or `text/event-stream`, copying the mature stream-ID/last-event replay
+  pattern while keeping WebSocket for later.
+- Future WebSocket layer should use Barter-rs-style lifecycle events:
+  connected, item, reconnecting, stream error, terminated.
 
 ### Aider
 
