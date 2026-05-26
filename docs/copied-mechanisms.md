@@ -208,6 +208,10 @@ Mechanisms to adapt:
   loop. Each completed task can schedule the next compare/implement/test/record
   or repair task, and every run writes `.a9/progress.json` with stable 24-hour
   automation capability progress.
+- `scripts/a9_supervisor.py:write_deterministic_record`: supervisor-owned
+  record phase. After a passing test phase, A9 writes a bounded JSON record
+  from existing run evidence and schedules the next `reference_scan` directly,
+  avoiding an extra model call that can reread context and trip budget gates.
 - `infra/systemd/a9-supervisor.service` and `scripts/a9_service.py`: production
   daemon packaging inspired by mature service practices. The unit uses
   middleware preflight, restart policy, journal output, and the helper exposes

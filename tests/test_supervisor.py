@@ -1235,6 +1235,63 @@ index 0000000..3e75765
 
         next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_records_deterministically_without_record_worker(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_records = mod.RECORDS_DIR
+            mod.RECORDS_DIR = Path(tmp) / "records"
+            task = mod.Task(
+                path=mod.DONE_DIR / "auto-test.md",
+                task_id="auto-test",
+                prompt="test the copied mechanism",
+                phase="test",
+                allowed_paths=["scripts/a9_control_api.py", "tests/test_control_api.py"],
+            )
+            summary = {
+                "task_id": task.task_id,
+                "status": "pass",
+                "run_dir": "/tmp/run",
+                "context_path": "/tmp/run/context.md",
+                "evidence_path": "/tmp/run/evidence.jsonl",
+                "worker_envelope": {
+                    "status": "pass",
+                    "envelope": {
+                        "protocolVersion": 1,
+                        "ok": True,
+                        "status": "ok",
+                        "output": {
+                            "changed_files": ["scripts/a9_control_api.py"],
+                            "copied_mechanisms": [{"mechanism": "redis stream replay"}],
+                            "tests": [{"command": "python3 -m unittest tests/test_control_api.py", "result": "pass"}],
+                            "next_slice": "continue communication governance",
+                        },
+                    },
+                },
+                "patch_apply": {"status": "skip"},
+                "patch_guard": {"status": "pass"},
+                "scope_guard": {"status": "pass"},
+                "git_governance": {"status": "committed", "commit": "abc123", "rolled_back": False},
+                "checks": [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+            }
+            try:
+                next_path = mod.schedule_next_task(task, summary)
+                self.assertIsNotNone(next_path)
+                assert next_path is not None
+                text = next_path.read_text(encoding="utf-8")
+                self.assertIn('phase: "reference_scan"', text)
+                self.assertIn("Continue A9 24-hour automation", text)
+                self.assertIn("deterministic_record_path", summary)
+                record_path = Path(summary["deterministic_record_path"])
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+                self.assertEqual(record["mode"], "deterministic_supervisor_record")
+                self.assertEqual(record["task_id"], "auto-test")
+                self.assertEqual(record["worker_output"]["next_slice"], "continue communication governance")
+                self.assertEqual(record["git"]["commit"], "abc123")
+            finally:
+                mod.RECORDS_DIR = old_records
+                if "next_path" in locals() and next_path is not None:
+                    next_path.unlink(missing_ok=True)
+
     def test_auto_loop_guard_trips_after_consecutive_failures_and_resets_on_pass(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -35,6 +35,7 @@ WORKTREES_DIR = STATE_DIR / "worktrees"
 WORKER_CODEX_HOME = STATE_DIR / "codex-home"
 WORKER_TMP_DIR = STATE_DIR / "tmp"
 EXTERNAL_SESSIONS_DIR = STATE_DIR / "external_sessions"
+RECORDS_DIR = STATE_DIR / "records"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
@@ -171,6 +172,7 @@ def ensure_dirs() -> None:
         WORKER_CODEX_HOME,
         WORKER_TMP_DIR,
         EXTERNAL_SESSIONS_DIR,
+        RECORDS_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -3202,6 +3204,51 @@ def enqueue_task_file(
     return path
 
 
+def write_deterministic_record(task: Task, summary: dict[str, Any]) -> Path:
+    ensure_dirs()
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = RECORDS_DIR / f"{timestamp}-{compact_task_ref(task.task_id)}.json"
+    worker_envelope = summary.get("worker_envelope", {})
+    envelope = worker_envelope.get("envelope", {}) if isinstance(worker_envelope, dict) else {}
+    output = envelope.get("output", {}) if isinstance(envelope, dict) else {}
+    if not isinstance(output, dict):
+        output = {"raw_output": output}
+    record = {
+        "recorded_at": utc_now(),
+        "mode": "deterministic_supervisor_record",
+        "task_id": task.task_id,
+        "phase": task.phase,
+        "status": summary.get("status"),
+        "run_dir": summary.get("run_dir"),
+        "context_path": summary.get("context_path"),
+        "evidence_path": summary.get("evidence_path"),
+        "state_path": summary.get("state_path"),
+        "deep_marks_path": summary.get("deep_marks_path"),
+        "worker_output": {
+            "changed_files": output.get("changed_files", []),
+            "copied_mechanisms": output.get("copied_mechanisms", []),
+            "tests": output.get("tests", []),
+            "next_slice": output.get("next_slice", ""),
+        },
+        "guards": {
+            "worker_envelope": worker_envelope.get("status") if isinstance(worker_envelope, dict) else "",
+            "patch_apply": summary.get("patch_apply", {}).get("status"),
+            "patch_guard": summary.get("patch_guard", {}).get("status"),
+            "scope_guard": summary.get("scope_guard", {}).get("status"),
+            "git_governance": summary.get("git_governance", {}).get("status"),
+        },
+        "git": {
+            "commit": summary.get("git_governance", {}).get("commit", ""),
+            "rolled_back": summary.get("git_governance", {}).get("rolled_back", False),
+        },
+        "checks": summary.get("checks", []),
+        "actual_token_usage": summary.get("worker", {}).get("actual_token_usage", {}),
+        "context_pressure": summary.get("context_pressure", {}),
+    }
+    write_json(path, record)
+    return path
+
+
 def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if flow_transition_blocks_next(summary):
         return None
@@ -3214,6 +3261,10 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:
         return None
     phase = next_phase_for(summary["status"], task.phase)
+    if phase == "record" and summary["status"] == "pass":
+        record_path = write_deterministic_record(task, summary)
+        summary["deterministic_record_path"] = str(record_path)
+        phase = next_phase_for("pass", "record")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     task_id = f"auto-{phase}-{task.task_id}-{timestamp}"
     return enqueue_task_file(
