@@ -697,6 +697,11 @@ Do the work.
             task_id="diagnostic",
             prompt="strict_worker_envelope: true\nexpected_file_changes: false\nTask: inspect only.",
         )
+        bulleted = mod.Task(
+            path=Path("task.md"),
+            task_id="diagnostic-bulleted",
+            prompt="Phase-specific bounds:\n- expected_file_changes: false\n- Do not modify files.",
+        )
         textual = mod.Task(
             path=Path("task.md"),
             task_id="smoke",
@@ -709,6 +714,7 @@ Do the work.
         )
 
         self.assertTrue(mod.task_allows_no_diff(explicit))
+        self.assertTrue(mod.task_allows_no_diff(bulleted))
         self.assertTrue(mod.task_allows_no_diff(textual))
         self.assertFalse(mod.task_allows_no_diff(implementation))
 
@@ -1755,6 +1761,36 @@ flow_expected_revision: None
             self.assertLess(len(next_path.name), 140)
         finally:
             next_path.unlink(missing_ok=True)
+
+    def test_long_copy_pipeline_task_ids_use_bounded_artifact_names(self):
+        mod = load_supervisor()
+        long_task_id = "auto-vendor_import-auto-mechanism_extract-" * 8 + "tail"
+
+        artifact_ref = mod.artifact_task_ref(long_task_id)
+        run_id = mod.run_id_for_task(long_task_id, 1)
+
+        self.assertLessEqual(len(artifact_ref), 96)
+        self.assertLessEqual(len(Path(run_id).name), 120)
+        self.assertIn(artifact_ref, run_id)
+        self.assertLessEqual(len((mod.WORKTREES_DIR / f"{artifact_ref}-attempt-1").name), 120)
+        self.assertIsNone(mod.previous_task_checkpoint_id(mod.Task(path=Path("task.md"), task_id=long_task_id, prompt="demo")))
+        packet = mod.build_context_packet(mod.Task(path=Path("task.md"), task_id=long_task_id, prompt="demo"))
+        self.assertIn("prompt", packet)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                queued = mod.enqueue_task_file(
+                    f"auto-implement-{long_task_id}-20260526T000000Z",
+                    "strict_worker_envelope: true\n",
+                    phase="implement",
+                )
+                self.assertLessEqual(len(queued.name), 124)
+                parsed = mod.parse_task(queued)
+                self.assertEqual(parsed.task_id, queued.stem)
+            finally:
+                mod.QUEUE_DIR = old_queue
 
     def test_session_refresh_route_runs_without_codex_worker(self):
         mod = load_supervisor()

@@ -137,6 +137,15 @@ def compact_task_ref(value: str, *, limit: int = 48) -> str:
     return f"{head}-{digest}"
 
 
+def artifact_task_ref(value: str) -> str:
+    return compact_task_ref(value, limit=96)
+
+
+def run_id_for_task(task_id: str, attempt: int) -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return f"{artifact_task_ref(task_id)}-{timestamp}-a{attempt}"
+
+
 def run_cmd(
     args: list[str],
     *,
@@ -163,6 +172,13 @@ def run_cmd_no_raise(args: list[str], *, cwd: Path = ROOT) -> subprocess.Complet
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+
+
+def path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
 
 
 def ensure_dirs() -> None:
@@ -643,10 +659,13 @@ def build_context_packet(task: Task) -> dict[str, Any]:
             doctrine_parts.append(f"## {path.name}\n\n{text}")
     doctrine = "\n\n".join(doctrine_parts)
 
-    previous_context_path = DONE_DIR / f"{task.task_id}.context.md"
+    previous_context_path = DONE_DIR / f"{artifact_task_ref(task.task_id)}.context.md"
+    legacy_context_path = DONE_DIR / f"{task.task_id}.context.md"
+    if not path_exists(previous_context_path) and path_exists(legacy_context_path):
+        previous_context_path = legacy_context_path
     previous_context = ""
     previous_context_meta: dict[str, Any] = {}
-    if previous_context_path.exists():
+    if path_exists(previous_context_path):
         previous_context_raw = previous_context_path.read_text(
             encoding="utf-8",
             errors="backslashreplace",
@@ -723,9 +742,10 @@ Hard rules:
 
 
 def create_worktree(task: Task, attempt: int) -> Path:
-    worktree = WORKTREES_DIR / f"{task.task_id}-attempt-{attempt}"
+    task_ref = artifact_task_ref(task.task_id)
+    worktree = WORKTREES_DIR / f"{task_ref}-attempt-{attempt}"
     branch_scope = hashlib.sha256(str(WORKTREES_DIR.resolve()).encode("utf-8")).hexdigest()[:10]
-    branch = f"a9-supervisor/{task.task_id}-{attempt}-{branch_scope}"
+    branch = f"a9-supervisor/{task_ref}-{attempt}-{branch_scope}"
     if worktree.exists():
         return reset_existing_worktree(worktree)
     add_args = ["git", "worktree", "add", "-B", branch, str(worktree), "HEAD"]
@@ -2887,14 +2907,18 @@ Continue this task from the durable context above. If status is `needs-repair`, 
 """
     context_path = run_dir / "context.md"
     context_path.write_text(content, encoding="utf-8")
-    task_context_path = STATE_DIR / "tasks" / "done" / f"{task.task_id}.context.md"
+    task_context_path = STATE_DIR / "tasks" / "done" / f"{artifact_task_ref(task.task_id)}.context.md"
     task_context_path.write_text(content, encoding="utf-8")
     return context_path
 
 
 def previous_task_checkpoint_id(task: Task) -> str | None:
-    done_path = DONE_DIR / f"{task.task_id}.json"
-    if not done_path.exists():
+    done_path = DONE_DIR / f"{artifact_task_ref(task.task_id)}.json"
+    if not path_exists(done_path):
+        legacy_path = DONE_DIR / f"{task.task_id}.json"
+        if path_exists(legacy_path):
+            done_path = legacy_path
+    if not path_exists(done_path):
         return None
     try:
         summary = json.loads(done_path.read_text(encoding="utf-8"))
@@ -2980,7 +3004,7 @@ def parse_optional_int(value: str | None) -> int | None:
 def parse_key_value_prompt(prompt: str) -> dict[str, str]:
     fields: dict[str, str] = {}
     for line in prompt.splitlines():
-        match = re.match(r"^\s*([A-Za-z0-9_-]+)\s*[:=]\s*(.+?)\s*$", line)
+        match = re.match(r"^\s*(?:[-*]\s*)?([A-Za-z0-9_-]+)\s*[:=]\s*(.+?)\s*$", line)
         if not match:
             continue
         key = match.group(1).strip().lower().replace("-", "_")
@@ -3227,7 +3251,7 @@ def enqueue_task_file(
     allowed_paths: list[str] | None = None,
 ) -> Path:
     ensure_dirs()
-    clean_id = slugify(task_id)
+    clean_id = compact_task_ref(task_id, limit=120)
     path = QUEUE_DIR / f"{clean_id}.md"
     suffix = 1
     while path.exists():
@@ -3320,7 +3344,8 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         phase = next_phase_for("pass", "record")
     checks = REFERENCE_SCAN_CHECKS if phase == "reference_scan" else DEFAULT_NEXT_CHECKS
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    task_id = f"auto-{phase}-{task.task_id}-{timestamp}"
+    parent_ref = compact_task_ref(task.task_id)
+    task_id = f"auto-{phase}-{parent_ref}-{timestamp}"
     return enqueue_task_file(
         task_id,
         next_task_prompt(task, summary, phase),
@@ -3886,7 +3911,7 @@ def write_session_close_reading_evidence_and_state(
 
 def run_session_refresh_task(task: Task, *, auto_next: bool = False) -> int:
     attempt = 1
-    run_id = f"{task.task_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-a{attempt}"
+    run_id = run_id_for_task(task.task_id, attempt)
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True)
     lease = {
@@ -3898,7 +3923,8 @@ def run_session_refresh_task(task: Task, *, auto_next: bool = False) -> int:
         "repo_head": git_head(),
         "parent_checkpoint_id": previous_task_checkpoint_id(task),
     }
-    lease_path = RUNNING_DIR / f"{task.task_id}.json"
+    task_ref = artifact_task_ref(task.task_id)
+    lease_path = RUNNING_DIR / f"{task_ref}.json"
     write_json(lease_path, lease)
     raw_task_path = run_dir / "raw_task.md"
     raw_task_path.write_text(task.path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -3982,7 +4008,7 @@ def run_session_refresh_task(task: Task, *, auto_next: bool = False) -> int:
         refresh["flow_revision"] = refresh.get("flow_expected_revision")
     write_json(run_dir / "summary.json", summary)
 
-    done_path = DONE_DIR / f"{task.task_id}.json"
+    done_path = DONE_DIR / f"{task_ref}.json"
     write_json(done_path, summary)
     lease_path.unlink(missing_ok=True)
     target_task_path = DONE_DIR / task.path.name
@@ -3997,7 +4023,7 @@ def run_session_refresh_task(task: Task, *, auto_next: bool = False) -> int:
 
 def run_session_close_reading_task(task: Task, *, auto_next: bool = False) -> int:
     attempt = 1
-    run_id = f"{task.task_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-a{attempt}"
+    run_id = run_id_for_task(task.task_id, attempt)
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True)
     lease = {
@@ -4009,7 +4035,8 @@ def run_session_close_reading_task(task: Task, *, auto_next: bool = False) -> in
         "repo_head": git_head(),
         "parent_checkpoint_id": previous_task_checkpoint_id(task),
     }
-    lease_path = RUNNING_DIR / f"{task.task_id}.json"
+    task_ref = artifact_task_ref(task.task_id)
+    lease_path = RUNNING_DIR / f"{task_ref}.json"
     write_json(lease_path, lease)
     raw_task_path = run_dir / "raw_task.md"
     raw_task_path.write_text(task.path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -4098,7 +4125,7 @@ def run_session_close_reading_task(task: Task, *, auto_next: bool = False) -> in
         reading["flow_revision"] = reading.get("flow_expected_revision")
     write_json(run_dir / "summary.json", summary)
 
-    done_path = DONE_DIR / f"{task.task_id}.json"
+    done_path = DONE_DIR / f"{task_ref}.json"
     write_json(done_path, summary)
     lease_path.unlink(missing_ok=True)
     target_task_path = DONE_DIR / task.path.name
@@ -4125,7 +4152,7 @@ def run_one(*, auto_next: bool = False) -> int:
 
     attempt = 1
     while attempt <= task.max_attempts:
-        run_id = f"{task.task_id}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-a{attempt}"
+        run_id = run_id_for_task(task.task_id, attempt)
         run_dir = RUNS_DIR / run_id
         run_dir.mkdir(parents=True)
         worktree = create_worktree(task, attempt)
@@ -4138,7 +4165,8 @@ def run_one(*, auto_next: bool = False) -> int:
             "repo_head": git_head(),
             "parent_checkpoint_id": previous_task_checkpoint_id(task),
         }
-        lease_path = RUNNING_DIR / f"{task.task_id}.json"
+        task_ref = artifact_task_ref(task.task_id)
+        lease_path = RUNNING_DIR / f"{task_ref}.json"
         write_json(lease_path, lease)
 
         worker = run_worker(task, worktree, run_dir)
@@ -4224,7 +4252,7 @@ def run_one(*, auto_next: bool = False) -> int:
             attempt += 1
             continue
 
-        done_path = DONE_DIR / f"{task.task_id}.json"
+        done_path = DONE_DIR / f"{task_ref}.json"
         write_json(done_path, summary)
         lease_path.unlink(missing_ok=True)
         target_task_path = DONE_DIR / task.path.name
