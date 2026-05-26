@@ -141,6 +141,14 @@ Redis ecosystem:
 2. Barter-rs-style retry policy:
    immediate first attempt, exponential backoff with cap, later jitter,
    typed `reconnect | continue | terminate | quarantine` actions.
+   Reconnecting stream extraction contract for A9:
+   `init_reconnecting_stream` = init once, then re-init on reconnect loop;
+   `with_reconnect_backoff` = fail-path backoff multiply/cap + success-path
+   reset; `with_termination_on_error` = terminal inner stream errors force
+   stream termination and re-init while recoverable errors continue; and
+   `with_reconnection_events` = emit `Reconnecting(origin)` lifecycle events
+   for external observers.
+   Consumer defaults to `125ms` initial backoff, multiplier `2`, max `60000ms`.
 3. Idempotent command plane:
    every command has `command_id`, `target_node`, `expected_revision`, `ttl`,
    `created_by`, and `policy_attestation`.
@@ -169,6 +177,47 @@ Redis ecosystem:
 8. Evidence:
    every disconnect, retry, stale heartbeat, command timeout, and replay gap
    writes bounded machine-readable evidence.
+
+## Reconnecting Stream Failure Contract (Barter-rs -> A9)
+
+Reference paths (declared source-of-truth for this mechanism):
+
+- `reference-projects/barter-rs/barter-data/src/streams/reconnect/stream.rs`
+- `reference-projects/barter-rs/barter-data/src/streams/reconnect/mod.rs`
+- `reference-projects/barter-rs/barter-data/src/streams/consumer.rs`
+- `reference-projects/barter-rs/LICENSE`
+
+Failure modes A9 must keep machine-readable:
+
+1. Re-init failure escalation:
+   repeated init failures must increase reconnect delay to capped backoff, with
+   explicit evidence fields for `attempt`, `delay_ms`, and `error_class`.
+2. Successful re-init reset:
+   first successful reconnect must reset backoff baseline; otherwise recovery
+   latency drifts upward.
+3. Terminal stream error cutover:
+   terminal inner-stream errors must force reconnect path, not stay in
+   `continue` branch.
+4. Reconnect observability:
+   reconnect transitions must emit explicit lifecycle events
+   (`reconnecting`/origin) so control plane can reflect degraded state and
+   approval flows can pause/resume safely.
+
+Adaptation target for A9 gateway/node stack:
+
+- Map `Reconnecting(origin)` into Redis Stream event envelopes and flow summary
+  metadata.
+- Keep reconnect policy deterministic now (125ms * 2 capped at 60000ms); add
+  jitter only after baseline behavior is proven in soak runs.
+- Bind terminal/recoverable classification to existing typed failure buckets so
+  repair routing is automatic.
+
+Verification note:
+
+- This repository currently lacks local `reference-projects/barter-rs/*`
+  content. Mechanism text above is captured from the bounded task packet's
+  selected mechanism list; next `reference_scan` slice should import or mount
+  the declared paths and append exact line-level evidence.
 
 ## First Worker Slice
 

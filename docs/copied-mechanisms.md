@@ -123,6 +123,39 @@ A9 adaptation target:
   pattern while keeping WebSocket for later.
 - Future WebSocket layer should use Barter-rs-style lifecycle events:
   connected, item, reconnecting, stream error, terminated.
+- Reconnecting stream contract (barter-data):
+  `reference-projects/barter-rs/barter-data/src/streams/reconnect/stream.rs`,
+  `reference-projects/barter-rs/barter-data/src/streams/reconnect/mod.rs`,
+  `reference-projects/barter-rs/barter-data/src/streams/consumer.rs`.
+  Mechanism contract:
+  `init_reconnecting_stream` initializes one live stream first, then reuses the
+  same init future for each reconnection cycle.
+  `with_reconnect_backoff` applies exponential backoff on failed re-init,
+  resets delay after successful re-init, and caps delay growth.
+  `with_termination_on_error` terminates the current inner stream on terminal
+  errors so outer reconnect loop is forced to re-init; recoverable errors are
+  still emitted to downstream consumers.
+  `with_reconnection_events` emits explicit `Reconnecting(origin)` events so
+  observers can distinguish reconnect transitions from normal data items.
+  Default consumer policy uses `125ms` initial backoff, multiplier `2`, max
+  backoff `60000ms`.
+
+Failure modes to preserve in A9 adaptation:
+
+- Initial stream init failure loops forever without hard stop unless upper-layer
+  budget/approval policy intervenes.
+- Backoff reset bugs can create permanent slow recovery after one successful
+  reconnect.
+- Terminal error misclassification can trap dead inner streams and block
+  re-init.
+- Missing reconnect lifecycle events hides degraded state from control plane.
+
+Evidence gap (must repair in next reference_sync slice):
+
+- The paths above are the declared source-of-truth, but current worktree does
+  not contain `reference-projects/barter-rs/*`; this slice records the contract
+  from bounded task packet mechanism selection and marks source snippet
+  verification as pending.
 
 ### Aider
 
