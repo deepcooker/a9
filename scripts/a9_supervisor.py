@@ -1276,6 +1276,7 @@ def normalize_worker_envelope_status(status: Any, ok: Any) -> tuple[str, str | N
     alias_map = {
         "pass": "ok",
         "success": "ok",
+        "completed": "ok",
     }
     canonical = alias_map.get(raw.strip().lower())
     if canonical:
@@ -1289,6 +1290,7 @@ def normalize_worker_envelope_protocol_version(protocol_version: Any, ok: Any) -
     alias_map = {
         "1": 1,
         "1.0": 1,
+        "openclaw/1": 1,
         "a9.strict_worker_envelope.v1": 1,
     }
     if protocol_version in {1, "1"}:
