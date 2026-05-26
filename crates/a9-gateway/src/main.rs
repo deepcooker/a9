@@ -460,4 +460,33 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn retry_policy_emits_exhausted_and_returns_last_retryable_error() {
+        let attempts = Cell::new(0);
+        let mut events = Vec::new();
+        let result = redis_roundtrip_with_retries_observer(
+            || {
+                let next = attempts.get() + 1;
+                attempts.set(next);
+                Err(std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    format!("timeout-{next}"),
+                ))
+            },
+            &NoopBackoff,
+            2,
+            |event| events.push(event),
+        );
+
+        assert!(result.is_err());
+        let err = result.err().expect("error expected after exhausting retries");
+        assert_eq!(err.kind(), ErrorKind::TimedOut);
+        assert_eq!(err.to_string(), "timeout-3");
+        assert_eq!(attempts.get(), 3);
+        assert!(matches!(
+            events.last(),
+            Some(ReconnectLifecycleEvent::ExhaustedRetries { max_retries: 2 })
+        ));
+    }
 }
