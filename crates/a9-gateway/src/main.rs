@@ -880,4 +880,65 @@ mod tests {
         assert_eq!(field(&transcript[2], "origin"), Some("connect_error"));
         assert_eq!(field(&transcript[2], "error_class"), Some("unknown"));
     }
+
+    #[test]
+    fn transcript_preserves_terminal_failure_order_and_typed_domains() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake redis listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let (tx, rx) = mpsc::channel::<Vec<Vec<String>>>();
+        let server = std::thread::spawn(move || {
+            let mut captured = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept fake redis client");
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).expect("read redis command");
+                let parts = parse_resp_array(&buf[..n]).expect("parse RESP array command");
+                captured.push(parts);
+                stream.write_all(b"+OK\r\n").expect("reply +OK");
+            }
+            tx.send(captured).expect("send transcript");
+        });
+
+        let terminal = decisions_from_lifecycle_event(
+            3,
+            ReconnectLifecycleEvent::FailureClassified {
+                attempt: 0,
+                kind: RedisFailureKind::Terminal,
+                error_kind: ErrorKind::PermissionDenied,
+            },
+        );
+        for decision in terminal {
+            emit_gateway_decision(
+                &addr.to_string(),
+                decision.phase,
+                decision.action,
+                decision.error_class,
+                decision.attempt,
+                decision.delay_ms,
+                decision.policy_budget_remaining,
+                decision.origin,
+            );
+        }
+
+        server.join().expect("fake redis server exits");
+        let transcript = rx.recv().expect("receive transcript");
+        assert_eq!(transcript.len(), 2);
+
+        assert_eq!(transcript[0][0], "XADD");
+        assert_eq!(field(&transcript[0], "phase"), Some("connect"));
+        assert_eq!(
+            field(&transcript[0], "action"),
+            Some(ConnectErrorAction::Terminate.as_str())
+        );
+        assert_eq!(field(&transcript[0], "origin"), Some("connect_error"));
+        assert_eq!(field(&transcript[0], "error_class"), Some("auth"));
+
+        assert_eq!(field(&transcript[1], "phase"), Some("stream"));
+        assert_eq!(
+            field(&transcript[1], "action"),
+            Some(StreamErrorAction::Reconnect.as_str())
+        );
+        assert_eq!(field(&transcript[1], "origin"), Some("stream_error"));
+        assert_eq!(field(&transcript[1], "error_class"), Some("auth"));
+    }
 }
