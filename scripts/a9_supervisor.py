@@ -4202,6 +4202,7 @@ def run_one(*, auto_next: bool = False) -> int:
         if task.path.exists():
             shutil.move(str(task.path), str(target_task_path))
         next_task_path = schedule_next_task(task, summary) if auto_next else None
+        summary["next_task_path"] = str(next_task_path) if next_task_path else ""
         if auto_next:
             write_json(run_dir / "summary.json", summary)
             write_json(done_path, summary)
