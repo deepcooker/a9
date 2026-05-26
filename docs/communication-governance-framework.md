@@ -269,6 +269,71 @@ Verification note:
   declared Barter-rs paths. A9 should copy the reconnect/backoff/error-event
   mechanism, not the trading-domain stream implementation.
 
+## Ordered State Replica Contract (Barter `state_replica.rs` -> A9 Reducer)
+
+Reference path:
+
+- `reference-projects/barter-rs/barter/src/engine/audit/state_replica.rs`
+
+Mechanism to copy (bounded to reducer contract, not trading logic):
+
+1. Monotonic sequence gate:
+   apply update only when `incoming.sequence > current.sequence`; otherwise
+   treat as stale/duplicate and skip.
+2. Gap hard-fail:
+   if `incoming.sequence != current.sequence + 1`, treat as out-of-order gap
+   and stop normal apply path (quarantine/error path).
+3. Explicit terminal reason:
+   reducer stop reason is explicit and machine-readable (`FeedEnded` vs
+   `EngineEvent::Shutdown`) instead of generic failure text.
+
+Field mapping table for A9 node/flow reducer:
+
+| Barter replica field | A9 field |
+| --- | --- |
+| `context.sequence` (current) | `flow_revision` or per-node `last_applied_seq` |
+| `next.sequence` (incoming) | event envelope `sequence` (stream monotonic sequence) |
+| `validate_and_update_context` | Redis Function gate with `expected_revision` + `expected_last_seq` |
+| stale check `current >= incoming` | `stale_event_skip=true` evidence; no state write |
+| gap check `incoming != current + 1` | `status=degraded`, `error_code=sequence_gap`, route to quarantine stream |
+| stop reason `FeedEnded` | `terminal_reason=feed_ended` in flow/node summary |
+| stop reason `EngineEvent::Shutdown` | `terminal_reason=engine_shutdown` in flow/node summary |
+
+Required event/heartbeat envelope fields (A9):
+
+- `node_id`
+- `flow_id`
+- `flow_revision` (post-apply)
+- `expected_revision` (precondition used by transition)
+- `sequence` (event sequence from stream producer)
+- `event_type`
+- `stale_event_skip` (`true|false`)
+- `gap_detected` (`true|false`)
+- `terminal_reason` (`none|feed_ended|engine_shutdown|quarantined_gap`)
+- `ts`
+
+Failure modes table (must stay machine-readable):
+
+1. Duplicate/stale overwrite:
+   missing stale gate lets old heartbeat/event regress hot snapshot.
+2. Silent gap apply:
+   reducer accepts non-contiguous sequence and corrupts replay invariants.
+3. Gap without quarantine:
+   system logs error but still advances revision, making repair impossible.
+4. Ambiguous terminal reason:
+   no explicit stop reason; control plane cannot decide auto-retry vs manual
+   resume.
+5. Revision/sequence drift:
+   `expected_revision` CAS passes but `sequence` is not contiguous, causing
+   mixed-order state.
+
+Token/cost behavior for this mechanism extract:
+
+- reducer checks are O(1) per event (`stale`, `gap`, CAS precondition);
+  no extra historical prompt expansion is required.
+- failure evidence must be bounded key-value envelopes, not raw logs, to keep
+  `session_refresh` and worker prompts compact.
+
 ## First Worker Slice
 
 The first 24-hour worker task should not add broad new product UI. It should
