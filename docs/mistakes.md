@@ -369,3 +369,26 @@
 - 监控者接管了通过测试的 patch。
 - 下一步要继续治理两个点：更严格的“小窗口读取”提示/策略，以及是否把
   `openclaw/1`、`completed` 作为 `ok=true` 下的窄 alias 归一化。
+
+## 2026-05-27：reference_scan 不能让 worker 自由抄大项目
+
+错误：
+
+- `auto-reference_scan-auto-test-implement-xinfo-consumers-p-74e5395946-20260526T201722Z`
+  进入 reference_scan 后没有产出 final envelope。
+- supervisor 在 `event_bytes=1075032` 时触发 `budget_stopped`，状态为
+  `retryable-worker-budget`。
+- 这不是业务代码失败，而是“让 worker 自由看参考项目”导致输出事件失控。
+
+纠正：
+
+- 监控者先用 `rg` 给出精选锚点，再把任务收窄成单一测试或单一机制抽取。
+- reference_scan 阶段必须限制为：最多 3 个文件锚点、最多 1 个机制、只输出
+  `next_slice`，不能展开源码和长文档。
+
+规则：
+
+- 通讯治理参考扫描优先由监控者预筛：`barter-rs` reconnect/backoff、
+  `a9-gateway` retry lifecycle、Redis Streams pending/lag。
+- worker 不再被要求“自由 inspect local reference projects”；要给它明确文件和
+  行锚，否则容易重复触发 event budget。
