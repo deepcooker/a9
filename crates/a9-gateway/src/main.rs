@@ -9,6 +9,51 @@ const EVENT_STREAM: &str = "a9:events";
 const HEARTBEAT_STREAM: &str = "a9:heartbeats";
 const WORKER_GROUP: &str = "a9-workers";
 
+trait ReconnectBackoff {
+    fn delay(&self, attempt: u32) -> Duration;
+}
+
+struct DefaultReconnectBackoff;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RedisFailureKind {
+    Retryable,
+    Terminal,
+}
+
+impl RedisFailureKind {
+    fn is_retryable(&self) -> bool {
+        matches!(self, RedisFailureKind::Retryable)
+    }
+}
+
+impl DefaultReconnectBackoff {
+    fn classify_failure(error: &std::io::Error) -> RedisFailureKind {
+        match error.kind() {
+            std::io::ErrorKind::TimedOut
+            | std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::NotConnected
+            | std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted => RedisFailureKind::Retryable,
+            std::io::ErrorKind::InvalidInput
+            | std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::InvalidData
+            | std::io::ErrorKind::Unsupported => RedisFailureKind::Terminal,
+            _ => RedisFailureKind::Terminal,
+        }
+    }
+}
+
+impl ReconnectBackoff for DefaultReconnectBackoff {
+    fn delay(&self, attempt: u32) -> Duration {
+        match attempt {
+            0 => Duration::ZERO,
+            n => Duration::from_millis(2u64.pow(n.min(15)) + 10),
+        }
+    }
+}
+
 fn encode_command(parts: &[String]) -> Vec<u8> {
     let mut out = format!("*{}\r\n", parts.len()).into_bytes();
     for part in parts {
@@ -17,13 +62,6 @@ fn encode_command(parts: &[String]) -> Vec<u8> {
         out.extend_from_slice(b"\r\n");
     }
     out
-}
-
-fn reconnect_backoff(attempt: u32) -> Duration {
-    match attempt {
-        0 => Duration::ZERO,
-        n => Duration::from_millis(2u64.pow(n.min(15)) + 10),
-    }
 }
 
 fn redis_roundtrip_once(addr: &str, parts: &[String]) -> std::io::Result<String> {
@@ -36,24 +74,42 @@ fn redis_roundtrip_once(addr: &str, parts: &[String]) -> std::io::Result<String>
     Ok(String::from_utf8_lossy(&buf[..n]).to_string())
 }
 
-fn redis_roundtrip(addr: &str, parts: &[String]) -> std::io::Result<String> {
-    let retries = env::var("A9_REDIS_RETRIES")
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(3);
+fn redis_roundtrip_with_retries<B: ReconnectBackoff>(
+    mut attempt: impl FnMut() -> std::io::Result<String>,
+    backoff: &B,
+    max_retries: u32,
+) -> std::io::Result<String> {
     let mut last_error = None;
-    for attempt in 0..=retries {
-        if attempt > 0 {
-            thread::sleep(reconnect_backoff(attempt));
+    for retry in 0..=max_retries {
+        if retry > 0 {
+            thread::sleep(backoff.delay(retry));
         }
-        match redis_roundtrip_once(addr, parts) {
+        match attempt() {
             Ok(response) => return Ok(response),
-            Err(error) => last_error = Some(error),
+            Err(error) => {
+                let failure = DefaultReconnectBackoff::classify_failure(&error);
+                if !failure.is_retryable() {
+                    return Err(error);
+                }
+                last_error = Some(error);
+            }
         }
     }
     Err(last_error.unwrap_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::Other, "redis roundtrip failed")
     }))
+}
+
+fn redis_roundtrip(addr: &str, parts: &[String]) -> std::io::Result<String> {
+    let retries = env::var("A9_REDIS_RETRIES")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(3);
+    redis_roundtrip_with_retries(
+        || redis_roundtrip_once(addr, parts),
+        &DefaultReconnectBackoff,
+        retries,
+    )
 }
 
 fn cmd(parts: &[&str]) -> Vec<String> {
@@ -220,22 +276,112 @@ fn main() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::io::ErrorKind;
+
+    #[derive(Default)]
+    struct NoopBackoff;
+
+    impl ReconnectBackoff for NoopBackoff {
+        fn delay(&self, _attempt: u32) -> Duration {
+            Duration::ZERO
+        }
+    }
 
     #[test]
     fn backoff_first_attempt_is_immediate() {
-        assert_eq!(reconnect_backoff(0), Duration::ZERO);
+        let backoff = DefaultReconnectBackoff;
+        assert_eq!(backoff.delay(0), Duration::ZERO);
     }
 
     #[test]
     fn backoff_is_exponential_with_small_constant_delay() {
-        assert_eq!(reconnect_backoff(1), Duration::from_millis(12));
-        assert_eq!(reconnect_backoff(2), Duration::from_millis(14));
-        assert_eq!(reconnect_backoff(3), Duration::from_millis(18));
+        let backoff = DefaultReconnectBackoff;
+        assert_eq!(backoff.delay(1), Duration::from_millis(12));
+        assert_eq!(backoff.delay(2), Duration::from_millis(14));
+        assert_eq!(backoff.delay(3), Duration::from_millis(18));
     }
 
     #[test]
     fn backoff_is_capped_at_barter_rs_style_exponent() {
-        assert_eq!(reconnect_backoff(15), Duration::from_millis(32778));
-        assert_eq!(reconnect_backoff(99), Duration::from_millis(32778));
+        let backoff = DefaultReconnectBackoff;
+        assert_eq!(backoff.delay(15), Duration::from_millis(32778));
+        assert_eq!(backoff.delay(99), Duration::from_millis(32778));
+    }
+
+    #[test]
+    fn classify_failure_marks_retryable_kinds() {
+        assert_eq!(
+            DefaultReconnectBackoff::classify_failure(&std::io::Error::new(
+                ErrorKind::TimedOut,
+                "timeout"
+            )),
+            RedisFailureKind::Retryable
+        );
+        assert_eq!(
+            DefaultReconnectBackoff::classify_failure(&std::io::Error::new(
+                ErrorKind::Interrupted,
+                "interrupted"
+            )),
+            RedisFailureKind::Retryable
+        );
+    }
+
+    #[test]
+    fn classify_failure_marks_terminal_kinds() {
+        assert_eq!(
+            DefaultReconnectBackoff::classify_failure(&std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "invalid input"
+            )),
+            RedisFailureKind::Terminal
+        );
+        assert_eq!(
+            DefaultReconnectBackoff::classify_failure(&std::io::Error::new(
+                ErrorKind::PermissionDenied,
+                "permission denied"
+            )),
+            RedisFailureKind::Terminal
+        );
+    }
+
+    #[test]
+    fn retry_policy_stops_after_terminal_failures() {
+        let attempts = Cell::new(0);
+        let result = redis_roundtrip_with_retries(
+            || {
+                attempts.set(attempts.get() + 1);
+                Err(std::io::Error::new(
+                    ErrorKind::PermissionDenied,
+                    "permission denied",
+                ))
+            },
+            &NoopBackoff,
+            3,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(attempts.get(), 1);
+    }
+
+    #[test]
+    fn retry_policy_keeps_retrying_retryable_failures() {
+        let attempts = Cell::new(0);
+        let result = redis_roundtrip_with_retries(
+            || {
+                let next = attempts.get() + 1;
+                attempts.set(next);
+                if next < 3 {
+                    Err(std::io::Error::new(ErrorKind::TimedOut, "timeout"))
+                } else {
+                    Ok("ok".to_string())
+                }
+            },
+            &NoopBackoff,
+            5,
+        );
+
+        assert_eq!(result.unwrap(), "ok");
+        assert_eq!(attempts.get(), 3);
     }
 }

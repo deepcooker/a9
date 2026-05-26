@@ -113,6 +113,10 @@ A9 adaptation target:
 
 - Communication governance, not trading logic.
 - Rust gateway retry/backoff and Redis roundtrip hardening.
+- First slice implemented typed retry-classification (`RedisFailureKind`) and a
+  `ReconnectBackoff`/`DefaultReconnectBackoff` shape in
+  `crates/a9-gateway/src/main.rs`, copied from Barter-rs typed
+  backoff/error-action structure.
 - Node heartbeat state machine and reconnect evidence.
 - Future SSE/WebSocket replay layer should use Barter-rs-style lifecycle
   events: connected, item, reconnecting, stream error, terminated.

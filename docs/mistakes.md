@@ -139,3 +139,27 @@
 - raw Codex JSONL 存文件/MySQL canonical index，Redis 只做热索引。
 - A9 runtime session 存 `.a9/runs`、MySQL、Redis hot path。
 - mem0 只存抽取后的长期记忆，必须带 evidence 引用。
+
+## 2026-05-26：strict worker envelope 不是自由文本协议
+
+错误：
+
+- `comm-governance-slice1-repair-20260526T091313Z` 的代码 patch、scope guard 和
+  `cargo test -p a9-gateway` 都通过了，但 worker final 写成
+  `protocolVersion: "openclaw-lobster-worker-envelope-v1"`、`status: "pass"`。
+- supervisor 要求 `protocolVersion` 必须是 `1`，`status` 必须是 `ok`、
+  `needs_approval` 或 `cancelled`，因此正确回滚了 patch。
+
+纠正：
+
+- 监控者接管并只保留通过测试、通过 scope guard 的有效 patch。
+- 后续 worker prompt 必须直接给出合法 envelope 示例，不要只说“strict JSON
+  envelope”。
+
+规则：
+
+- `strict_worker_envelope: true` 时，合法最小通过格式是：
+
+```json
+{"protocolVersion":1,"ok":true,"status":"ok","output":{}}
+```
