@@ -1302,8 +1302,8 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
                     result["findings"].append(
                         {"level": "error", "message": "requiresApproval needs resumeToken or approvalId"}
                     )
-        elif status == "ok" and "output" in envelope and not isinstance(envelope.get("output"), list):
-            result["findings"].append({"level": "error", "message": "output must be a list when present"})
+        elif status == "ok" and "output" in envelope and not isinstance(envelope.get("output"), (dict, list)):
+            result["findings"].append({"level": "error", "message": "output must be an object or list when present"})
         if result["findings"]:
             result["status"] = "fail"
         elif status == "needs_approval":

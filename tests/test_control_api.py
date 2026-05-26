@@ -243,6 +243,32 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(degraded["status"], "degraded")
         self.assertEqual(degraded["events"], [])
 
+    def test_read_events_rejects_invalid_last_id_as_degraded(self):
+        mod = load_control_api()
+        calls = []
+
+        def fake_redis(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("redis_cli must not be called for invalid cursor")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.read_events("bad-cursor", limit=5)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["events"], [])
+        self.assertIn("invalid last_id format", result["error"])
+        self.assertEqual(calls, [])
+
+    def test_resolve_event_last_id_uses_query_then_header(self):
+        mod = load_control_api()
+        self.assertEqual(mod._resolve_event_last_id("1740000001-0", "1740000002-0"), "1740000001-0")
+        self.assertEqual(mod._resolve_event_last_id(None, "1740000002-0"), "1740000002-0")
+        self.assertIsNone(mod._resolve_event_last_id(None, "bad-cursor"))
+
     def test_events_to_sse_uses_stream_id_and_json_data(self):
         mod = load_control_api()
         body = mod.events_to_sse(
@@ -603,6 +629,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["service"], "a9-controller")
         self.assertEqual(discovery["endpoints"]["register_node"], "/api/nodes/register")
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
+        self.assertEqual(discovery["events"]["max_limit"], 1000)
+        self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])
 
     def test_tailscale_status_reports_missing_binary(self):
         mod = load_control_api()

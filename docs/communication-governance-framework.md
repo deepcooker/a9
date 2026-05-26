@@ -148,9 +148,11 @@ Redis ecosystem:
    write RedisJSON snapshot, append heartbeat stream, add TimeSeries metric,
    retain local file fallback if Redis is unavailable.
 5. Event replay:
-   stream IDs and `Last-Event-ID` for SSE; never rely on volatile UI state.
+   stream IDs and replay cursor handling for SSE; never rely on volatile UI state.
    First slice exposes `a9:events` through `/api/events` with JSON tail and
-   `format=sse` output, plus degraded behavior when Redis is unavailable.
+   `format=sse` output, using explicit cursor precedence (`last_id` query first,
+   then `Last-Event-ID` request header), with degraded output when cursor format
+   is invalid or Redis is unavailable.
 6. Backpressure:
    bounded stream reads, trim policy, dead-letter stream, retry budget, and
    error-class counters.

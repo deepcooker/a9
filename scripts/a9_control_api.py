@@ -40,6 +40,7 @@ PHONE_CONTROL_GROUPS = {
 }
 KNOWN_CONTROL_COMMANDS = sorted({cmd for commands in PHONE_CONTROL_GROUPS.values() for cmd in commands})
 EVENTS_STREAM_KEY = "a9:events"
+EVENTS_STREAM_LIMIT_MAX = 1000
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -115,6 +116,14 @@ def _looks_like_stream_id(value: str) -> bool:
     return bool(re.fullmatch(r"\d+-\d+", value))
 
 
+def _resolve_event_last_id(query_last_id: str | None, last_event_id_header: str | None) -> str | None:
+    if query_last_id:
+        return query_last_id
+    if last_event_id_header and _looks_like_stream_id(last_event_id_header):
+        return last_event_id_header
+    return None
+
+
 def parse_xrange_events(output: str) -> list[dict[str, Any]]:
     text = (output or "").strip()
     if not text:
@@ -163,7 +172,18 @@ def parse_xrange_events(output: str) -> list[dict[str, Any]]:
 
 
 def read_events(last_id: str | None = None, *, count: int = 100, limit: int | None = None) -> dict[str, Any]:
-    requested = max(1, int(limit) if limit is not None else int(count))
+    requested_raw = limit if limit is not None else count
+    requested = max(1, min(EVENTS_STREAM_LIMIT_MAX, int(requested_raw)))
+    if last_id is not None and not _looks_like_stream_id(last_id):
+        return {
+            "status": "degraded",
+            "stream": EVENTS_STREAM_KEY,
+            "error": "invalid last_id format, expected stream-id like 1740000000-0",
+            "last_id": last_id,
+            "requested_count": requested,
+            "events": [],
+        }
+
     start = "-" if not last_id else f"({last_id}"
     try:
         proc = redis_cli(["--raw", "XRANGE", EVENTS_STREAM_KEY, start, "+", "COUNT", str(requested)])
@@ -479,6 +499,8 @@ def controller_discovery() -> dict[str, Any]:
             "url": "/api/events",
             "formats": ["json", "sse"],
             "query": ["last_id", "limit", "count", "format=sse"],
+            "sse_cursor_hint": "include Last-Event-ID request header or last_id query for replay",
+            "max_limit": EVENTS_STREAM_LIMIT_MAX,
         },
     }
 
@@ -1293,8 +1315,12 @@ class ControlHandler(BaseHTTPRequestHandler):
                 source = query.get("source_session_path", [None])[0]
                 self.write_json(200, operator_tail(source, limit=limit))
             elif parsed.path == "/api/events":
-                last_id = query.get("last_id", [None])[0]
-                limit = int(query.get("limit", query.get("count", ["100"]))[0])
+                last_id = _resolve_event_last_id(query.get("last_id", [None])[0], self.headers.get("Last-Event-ID"))
+                try:
+                    limit = int(query.get("limit", query.get("count", ["100"]))[0])
+                except ValueError:
+                    self.write_json(400, {"error": "limit must be integer"})
+                    return
                 payload = read_events(last_id, limit=limit)
                 if query.get("format", ["json"])[0] == "sse":
                     self.write_sse(200, payload)
