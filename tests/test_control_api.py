@@ -344,6 +344,42 @@ class ControlApiTests(unittest.TestCase):
         self.assertIn('data: {"id": "1740000000-0"', body)
         self.assertTrue(body.endswith("\n\n"))
 
+    def test_event_replay_reset_decision_resets_cursor_for_cursor_gap(self):
+        mod = load_control_api()
+        decision = mod.event_replay_reset_decision(
+            {
+                "status": "degraded",
+                "error_code": "cursor_gap",
+                "next_last_id": "1740000010-0",
+            }
+        )
+        self.assertEqual(decision["action"], "reset_cursor")
+        self.assertEqual(decision["reason"], "cursor_gap")
+        self.assertEqual(decision["next_last_id"], "1740000010-0")
+
+    def test_event_replay_reset_decision_retries_without_cursor_when_next_last_id_invalid(self):
+        mod = load_control_api()
+        decision = mod.event_replay_reset_decision(
+            {
+                "status": "degraded",
+                "error_code": "cursor_gap",
+                "next_last_id": "bad-id",
+            }
+        )
+        self.assertEqual(decision["action"], "retry_without_cursor")
+        self.assertEqual(decision["next_last_id"], "")
+
+    def test_event_replay_reset_decision_keeps_cursor_when_no_gap(self):
+        mod = load_control_api()
+        decision = mod.event_replay_reset_decision(
+            {
+                "status": "ok",
+                "next_last_id": "1740000004-0",
+            }
+        )
+        self.assertEqual(decision["action"], "keep_cursor")
+        self.assertEqual(decision["next_last_id"], "1740000004-0")
+
     def test_probe_node_uses_remote_probe_and_registers_result(self):
         mod = load_control_api()
 

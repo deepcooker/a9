@@ -252,6 +252,28 @@ def read_events(last_id: str | None = None, *, count: int = 100, limit: int | No
     }
 
 
+def event_replay_reset_decision(response: dict[str, Any]) -> dict[str, Any]:
+    """Return a bounded client action for /api/events replay responses."""
+    if response.get("status") == "degraded" and response.get("error_code") == "cursor_gap":
+        next_last_id = str(response.get("next_last_id") or "")
+        if _looks_like_stream_id(next_last_id):
+            return {
+                "action": "reset_cursor",
+                "reason": "cursor_gap",
+                "next_last_id": next_last_id,
+            }
+        return {
+            "action": "retry_without_cursor",
+            "reason": "cursor_gap_without_valid_next_last_id",
+            "next_last_id": "",
+        }
+    return {
+        "action": "keep_cursor",
+        "reason": "no_cursor_reset_needed",
+        "next_last_id": str(response.get("next_last_id") or ""),
+    }
+
+
 def events_to_sse(payload: dict[str, Any]) -> bytes:
     chunks = []
     for event in payload.get("events", []):
