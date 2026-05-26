@@ -1282,6 +1282,7 @@ index 0000000..3e75765
                 self.assertIn("Continue A9 24-hour automation", text)
                 self.assertIn("deterministic_record_path", summary)
                 record_path = Path(summary["deterministic_record_path"])
+                self.assertIn(f"- record_path: {record_path}", text)
                 record = json.loads(record_path.read_text(encoding="utf-8"))
                 self.assertEqual(record["mode"], "deterministic_supervisor_record")
                 self.assertEqual(record["task_id"], "auto-test")

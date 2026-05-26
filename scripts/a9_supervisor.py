@@ -3064,6 +3064,12 @@ Managed flow:
 - flow_id: {flow['flow_id']}
 - flow_expected_revision: {flow['revision']}
 """
+    record_lines = ""
+    if summary.get("deterministic_record_path"):
+        record_lines = f"""
+Deterministic record:
+- record_path: {summary['deterministic_record_path']}
+"""
     return f"""strict_worker_envelope: true
 
 Continue A9 24-hour automation.
@@ -3076,6 +3082,7 @@ Previous context: {summary['context_path']}
 
 Phase: {phase}
 {flow_lines}
+{record_lines}
 
 Core rule:
 - Continue copying mature open-source mechanisms before inventing.
