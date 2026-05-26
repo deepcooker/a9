@@ -66,6 +66,67 @@ class MiddlewareFlowTests(unittest.TestCase):
         self.assertEqual(updated["history"][0]["to_status"], "running")
         self.assertEqual(updated["history"][0]["evidence_id"], "e1")
 
+    def test_transition_flow_state_sequence_gate_and_gap_quarantine(self):
+        mod = load_middleware()
+        state = mod.initial_flow_state("flow-1", "session_refresh")
+
+        first = mod.transition_flow_state(
+            state,
+            expected_revision=0,
+            expected_last_seq=0,
+            sequence=1,
+            next_status="running",
+            actor="supervisor",
+            reason="seq-1",
+            evidence_id="e1",
+            now="2026-05-22T00:00:00+00:00",
+        )
+        self.assertEqual(first["revision"], 1)
+        self.assertEqual(first["last_seq"], 1)
+        self.assertEqual(first["history"][0]["sequence"], 1)
+
+        stale = mod.transition_flow_state(
+            first,
+            expected_revision=1,
+            expected_last_seq=1,
+            sequence=1,
+            next_status="completed",
+            actor="supervisor",
+            reason="duplicate",
+            evidence_id="e2",
+            now="2026-05-22T00:00:01+00:00",
+        )
+        self.assertEqual(stale["revision"], 1)
+        self.assertEqual(stale["last_seq"], 1)
+        self.assertEqual(len(stale["history"]), 1)
+
+        gap = mod.transition_flow_state(
+            first,
+            expected_revision=1,
+            expected_last_seq=1,
+            sequence=3,
+            next_status="completed",
+            actor="supervisor",
+            reason="missing-seq-2",
+            evidence_id="e3",
+            now="2026-05-22T00:00:02+00:00",
+        )
+        self.assertEqual(gap["revision"], 2)
+        self.assertEqual(gap["status"], "quarantined")
+        self.assertEqual(gap["terminal_reason"], "sequence_gap")
+        self.assertEqual(gap["quarantine"][0]["expected_next_seq"], 2)
+        self.assertEqual(gap["quarantine"][0]["incoming_seq"], 3)
+
+        with self.assertRaisesRegex(ValueError, "sequence_mismatch"):
+            mod.transition_flow_state(
+                first,
+                expected_revision=1,
+                expected_last_seq=9,
+                sequence=2,
+                next_status="completed",
+                actor="supervisor",
+            )
+
     def test_set_waiting_flow_state_records_approval_envelope(self):
         mod = load_middleware()
         state = mod.initial_flow_state("flow-1", "approval")
@@ -166,6 +227,95 @@ class MiddlewareFlowTests(unittest.TestCase):
             ]
         )
         self.assertIn("revision_mismatch", stale.stdout)
+
+    @unittest.skipUnless(redis_available(), "redis is not running")
+    def test_redis_function_transition_flow_sequence_gate_gap_and_stale_skip(self):
+        mod = load_middleware()
+        mod.init_redis_runtime()
+        flow_id = "middleware-flow-seq-unittest"
+        key = mod.redis_flow_key(flow_id)
+        state = mod.initial_flow_state(flow_id, "unit")
+        create = mod.redis(["JSON.SET", key, "$", mod.json_compact(state)])
+        self.assertEqual(create.returncode, 0, create.stdout)
+
+        first = mod.redis(
+            [
+                "FCALL",
+                "transition_flow",
+                "1",
+                key,
+                "0",
+                "running",
+                "unittest",
+                "seq-1",
+                "e1",
+                "2026-05-22T00:00:00+00:00",
+                "0",
+                "1",
+            ]
+        )
+        self.assertEqual(first.returncode, 0, first.stdout)
+        self.assertIn('"revision":1', first.stdout)
+        self.assertIn('"last_seq":1', first.stdout)
+
+        stale = mod.redis(
+            [
+                "FCALL",
+                "transition_flow",
+                "1",
+                key,
+                "1",
+                "completed",
+                "unittest",
+                "dup",
+                "e2",
+                "2026-05-22T00:00:01+00:00",
+                "1",
+                "1",
+            ]
+        )
+        self.assertEqual(stale.returncode, 0, stale.stdout)
+        self.assertIn('"revision":1', stale.stdout)
+        self.assertIn('"last_seq":1', stale.stdout)
+
+        gap = mod.redis(
+            [
+                "FCALL",
+                "transition_flow",
+                "1",
+                key,
+                "1",
+                "completed",
+                "unittest",
+                "gap",
+                "e3",
+                "2026-05-22T00:00:02+00:00",
+                "1",
+                "3",
+            ]
+        )
+        self.assertEqual(gap.returncode, 0, gap.stdout)
+        self.assertIn('"revision":2', gap.stdout)
+        self.assertIn('"status":"quarantined"', gap.stdout)
+        self.assertIn('"terminal_reason":"sequence_gap"', gap.stdout)
+
+        mismatch = mod.redis(
+            [
+                "FCALL",
+                "transition_flow",
+                "1",
+                key,
+                "2",
+                "completed",
+                "unittest",
+                "mismatch",
+                "e4",
+                "2026-05-22T00:00:03+00:00",
+                "999",
+                "4",
+            ]
+        )
+        self.assertIn("sequence_mismatch", mismatch.stdout)
 
     @unittest.skipUnless(redis_available(), "redis is not running")
     def test_redis_function_wait_and_resume_flow(self):

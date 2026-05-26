@@ -81,6 +81,7 @@ def initial_flow_state(flow_id: str, kind: str, *, status: str = "created", meta
         "kind": kind,
         "status": status,
         "revision": 0,
+        "last_seq": 0,
         "created_at": now,
         "updated_at": now,
         "metadata": metadata or {},
@@ -96,14 +97,44 @@ def transition_flow_state(
     actor: str,
     reason: str = "",
     evidence_id: str = "",
+    expected_last_seq: int | None = None,
+    sequence: int | None = None,
     now: str | None = None,
 ) -> dict[str, Any]:
     current_revision = int(state.get("revision", 0))
     if current_revision != expected_revision:
         raise ValueError(f"revision_mismatch current={current_revision} expected={expected_revision}")
+    current_last_seq = int(state.get("last_seq", 0))
+    if expected_last_seq is not None and current_last_seq != expected_last_seq:
+        raise ValueError(f"sequence_mismatch current={current_last_seq} expected={expected_last_seq}")
+    if sequence is not None and sequence <= current_last_seq:
+        return dict(state)
+    timestamp = now or utc_now()
+    if sequence is not None and sequence != current_last_seq + 1:
+        updated = dict(state)
+        history = list(updated.get("history") or [])
+        gap = {
+            "revision": current_revision + 1,
+            "kind": "sequence_gap",
+            "actor": actor,
+            "reason": reason,
+            "evidence_id": evidence_id,
+            "expected_next_seq": current_last_seq + 1,
+            "incoming_seq": sequence,
+            "at": timestamp,
+        }
+        history.append(gap)
+        quarantined = list(updated.get("quarantine") or [])
+        quarantined.append(gap)
+        updated["status"] = "quarantined"
+        updated["terminal_reason"] = "sequence_gap"
+        updated["revision"] = current_revision + 1
+        updated["updated_at"] = timestamp
+        updated["history"] = history
+        updated["quarantine"] = quarantined
+        return updated
     updated = dict(state)
     history = list(updated.get("history") or [])
-    timestamp = now or utc_now()
     history.append(
         {
             "revision": current_revision + 1,
@@ -112,11 +143,14 @@ def transition_flow_state(
             "actor": actor,
             "reason": reason,
             "evidence_id": evidence_id,
+            "sequence": sequence,
             "at": timestamp,
         }
     )
     updated["status"] = next_status
     updated["revision"] = current_revision + 1
+    if sequence is not None:
+        updated["last_seq"] = sequence
     updated["updated_at"] = timestamp
     updated["history"] = history
     return updated
@@ -252,6 +286,8 @@ redis.register_function('transition_flow', function(keys, args)
   local reason = args[4] or ''
   local evidence_id = args[5] or ''
   local now = args[6] or ''
+  local expected_last_seq = tonumber(args[7])
+  local incoming_seq = tonumber(args[8])
   local raw = redis.call('JSON.GET', key, '$')
   if not raw then
     return redis.error_reply('flow_not_found')
@@ -262,6 +298,38 @@ redis.register_function('transition_flow', function(keys, args)
   if current ~= expected then
     return redis.error_reply('revision_mismatch current=' .. tostring(current) .. ' expected=' .. tostring(expected))
   end
+  local current_last_seq = tonumber(state['last_seq'] or 0)
+  if expected_last_seq ~= nil and current_last_seq ~= expected_last_seq then
+    return redis.error_reply('sequence_mismatch current=' .. tostring(current_last_seq) .. ' expected=' .. tostring(expected_last_seq))
+  end
+  if incoming_seq ~= nil and incoming_seq <= current_last_seq then
+    return cjson.encode(state)
+  end
+  if incoming_seq ~= nil and incoming_seq ~= current_last_seq + 1 then
+    local history = state['history'] or {}
+    local gap = {
+      revision = current + 1,
+      kind = 'sequence_gap',
+      actor = actor,
+      reason = reason,
+      evidence_id = evidence_id,
+      expected_next_seq = current_last_seq + 1,
+      incoming_seq = incoming_seq,
+      at = now
+    }
+    table.insert(history, gap)
+    local quarantine = state['quarantine'] or {}
+    table.insert(quarantine, gap)
+    state['status'] = 'quarantined'
+    state['terminal_reason'] = 'sequence_gap'
+    state['revision'] = current + 1
+    state['updated_at'] = now
+    state['history'] = history
+    state['quarantine'] = quarantine
+    redis.call('JSON.SET', key, '$', cjson.encode(state))
+    redis.call('XADD', 'a9:events', '*', 'kind', 'flow_sequence_gap', 'flow_id', key, 'revision', tostring(current + 1), 'expected_next_seq', tostring(current_last_seq + 1), 'incoming_seq', tostring(incoming_seq), 'actor', actor)
+    return cjson.encode(state)
+  end
   local history = state['history'] or {}
   table.insert(history, {
     revision = current + 1,
@@ -270,10 +338,14 @@ redis.register_function('transition_flow', function(keys, args)
     actor = actor,
     reason = reason,
     evidence_id = evidence_id,
+    sequence = incoming_seq,
     at = now
   })
   state['status'] = next_status
   state['revision'] = current + 1
+  if incoming_seq ~= nil then
+    state['last_seq'] = incoming_seq
+  end
   state['updated_at'] = now
   state['history'] = history
   redis.call('JSON.SET', key, '$', cjson.encode(state))
