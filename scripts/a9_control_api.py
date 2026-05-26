@@ -43,6 +43,7 @@ EVENTS_STREAM_KEY = "a9:events"
 EVENTS_STREAM_LIMIT_MAX = 1000
 TASKS_STREAM_KEY = "a9:tasks"
 TASKS_STREAM_GROUP = "a9-worker"
+TASKS_STREAM_TOP_CONSUMERS_LIMIT = 3
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -823,6 +824,22 @@ def parse_xpending_total(output: str) -> int | None:
     return parse_int(lines[0], default=-1)
 
 
+def parse_xinfo_consumers_rows(output: str) -> list[dict[str, str]]:
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    rows: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for index in range(0, len(lines) - 1, 2):
+        key = lines[index]
+        value = lines[index + 1]
+        if key == "name" and current:
+            rows.append(current)
+            current = {}
+        current[key] = value
+    if current:
+        rows.append(current)
+    return rows
+
+
 def redis_tasks_stream_probe() -> dict[str, Any]:
     if not redis_available():
         return {"status": "unavailable", "reason": "redis_unavailable", "lag": None, "pending": None}
@@ -859,6 +876,33 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
         result["reason"] = "invalid_pending"
         return result
     result["pending"] = total
+    try:
+        consumers = redis_cli(["--raw", "XINFO", "CONSUMERS", TASKS_STREAM_KEY, TASKS_STREAM_GROUP])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        result["consumer_probe_status"] = "degraded"
+        result["consumer_probe_reason"] = "xinfo_consumers_probe_error"
+        result["consumer_probe_error"] = str(exc)
+        return result
+    if consumers.returncode != 0:
+        result["consumer_probe_status"] = "degraded"
+        result["consumer_probe_reason"] = "xinfo_consumers_failed"
+        return result
+    rows = parse_xinfo_consumers_rows(consumers.stdout)
+    top_consumers = sorted(
+        (
+            {
+                "name": row.get("name", ""),
+                "pending": parse_int(row.get("pending"), default=0),
+                "idle": parse_int(row.get("idle"), default=0),
+            }
+            for row in rows
+        ),
+        key=lambda item: item["pending"],
+        reverse=True,
+    )[:TASKS_STREAM_TOP_CONSUMERS_LIMIT]
+    result["consumer_probe_status"] = "ok"
+    result["consumer_probe_reason"] = "healthy"
+    result["top_consumers"] = top_consumers
     return result
 
 
