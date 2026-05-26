@@ -41,6 +41,8 @@ PHONE_CONTROL_GROUPS = {
 KNOWN_CONTROL_COMMANDS = sorted({cmd for commands in PHONE_CONTROL_GROUPS.values() for cmd in commands})
 EVENTS_STREAM_KEY = "a9:events"
 EVENTS_STREAM_LIMIT_MAX = 1000
+TASKS_STREAM_KEY = "a9:tasks"
+TASKS_STREAM_GROUP = "a9-worker"
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -728,7 +730,12 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
                 nodes.append(enrich_node_connection(read_json(path)))
             except json.JSONDecodeError:
                 nodes.append({"node_id": path.stem, "status": "invalid", "connection_state": "invalid"})
-    return {"count": len(nodes), "nodes": nodes[-50:], "redis": redis_node_hot_status()}
+    return {
+        "count": len(nodes),
+        "nodes": nodes[-50:],
+        "redis": redis_node_hot_status(),
+        "tasks_stream": redis_tasks_stream_probe(),
+    }
 
 
 def node_connection_action(connection_state: str) -> tuple[str, str]:
@@ -784,6 +791,75 @@ def redis_node_hot_status() -> dict[str, Any]:
         "heartbeats_stream_len": int(stream.stdout.strip() or "0") if stream.returncode == 0 else None,
         "events_stream_len": int(events.stdout.strip() or "0") if events.returncode == 0 else None,
     }
+
+
+def parse_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_xinfo_groups_rows(output: str) -> list[dict[str, str]]:
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    rows: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for index in range(0, len(lines) - 1, 2):
+        key = lines[index]
+        value = lines[index + 1]
+        if key == "name" and current:
+            rows.append(current)
+            current = {}
+        current[key] = value
+    if current:
+        rows.append(current)
+    return rows
+
+
+def parse_xpending_total(output: str) -> int | None:
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    if not lines:
+        return None
+    return parse_int(lines[0], default=-1)
+
+
+def redis_tasks_stream_probe() -> dict[str, Any]:
+    if not redis_available():
+        return {"status": "unavailable", "reason": "redis_unavailable", "lag": None, "pending": None}
+    try:
+        groups = redis_cli(["--raw", "XINFO", "GROUPS", TASKS_STREAM_KEY])
+        pending = redis_cli(["--raw", "XPENDING", TASKS_STREAM_KEY, TASKS_STREAM_GROUP])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "degraded", "reason": "redis_probe_error", "lag": None, "pending": None, "error": str(exc)}
+    if groups.returncode != 0:
+        return {"status": "degraded", "reason": "xinfo_groups_failed", "lag": None, "pending": None}
+    group = next((row for row in parse_xinfo_groups_rows(groups.stdout) if row.get("name") == TASKS_STREAM_GROUP), None)
+    if not group:
+        return {"status": "degraded", "reason": "consumer_group_missing", "lag": None, "pending": None}
+    lag = parse_int(group.get("lag"), default=-1)
+    if lag < 0:
+        return {"status": "degraded", "reason": "invalid_lag", "lag": None, "pending": None}
+    result: dict[str, Any] = {
+        "status": "ok",
+        "reason": "healthy",
+        "stream": TASKS_STREAM_KEY,
+        "group": TASKS_STREAM_GROUP,
+        "lag": lag,
+        "pending": None,
+        "consumer_count": parse_int(group.get("consumers"), default=0),
+        "entries_read": parse_int(group.get("entries-read"), default=0),
+    }
+    if pending.returncode != 0:
+        result["status"] = "degraded"
+        result["reason"] = "xpending_failed"
+        return result
+    total = parse_xpending_total(pending.stdout)
+    if total is None or total < 0:
+        result["status"] = "degraded"
+        result["reason"] = "invalid_pending"
+        return result
+    result["pending"] = total
+    return result
 
 
 def publish_node_heartbeat_redis(record: dict[str, Any]) -> dict[str, Any]:

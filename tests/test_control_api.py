@@ -184,6 +184,126 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["connection_action"], "continue")
         self.assertEqual(node["connection_action_reason"], "heartbeat_fresh")
 
+    def test_node_status_includes_tasks_stream_pending_lag_probe(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        groups_output = "\n".join(
+            [
+                "name",
+                "a9-worker",
+                "consumers",
+                "2",
+                "pending",
+                "7",
+                "last-delivered-id",
+                "1740000010-0",
+                "entries-read",
+                "100",
+                "lag",
+                "3",
+            ]
+        )
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("11\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("22\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc(groups_output)
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("7\n1740000001-0\n1740000010-0\nworker-a\n5\nworker-b\n2\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            status = mod.node_status(Path("/tmp/a9-test-nodes-empty"))
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status["tasks_stream"]["status"], "ok")
+        self.assertEqual(status["tasks_stream"]["reason"], "healthy")
+        self.assertEqual(status["tasks_stream"]["stream"], "a9:tasks")
+        self.assertEqual(status["tasks_stream"]["group"], "a9-worker")
+        self.assertEqual(status["tasks_stream"]["lag"], 3)
+        self.assertEqual(status["tasks_stream"]["pending"], 7)
+        self.assertEqual(status["tasks_stream"]["consumer_count"], 2)
+        self.assertEqual(status["tasks_stream"]["entries_read"], 100)
+
+    def test_node_status_tasks_stream_probe_degraded_when_xpending_fails(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("1\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\na9-worker\nconsumers\n1\nentries-read\n9\nlag\n4\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("ERR no group\n", returncode=1)
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            status = mod.node_status(Path("/tmp/a9-test-nodes-empty"))
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status["tasks_stream"]["status"], "degraded")
+        self.assertEqual(status["tasks_stream"]["reason"], "xpending_failed")
+        self.assertEqual(status["tasks_stream"]["lag"], 4)
+        self.assertIsNone(status["tasks_stream"]["pending"])
+
+    def test_node_status_tasks_stream_probe_degraded_when_group_missing(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("1\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\nother-group\nlag\n1\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("0\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            status = mod.node_status(Path("/tmp/a9-test-nodes-empty"))
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status["tasks_stream"]["status"], "degraded")
+        self.assertEqual(status["tasks_stream"]["reason"], "consumer_group_missing")
+        self.assertIsNone(status["tasks_stream"]["lag"])
+        self.assertIsNone(status["tasks_stream"]["pending"])
+
     def test_enrich_node_connection_marks_stale_and_offline(self):
         mod = load_control_api()
         original_now = mod.utc_now_dt

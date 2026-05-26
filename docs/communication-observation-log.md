@@ -196,6 +196,19 @@ Observed issues:
      with a needs-followup routing regression. The incorrectly queued test task
      was superseded.
 
+19. Redis pending/lag worker patch passed tests but used an unrealistic Redis
+    model.
+   - `auto-implement-auto-mechanism_extract-auto-reference-d5193c1c17...`
+     implemented a useful `XINFO GROUPS` + `XPENDING` probe and passed
+     `tests/test_control_api.py`.
+   - The patch also treated `XINFO GROUPS` rows as if they contained individual
+     consumer names and pending counts. Redis `XINFO GROUPS` exposes group-level
+     fields; per-consumer evidence requires `XINFO CONSUMERS` or extended
+     `XPENDING`.
+   - Intervention: monitor did not cherry-pick that commit. The valid parts were
+     manually reimplemented without fake per-consumer projection, and tests now
+     cover healthy, missing-group, and `XPENDING` failure paths.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
