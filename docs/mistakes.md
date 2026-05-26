@@ -163,3 +163,23 @@
 ```json
 {"protocolVersion":1,"ok":true,"status":"ok","output":{}}
 ```
+
+## 2026-05-26：Spark 不能直接当无人值守默认模型
+
+错误：
+
+- `event-replay-gap-20260526T110451Z` 使用 `gpt-5.3-codex-spark` 做 auto-next
+  worker 时，任务还没进入代码阶段就失败。
+- 失败信息是 `Tool 'image_generation' is not supported with
+  gpt-5.3-codex-spark-1p-codexswic-ev3.`。
+
+纠正：
+
+- 无人值守默认 worker 回到稳定 `gpt-5.3-codex`。
+- Spark 只作为低成本候选模型或受控 smoke 使用，除非 supervisor 能显式约束
+  Codex exec 注入的 toolset。
+
+规则：
+
+- 24h loop 的默认模型优先稳定和工具兼容，不优先省 token。
+- 模型/tool 兼容失败不算业务任务失败，修完默认配置后要重置 auto-loop guard，再继续跑。

@@ -57,7 +57,7 @@ Do the work.
         self.assertEqual(task.allowed_paths, ["scripts/", "tests/*.py"])
         self.assertEqual(task.prompt, "Do the work.")
 
-    def test_default_worker_uses_spark_model_and_can_be_overridden(self):
+    def test_default_worker_uses_stable_codex_model_and_can_be_overridden(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="model-test", prompt="demo")
         with tempfile.TemporaryDirectory() as tmp:
@@ -73,7 +73,7 @@ Do the work.
                 self.assertIn(f"TMPDIR={mod.WORKER_TMP_DIR}", cmd)
                 self.assertIn("--ephemeral", cmd)
                 self.assertIn("--model", cmd)
-                self.assertEqual(cmd[cmd.index("--model") + 1], "gpt-5.3-codex-spark")
+                self.assertEqual(cmd[cmd.index("--model") + 1], "gpt-5.3-codex")
 
                 os.environ["A9_SUPERVISOR_MODEL"] = "gpt-5.5"
                 cmd = mod.build_worker_cmd(task, Path("/tmp/worktree"), run_dir, final_path, "prompt")

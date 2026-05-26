@@ -171,8 +171,9 @@ agent 稳定后的垂直化训练和数据项目。
 - 真实 Codex worker 可用 `.a9/codex-home` / `.a9/tmp` 隔离运行。
 - worker event/byte budget gate 可截断过度探索和错误事件增长。
 - worker `turn.completed` usage 会聚合为 `actual_token_usage`，写入 summary、
-  context pressure、Redis session payload 和 MySQL checkpoint token_usage，便于监控
-  `GPT-5.3-Codex-Spark` 的真实 token 消耗。
+  context pressure、Redis session payload 和 MySQL checkpoint token_usage。Spark
+  可做低成本候选模型监控，但无人值守默认 worker 使用稳定 `gpt-5.3-codex`，避免
+  toolset 不兼容中断 auto-loop。
 - accepted worker diff 会在隔离 worktree 里原子 commit。
 - failed/repair worker diff 会先留证据再 rollback 到 base。
 - worker 可只输出 `SEARCH/REPLACE`，由 supervisor deterministic apply 后再进入 guard、test、git governance。
