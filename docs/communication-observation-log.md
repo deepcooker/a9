@@ -187,6 +187,15 @@ Observed issues:
    - Intervention: monitor manually applied the valid patch and superseded the
      repair task.
 
+18. `record:` next_slice was not routed because the prefix table missed record.
+   - The replay worker correctly returned
+     `next_slice: record: append run evidence...`.
+   - `PHASE_ORDER` includes `record`, but `NEXT_SLICE_PHASE_PREFIXES` did not.
+   - Supervisor therefore queued another `test` task instead of a record task.
+   - Intervention: added `record -> record` to the prefix table and covered it
+     with a needs-followup routing regression. The incorrectly queued test task
+     was superseded.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.

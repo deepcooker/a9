@@ -1719,6 +1719,36 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_routes_to_record_phase_from_next_slice_prefix(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-test.md",
+            task_id="auto-test",
+            prompt="test one copied mechanism",
+            phase="test",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "needs-followup",
+            "run_dir": str(mod.RUNS_DIR / "auto-test-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-test-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "record: append evidence for replay pass"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "record"', text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
     def test_schedule_next_task_unknown_or_missing_next_slice_prefix_falls_back_to_phase_order(self):
         mod = load_supervisor()
         mod.ensure_dirs()

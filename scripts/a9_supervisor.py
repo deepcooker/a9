@@ -3151,6 +3151,7 @@ NEXT_SLICE_PHASE_PREFIXES = {
     "implement": "implement",
     "test": "test",
     "repair": "repair",
+    "record": "record",
 }
 
 
