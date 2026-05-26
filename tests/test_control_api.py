@@ -141,6 +141,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["count"], 1)
         self.assertEqual(status["nodes"][0]["capabilities"]["python3"], "/usr/bin/python3")
         self.assertEqual(status["nodes"][0]["connection_state"], "online")
+        self.assertEqual(status["nodes"][0]["connection_action"], "continue")
 
     def test_enrich_node_connection_marks_stale_and_offline(self):
         mod = load_control_api()
@@ -153,8 +154,12 @@ class ControlApiTests(unittest.TestCase):
             mod.utc_now_dt = original_now
 
         self.assertEqual(stale["connection_state"], "stale")
+        self.assertEqual(stale["connection_action"], "reconnect")
+        self.assertEqual(stale["connection_action_reason"], "heartbeat_stale")
         self.assertEqual(stale["last_seen_age_seconds"], 180)
         self.assertEqual(offline["connection_state"], "offline")
+        self.assertEqual(offline["connection_action"], "quarantine")
+        self.assertEqual(offline["connection_action_reason"], "heartbeat_offline")
 
     def test_publish_node_heartbeat_redis_writes_json_stream_and_timeseries(self):
         mod = load_control_api()

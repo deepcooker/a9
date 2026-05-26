@@ -145,6 +145,26 @@ Observed issues:
    - Intervention: monitor added the missing minimal regression test directly.
      The targeted three-test slice passed.
 
+14. Barter reference hydration patch was valid, but invalid envelope caused a
+    rollback.
+   - `hydrate-barter-reference-slices-20260526T184000Z` correctly extended
+     worker reference hydration to include bounded Barter-rs communication
+     slices.
+   - Guard and scope passed, but the worker wrote `protocolVersion: "1.0"` and
+     `status: "completed"`.
+   - Supervisor rolled back the patch; monitor reviewed and manually applied
+     the tested diff.
+
+15. Node connection action patch was valid, but protocolVersion drift caused a
+    second rollback.
+   - `implement-node-connection-action-20260526T185100Z` copied Barter-rs typed
+     action boundaries into `connection_state -> connection_action`.
+   - `python3 -m unittest tests/test_control_api.py` passed with 37 tests.
+   - Worker still used invalid `protocolVersion:
+     "a9.strict_worker_envelope.v1"`, so git governance rolled back.
+   - Intervention: monitor manually applied the patch and kept the generated
+     repair task out of the queue.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
@@ -161,6 +181,9 @@ Next monitoring target:
 - Treat "wide-read budget failure in tiny test tasks" as a supervisor prompt
   governance bug. Next slices should either provide exact line anchors or make
   the worker output SEARCH/REPLACE directly from a smaller context packet.
+- Treat `protocolVersion` drift as the next strict-envelope governance bug:
+  status aliases are normalized, but protocol aliases still roll back good
+  patches.
 - Then return to the five communication blocks: node state machine, Redis
   Streams production governance, multi-machine onboarding, SSE replay, and
   communication metrics/soak.

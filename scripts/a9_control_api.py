@@ -731,10 +731,27 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
     return {"count": len(nodes), "nodes": nodes[-50:], "redis": redis_node_hot_status()}
 
 
+def node_connection_action(connection_state: str) -> tuple[str, str]:
+    if connection_state == "online":
+        return ("continue", "heartbeat_fresh")
+    if connection_state == "stale":
+        return ("reconnect", "heartbeat_stale")
+    if connection_state == "offline":
+        return ("quarantine", "heartbeat_offline")
+    return ("reconnect", "heartbeat_unknown")
+
+
 def enrich_node_connection(record: dict[str, Any]) -> dict[str, Any]:
     heartbeat_at = parse_iso_datetime(str(record.get("last_heartbeat_at") or record.get("updated_at") or ""))
     if not heartbeat_at:
-        return {**record, "connection_state": "unknown", "last_seen_age_seconds": None}
+        action, reason = node_connection_action("unknown")
+        return {
+            **record,
+            "connection_state": "unknown",
+            "connection_action": action,
+            "connection_action_reason": reason,
+            "last_seen_age_seconds": None,
+        }
     age = max(0, int((utc_now_dt() - heartbeat_at).total_seconds()))
     if age <= NODE_ONLINE_TTL_SECONDS:
         state = "online"
@@ -742,9 +759,12 @@ def enrich_node_connection(record: dict[str, Any]) -> dict[str, Any]:
         state = "stale"
     else:
         state = "offline"
+    action, reason = node_connection_action(state)
     return {
         **record,
         "connection_state": state,
+        "connection_action": action,
+        "connection_action_reason": reason,
         "last_seen_age_seconds": age,
         "heartbeat_ttl_seconds": NODE_ONLINE_TTL_SECONDS,
     }

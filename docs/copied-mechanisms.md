@@ -118,6 +118,13 @@ A9 adaptation target:
   `crates/a9-gateway/src/main.rs`, copied from Barter-rs typed
   backoff/error-action structure.
 - Node heartbeat state machine and reconnect evidence.
+- Controller node connection helper (`scripts/a9_control_api.py`):
+  `connection_state -> connection_action` deterministic mapping adapted from
+  Barter-rs typed error-action boundaries:
+  `online -> continue`, `stale -> reconnect`, `offline -> quarantine`.
+  Boundary note: A9 controller record governance uses `quarantine` (not
+  immediate terminate) for offline nodes so operator/supervisor can decide
+  resume/repair policy with evidence.
 - SSE replay slice exposes Redis Stream `a9:events` through `/api/events` as
   JSON or `text/event-stream`, copying the mature stream-ID/last-event replay
   pattern while keeping WebSocket for later.
@@ -156,6 +163,9 @@ Typed reconnect action contract extracted for A9:
   `Reconnect | Terminate`.
 - Stream path uses `StreamErrorAction` only:
   `Continue | Reconnect`.
+- Controller node record action domain is intentionally narrower and
+  deterministic: `continue | reconnect | quarantine`, derived only from
+  `connection_state`.
 - A9 evidence should always record `phase` and `action` together so the
   action-domain is auditable and machine-routable.
 - Minimum reconnect evidence keys:

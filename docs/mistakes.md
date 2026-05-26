@@ -320,3 +320,24 @@
 - 小任务必须小上下文：优先 `rg` 精确定位，再读 80 行以内的窗口。
 - 如果 worker 两次在同类窄任务上预算失败，监控者接管补丁，并把失败模式写入
   supervisor prompt/任务模板治理。
+
+## 2026-05-27：只归一化 status 不够，protocolVersion 也会漂移
+
+错误：
+
+- `hydrate-barter-reference-slices-20260526T184000Z` 写出有效代码和测试，但
+  envelope 用了 `protocolVersion: "1.0"`、`status: "completed"`。
+- `implement-node-connection-action-20260526T185100Z` 的 status 被归一化成功，
+  但 envelope 用了 `protocolVersion: "a9.strict_worker_envelope.v1"`。
+- 两次 patch/scope/check 都可接受，最终都因为 strict envelope 被回滚。
+
+纠正：
+
+- 监控者审 patch 后手工接管应用，避免 24 小时队列反复 repair 同一类非代码问题。
+- 下一刀应该修 supervisor envelope 协议治理：要么极强提示只允许数字 `1`，要么
+  在 `ok=true` 且字段语义明确时归一化少量 protocolVersion alias 并记录 info。
+
+规则：
+
+- good patch + bad envelope 是治理问题，不是业务失败。
+- 同类 envelope 漂移连续出现时，优先修 supervisor 协议治理，再继续堆功能。
