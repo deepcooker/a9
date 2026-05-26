@@ -27,6 +27,19 @@ impl RedisFailureKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReconnectLifecycleEvent {
+    AttemptStarted { attempt: u32 },
+    RetryScheduled { attempt: u32, delay_ms: u64 },
+    FailureClassified {
+        attempt: u32,
+        kind: RedisFailureKind,
+        error_kind: std::io::ErrorKind,
+    },
+    AttemptSucceeded { attempt: u32 },
+    ExhaustedRetries { max_retries: u32 },
+}
+
 impl DefaultReconnectBackoff {
     fn classify_failure(error: &std::io::Error) -> RedisFailureKind {
         match error.kind() {
@@ -49,7 +62,7 @@ impl ReconnectBackoff for DefaultReconnectBackoff {
     fn delay(&self, attempt: u32) -> Duration {
         match attempt {
             0 => Duration::ZERO,
-            n => Duration::from_millis(2u64.pow(n.min(15)) + 10),
+            n => Duration::from_millis((125u64 * 2u64.pow((n - 1).min(31))).min(60_000)),
         }
     }
 }
@@ -75,19 +88,42 @@ fn redis_roundtrip_once(addr: &str, parts: &[String]) -> std::io::Result<String>
 }
 
 fn redis_roundtrip_with_retries<B: ReconnectBackoff>(
-    mut attempt: impl FnMut() -> std::io::Result<String>,
+    attempt: impl FnMut() -> std::io::Result<String>,
     backoff: &B,
     max_retries: u32,
 ) -> std::io::Result<String> {
+    redis_roundtrip_with_retries_observer(attempt, backoff, max_retries, |_| {})
+}
+
+fn redis_roundtrip_with_retries_observer<B: ReconnectBackoff>(
+    mut attempt: impl FnMut() -> std::io::Result<String>,
+    backoff: &B,
+    max_retries: u32,
+    mut on_event: impl FnMut(ReconnectLifecycleEvent),
+) -> std::io::Result<String> {
     let mut last_error = None;
     for retry in 0..=max_retries {
+        on_event(ReconnectLifecycleEvent::AttemptStarted { attempt: retry });
         if retry > 0 {
-            thread::sleep(backoff.delay(retry));
+            let delay = backoff.delay(retry);
+            on_event(ReconnectLifecycleEvent::RetryScheduled {
+                attempt: retry,
+                delay_ms: delay.as_millis() as u64,
+            });
+            thread::sleep(delay);
         }
         match attempt() {
-            Ok(response) => return Ok(response),
+            Ok(response) => {
+                on_event(ReconnectLifecycleEvent::AttemptSucceeded { attempt: retry });
+                return Ok(response);
+            }
             Err(error) => {
                 let failure = DefaultReconnectBackoff::classify_failure(&error);
+                on_event(ReconnectLifecycleEvent::FailureClassified {
+                    attempt: retry,
+                    kind: failure,
+                    error_kind: error.kind(),
+                });
                 if !failure.is_retryable() {
                     return Err(error);
                 }
@@ -95,6 +131,7 @@ fn redis_roundtrip_with_retries<B: ReconnectBackoff>(
             }
         }
     }
+    on_event(ReconnectLifecycleEvent::ExhaustedRetries { max_retries });
     Err(last_error.unwrap_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::Other, "redis roundtrip failed")
     }))
@@ -297,16 +334,16 @@ mod tests {
     #[test]
     fn backoff_is_exponential_with_small_constant_delay() {
         let backoff = DefaultReconnectBackoff;
-        assert_eq!(backoff.delay(1), Duration::from_millis(12));
-        assert_eq!(backoff.delay(2), Duration::from_millis(14));
-        assert_eq!(backoff.delay(3), Duration::from_millis(18));
+        assert_eq!(backoff.delay(1), Duration::from_millis(125));
+        assert_eq!(backoff.delay(2), Duration::from_millis(250));
+        assert_eq!(backoff.delay(3), Duration::from_millis(500));
     }
 
     #[test]
     fn backoff_is_capped_at_barter_rs_style_exponent() {
         let backoff = DefaultReconnectBackoff;
-        assert_eq!(backoff.delay(15), Duration::from_millis(32778));
-        assert_eq!(backoff.delay(99), Duration::from_millis(32778));
+        assert_eq!(backoff.delay(10), Duration::from_millis(60000));
+        assert_eq!(backoff.delay(99), Duration::from_millis(60000));
     }
 
     #[test]
@@ -383,5 +420,44 @@ mod tests {
 
         assert_eq!(result.unwrap(), "ok");
         assert_eq!(attempts.get(), 3);
+    }
+
+    #[test]
+    fn retry_policy_emits_typed_lifecycle_events() {
+        let attempts = Cell::new(0);
+        let mut events = Vec::new();
+        let result = redis_roundtrip_with_retries_observer(
+            || {
+                let next = attempts.get() + 1;
+                attempts.set(next);
+                if next == 1 {
+                    Err(std::io::Error::new(ErrorKind::TimedOut, "timeout"))
+                } else {
+                    Ok("ok".to_string())
+                }
+            },
+            &NoopBackoff,
+            3,
+            |event| events.push(event),
+        );
+
+        assert_eq!(result.unwrap(), "ok");
+        assert_eq!(
+            events,
+            vec![
+                ReconnectLifecycleEvent::AttemptStarted { attempt: 0 },
+                ReconnectLifecycleEvent::FailureClassified {
+                    attempt: 0,
+                    kind: RedisFailureKind::Retryable,
+                    error_kind: ErrorKind::TimedOut,
+                },
+                ReconnectLifecycleEvent::AttemptStarted { attempt: 1 },
+                ReconnectLifecycleEvent::RetryScheduled {
+                    attempt: 1,
+                    delay_ms: 0,
+                },
+                ReconnectLifecycleEvent::AttemptSucceeded { attempt: 1 },
+            ]
+        );
     }
 }
