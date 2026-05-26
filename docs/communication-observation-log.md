@@ -175,6 +175,18 @@ Observed issues:
    - Targeted strict-envelope tests passed locally; the auto-generated pytest
      follow-up was superseded because pytest is not installed in this runtime.
 
+17. Prompt discipline improved, but workers still use broad file windows and
+    envelope aliases outside the current whitelist.
+   - `implement-node-heartbeat-action-hotpath-20260526T192600Z` followed the new
+     no-raw-session/no-pytest discipline and ran only unittest checks.
+   - It still opened broad `sed -n '1,260p'` windows before using the exact
+     anchor.
+   - It produced a valid patch and passing `tests/test_control_api.py`, but the
+     final envelope used `protocolVersion: "openclaw/1"` and
+     `status: "completed"`, so supervisor rolled it back.
+   - Intervention: monitor manually applied the valid patch and superseded the
+     repair task.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
@@ -193,7 +205,9 @@ Next monitoring target:
   the worker output SEARCH/REPLACE directly from a smaller context packet.
 - ProtocolVersion drift is now covered by supervisor tests. The remaining
   governance issue is worker prompt discipline: even bounded test tasks still
-  sometimes read raw session docs and try pytest before unittest.
+  sometimes read overly broad file windows. Workers also still emit common
+  envelope aliases outside the current whitelist, especially `openclaw/1` and
+  `completed`.
 - Then return to the five communication blocks: node state machine, Redis
   Streams production governance, multi-machine onboarding, SSE replay, and
   communication metrics/soak.

@@ -186,6 +186,8 @@ class ControlApiTests(unittest.TestCase):
                     "node_id": "node-a",
                     "status": "online",
                     "connection_state": "online",
+                    "connection_action": "continue",
+                    "connection_action_reason": "heartbeat_fresh",
                     "last_heartbeat_at": "2026-05-26T12:00:00+00:00",
                 }
             )
@@ -194,8 +196,15 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["json_key"], "a9:node:node-a")
-        self.assertTrue(any(call[:2] == ["JSON.SET", "a9:node:node-a"] for call in calls))
-        self.assertTrue(any(call[:2] == ["XADD", "a9:heartbeats"] for call in calls))
+        json_set_call = next(call for call in calls if call[:2] == ["JSON.SET", "a9:node:node-a"])
+        json_payload = json.loads(json_set_call[3])
+        self.assertEqual(json_payload["connection_action"], "continue")
+        self.assertEqual(json_payload["connection_action_reason"], "heartbeat_fresh")
+        xadd_call = next(call for call in calls if call[:2] == ["XADD", "a9:heartbeats"])
+        self.assertIn("connection_action", xadd_call)
+        self.assertIn("continue", xadd_call)
+        self.assertIn("connection_action_reason", xadd_call)
+        self.assertIn("heartbeat_fresh", xadd_call)
         self.assertTrue(any(call[:2] == ["TS.ADD", "a9:ts:heartbeat"] for call in calls))
 
     def test_parse_xrange_events_accepts_raw_and_json_shapes(self):

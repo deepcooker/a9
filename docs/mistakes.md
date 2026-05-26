@@ -353,3 +353,19 @@
 
 - worker 仍会在 test 任务里先尝试 pytest；当前运行环境没有 pytest。
 - worker 仍会习惯性读取 raw session close-reading，即使任务明确禁止。
+
+## 2026-05-27：prompt 纪律有效但不充分
+
+现象：
+
+- `implement-node-heartbeat-action-hotpath-20260526T192600Z` 没有再读 raw
+  session，也没有再跑 pytest，说明 auto-next prompt discipline 有效。
+- 但 worker 仍然用 `sed -n '1,260p'` 这类较宽窗口。
+- final envelope 又写成 `protocolVersion: "openclaw/1"` 和
+  `status: "completed"`，有效 patch 被回滚。
+
+纠正：
+
+- 监控者接管了通过测试的 patch。
+- 下一步要继续治理两个点：更严格的“小窗口读取”提示/策略，以及是否把
+  `openclaw/1`、`completed` 作为 `ok=true` 下的窄 alias 归一化。
