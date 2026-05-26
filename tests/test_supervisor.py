@@ -1408,6 +1408,116 @@ index 0000000..3e75765
                 if "next_path" in locals() and next_path is not None:
                     next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_routes_to_test_phase_from_next_slice_prefix(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-impl.md",
+            task_id="auto-impl",
+            prompt="implement one bounded slice",
+            phase="implement",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-impl-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-impl-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "test: validate bounded routing"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "test"', text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
+    def test_schedule_next_task_routes_to_implement_phase_from_next_slice_prefix(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-vendor.md",
+            task_id="auto-vendor",
+            prompt="import one mechanism",
+            phase="vendor_import",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-vendor-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-vendor-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "implement: wire next transition"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "implement"', text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
+    def test_schedule_next_task_unknown_or_missing_next_slice_prefix_falls_back_to_phase_order(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-ref.md",
+            task_id="auto-ref",
+            prompt="scan next reference",
+            phase="reference_scan",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+
+        unknown_summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-ref-run-unknown"),
+            "context_path": str(mod.RUNS_DIR / "auto-ref-run-unknown" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "unknown: something"}},
+            },
+        }
+        missing_summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-ref-run-missing"),
+            "context_path": str(mod.RUNS_DIR / "auto-ref-run-missing" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {}},
+            },
+        }
+
+        unknown_next = mod.schedule_next_task(task, unknown_summary)
+        self.assertIsNotNone(unknown_next)
+        assert unknown_next is not None
+        try:
+            unknown_text = unknown_next.read_text(encoding="utf-8")
+            self.assertIn('phase: "mechanism_extract"', unknown_text)
+        finally:
+            unknown_next.unlink(missing_ok=True)
+
+        missing_next = mod.schedule_next_task(task, missing_summary)
+        self.assertIsNotNone(missing_next)
+        assert missing_next is not None
+        try:
+            missing_text = missing_next.read_text(encoding="utf-8")
+            self.assertIn('phase: "mechanism_extract"', missing_text)
+        finally:
+            missing_next.unlink(missing_ok=True)
+
     def test_auto_loop_guard_trips_after_consecutive_failures_and_resets_on_pass(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

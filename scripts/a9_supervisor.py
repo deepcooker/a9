@@ -3113,6 +3113,23 @@ def next_phase_for(status: str, current_phase: str) -> str:
     return PHASE_ORDER[(index + 1) % len(PHASE_ORDER)]
 
 
+NEXT_SLICE_PHASE_PREFIXES = {
+    "reference_scan": "reference_scan",
+    "mechanism_extract": "mechanism_extract",
+    "implement": "implement",
+    "test": "test",
+    "repair": "repair",
+}
+
+
+def phase_from_next_slice(next_slice: Any) -> str | None:
+    text = str(next_slice or "").strip()
+    if not text or ":" not in text:
+        return None
+    prefix = text.split(":", 1)[0].strip().lower().replace("-", "_")
+    return NEXT_SLICE_PHASE_PREFIXES.get(prefix)
+
+
 def flow_status_for_task(phase: str, status: str) -> str:
     if status == "pass":
         return f"{phase}_done"
@@ -3396,6 +3413,11 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:
         return None
     phase = next_phase_for(summary["status"], task.phase)
+    if summary["status"] in {"pass", "needs-followup"}:
+        worker_output = worker_output_from_summary(summary)
+        routed_phase = phase_from_next_slice(worker_output.get("next_slice"))
+        if routed_phase:
+            phase = routed_phase
     if phase == "record" and summary["status"] == "pass":
         record_path = write_deterministic_record(task, summary)
         summary["deterministic_record_path"] = str(record_path)
