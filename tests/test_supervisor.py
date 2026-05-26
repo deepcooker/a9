@@ -806,6 +806,14 @@ Do the work.
 
         self.assertEqual(mod.decide_status(worker, diff, []), "retryable-worker-budget")
 
+    def test_retryable_worker_failure_short_circuits_checks(self):
+        mod = load_supervisor()
+
+        self.assertTrue(mod.worker_failure_short_circuits_checks({"status": "retryable-worker-budget"}))
+        self.assertTrue(mod.worker_failure_short_circuits_checks({"status": "retryable-worker-network"}))
+        self.assertFalse(mod.worker_failure_short_circuits_checks({"status": ""}))
+        self.assertFalse(mod.worker_failure_short_circuits_checks({"status": "needs-repair"}))
+
     def test_worker_network_error_is_classified_separately(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

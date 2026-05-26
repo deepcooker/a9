@@ -3150,6 +3150,10 @@ def auto_loop_failure_kind(summary: dict[str, Any]) -> str:
     return ""
 
 
+def worker_failure_short_circuits_checks(worker_failure: dict[str, Any]) -> bool:
+    return str(worker_failure.get("status") or "").startswith("retryable-")
+
+
 def update_auto_loop_guard(summary: dict[str, Any]) -> dict[str, Any]:
     ensure_dirs()
     kind = auto_loop_failure_kind(summary)
@@ -4122,18 +4126,22 @@ def run_one(*, auto_next: bool = False) -> int:
         diff = capture_diff(worktree, run_dir)
         patch_guard = validate_captured_diff(diff, worktree, run_dir)
         scope_guard = validate_scope(diff, task, run_dir)
-        checks = run_checks(task, worktree, run_dir)
-        status = decide_status(
-            worker,
-            diff,
-            checks,
-            patch_guard,
-            scope_guard,
-            patch_apply,
-            worker_envelope,
-            allow_no_diff=task_allows_no_diff(task),
-        )
         worker_failure = classify_worker_failure(worker)
+        if worker_failure_short_circuits_checks(worker_failure):
+            checks = []
+            status = str(worker_failure["status"])
+        else:
+            checks = run_checks(task, worktree, run_dir)
+            status = decide_status(
+                worker,
+                diff,
+                checks,
+                patch_guard,
+                scope_guard,
+                patch_apply,
+                worker_envelope,
+                allow_no_diff=task_allows_no_diff(task),
+            )
         git_governance = apply_git_governance(worktree, run_dir, task, status, diff)
         summary = {
             **lease,
