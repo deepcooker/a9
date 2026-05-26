@@ -840,6 +840,22 @@ def parse_xinfo_consumers_rows(output: str) -> list[dict[str, str]]:
     return rows
 
 
+def xinfo_consumers_rows_malformed(output: str, rows: list[dict[str, str]]) -> bool:
+    lines = [line.strip() for line in (output or "").splitlines() if line.strip()]
+    if len(lines) % 2 != 0:
+        return True
+    if not lines:
+        return False
+    for row in rows:
+        if not row.get("name"):
+            return True
+        if parse_int(row.get("pending"), default=-1) < 0:
+            return True
+        if parse_int(row.get("idle"), default=-1) < 0:
+            return True
+    return False
+
+
 def redis_tasks_stream_probe() -> dict[str, Any]:
     if not redis_available():
         return {"status": "unavailable", "reason": "redis_unavailable", "lag": None, "pending": None}
@@ -888,6 +904,10 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
         result["consumer_probe_reason"] = "xinfo_consumers_failed"
         return result
     rows = parse_xinfo_consumers_rows(consumers.stdout)
+    if xinfo_consumers_rows_malformed(consumers.stdout, rows):
+        result["consumer_probe_status"] = "degraded"
+        result["consumer_probe_reason"] = "xinfo_consumers_malformed"
+        return result
     top_consumers = sorted(
         (
             {

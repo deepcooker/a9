@@ -206,8 +206,30 @@ Observed issues:
      fields; per-consumer evidence requires `XINFO CONSUMERS` or extended
      `XPENDING`.
    - Intervention: monitor did not cherry-pick that commit. The valid parts were
-     manually reimplemented without fake per-consumer projection, and tests now
-     cover healthy, missing-group, and `XPENDING` failure paths.
+   manually reimplemented without fake per-consumer projection, and tests now
+   cover healthy, missing-group, and `XPENDING` failure paths.
+
+20. XINFO CONSUMERS malformed-success probe validated the monitor/worker split.
+   - The worker added a focused regression for successful but malformed
+     `XINFO CONSUMERS a9:tasks a9-worker` output.
+   - It did not broaden into references or unrelated suites. It returned
+     `needs_approval` with the exact missing behavior when the test failed:
+     group-level `status/reason/lag/pending` must stay usable while only
+     `consumer_probe_*` degrades.
+   - Intervention: monitor implemented the missing subprobe malformed guard in
+     `scripts/a9_control_api.py` and kept the worker's test in
+     `tests/test_control_api.py`.
+   - Result: `python3 -m unittest tests/test_control_api.py` passes with `43`
+     tests.
+
+21. Reference scan still needs stricter context governance.
+   - `auto-reference_scan-auto-test-implement-xinfo-consumers-p-74e...` failed
+     as `retryable-worker-budget` with `event_bytes=1075032`, no final envelope,
+     and no diff.
+   - Root cause: free-form `reference_scan` over mature projects invites large
+     output even when the task says bounded.
+   - Intervention: monitor recorded the failure in `docs/mistakes.md` and
+     replaced the broad scan with a narrow test task using explicit anchors.
 
 Current communication state after this observation:
 
