@@ -53,6 +53,9 @@ DEFAULT_NEXT_CHECKS = [
     "python3 -m unittest tests/test_supervisor.py tests/test_memory.py tests/test_checkpoint.py",
     "cargo build --workspace",
 ]
+REFERENCE_SCAN_CHECKS = [
+    "python3 -m py_compile scripts/a9_supervisor.py",
+]
 SESSION_REFRESH_PHASE = "session_refresh"
 SESSION_CLOSE_READING_PHASE = "session_close_reading"
 FLOW_KEY_PREFIX = "a9:flow:"
@@ -3049,6 +3052,23 @@ def flow_status_for_task(phase: str, status: str) -> str:
 
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
     focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
+    phase_lines = ""
+    if phase == "reference_scan":
+        phase_lines = """
+Phase-specific bounds:
+expected_file_changes: false
+- Do not modify files in this phase.
+- Do not `cat` full context, record, session, or reference files.
+- Read only bounded snippets with `sed -n '1,120p'` or targeted `rg -n`.
+- Pick one concrete next mechanism and put it in `output.next_slice`.
+"""
+    elif phase in {"mechanism_extract", "vendor_import"}:
+        phase_lines = """
+Phase-specific bounds:
+- Do not broaden into implementation unless the phase is `implement`.
+- Do not `cat` full context, record, session, or reference files.
+- Use targeted `rg -n` and bounded `sed` snippets only.
+"""
     repair_hint = ""
     patch_apply = summary.get("patch_apply", {})
     patch_apply_hint = format_patch_apply_repair_hint(patch_apply, summary.get("git_governance", {}))
@@ -3083,12 +3103,13 @@ Previous context: {summary['context_path']}
 Phase: {phase}
 {flow_lines}
 {record_lines}
+{phase_lines}
 
 Core rule:
 - Continue copying mature open-source mechanisms before inventing.
 - Inspect local reference projects under `/root/a9/reference-projects`.
 - Record copied source/license obligations in docs/vendor records when adding new references.
-- Implement one concrete, testable improvement toward the 24-hour A9 service.
+- Implement one concrete, testable improvement only when the current phase calls for implementation or test hardening.
 - Run the declared checks.
 - Keep the task bounded; do not broaden beyond the task file's allowed paths.
 - If `strict_worker_envelope: true` is present, final output must include:
@@ -3272,13 +3293,14 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         record_path = write_deterministic_record(task, summary)
         summary["deterministic_record_path"] = str(record_path)
         phase = next_phase_for("pass", "record")
+    checks = REFERENCE_SCAN_CHECKS if phase == "reference_scan" else DEFAULT_NEXT_CHECKS
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     task_id = f"auto-{phase}-{task.task_id}-{timestamp}"
     return enqueue_task_file(
         task_id,
         next_task_prompt(task, summary, phase),
         phase=phase,
-        checks=DEFAULT_NEXT_CHECKS,
+        checks=checks,
         timeout_seconds=3600,
         idle_timeout_seconds=300,
         max_attempts=1,

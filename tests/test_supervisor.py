@@ -1279,7 +1279,10 @@ index 0000000..3e75765
                 assert next_path is not None
                 text = next_path.read_text(encoding="utf-8")
                 self.assertIn('phase: "reference_scan"', text)
+                self.assertIn('  - "python3 -m py_compile scripts/a9_supervisor.py"', text)
                 self.assertIn("Continue A9 24-hour automation", text)
+                self.assertIn("expected_file_changes: false", text)
+                self.assertIn("Do not `cat` full context", text)
                 self.assertIn("deterministic_record_path", summary)
                 record_path = Path(summary["deterministic_record_path"])
                 self.assertIn(f"- record_path: {record_path}", text)
