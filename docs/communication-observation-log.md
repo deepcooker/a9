@@ -231,6 +231,45 @@ Observed issues:
    - Intervention: monitor recorded the failure in `docs/mistakes.md` and
      replaced the broad scan with a narrow test task using explicit anchors.
 
+22. Redis task stream action thresholds now produce machine-routable decisions.
+   - Implemented `thresholds_version=redis_streams_v1`,
+     `stream_action`, and `stream_action_reason` on successful
+     `a9:tasks` consumer-group probe output.
+   - Action domain is intentionally small:
+     `continue`, `watch`, `intervene`.
+   - Copied threshold contract from the Redis Streams evidence notes:
+     `lag_warn >= 100`, `lag_critical >= 1000`,
+     `pending_idle_critical_ms >= 30000`, and
+     `pending_skew_ratio >= 0.8`.
+   - Current control API tests cover healthy continue, lag warning watch,
+     lag critical intervene, pending skew intervene, pending stuck intervene,
+     malformed consumer output, `XPENDING` failure, invalid pending parse, and
+     missing group.
+
+23. Worker/monitor split found and repaired two real threshold bugs.
+   - First bug: pending-stuck detection used idle from the highest-pending
+     consumer only. A worker-generated regression showed that a lower-pending
+     consumer can be stuck longer and still require `intervene`.
+   - Repair: compute stuck idle from consumers with `pending > 0`, not just the
+     pending-ranked first entry.
+   - Second bug: the first repair still computed from capped `top_consumers`.
+     A follow-up worker regression showed that the fourth consumer can be
+     hidden from the API response cap while still needing intervention.
+   - Repair: compute threshold inputs from all parsed consumer rows before
+     applying `TASKS_STREAM_TOP_CONSUMERS_LIMIT`; keep `top_consumers` capped
+     only for response size.
+   - Result: `python3 -m unittest tests/test_control_api.py` passes with `51`
+     tests.
+
+24. Auto-next still generates overly broad checks after successful slices.
+   - After narrow Redis tasks stream slices, generated follow-ups repeatedly
+     included unrelated supervisor/memory/checkpoint suites and `cargo build`.
+   - Monitoring intervention was required to rewrite those tasks back to
+     `python3 -m unittest tests/test_control_api.py`.
+   - Next governance repair should update auto-next check selection so phase
+     follow-ups inherit the previous focused test surface instead of falling
+     back to broad default checks.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
