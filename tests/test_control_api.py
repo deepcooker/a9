@@ -287,8 +287,12 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(status["tasks_stream"]["status"], "ok")
         self.assertEqual(status["tasks_stream"]["reason"], "healthy")
+        self.assertEqual(status["tasks_stream"]["stream"], "a9:tasks")
+        self.assertEqual(status["tasks_stream"]["group"], "a9-worker")
         self.assertEqual(status["tasks_stream"]["lag"], 4)
         self.assertEqual(status["tasks_stream"]["pending"], 3)
+        self.assertEqual(status["tasks_stream"]["consumer_count"], 1)
+        self.assertEqual(status["tasks_stream"]["entries_read"], 9)
         self.assertEqual(status["tasks_stream"]["consumer_probe_status"], "degraded")
         self.assertEqual(status["tasks_stream"]["consumer_probe_reason"], "xinfo_consumers_failed")
 
