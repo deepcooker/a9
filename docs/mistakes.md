@@ -1,5 +1,35 @@
 # A9 错题本
 
+## 2026-05-27：通讯观察中不要机械相信 auto-next 阶段
+
+现象：
+
+- worker 的 `next_slice` 明确要求 `test:`，但 auto-next 仍按固定
+  `record -> reference_scan -> mechanism_extract...` 继续排队。
+- 这会让通信治理任务绕回泛扫描，浪费 token，也可能稀释已经明确的测试目标。
+
+修正：
+
+- 监控者需要检查 queued task 是否匹配 worker `next_slice`。
+- 对通讯线，已有明确 test/implement slice 时，应强制改队列阶段并收缩 checks。
+- 后续 supervisor 应支持从 `next_slice` 的 `test:` / `implement:` /
+  `repair:` 前缀推导下一阶段，但必须保留 allowed_paths 和 policy guard。
+
+## 2026-05-27：不要在普通队列上并发跑同一类 worker
+
+现象：
+
+- Codex/参考项目支持多 thread/subagent，但 A9 当前普通 copy pipeline 还没有
+  对每个任务强制 Redis `flow_id + expected_revision`。
+- 如果同时启动多个 `run-one`，可能出现两个 worker 读同一队列或同一方向，
+  造成重复推进、上下文交叉、record 覆盖和 token 浪费。
+
+修正：
+
+- 当前默认单 active worker。
+- 只有任务具备独立 flow、expected revision、独立 write scope 时才允许并发。
+- 并发治理要先抄 Codex thread/session 边界和 OpenClaw/Lobster flow revision。
+
 这里记录已经犯过、以后必须改变行为的问题。
 
 ## 2026-05-21：不要把执行机器任务误说成量化业务任务
