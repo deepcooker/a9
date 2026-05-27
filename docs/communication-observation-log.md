@@ -283,6 +283,28 @@ Observed issues:
      `python3 -m unittest tests/test_control_api.py`, and
      `python3 -m unittest tests/test_supervisor.py` all passed.
 
+26. Soak reports now carry communication action snapshots.
+   - Added `scripts/a9_soak.py::communication_snapshot()` to load the control
+     API locally and copy bounded communication health into soak reports:
+     `nodes_count`, `redis`, and `tasks_stream`.
+   - Soak report tests now cover healthy, degraded
+     (`consumer_group_missing -> watch`), and unavailable
+     (`redis_unavailable -> intervene`) tasks stream action payloads.
+   - `redis_tasks_stream_probe()` now emits
+     `thresholds_version/stream_action/stream_action_reason` for early
+     degraded/unavailable branches, not only healthy/probe-complete branches.
+   - Real bounded fake-worker smoke passed:
+     `python3 scripts/a9_soak.py run --fake-worker --tasks 1 --sleep-seconds 0 --task-id communication-snapshot-smoke-2`.
+     The resulting `.a9/soak/latest.json` had `return_code=0`,
+     empty `queued_tail`, Redis hot path status `ok`, and
+     `tasks_stream.reason=consumer_group_missing`,
+     `stream_action=watch`,
+     `stream_action_reason=consumer_group_missing`.
+   - Verification suites:
+     `python3 -m unittest tests/test_control_api.py tests/test_soak.py`
+     passed with `63` tests before the final soak assertion, and
+     `python3 -m unittest tests/test_soak.py` passed with `11` tests after it.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
