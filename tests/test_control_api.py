@@ -1098,6 +1098,15 @@ class ControlApiTests(unittest.TestCase):
                     if "=" in line
                 }
 
+            @staticmethod
+            def classify_probe_result(return_code, output):
+                return {
+                    "probe_action": "repair",
+                    "probe_action_reason": "missing_required_tools",
+                    "required_missing": ["git", "curl"],
+                    "optional_missing": ["tmux", "tailscale"],
+                }
+
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             original_remote = mod.remote
@@ -1110,10 +1119,59 @@ class ControlApiTests(unittest.TestCase):
             status = mod.node_status(root)
 
         self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["probe_action"], "repair")
+        self.assertEqual(result["probe_action_reason"], "missing_required_tools")
+        self.assertEqual(result["missing_required_tools"], ["git", "curl"])
+        self.assertEqual(result["missing_optional_tools"], ["tmux", "tailscale"])
         self.assertEqual(result["probe"]["python3"], "/usr/bin/python3")
         self.assertEqual(status["count"], 1)
         self.assertEqual(status["nodes"][0]["host"], "node1")
         self.assertEqual(status["nodes"][0]["capabilities"]["python3"], "/usr/bin/python3")
+
+    def test_probe_node_nonzero_return_code_is_retry_action(self):
+        mod = load_control_api()
+
+        class FakeRemote:
+            @staticmethod
+            def ssh_base(target, *, connect_timeout=10, identity_file=""):
+                return ["python3", "-c", "import sys; print('host=node1'); sys.exit(255)"]
+
+            @staticmethod
+            def remote_probe_script():
+                return "ignored"
+
+            @staticmethod
+            def parse_probe(text):
+                return {
+                    line.split("=", 1)[0]: line.split("=", 1)[1]
+                    for line in text.splitlines()
+                    if "=" in line
+                }
+
+            @staticmethod
+            def classify_probe_result(return_code, output):
+                return {
+                    "probe_action": "retry",
+                    "probe_action_reason": "ssh_exec_error",
+                    "required_missing": [],
+                    "optional_missing": [],
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_remote = mod.remote
+            try:
+                mod.remote = lambda: FakeRemote
+                result = mod.probe_node({"ssh_target": "root@node1"}, root=root)
+            finally:
+                mod.remote = original_remote
+
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["return_code"], 255)
+        self.assertEqual(result["probe"]["host"], "node1")
+        self.assertEqual(result["probe_action"], "retry")
+        self.assertEqual(result["probe_action_reason"], "ssh_exec_error")
+        self.assertEqual(result["missing_required_tools"], [])
 
     def test_bootstrap_plan_node_is_non_executing_plan(self):
         mod = load_control_api()

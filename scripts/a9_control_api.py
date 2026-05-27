@@ -1113,7 +1113,8 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         stderr=subprocess.STDOUT,
         check=False,
     )
-    parsed = mod.parse_probe(proc.stdout) if proc.returncode == 0 else {}
+    parsed = mod.parse_probe(proc.stdout)
+    classification = mod.classify_probe_result(proc.returncode, parsed)
     host = str(payload.get("host") or parsed.get("host") or target.split("@")[-1].split(":")[0])
     registered = register_node(
         {
@@ -1136,6 +1137,10 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         "checked_at": utc_now(),
         "ssh_target": target,
         "return_code": proc.returncode,
+        "probe_action": classification["probe_action"],
+        "probe_action_reason": classification["probe_action_reason"],
+        "missing_required_tools": classification["required_missing"],
+        "missing_optional_tools": classification["optional_missing"],
         "probe": parsed,
         "raw": compact_text(proc.stdout, 4000),
         "node": registered["node"],
