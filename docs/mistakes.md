@@ -551,3 +551,19 @@
 - 小测试任务只给目标文件、失败日志和接口合同，不给前序 run context。
 - 监控质量不能只看 pass/fail，还要记录 prompt 是否过宽、命令是否噪音、是否有
   不必要的大范围读取。
+
+## 2026-05-27：worker 会把非声明检查失败误当主线
+
+现象：
+
+- `test-node-probe-retry-handler-20260527T081000Z` 明确要求只跑
+  `python3 -m unittest tests/test_control_api.py`。
+- worker 额外运行了 `python3 -m pytest ...`，环境没有 pytest，于是失败。
+- supervisor 的 declared check 通过，但 worker 的 next_slice 仍然建议安装 pytest。
+
+规则：
+
+- worker 不应运行未声明检查；如果运行了，不能把未声明检查失败升级成项目主线。
+- supervisor/monitor 评价任务时以 declared checks 为准，同时把额外命令失败记录为
+  worker 纪律问题。
+- 下一步不能为了 worker 的误判安装依赖；应回到产品主线和参考项目机制。

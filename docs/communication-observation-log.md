@@ -535,3 +535,20 @@ Next monitoring target:
      listing even though the task only needed local control API tests. This did
      not break scope, but the next worker prompt should be narrower and should
      avoid automatic `reference_scan` when the next slice is explicitly a test.
+
+37. Monitor rewrote the next task and caught declared-check drift.
+   - Task:
+     `test-node-probe-retry-handler-20260527T081000Z`.
+   - Run:
+     `.a9/runs/test-node-probe-retry-handler-20260527T081000Z-20260527T080612Z-a1`.
+   - Worker added the intended negative-path HTTP handler test for persisted
+     retry probe state and stayed inside `tests/test_control_api.py`.
+   - Scope and patch guards passed. Supervisor's declared check
+     `python3 -m unittest tests/test_control_api.py` passed with `57` tests;
+     monitor then verified `python3 -m unittest tests/test_control_api.py
+     tests/test_remote.py` passed with `66` tests.
+   - Monitor cherry-picked worker commit `ccce31d...` as `d1864f0`.
+   - Quality issue: the worker ignored the "run only declared check" bound,
+     attempted pytest, and then proposed installing pytest even though the
+     supervisor check already passed. The next queued task was rewritten away
+     from this wrong next_slice.
