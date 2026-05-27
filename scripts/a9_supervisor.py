@@ -3528,6 +3528,8 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         return schedule_next_session_refresh_task(task, summary)
     if task.phase == SESSION_CLOSE_READING_PHASE:
         return schedule_next_session_close_reading_task(task, summary)
+    if monitor_score_blocks_next(summary):
+        return None
     if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:
         return None
     phase = next_phase_for(summary["status"], task.phase)
@@ -3561,6 +3563,19 @@ def flow_transition_blocks_next(summary: dict[str, Any]) -> bool:
     if not isinstance(transition, dict):
         return False
     return bool(transition.get("enabled")) and transition.get("status") == "fail"
+
+
+def monitor_score_blocks_next(summary: dict[str, Any]) -> bool:
+    monitor_score = summary.get("monitor_score")
+    if not isinstance(monitor_score, dict):
+        return False
+    gates = monitor_score.get("gates")
+    if not isinstance(gates, dict):
+        return False
+    hard_gate = gates.get("hard_gate")
+    if not isinstance(hard_gate, dict):
+        return False
+    return hard_gate.get("status") == "fail"
 
 
 def schedule_next_session_refresh_task(task: Task, summary: dict[str, Any]) -> Path | None:

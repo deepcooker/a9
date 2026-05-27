@@ -1642,6 +1642,36 @@ index 0000000..3e75765
 
         next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_blocks_when_monitor_hard_gate_fails(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "monitor-block.md",
+            task_id="monitor-block",
+            prompt="test data schema",
+            phase="test",
+            allowed_paths=["tests/test_control_api.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "monitor-block-run"),
+            "context_path": str(mod.RUNS_DIR / "monitor-block-run" / "context.md"),
+            "monitor_score": {
+                "decision_model": "requirements_review_council_v1",
+                "recommended_action": "block_and_rewrite_task",
+                "gates": {
+                    "hard_gate": {
+                        "status": "fail",
+                        "failed_experts": ["test_verifiability_expert"],
+                    }
+                },
+            },
+        }
+
+        self.assertTrue(mod.monitor_score_blocks_next(summary))
+        self.assertIsNone(mod.schedule_next_task(task, summary))
+
     def test_schedule_next_task_records_deterministically_without_record_worker(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
