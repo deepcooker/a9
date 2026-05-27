@@ -450,6 +450,12 @@ Mechanisms to adapt:
   `action=block`; a fresh pass returns `action=continue`. This gives the
   supervisor and mobile UI a deterministic input for deciding whether
   multi-machine rollout can continue.
+- `scripts/a9_supervisor.py`: auto-next scheduling now consumes the gateway
+  runtime evidence channel for communication-sensitive tasks. Gateway, Redis,
+  stream, WebSocket, SSH, Tailscale, tmux, mobile, control-plane, and remote
+  tasks are blocked unless `gateway.runtime_evidence.action=continue`; ordinary
+  docs/session tasks skip the gate. This makes the runtime evidence actionable
+  instead of only visible.
 
 ## Client Skeleton Reference Notes
 

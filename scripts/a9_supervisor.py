@@ -45,6 +45,26 @@ DEFAULT_WORKER_MODEL = "gpt-5.3-codex"
 DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
 DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
+COMMUNICATION_GATE_HINTS = (
+    "gateway",
+    "redis",
+    "stream",
+    "ws",
+    "websocket",
+    "ssh",
+    "tailscale",
+    "tmux",
+    "mobile",
+    "control api",
+    "control plane",
+    "communication",
+    "remote",
+    "通讯",
+    "通信",
+    "多机器",
+    "手机",
+    "远程",
+)
 BLOCKED_WORKER_COMMAND_PATTERNS = [
     "codex exec",
     "a9_supervisor.py run-one",
@@ -3670,6 +3690,61 @@ def checks_for_next_phase(phase: str, task: Task) -> list[str]:
     return list(DEFAULT_NEXT_CHECKS)
 
 
+def communication_task_requires_gateway_runtime_evidence(task: Task, summary: dict[str, Any]) -> bool:
+    worker_output = worker_output_from_summary(summary)
+    haystack = " ".join(
+        [
+            task.task_id,
+            task.phase,
+            task.prompt,
+            str(worker_output.get("next_slice", "")),
+            json.dumps(worker_output.get("copied_mechanisms", []), ensure_ascii=False),
+        ]
+    ).lower()
+    return any(hint in haystack for hint in COMMUNICATION_GATE_HINTS)
+
+
+def gateway_runtime_gate() -> dict[str, Any]:
+    control_path = ROOT / "scripts" / "a9_control_api.py"
+    if not control_path.exists():
+        return {
+            "status": "unavailable",
+            "action": "block",
+            "reason": "control_api_missing",
+        }
+    spec = importlib.util.spec_from_file_location("a9_control_api_gateway_gate", control_path)
+    if not spec or not spec.loader:
+        return {
+            "status": "unavailable",
+            "action": "block",
+            "reason": "control_api_load_failed",
+        }
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    gateway = module.gateway_transport_contract(ROOT)
+    runtime = gateway.get("runtime_evidence", {}) if isinstance(gateway, dict) else {}
+    if not isinstance(runtime, dict):
+        runtime = {}
+    return {
+        "status": runtime.get("status", gateway.get("status", "unknown") if isinstance(gateway, dict) else "unknown"),
+        "action": runtime.get("action", "block"),
+        "reason": runtime.get("reason", gateway.get("reason", "gateway_runtime_evidence_missing") if isinstance(gateway, dict) else "gateway_runtime_evidence_missing"),
+        "gateway_status": gateway.get("status", "unknown") if isinstance(gateway, dict) else "unknown",
+        "event_id": runtime.get("event_id", ""),
+        "age_seconds": runtime.get("age_seconds"),
+        "stale_seconds": runtime.get("stale_seconds"),
+    }
+
+
+def gateway_runtime_blocks_next(task: Task, summary: dict[str, Any]) -> bool:
+    if not communication_task_requires_gateway_runtime_evidence(task, summary):
+        summary["gateway_runtime_gate"] = {"status": "skip", "action": "continue", "reason": "not_communication_task"}
+        return False
+    gate = gateway_runtime_gate()
+    summary["gateway_runtime_gate"] = gate
+    return gate.get("action") != "continue"
+
+
 def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if flow_transition_blocks_next(summary):
         return None
@@ -3696,6 +3771,8 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
             allowed_paths=task.allowed_paths,
         )
     if monitor_score_blocks_next(summary):
+        return None
+    if gateway_runtime_blocks_next(task, summary):
         return None
     if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:
         return None

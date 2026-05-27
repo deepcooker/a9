@@ -1836,6 +1836,100 @@ index 0000000..3e75765
         self.assertTrue(mod.monitor_score_blocks_next(summary))
         self.assertIsNone(mod.schedule_next_task(task, summary))
 
+    def test_schedule_next_task_blocks_communication_when_gateway_runtime_evidence_not_continue(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "gateway-communication.md",
+            task_id="gateway-communication",
+            prompt="Continue communication governance for Redis stream and mobile control plane.",
+            phase="test",
+            allowed_paths=["crates/a9-gateway/src/main.rs"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "gateway-run"),
+            "context_path": str(mod.RUNS_DIR / "gateway-run" / "context.md"),
+        }
+        original_gate = mod.gateway_runtime_gate
+        try:
+            mod.gateway_runtime_gate = lambda: {
+                "status": "degraded",
+                "action": "emit_runtime_event",
+                "reason": "gateway_runtime_event_stale",
+                "event_id": "1-0",
+            }
+            self.assertTrue(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+            self.assertIsNone(mod.schedule_next_task(task, summary))
+        finally:
+            mod.gateway_runtime_gate = original_gate
+
+        self.assertEqual(summary["gateway_runtime_gate"]["action"], "emit_runtime_event")
+        self.assertEqual(summary["gateway_runtime_gate"]["reason"], "gateway_runtime_event_stale")
+
+    def test_schedule_next_task_allows_communication_when_gateway_runtime_evidence_continue(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "gateway-communication-pass.md",
+            task_id="gateway-communication-pass",
+            prompt="Continue gateway Redis stream communication governance.",
+            phase="test",
+            allowed_paths=["crates/a9-gateway/src/main.rs"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "gateway-run-pass"),
+            "context_path": str(mod.RUNS_DIR / "gateway-run-pass" / "context.md"),
+        }
+        original_gate = mod.gateway_runtime_gate
+        try:
+            mod.gateway_runtime_gate = lambda: {
+                "status": "ok",
+                "action": "continue",
+                "reason": "gateway_runtime_event_fresh",
+                "event_id": "2-0",
+            }
+            next_path = mod.schedule_next_task(task, summary)
+        finally:
+            mod.gateway_runtime_gate = original_gate
+
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn("Continue A9 24-hour automation", text)
+            self.assertEqual(summary["gateway_runtime_gate"]["action"], "continue")
+        finally:
+            next_path.unlink(missing_ok=True)
+
+    def test_schedule_next_task_skips_gateway_gate_for_non_communication_task(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "docs-record.md",
+            task_id="docs-record",
+            prompt="Update copied mechanism notes.",
+            phase="record",
+            allowed_paths=["docs/copied-mechanisms.md"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "docs-run"),
+            "context_path": str(mod.RUNS_DIR / "docs-run" / "context.md"),
+        }
+        next_path = mod.schedule_next_task(task, summary)
+
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            self.assertEqual(summary["gateway_runtime_gate"]["status"], "skip")
+        finally:
+            next_path.unlink(missing_ok=True)
+
     def test_schedule_next_task_routes_monitor_blocked_to_repair_takeover(self):
         mod = load_supervisor()
         mod.ensure_dirs()
