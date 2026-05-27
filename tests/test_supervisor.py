@@ -727,6 +727,47 @@ Do the work.
             "needs-repair",
         )
 
+    def test_process_governance_flags_undeclared_worker_test_commands(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'python3 -m pytest -q tests/test_control_api.py -k compact_summary'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="process-governance",
+                prompt="test data schema",
+                checks=["python3 -m unittest tests/test_control_api.py"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["findings"][0]["kind"], "undeclared_check")
+        self.assertIn("pytest", result["findings"][0]["command"])
+
+    def test_process_governance_failure_blocks_status_even_when_checks_pass(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
+        status = mod.decide_status(
+            worker,
+            {"diff_bytes": 120},
+            [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+            patch_guard={"status": "pass"},
+            scope_guard={"status": "pass"},
+            process_governance={"status": "fail", "findings": [{"kind": "undeclared_check"}]},
+        )
+
+        self.assertEqual(status, "monitor-blocked")
+
     def test_worker_envelope_required_missing_requires_repair(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

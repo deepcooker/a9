@@ -42,6 +42,14 @@
   `undeclared_check` 为过程违规，并在 hard gate fail 时把 run 标为
   `monitor-blocked` 或生成明确 repair task，而不是仅靠人工阅读 monitor_score。
 
+进展：
+
+- `scripts/a9_supervisor.py` 已新增 `process_governance`：
+  从 `event_summaries.jsonl` 读取 worker 命令，测试类命令不在 declared checks
+  里时标记 `undeclared_check`。
+- `decide_status` 已将 `process_governance.status=fail` 转成 `monitor-blocked`。
+- 后续这类 run 不会被当作普通 pass 提交/续跑，patch 需要监控者或 repair 任务接管。
+
 ## 2026-05-27：通讯观察中不要机械相信 auto-next 阶段
 
 现象：

@@ -57,6 +57,7 @@ DEFAULT_NEXT_CHECKS = [
 REFERENCE_SCAN_CHECKS = [
     "python3 -m py_compile scripts/a9_supervisor.py",
 ]
+TEST_COMMAND_HINTS = ("pytest", "unittest", "cargo test", "npm test", "pnpm test", "yarn test")
 SESSION_REFRESH_PHASE = "session_refresh"
 SESSION_CLOSE_READING_PHASE = "session_close_reading"
 FLOW_KEY_PREFIX = "a9:flow:"
@@ -1608,6 +1609,69 @@ def run_checks(task: Task, worktree: Path, run_dir: Path) -> list[dict[str, Any]
     return results
 
 
+def normalize_shell_command(command: str) -> str:
+    return " ".join(str(command or "").split())
+
+
+def command_looks_like_test(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    return any(hint in normalized for hint in TEST_COMMAND_HINTS)
+
+
+def command_matches_declared_check(command: str, checks: list[str]) -> bool:
+    normalized = normalize_shell_command(command)
+    declared = [normalize_shell_command(item) for item in checks]
+    return any(normalized == item or normalized in item or item in normalized for item in declared)
+
+
+def read_jsonl_file(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    if not path.exists():
+        return rows
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+    return rows
+
+
+def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+    output_path = run_dir / "process_governance.json"
+    event_path = Path(str(worker.get("event_summaries_path") or ""))
+    findings: list[dict[str, Any]] = []
+    commands_seen: set[str] = set()
+    for event in read_jsonl_file(event_path):
+        if event.get("item_type") != "command_execution" or not isinstance(event.get("command"), str):
+            continue
+        command = normalize_shell_command(str(event.get("command") or ""))
+        if not command or command in commands_seen:
+            continue
+        commands_seen.add(command)
+        if command_looks_like_test(command) and task.checks and not command_matches_declared_check(command, task.checks):
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "undeclared_check",
+                    "message": "worker ran test/check command outside declared checks",
+                    "command": command,
+                    "declared_checks": task.checks,
+                }
+            )
+    result = {
+        "status": "fail" if findings else "pass",
+        "policy": "declared_checks_are_authoritative",
+        "findings": findings,
+        "output_path": str(output_path),
+    }
+    write_json(output_path, result)
+    return result
+
+
 def decide_status(
     worker: dict[str, Any],
     diff: dict[str, Any],
@@ -1616,6 +1680,7 @@ def decide_status(
     scope_guard: dict[str, Any] | None = None,
     patch_apply: dict[str, Any] | None = None,
     worker_envelope: dict[str, Any] | None = None,
+    process_governance: dict[str, Any] | None = None,
     allow_no_diff: bool = False,
 ) -> str:
     failure = classify_worker_failure(worker)
@@ -1631,6 +1696,8 @@ def decide_status(
         return "needs-repair"
     if scope_guard and scope_guard.get("status") == "fail":
         return "needs-repair"
+    if process_governance and process_governance.get("status") == "fail":
+        return "monitor-blocked"
     failed_checks = [item for item in checks if item["return_code"] != 0]
     if failed_checks:
         return "needs-repair"
@@ -4424,6 +4491,7 @@ def run_one(*, auto_next: bool = False) -> int:
         diff = capture_diff(worktree, run_dir)
         patch_guard = validate_captured_diff(diff, worktree, run_dir)
         scope_guard = validate_scope(diff, task, run_dir)
+        process_governance = classify_process_governance(task, worker, run_dir)
         worker_failure = classify_worker_failure(worker)
         if worker_failure_short_circuits_checks(worker_failure):
             checks = []
@@ -4438,6 +4506,7 @@ def run_one(*, auto_next: bool = False) -> int:
                 scope_guard,
                 patch_apply,
                 worker_envelope,
+                process_governance,
                 allow_no_diff=task_allows_no_diff(task),
             )
         git_governance = apply_git_governance(worktree, run_dir, task, status, diff)
@@ -4454,6 +4523,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "diff": diff,
             "patch_guard": patch_guard,
             "scope_guard": scope_guard,
+            "process_governance": process_governance,
             "git_governance": git_governance,
             "checks": checks,
         }
