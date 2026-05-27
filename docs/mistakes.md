@@ -119,6 +119,9 @@
 - `implement-worker-envelope-normalization-20260526T175650Z` 已实现受限归一化：
   `ok=true` 且 `status in {pass, success}` 时归一为 `ok`，并记录 info finding。
 - 非法状态仍失败，`needs_approval/cancelled` 语义不变。
+- `refscan-codex-transport-backpressure-retry-20260527` 再次暴露 Spark 会输出
+  `status=reference_scan_complete`；该类“明确阶段完成 + ok=true”的别名已受限归一到
+  `ok`，但任意 `done` 仍保持失败，避免放宽协议边界。
 
 ## 2026-05-27：worker worktree 看不到参考项目路径
 

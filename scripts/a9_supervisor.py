@@ -1288,6 +1288,7 @@ def normalize_worker_envelope_status(status: Any, ok: Any) -> tuple[str, str | N
         "pass": "ok",
         "success": "ok",
         "completed": "ok",
+        "reference_scan_complete": "ok",
     }
     canonical = alias_map.get(raw.strip().lower())
     if canonical:
