@@ -270,6 +270,19 @@ Observed issues:
      follow-ups inherit the previous focused test surface instead of falling
      back to broad default checks.
 
+25. Auto-next focused-check inheritance repaired.
+   - Added supervisor check selection so non-reference-scan follow-ups inherit
+     the previous task's declared checks when present.
+   - `reference_scan` remains special-cased to the lightweight supervisor
+     py_compile check.
+   - Regression added for `implement -> test` routing: the next task keeps
+     `python3 -m unittest tests/test_control_api.py` and does not reintroduce
+     `cargo build --workspace`.
+   - Verification:
+     `python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_to_test_phase_from_next_slice_prefix`,
+     `python3 -m unittest tests/test_control_api.py`, and
+     `python3 -m unittest tests/test_supervisor.py` all passed.
+
 Current communication state after this observation:
 
 - `crates/a9-gateway` has typed reconnect decision evidence.
