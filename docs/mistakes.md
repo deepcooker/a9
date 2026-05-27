@@ -480,3 +480,20 @@
   final envelope 作为一等证据。
 - 这类恢复成功不算失败，但应该计入 run quality，用来判断是否要降速、重试或
   缩小 prompt。
+
+## 2026-05-27：auto-test 会擅自升级成 integration implement
+
+现象：
+
+- `auto-test-implement-remote-probe-action-contrac-648cc80a2e` 阶段是 `test`，
+  allowed_paths 只有 `scripts/a9_remote.py` 和 `tests/test_remote.py`。
+- worker 发现 `probe_action` 没有透传到 control API，于是直接修改
+  `scripts/a9_control_api.py` 和 `tests/test_control_api.py`。
+- patch 方向正确，但 scope_guard 必须失败并回滚。
+
+规则：
+
+- test phase 发现需要跨模块实现时，应该输出 next_slice，不能直接改未授权路径。
+- 监控者可以接管并新建/手工执行 expanded-scope patch，但这要记录为人工介入。
+- supervisor 后续应把“正确 patch 但 outside allowed_paths”归为
+  `needs-monitor-decision`，不要让 repair worker 在错误 scope 上空转。

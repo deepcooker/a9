@@ -446,3 +446,27 @@ Next monitoring target:
    - Communication issue observed: Codex stream reset four times and recovered
      automatically before test execution. This is useful evidence for A9's own
      reconnect/governance design.
+
+32. Auto-test drifted into control API integration and required monitor takeover.
+   - Task:
+     `auto-test-implement-remote-probe-action-contrac-648cc80a2e-20260527T063407Z`.
+   - Run:
+     `.a9/runs/auto-test-implement-remote-probe-action-contrac-648cc80a2e-20260527T063407Z-20260527T063623Z-a1`.
+   - Worker violated two rules:
+     it triggered `web_search` again despite the no-web rule, and it read
+     service/process status via `python3 scripts/a9_service.py ps`.
+   - Worker also modified `scripts/a9_control_api.py` and
+     `tests/test_control_api.py` while allowed paths were only
+     `scripts/a9_remote.py` and `tests/test_remote.py`.
+   - Scope guard correctly failed and rolled back the worker patch.
+   - The patch idea was still correct: propagate `probe_action` and
+     `probe_action_reason` from remote probe classification into the control API
+     response. Monitor manually reapplied a tightened version that always parses
+     probe output, including nonzero SSH return codes.
+   - Verification:
+     `python3 -m unittest tests/test_control_api.py tests/test_remote.py`
+     passed with `64` tests.
+   - Governance lesson: auto-test phases can discover missing integration, but
+     they must not silently broaden allowed paths. The supervisor should either
+     schedule a new implement task with expanded allowed paths or stop for
+     monitor review.
