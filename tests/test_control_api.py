@@ -188,6 +188,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["reason"], "gateway_contract_pass")
         self.assertEqual(calls[0][0], [str(binary), "transport-contract"])
         self.assertEqual(result["latest_event"]["status"], "missing")
+        self.assertEqual(result["runtime_evidence"]["status"], "degraded")
+        self.assertEqual(result["runtime_evidence"]["action"], "emit_runtime_event")
 
     def test_gateway_transport_contract_can_request_event_emission(self):
         mod = load_control_api()
@@ -307,6 +309,45 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(event["request_overload_returns_retry_error"])
         self.assertTrue(event["response_waits_on_backpressure"])
         self.assertTrue(event["writer_full_preserves_existing_message"])
+
+    def test_gateway_runtime_evidence_decision_requires_fresh_event(self):
+        mod = load_control_api()
+        local = {"status": "ok"}
+
+        missing = mod.gateway_runtime_evidence_decision(local, {"status": "missing"}, now_ms_value=1_000_000)
+        self.assertEqual(missing["status"], "degraded")
+        self.assertEqual(missing["action"], "emit_runtime_event")
+        self.assertEqual(missing["reason"], "gateway_runtime_event_missing")
+
+        failed = mod.gateway_runtime_evidence_decision(
+            local,
+            {"status": "fail", "event_id": "1-0", "ts": "900000"},
+            now_ms_value=1_000_000,
+        )
+        self.assertEqual(failed["status"], "fail")
+        self.assertEqual(failed["action"], "block")
+        self.assertEqual(failed["reason"], "gateway_runtime_event_failed")
+
+        stale = mod.gateway_runtime_evidence_decision(
+            local,
+            {"status": "ok", "event_id": "2-0", "ts": "600000"},
+            stale_seconds=300,
+            now_ms_value=1_000_000,
+        )
+        self.assertEqual(stale["status"], "degraded")
+        self.assertEqual(stale["action"], "emit_runtime_event")
+        self.assertEqual(stale["reason"], "gateway_runtime_event_stale")
+        self.assertEqual(stale["age_seconds"], 400)
+
+        fresh = mod.gateway_runtime_evidence_decision(
+            local,
+            {"status": "ok", "event_id": "3-0", "ts": "900000"},
+            stale_seconds=300,
+            now_ms_value=1_000_000,
+        )
+        self.assertEqual(fresh["status"], "ok")
+        self.assertEqual(fresh["action"], "continue")
+        self.assertEqual(fresh["reason"], "gateway_runtime_event_fresh")
 
     def test_register_and_heartbeat_node_write_controller_registry(self):
         mod = load_control_api()

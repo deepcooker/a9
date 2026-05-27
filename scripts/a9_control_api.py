@@ -45,6 +45,7 @@ EVENTS_STREAM_LIMIT_MAX = 1000
 TASKS_STREAM_KEY = "a9:tasks"
 TASKS_STREAM_GROUP = "a9-worker"
 TASKS_STREAM_TOP_CONSUMERS_LIMIT = 3
+GATEWAY_CONTRACT_EVENT_STALE_SECONDS = 300
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -406,13 +407,82 @@ def gateway_transport_contract(root: Path = ROOT, *, emit_event: bool = False) -
         and payload.get("overload_error_code") == -32001
         and all(payload.get(name) is True for name in required_true)
     )
-    return {
+    latest_event = latest_gateway_transport_contract_event()
+    result = {
         **payload,
         "status": "ok" if passed else "fail",
         "binary": str(binary),
         "return_code": proc.returncode,
         "reason": "gateway_contract_pass" if passed else "gateway_contract_failed",
-        "latest_event": latest_gateway_transport_contract_event(),
+        "latest_event": latest_event,
+    }
+    result["runtime_evidence"] = gateway_runtime_evidence_decision(result, latest_event)
+    return result
+
+
+def event_age_seconds(event: dict[str, Any], *, now_ms_value: int | None = None) -> int | None:
+    raw_ts = event.get("ts") if isinstance(event, dict) else None
+    if raw_ts in {None, ""}:
+        return None
+    try:
+        ts_ms = int(str(raw_ts))
+    except (TypeError, ValueError):
+        return None
+    now_value = now_ms_value if now_ms_value is not None else int(utc_now_dt().timestamp() * 1000)
+    return max(0, int((now_value - ts_ms) / 1000))
+
+
+def gateway_runtime_evidence_decision(
+    local_contract: dict[str, Any],
+    latest_event: dict[str, Any],
+    *,
+    stale_seconds: int = GATEWAY_CONTRACT_EVENT_STALE_SECONDS,
+    now_ms_value: int | None = None,
+) -> dict[str, Any]:
+    if local_contract.get("status") != "ok":
+        return {
+            "status": "fail",
+            "action": "block",
+            "reason": "local_gateway_contract_failed",
+        }
+    event_status = str(latest_event.get("status") or "")
+    if event_status in {"missing", "unavailable"}:
+        return {
+            "status": "degraded",
+            "action": "emit_runtime_event",
+            "reason": "gateway_runtime_event_missing",
+        }
+    if event_status != "ok":
+        return {
+            "status": "fail",
+            "action": "block",
+            "reason": "gateway_runtime_event_failed",
+            "event_id": latest_event.get("event_id", ""),
+        }
+    age = event_age_seconds(latest_event, now_ms_value=now_ms_value)
+    if age is None:
+        return {
+            "status": "degraded",
+            "action": "emit_runtime_event",
+            "reason": "gateway_runtime_event_missing_timestamp",
+            "event_id": latest_event.get("event_id", ""),
+        }
+    if age > stale_seconds:
+        return {
+            "status": "degraded",
+            "action": "emit_runtime_event",
+            "reason": "gateway_runtime_event_stale",
+            "event_id": latest_event.get("event_id", ""),
+            "age_seconds": age,
+            "stale_seconds": stale_seconds,
+        }
+    return {
+        "status": "ok",
+        "action": "continue",
+        "reason": "gateway_runtime_event_fresh",
+        "event_id": latest_event.get("event_id", ""),
+        "age_seconds": age,
+        "stale_seconds": stale_seconds,
     }
 
 

@@ -444,6 +444,12 @@ Mechanisms to adapt:
   exposes it under `gateway.latest_event`. This closes the loop from Rust
   gateway check -> Redis replay evidence -> mobile/supervisor status, while
   preserving `/api/status` as a read-only view.
+- `scripts/a9_control_api.py`: gateway contract status now includes a
+  `runtime_evidence` decision channel. A local pass with missing or stale Redis
+  evidence returns `action=emit_runtime_event`; a failed runtime event returns
+  `action=block`; a fresh pass returns `action=continue`. This gives the
+  supervisor and mobile UI a deterministic input for deciding whether
+  multi-machine rollout can continue.
 
 ## Client Skeleton Reference Notes
 
