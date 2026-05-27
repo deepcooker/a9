@@ -497,3 +497,20 @@
 - 监控者可以接管并新建/手工执行 expanded-scope patch，但这要记录为人工介入。
 - supervisor 后续应把“正确 patch 但 outside allowed_paths”归为
   `needs-monitor-decision`，不要让 repair worker 在错误 scope 上空转。
+
+## 2026-05-27：长测试无输出会误杀好 patch
+
+现象：
+
+- `implement-probe-action-routing-20260527T064200Z` 写出了正确小补丁。
+- `tests/test_control_api.py` 已通过。
+- `tests/test_supervisor.py` 本身需要约 131 秒，期间输出稀疏，worker 被
+  idle timeout 杀掉，final envelope 缺失。
+- patch/scope guard 通过，但 git governance 因最终状态回滚。
+
+规则：
+
+- 对 `tests/test_supervisor.py` 这类长测试，任务 idle timeout 至少要覆盖真实耗时，
+  或测试命令需要 heartbeat wrapper。
+- “patch guard pass + scope guard pass + check 部分已通过 + idle timeout”应进入
+  monitor review，而不是直接让 worker 重跑。

@@ -470,3 +470,25 @@ Next monitoring target:
      they must not silently broaden allowed paths. The supervisor should either
      schedule a new implement task with expanded allowed paths or stop for
      monitor review.
+
+33. Probe action routing patch was good, but long supervisor test caused idle timeout.
+   - Task:
+     `implement-probe-action-routing-20260527T064200Z`.
+   - Run:
+     `.a9/runs/implement-probe-action-routing-20260527T064200Z-20260527T070032Z-a1`.
+   - Worker followed the intended direction and wrote a small patch:
+     `probe_action_to_followup()` in supervisor, `supervisor_followup` in
+     control API probe responses, and focused tests.
+   - `tests/test_control_api.py` passed inside the worker, but
+     `tests/test_supervisor.py` produced no output long enough for the worker
+     idle timeout and the run ended as `retryable-timeout`.
+   - Because final envelope was missing, git governance rolled back the patch
+     despite scope and patch guards passing.
+   - Monitor reapplied the patch manually and verified:
+     `python3 -m unittest tests.test_supervisor.SupervisorTests.test_probe_action_to_followup_maps_continue_repair_retry tests/test_control_api.py tests/test_remote.py`
+     passed with `65` tests, and full
+     `python3 -m unittest tests/test_supervisor.py` passed with `80` tests in
+     `131.735s`.
+   - Governance lesson: declared checks that can run for ~130s with sparse
+     output need a longer idle timeout or heartbeat output. Otherwise good
+     patches are rolled back as retryable-timeout.
