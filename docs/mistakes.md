@@ -450,3 +450,33 @@
 - 给 worker 的参考项目锚点必须写绝对路径 `/root/a9/reference-projects/...`。
 - 如果任务需要本仓库文件和参考仓库文件混读，二者路径边界要明确：
   worktree 内读 A9 文件，主仓库绝对路径读 reference projects。
+
+## 2026-05-27：mechanism_extract 会忍不住落文档
+
+现象：
+
+- `auto-mechanism_extract-reference_scan-multimachine-ssh-tails-c9aefaf119`
+  阶段是 `mechanism_extract`，目标是产出实现合同。
+- worker 直接新增 `docs/remote-probe-contract.md`。
+- 该文件不在 allowed_paths，scope_guard 失败，git governance 回滚。
+
+规则：
+
+- mechanism_extract 如果允许写文档，必须把文档路径显式加入 allowed_paths。
+- 如果目标是下一刀实现，不要让 worker 先写合同文档；让它在 envelope 的
+  `next_slice` 里输出合同即可。
+
+## 2026-05-27：Codex exec stream reset 能恢复，但必须被记录
+
+现象：
+
+- `implement-remote-probe-action-contract-20260527T063000Z` 期间出现 4 次
+  `stream disconnected before completion: Connection reset by peer`。
+- worker 自动 reconnect 并继续完成 patch 和测试。
+
+规则：
+
+- A9 自己的长任务通讯治理必须把 reconnect 次数、阶段、最后成功事件、是否丢
+  final envelope 作为一等证据。
+- 这类恢复成功不算失败，但应该计入 run quality，用来判断是否要降速、重试或
+  缩小 prompt。

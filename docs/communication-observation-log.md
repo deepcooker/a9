@@ -405,3 +405,44 @@ Next monitoring target:
      should use absolute reference paths directly to avoid wasted events.
    - Cost/behavior evidence: `event_count=22`, `event_bytes=21042`,
      `prompt_approx_tokens=6660`, and actual uncached input was `17896`.
+
+30. Mechanism extract drifted into docs and was rolled back by scope guard.
+   - Task:
+     `auto-mechanism_extract-reference_scan-multimachine-ssh-tails-c9aefaf119-20260527T062318Z`.
+   - Run:
+     `.a9/runs/auto-mechanism_extract-reference_scan-multimachine-ssh-tails-c9aefaf119-20260527T062318Z-20260527T062626Z-a1`.
+   - Worker produced a useful implementation contract, but wrote
+     `docs/remote-probe-contract.md` even though allowed paths were only
+     `scripts/a9_remote.py`, `scripts/a9_control_api.py`,
+     `tests/test_remote.py`, and `tests/test_control_api.py`.
+   - Scope guard correctly failed and git governance rolled the patch back.
+   - Monitor intervention: deleted the auto repair task and replaced it with a
+     direct implement task constrained to `scripts/a9_remote.py` and
+     `tests/test_remote.py`.
+
+31. Remote probe action contract implemented by worker, with remaining read-discipline issues.
+   - Task:
+     `implement-remote-probe-action-contract-20260527T063000Z`.
+   - Run:
+     `.a9/runs/implement-remote-probe-action-contract-20260527T063000Z-20260527T063036Z-a1`.
+   - Implemented:
+     `classify_probe_result(return_code, output)` with
+     `probe_action`, `probe_action_reason`, `required_missing`, and
+     `optional_missing`.
+   - `probe(args)` now always parses probe output and emits classification
+     fields in JSON.
+   - Contract:
+     nonzero SSH -> `retry/ssh_exec_error`; missing required
+     `git/python3/curl` -> `repair/missing_required_tools`; optional missing
+     `tmux/tailscale` -> `continue/optional_tools_missing`; all present ->
+     `continue/probe_ok`.
+   - Verification after cherry-pick:
+     `python3 -m unittest tests/test_remote.py tests/test_control_api.py`
+     passed with `63` tests.
+   - Behavior issue: worker still opened full 260-line windows before `rg`.
+     This violated prompt discipline but stayed within event budget. The next
+     governance improvement should make command-window violations a machine
+     finding.
+   - Communication issue observed: Codex stream reset four times and recovered
+     automatically before test execution. This is useful evidence for A9's own
+     reconnect/governance design.
