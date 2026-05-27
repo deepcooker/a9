@@ -213,6 +213,56 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["connection_action"], "continue")
         self.assertEqual(node["connection_action_reason"], "heartbeat_fresh")
 
+    def test_api_nodes_endpoint_preserves_reconnect_governance_fields(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "node/a",
+                    "ssh_target": "root@worker-a",
+                    "reconnect_action": "reconnect",
+                    "reconnect_reason": "ssh_exec_error",
+                    "reconnect_attempt": 3,
+                    "reconnect_backoff_seconds": 8,
+                    "stream_action": "continue",
+                    "stream_reason": "decode_error",
+                    "reconnect_lifecycle": {"event": "reconnecting", "phase": "backoff"},
+                },
+                root=root,
+            )
+
+            captured = {"status": None, "payload": None}
+
+            class DummyNodesGetHandler:
+                path = "/api/nodes"
+                headers = {}
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["payload"] = payload
+
+                def write_sse(self, status, payload):
+                    raise AssertionError("write_sse should not be used for /api/nodes")
+
+            original_node_status = mod.node_status
+            mod.node_status = lambda: original_node_status(root)
+            try:
+                mod.ControlHandler.do_GET(DummyNodesGetHandler())
+            finally:
+                mod.node_status = original_node_status
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["count"], 1)
+        node = captured["payload"]["nodes"][0]
+        self.assertEqual(node["reconnect_action"], "reconnect")
+        self.assertEqual(node["reconnect_reason"], "ssh_exec_error")
+        self.assertEqual(node["reconnect_attempt"], 3)
+        self.assertEqual(node["reconnect_backoff_seconds"], 8)
+        self.assertEqual(node["stream_action"], "continue")
+        self.assertEqual(node["stream_reason"], "decode_error")
+        self.assertEqual(node["reconnect_lifecycle"], {"event": "reconnecting", "phase": "backoff"})
+
     def test_node_status_aggregates_latest_tmux_action_from_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
