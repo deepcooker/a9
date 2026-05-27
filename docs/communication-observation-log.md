@@ -492,3 +492,15 @@ Next monitoring target:
    - Governance lesson: declared checks that can run for ~130s with sparse
      output need a longer idle timeout or heartbeat output. Otherwise good
      patches are rolled back as retryable-timeout.
+
+34. Worker idle timeout now accounts for long supervisor suite.
+   - Implemented `effective_worker_idle_timeout_seconds(task)`.
+   - If declared checks include `tests/test_supervisor.py`, worker idle timeout
+     is raised to at least `420s`; other tasks keep their declared idle timeout.
+   - `run_worker()` records the effective `idle_timeout_seconds` in the worker
+     summary for future diagnosis.
+   - Verification:
+     targeted supervisor idle-timeout tests passed, `python3 -m unittest
+     tests/test_control_api.py tests/test_remote.py` passed with `64` tests,
+     and full `python3 -m unittest tests/test_supervisor.py` passed with `81`
+     tests in `132.361s`.

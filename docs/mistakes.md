@@ -514,3 +514,10 @@
   或测试命令需要 heartbeat wrapper。
 - “patch guard pass + scope guard pass + check 部分已通过 + idle timeout”应进入
   monitor review，而不是直接让 worker 重跑。
+
+修复：
+
+- `effective_worker_idle_timeout_seconds(task)` 已加入：声明检查包含
+  `tests/test_supervisor.py` 时，worker idle timeout 至少 `420s`。
+- run summary 现在记录实际使用的 `idle_timeout_seconds`，方便后续判断是否又是
+  长测试误杀。
