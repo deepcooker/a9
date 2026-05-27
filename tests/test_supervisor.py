@@ -1637,6 +1637,7 @@ index 0000000..3e75765
             task_id="auto-impl",
             prompt="implement one bounded slice",
             phase="implement",
+            checks=["python3 -m unittest tests/test_control_api.py"],
             allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
         )
         summary = {
@@ -1656,6 +1657,8 @@ index 0000000..3e75765
         try:
             text = next_path.read_text(encoding="utf-8")
             self.assertIn('phase: "test"', text)
+            self.assertIn('  - "python3 -m unittest tests/test_control_api.py"', text)
+            self.assertNotIn("cargo build --workspace", text)
         finally:
             next_path.unlink(missing_ok=True)
 

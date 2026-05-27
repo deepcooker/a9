@@ -3437,6 +3437,14 @@ def write_deterministic_record(task: Task, summary: dict[str, Any]) -> Path:
     return path
 
 
+def checks_for_next_phase(phase: str, task: Task) -> list[str]:
+    if phase == "reference_scan":
+        return list(REFERENCE_SCAN_CHECKS)
+    if task.checks:
+        return list(task.checks)
+    return list(DEFAULT_NEXT_CHECKS)
+
+
 def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if flow_transition_blocks_next(summary):
         return None
@@ -3458,7 +3466,7 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         record_path = write_deterministic_record(task, summary)
         summary["deterministic_record_path"] = str(record_path)
         phase = next_phase_for("pass", "record")
-    checks = REFERENCE_SCAN_CHECKS if phase == "reference_scan" else DEFAULT_NEXT_CHECKS
+    checks = checks_for_next_phase(phase, task)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     parent_ref = compact_task_ref(task.task_id)
     task_id = f"auto-{phase}-{parent_ref}-{timestamp}"
