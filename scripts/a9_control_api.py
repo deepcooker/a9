@@ -1231,6 +1231,7 @@ def tmux_ensure_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
         return {
             "status": "blocked",
             "execution_enabled": False,
+            "tmux_action": "wait_for_approval",
             "gate": gate,
         }
     plan = read_tmux_plan_evidence(str(payload.get("evidence_path") or ""), root=root)
@@ -1252,8 +1253,11 @@ def tmux_ensure_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
         timed_out = True
         return_code = 124
         output = str(exc)
+    status = "timeout" if timed_out else "ok" if return_code == 0 else "failed"
+    tmux_action = "retry" if status == "timeout" else "continue" if status == "ok" else "repair"
+    reason = "tmux_ensure_timeout" if status == "timeout" else "tmux_ensure_ok" if status == "ok" else "tmux_ensure_failed"
     result = {
-        "status": "timeout" if timed_out else "ok" if return_code == 0 else "failed",
+        "status": status,
         "transport": "tailscale+ssh+tmux",
         "transport_quality": plan.get("transport_quality") or transport_quality(str(plan.get("target") or "")),
         "node_id": plan.get("node_id"),
@@ -1264,6 +1268,8 @@ def tmux_ensure_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
         "timed_out": timed_out,
         "output": compact_text(output, 4000),
         "plan_evidence_path": plan.get("evidence_path"),
+        "tmux_action": tmux_action,
+        "reason": reason,
         "gate": gate,
     }
     evidence_path = write_node_evidence("tmux-ensure", str(plan.get("node_id") or plan.get("target") or "node"), result, root=root)
@@ -1296,6 +1302,8 @@ def tmux_status_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
         output = str(exc)
         timed_out = True
     status = "exists" if return_code == 0 else "timeout" if timed_out else "missing"
+    tmux_action = "continue" if status == "exists" else "retry" if status == "timeout" else "repair"
+    reason = "tmux_session_exists" if status == "exists" else "tmux_status_timeout" if status == "timeout" else "tmux_session_missing"
     result = {
         "status": status,
         "transport": "tailscale+ssh+tmux",
@@ -1308,6 +1316,8 @@ def tmux_status_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
         "timed_out": timed_out,
         "output": compact_text(output, 4000),
         "plan_evidence_path": plan.get("evidence_path"),
+        "tmux_action": tmux_action,
+        "reason": reason,
         "command_preview": command,
     }
     evidence_path = write_node_evidence("tmux-status", str(plan.get("node_id") or target or "node"), result, root=root)
