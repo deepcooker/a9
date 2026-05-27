@@ -416,10 +416,13 @@ Mechanisms to adapt:
   with evidence, not free-form self-justification by the same worker.
 - `scripts/a9_supervisor.py`: process governance now turns task-level command
   bounds into deterministic checks. If a prompt forbids `ls` or `rg --files`,
-  those commands become blocking findings; if it declares `sed windows <= N
-  lines`, oversized `sed -n start,endp` reads are blocked. This copies the
-  Codex-style principle that prompt policy must become runtime policy when
-  token cost and reference discipline matter.
+  those commands become blocking findings. `sed windows <= N lines` is now an
+  observable read policy instead of a mechanical 120-line trap: the effective
+  soft window is at least 180 lines, read-heavy phases may use larger bounded
+  batches when the worker first explains the reason, and only hard-window
+  violations block live execution. This copies the Codex-style principle that
+  prompt policy must become runtime policy, while keeping enough flexibility
+  for real reference reading and monitor observation.
 - `crates/a9-gateway`: Codex app-server transport backpressure semantics are now
   captured as A9's first in-memory communication contract. The copied mechanism
   is asymmetric queue handling: request messages on a full inbound queue return

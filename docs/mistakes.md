@@ -1,5 +1,27 @@
 # A9 错题本
 
+## 2026-05-28：固定 120 行 sed gate 过于机械
+
+现象：
+
+- 监控者指出 `sed windows <= 120 lines` 不一定合理。参考扫描和机制抽取
+  本来就需要分批读上下文，机械拦 121/151 行会打断有效工作。
+- 真正要防的是吞整文件、无原因扩窗、token 爆炸和 worker 失控，而不是固定行数本身。
+
+修正：
+
+- `scripts/a9_supervisor.py` 把 sed 读取治理改成三层：
+  soft window 至少 180 行；超过 soft window 时要求 worker 先说明“为什么要分批读”；
+  read-heavy 阶段允许更大的 bounded batch；超过 hard window 才 live block。
+- post-run process governance 会记录 `batched_read_with_rationale` 或
+  `command_window_missing_rationale`，用于观察 worker 质量；只有 error finding
+  才把 run 变成 `monitor-blocked`。
+
+产品判断：
+
+- 当前先做限制和观测，不追求一次把阈值调到最优。
+- 这符合 A9 的核心：执行机器可以读参考项目，但必须留下原因、边界和证据。
+
 ## 2026-05-28：targeted rg 不能只写在 prompt 里
 
 现象：

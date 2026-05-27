@@ -802,7 +802,7 @@ Do the work.
                         json.dumps(
                             {
                                 "item_type": "command_execution",
-                                "command": "/bin/bash -lc \"sed -n '1,200p' reference-projects/codex/mod.rs\"",
+                                "command": "/bin/bash -lc \"sed -n '1,241p' reference-projects/codex/mod.rs\"",
                             }
                         ),
                     ]
@@ -828,8 +828,75 @@ Do the work.
         self.assertIn("broad_rg_command", kinds)
         self.assertIn("command_window_exceeded", kinds)
         window = next(finding for finding in result["findings"] if finding["kind"] == "command_window_exceeded")
-        self.assertEqual(window["lines"], 200)
-        self.assertEqual(window["limit"], 120)
+        self.assertEqual(window["lines"], 241)
+        self.assertEqual(window["soft_limit"], 180)
+        self.assertEqual(window["hard_limit"], 240)
+
+    def test_process_governance_observes_batched_sed_reads_with_rationale(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "item_type": "agent_message",
+                                "text_preview": "为了理解 transport 状态机机制，需要分批读取 on_stream_err 核心窗口。",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc \"sed -n '1,220p' reference-projects/codex/mod.rs\"",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="batched-sed-rationale",
+                phase="mechanism_extract",
+                prompt="Hard bounds:\n- sed windows <= 120 lines.\n",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["kind"], "batched_read_with_rationale")
+        self.assertEqual(result["findings"][0]["level"], "info")
+
+    def test_process_governance_warns_on_batched_sed_read_without_rationale(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc \"sed -n '1,220p' reference-projects/codex/mod.rs\"",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="batched-sed-no-rationale",
+                phase="mechanism_extract",
+                prompt="Hard bounds:\n- sed windows <= 120 lines.\n",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["kind"], "command_window_missing_rationale")
+        self.assertEqual(result["findings"][0]["level"], "warning")
 
     def test_process_governance_failure_blocks_status_even_when_checks_pass(self):
         mod = load_supervisor()
@@ -860,7 +927,7 @@ Do the work.
         )
 
         broad_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n needle docs .'")
-        sed_over = mod.live_worker_command_violation(task, "/bin/bash -lc \"sed -n '1,151p' scripts/a9_supervisor.py\"")
+        sed_over = mod.live_worker_command_violation(task, "/bin/bash -lc \"sed -n '1,241p' scripts/a9_supervisor.py\"")
         undeclared = mod.live_worker_command_violation(task, "/bin/bash -lc 'python3 -m pytest -q tests/test_supervisor.py'")
         declared = mod.live_worker_command_violation(
             task,
@@ -869,9 +936,33 @@ Do the work.
 
         self.assertEqual(broad_rg["kind"], "broad_rg_command")
         self.assertEqual(sed_over["kind"], "command_window_exceeded")
-        self.assertEqual(sed_over["lines"], 151)
+        self.assertEqual(sed_over["lines"], 241)
         self.assertEqual(undeclared["kind"], "undeclared_check")
         self.assertEqual(declared, {})
+
+    def test_live_worker_allows_read_heavy_batched_sed_with_rationale(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="live-batched-read",
+            phase="mechanism_extract",
+            prompt="Hard bounds:\n- sed windows <= 120 lines.\n",
+        )
+
+        allowed = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc \"sed -n '1,220p' reference-projects/codex/mod.rs\"",
+            rationale="为了理解状态机机制，需要分批读取这个 bounded window。",
+        )
+        blocked = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc \"sed -n '1,361p' reference-projects/codex/mod.rs\"",
+            rationale="为了理解状态机机制，需要分批读取这个 bounded window。",
+        )
+
+        self.assertEqual(allowed, {})
+        self.assertEqual(blocked["kind"], "command_window_exceeded")
+        self.assertEqual(blocked["limit"], 360)
 
     def test_worker_envelope_required_missing_requires_repair(self):
         mod = load_supervisor()
@@ -2024,7 +2115,7 @@ index 0000000..3e75765
             self.assertIn("/tmp/run/process_governance.json", text)
             self.assertIn("patch.diff", text)
             self.assertIn("Declared checks are authoritative", text)
-            self.assertIn("<=120 line windows", text)
+            self.assertIn("prefer <=180 line", text)
             self.assertIn("python3 -m unittest tests/test_control_api.py", text)
             self.assertNotIn("rg -n other docs .", text)
         finally:

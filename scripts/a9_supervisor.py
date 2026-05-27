@@ -1067,7 +1067,7 @@ def blocked_worker_command(command: str) -> str:
     return ""
 
 
-def live_worker_command_violation(task: Task, command: str) -> dict[str, Any]:
+def live_worker_command_violation(task: Task, command: str, *, rationale: str = "") -> dict[str, Any]:
     normalized = normalize_shell_command(command)
     if command_looks_like_test(normalized) and task.checks and not command_matches_declared_check(normalized, task.checks):
         return {
@@ -1093,18 +1093,16 @@ def live_worker_command_violation(task: Task, command: str) -> dict[str, Any]:
             "reason": "worker started rg against a broad root despite targeted rg bounds",
             "command": normalized,
         }
-    sed_window_limit = prompt_sed_window_limit(task.prompt)
-    if sed_window_limit is not None:
-        for start, end in sed_windows_from_command(normalized):
-            lines = end - start + 1
-            if lines > sed_window_limit:
-                return {
-                    "kind": "command_window_exceeded",
-                    "reason": "worker started a sed read window larger than task bounds",
-                    "command": normalized,
-                    "lines": lines,
-                    "limit": sed_window_limit,
-                }
+    for finding in sed_window_governance(task, normalized, rationale=rationale):
+        if finding.get("level") == "error":
+            return {
+                "kind": finding["kind"],
+                "reason": finding["message"],
+                "command": normalized,
+                "lines": finding["lines"],
+                "limit": finding["hard_limit"],
+                "soft_limit": finding["soft_limit"],
+            }
     return {}
 
 
@@ -1126,6 +1124,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     event_counts: dict[str, int] = {}
     event_summaries: list[dict[str, Any]] = []
     seen_event_summaries: set[str] = set()
+    last_agent_rationale = ""
     timed_out = False
     idle_timed_out = False
     budget_stopped = False
@@ -1178,6 +1177,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             if fingerprint not in seen_event_summaries:
                                 seen_event_summaries.add(fingerprint)
                                 event_summaries.append(event_summary)
+                            if event_summary.get("item_type") in {"agent_message", "reasoning"}:
+                                last_agent_rationale = str(event_summary.get("text_preview") or "")
                         if event_summary and event_summary.get("item_type") == "command_execution":
                             command = str(event_summary.get("command", ""))
                             blocked = blocked_worker_command(command)
@@ -1186,7 +1187,11 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                                 budget_reason = f"blocked nested worker command: {blocked}"
                                 proc.kill()
                                 break
-                            violation = live_worker_command_violation(task, command)
+                            violation = live_worker_command_violation(
+                                task,
+                                command,
+                                rationale=last_agent_rationale,
+                            )
                             if violation:
                                 budget_stopped = True
                                 budget_reason = (
@@ -1721,6 +1726,107 @@ def prompt_sed_window_limit(prompt: str) -> int | None:
     return int(match.group(1))
 
 
+READ_HEAVY_PHASES = {"reference_scan", "mechanism_extract", SESSION_CLOSE_READING_PHASE}
+BATCHED_READ_RATIONALE_HINTS = (
+    "原因",
+    "因为",
+    "为了",
+    "需要",
+    "分批",
+    "定位",
+    "机制",
+    "语义",
+    "状态机",
+    "上下文",
+    "边界",
+    "失败模式",
+    "because",
+    "reason",
+    "why",
+    "need",
+    "batch",
+    "mechanism",
+    "state",
+    "context",
+    "failure",
+)
+
+
+def sed_window_policy(task: Task) -> dict[str, Any] | None:
+    prompt_limit = prompt_sed_window_limit(task.prompt)
+    if prompt_limit is None:
+        return None
+    soft_limit = max(prompt_limit, 180)
+    multiplier = 2 if task.phase in READ_HEAVY_PHASES else 1
+    hard_limit = max(240, soft_limit * multiplier)
+    return {
+        "prompt_limit": prompt_limit,
+        "soft_limit": soft_limit,
+        "hard_limit": hard_limit,
+        "phase": task.phase,
+        "rationale_required_over": soft_limit,
+    }
+
+
+def rationale_supports_batched_read(text: str) -> bool:
+    normalized = str(text or "").lower()
+    if not normalized.strip():
+        return False
+    return any(hint in normalized for hint in BATCHED_READ_RATIONALE_HINTS)
+
+
+def sed_window_governance(
+    task: Task,
+    command: str,
+    *,
+    rationale: str = "",
+) -> list[dict[str, Any]]:
+    policy = sed_window_policy(task)
+    if not policy:
+        return []
+    findings: list[dict[str, Any]] = []
+    has_rationale = rationale_supports_batched_read(rationale)
+    for start, end in sed_windows_from_command(command):
+        lines = end - start + 1
+        base = {
+            "command": command,
+            "start": start,
+            "end": end,
+            "lines": lines,
+            "prompt_limit": policy["prompt_limit"],
+            "soft_limit": policy["soft_limit"],
+            "hard_limit": policy["hard_limit"],
+        }
+        if lines > policy["hard_limit"]:
+            findings.append(
+                {
+                    **base,
+                    "level": "error",
+                    "kind": "command_window_exceeded",
+                    "message": "worker read more sed lines than the hard task bound allows",
+                }
+            )
+        elif lines > policy["soft_limit"] and not has_rationale:
+            findings.append(
+                {
+                    **base,
+                    "level": "warning",
+                    "kind": "command_window_missing_rationale",
+                    "message": "worker used a larger batched sed window without explaining why first",
+                }
+            )
+        elif lines > policy["soft_limit"]:
+            findings.append(
+                {
+                    **base,
+                    "level": "info",
+                    "kind": "batched_read_with_rationale",
+                    "message": "worker used a larger bounded sed window after giving a rationale",
+                }
+            )
+    return findings
+
+
 def command_runs_ls(command: str) -> bool:
     normalized = normalize_shell_command(command)
     return bool(re.search(r"(?:^|\s)(?:/bin/)?(?:bash|sh)\s+-lc\s+['\"]?ls(?:['\"]?|\s|$)", normalized)) or normalized == "ls"
@@ -1767,8 +1873,11 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     forbids_rg_files = prompt_forbids_rg_files(task.prompt)
     forbids_ls = prompt_forbids_ls(task.prompt)
     requires_targeted_rg = prompt_requires_targeted_rg(task.prompt)
-    sed_window_limit = prompt_sed_window_limit(task.prompt)
+    last_agent_rationale = ""
     for event in read_jsonl_file(event_path):
+        if event.get("item_type") in {"agent_message", "reasoning"}:
+            last_agent_rationale = str(event.get("text_preview") or "")
+            continue
         if event.get("item_type") != "command_execution" or not isinstance(event.get("command"), str):
             continue
         command = normalize_shell_command(str(event.get("command") or ""))
@@ -1812,26 +1921,13 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "command": command,
                 }
             )
-        if sed_window_limit is not None:
-            for start, end in sed_windows_from_command(command):
-                lines = end - start + 1
-                if lines > sed_window_limit:
-                    findings.append(
-                        {
-                            "level": "error",
-                            "kind": "command_window_exceeded",
-                            "message": "worker read more sed lines than the task allowed",
-                            "command": command,
-                            "start": start,
-                            "end": end,
-                            "lines": lines,
-                            "limit": sed_window_limit,
-                        }
-                    )
+        findings.extend(sed_window_governance(task, command, rationale=last_agent_rationale))
+    error_findings = [finding for finding in findings if finding.get("level") == "error"]
     result = {
-        "status": "fail" if findings else "pass",
+        "status": "fail" if error_findings else "pass",
         "policy": "declared_checks_and_task_command_bounds_are_authoritative",
         "findings": findings,
+        "error_findings_count": len(error_findings),
         "output_path": str(output_path),
     }
     write_json(output_path, result)
@@ -3571,7 +3667,8 @@ Monitor-blocked repair:
 - monitor_block: {bounded_inline(json.dumps(monitor_block, ensure_ascii=False), 800)}
 - First inspect the blocked run evidence and patch diff, then salvage only the useful minimal changes.
 - Declared checks are authoritative. Do not rerun undeclared checks, especially broad pytest/cargo commands.
-- If process_governance_summary cites an output_path, inspect that file with <=120 line windows only.
+- If process_governance_summary cites an output_path, inspect it in bounded batches; prefer <=180 line
+  windows, and explain the reason before any larger batch.
 - Preserve data-first acceptance and performance-second constraints before applying or rewriting any patch.
 """
     flow = summary.get("flow_transition", {})
