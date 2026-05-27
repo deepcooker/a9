@@ -358,3 +358,26 @@ Next monitoring target:
      `python3 -m unittest tests/test_control_api.py tests/test_remote.py`
      passed with `58` tests, and
      `python3 -m unittest tests/test_supervisor.py` passed with `79` tests.
+
+28. Follow-up worker obeyed no-web discipline and added node-level tmux aggregation.
+   - Task:
+     `auto-test-implement-tmux-action-contract-20260527T053300Z-20260527T054343Z`.
+   - Run:
+     `.a9/runs/auto-test-implement-tmux-action-contract-20260527T053300Z-20260527T054343Z-20260527T060902Z-a1`.
+   - Prompt inspection confirmed the queued task carried the new rule:
+     no web search/browsing unless explicitly requested.
+   - Good behavior: no `web_search` event, no raw session reads, no service
+     status reads, touched only allowed files, strict envelope passed without
+     alias drift, and supervisor-declared checks passed.
+   - Implemented mechanism: `/api/nodes` now enriches each node with latest
+     tmux evidence action fields:
+     `tmux_action`, `tmux_action_reason`, `tmux_status`, and
+     `tmux_evidence_path`.
+   - Remaining discipline issue: worker still used noisy/wide reads, including
+     `ls -la`, `sed -n '1210,1360p'`, and
+     `sed -n '1180,1415p'`. This did not break the task, but it shows the next
+     supervisor improvement should enforce or score read-window size instead of
+     relying only on prompt text.
+   - Verification after cherry-pick:
+     `python3 -m unittest tests/test_control_api.py tests/test_remote.py`
+     passed with `59` tests.

@@ -414,3 +414,23 @@
 
 - 小实现任务默认只看本地 repo、任务文件、精选参考切片和测试失败日志。
 - 需要联网研究时，任务必须显式写出 research 目标、来源边界和输出预算。
+
+## 2026-05-27：禁止 web_search 后，宽窗口读取仍然会漂
+
+现象：
+
+- `auto-test-implement-tmux-action-contract-20260527T053300Z-20260527T054343Z`
+  没有再触发 web search，也没有读 raw session。
+- 但 worker 仍执行了 `ls -la` 和较宽 `sed` 窗口，例如
+  `sed -n '1180,1415p'`。
+
+判断：
+
+- prompt 纪律能修一部分行为，但不能完全约束读取成本。
+- 后续要把“读窗口大小、噪音命令、未声明命令”变成可机读 finding，
+  不只是写在 prompt 里。
+
+规则：
+
+- worker 行为治理要从提示词升级到事件审计：命令事件里出现宽 sed、full
+  dump、无意义 `ls`、未授权 web search，都应该进入 run summary finding。
