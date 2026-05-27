@@ -133,6 +133,20 @@
   主仓绝对路径并允许只读访问。
 - 后续 reference_scan 产物要落成可被 worker worktree 读取的 evidence/slice，而不是只靠文字路径。
 
+复发：
+
+- `refscan-codex-transport-backpressure-20260527` 指定
+  `reference-projects/codex/codex-rs/app-server-transport/src/transport/mod.rs`，
+  但该 Codex transport slice 没有被 hydrate 进 worker worktree。
+- worker 找不到路径后扩散到 `rg --files reference-projects`、Barter-rs 和
+  OpenClaw，最终 `worker event bytes exceeded 120000`。
+
+修复：
+
+- `worker_reference_slices()` 增加 Codex app-server transport 小切片。
+- reference task 必须优先验证 worker worktree 可见的 reference slice；路径不可见
+  时先修 hydrate，不让 worker 自行换参考项目。
+
 ## 2026-05-27：不要把编排级测试目标一次性丢给 worker
 
 现象：

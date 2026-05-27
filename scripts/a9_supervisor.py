@@ -834,6 +834,7 @@ def create_isolated_git_copy(worktree: Path, *, replace_existing: bool = False) 
 
 def worker_reference_slices() -> list[str]:
     return [
+        "reference-projects/codex/codex-rs/app-server-transport/src/transport",
         "reference-projects/openclaw/extensions/lobster",
         "reference-projects/openclaw/extensions/policy",
         "reference-projects/openclaw/extensions/memory-core",

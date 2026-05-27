@@ -241,6 +241,17 @@ Do the work.
             tmp_path = Path(tmp)
             source_root = tmp_path / "source"
             worktree = tmp_path / "worktree"
+            codex_transport = (
+                source_root
+                / "reference-projects"
+                / "codex"
+                / "codex-rs"
+                / "app-server-transport"
+                / "src"
+                / "transport"
+            )
+            codex_transport.mkdir(parents=True)
+            (codex_transport / "mod.rs").write_text("mod websocket;\n", encoding="utf-8")
             lobster = source_root / "reference-projects" / "openclaw" / "extensions" / "lobster" / "src"
             lobster.mkdir(parents=True)
             (lobster / "lobster-core.d.ts").write_text("type LobsterToolEnvelope = {}\n", encoding="utf-8")
@@ -267,11 +278,24 @@ Do the work.
             finally:
                 mod.ROOT = original_root
 
+            self.assertIn("reference-projects/codex/codex-rs/app-server-transport/src/transport", copied)
             self.assertIn("reference-projects/openclaw/extensions/lobster", copied)
             self.assertIn("reference-projects/barter-rs/barter-integration/src/socket", copied)
             self.assertIn("reference-projects/barter-rs/barter/src/engine/audit", copied)
             self.assertIn("reference-projects/barter-rs/barter/src/strategy", copied)
             self.assertIn("vendor-src", copied)
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "codex"
+                    / "codex-rs"
+                    / "app-server-transport"
+                    / "src"
+                    / "transport"
+                    / "mod.rs"
+                ).exists()
+            )
             self.assertTrue(
                 (
                     worktree
