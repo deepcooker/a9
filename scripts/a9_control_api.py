@@ -297,6 +297,7 @@ def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     worker = summary.get("worker", {})
     context_pressure = summary.get("context_pressure", {})
+    monitor_score = summary.get("monitor_score", {})
     return {
         "task_id": summary.get("task_id"),
         "status": summary.get("status"),
@@ -318,6 +319,13 @@ def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
         "scope_guard": summary.get("scope_guard", {}),
         "git_governance": summary.get("git_governance", {}),
         "policy_attestation": summary.get("policy_attestation", {}),
+        "monitor_score": {
+            "decision_model": monitor_score.get("decision_model"),
+            "score": monitor_score.get("score"),
+            "recommended_action": monitor_score.get("recommended_action"),
+            "gates": monitor_score.get("gates", {}),
+            "findings": monitor_score.get("findings", []),
+        },
         "context_pressure": context_pressure,
         "actual_token_usage": context_pressure.get("actual_token_usage") or worker.get("actual_token_usage", {}),
     }

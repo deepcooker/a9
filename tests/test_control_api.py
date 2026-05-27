@@ -44,6 +44,21 @@ class ControlApiTests(unittest.TestCase):
             "scope_guard": {"status": "pass"},
             "git_governance": {"status": "skip"},
             "policy_attestation": {"attestation_hash": "abc"},
+            "monitor_score": {
+                "decision_model": "requirements_review_council",
+                "score": 0.41,
+                "recommended_action": "repair",
+                "gates": {
+                    "data_model": {"status": "fail", "reason": "schema missing"},
+                    "performance_depth": {"status": "pass"},
+                },
+                "findings": [
+                    {"gate": "data_model", "severity": "high", "message": "missing state field"},
+                ],
+                "experts": [
+                    {"name": "product_mainline", "vote": "fail"},
+                ],
+            },
             "context_pressure": {"budget_ratio": 0.25},
         }
 
@@ -52,6 +67,11 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(compact["task_id"], "task-1")
         self.assertEqual(compact["worker_envelope"]["status"], "pass")
         self.assertEqual(compact["policy_attestation"]["attestation_hash"], "abc")
+        self.assertEqual(compact["monitor_score"]["decision_model"], "requirements_review_council")
+        self.assertEqual(compact["monitor_score"]["recommended_action"], "repair")
+        self.assertEqual(compact["monitor_score"]["gates"]["data_model"]["status"], "fail")
+        self.assertEqual(compact["monitor_score"]["findings"][0]["gate"], "data_model")
+        self.assertNotIn("experts", compact["monitor_score"])
         self.assertEqual(compact["actual_token_usage"]["input_tokens"], 10)
         self.assertEqual(compact["context_path"], "/tmp/run/context.md")
         self.assertEqual(compact["evidence_path"], "/tmp/run/evidence.jsonl")
