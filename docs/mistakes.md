@@ -28,6 +28,20 @@
   governance 字段的验收。
 - 性能第二的边界也正确：使用 in-process API handler test，没有真实网络和服务探测。
 
+后续复现：
+
+- `expose-monitor-score-in-control-api-20260527` 再次出现同类问题：
+  patch 有价值，声明检查通过，但 worker 擅自运行未声明 `pytest`。
+- 这次 `block auto next on monitor hard gate` 已生效：run pass 后没有继续生成
+  auto-next。
+- 监控者继续采用同一策略：保留有价值 patch，过程违规不放行成下一任务。
+
+下一步修正：
+
+- worker prompt 里“只跑声明检查”不够，需要 supervisor 在事件层记录
+  `undeclared_check` 为过程违规，并在 hard gate fail 时把 run 标为
+  `monitor-blocked` 或生成明确 repair task，而不是仅靠人工阅读 monitor_score。
+
 ## 2026-05-27：通讯观察中不要机械相信 auto-next 阶段
 
 现象：
