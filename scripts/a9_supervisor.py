@@ -1067,6 +1067,47 @@ def blocked_worker_command(command: str) -> str:
     return ""
 
 
+def live_worker_command_violation(task: Task, command: str) -> dict[str, Any]:
+    normalized = normalize_shell_command(command)
+    if command_looks_like_test(normalized) and task.checks and not command_matches_declared_check(normalized, task.checks):
+        return {
+            "kind": "undeclared_check",
+            "reason": "worker started a test/check outside declared checks",
+            "command": normalized,
+        }
+    if prompt_forbids_rg_files(task.prompt) and "rg --files" in normalized:
+        return {
+            "kind": "forbidden_rg_files",
+            "reason": "worker started rg --files despite task command bounds",
+            "command": normalized,
+        }
+    if prompt_forbids_ls(task.prompt) and command_runs_ls(normalized):
+        return {
+            "kind": "forbidden_ls",
+            "reason": "worker started ls despite task command bounds",
+            "command": normalized,
+        }
+    if prompt_requires_targeted_rg(task.prompt) and command_runs_broad_rg(normalized):
+        return {
+            "kind": "broad_rg_command",
+            "reason": "worker started rg against a broad root despite targeted rg bounds",
+            "command": normalized,
+        }
+    sed_window_limit = prompt_sed_window_limit(task.prompt)
+    if sed_window_limit is not None:
+        for start, end in sed_windows_from_command(normalized):
+            lines = end - start + 1
+            if lines > sed_window_limit:
+                return {
+                    "kind": "command_window_exceeded",
+                    "reason": "worker started a sed read window larger than task bounds",
+                    "command": normalized,
+                    "lines": lines,
+                    "limit": sed_window_limit,
+                }
+    return {}
+
+
 def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     prompt_path = run_dir / "prompt.md"
     raw_task_path = run_dir / "raw_task.md"
@@ -1138,10 +1179,20 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                                 seen_event_summaries.add(fingerprint)
                                 event_summaries.append(event_summary)
                         if event_summary and event_summary.get("item_type") == "command_execution":
-                            blocked = blocked_worker_command(str(event_summary.get("command", "")))
+                            command = str(event_summary.get("command", ""))
+                            blocked = blocked_worker_command(command)
                             if blocked:
                                 budget_stopped = True
                                 budget_reason = f"blocked nested worker command: {blocked}"
+                                proc.kill()
+                                break
+                            violation = live_worker_command_violation(task, command)
+                            if violation:
+                                budget_stopped = True
+                                budget_reason = (
+                                    f"blocked worker command by task bounds: {violation.get('kind')} "
+                                    f"{bounded_inline(violation.get('command', ''), 240)}"
+                                )
                                 proc.kill()
                                 break
                     if event_count > max_events:

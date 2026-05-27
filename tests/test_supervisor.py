@@ -845,6 +845,34 @@ Do the work.
 
         self.assertEqual(status, "monitor-blocked")
 
+    def test_live_worker_command_violation_blocks_task_bound_violations(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="live-command-bounds",
+            prompt=(
+                "Hard bounds:\n"
+                "- Do not run ls or rg --files.\n"
+                "- Use targeted rg -n only.\n"
+                "- sed windows <= 120 lines.\n"
+            ),
+            checks=["python3 -m unittest tests.test_supervisor.SupervisorTests.test_demo"],
+        )
+
+        broad_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n needle docs .'")
+        sed_over = mod.live_worker_command_violation(task, "/bin/bash -lc \"sed -n '1,151p' scripts/a9_supervisor.py\"")
+        undeclared = mod.live_worker_command_violation(task, "/bin/bash -lc 'python3 -m pytest -q tests/test_supervisor.py'")
+        declared = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_demo'",
+        )
+
+        self.assertEqual(broad_rg["kind"], "broad_rg_command")
+        self.assertEqual(sed_over["kind"], "command_window_exceeded")
+        self.assertEqual(sed_over["lines"], 151)
+        self.assertEqual(undeclared["kind"], "undeclared_check")
+        self.assertEqual(declared, {})
+
     def test_worker_envelope_required_missing_requires_repair(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
