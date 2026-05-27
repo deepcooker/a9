@@ -1270,6 +1270,90 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["last_probe_optional_missing"], ["tmux"])
         self.assertTrue(node["last_probe_checked_at"])
 
+    def test_api_nodes_persists_retry_last_probe_fields_after_probe_post(self):
+        mod = load_control_api()
+
+        class FakeRemote:
+            @staticmethod
+            def ssh_base(target, *, connect_timeout=10, identity_file=""):
+                return ["echo", "host=node1\nuser=root\npython3=/usr/bin/python3\n"]
+
+            @staticmethod
+            def remote_probe_script():
+                return "ignored"
+
+            @staticmethod
+            def parse_probe(text):
+                return {
+                    line.split("=", 1)[0]: line.split("=", 1)[1]
+                    for line in text.splitlines()
+                    if "=" in line
+                }
+
+            @staticmethod
+            def classify_probe_result(return_code, output):
+                return {
+                    "probe_action": "retry",
+                    "probe_action_reason": "ssh_exec_error",
+                    "required_missing": [],
+                    "optional_missing": ["tmux"],
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_remote = mod.remote
+            original_probe_node = mod.probe_node
+            original_node_status = mod.node_status
+            try:
+                mod.remote = lambda: FakeRemote
+                mod.probe_node = lambda payload: original_probe_node(payload, root=root)
+                mod.node_status = lambda: original_node_status(root)
+
+                post_payload = {"ssh_target": "root@node1"}
+                post_body = json.dumps(post_payload).encode("utf-8")
+                captured_post = {"status": None, "payload": None}
+
+                class DummyProbePostHandler:
+                    path = "/api/nodes/probe"
+                    headers = {"Content-Length": str(len(post_body))}
+                    rfile = io.BytesIO(post_body)
+
+                    def write_json(self, status, payload):
+                        captured_post["status"] = status
+                        captured_post["payload"] = payload
+
+                mod.ControlHandler.do_POST(DummyProbePostHandler())
+
+                captured_get = {"status": None, "payload": None}
+
+                class DummyNodesGetHandler:
+                    path = "/api/nodes"
+                    headers = {}
+
+                    def write_json(self, status, payload):
+                        captured_get["status"] = status
+                        captured_get["payload"] = payload
+
+                    def write_sse(self, status, payload):
+                        raise AssertionError("write_sse should not be used for /api/nodes")
+
+                mod.ControlHandler.do_GET(DummyNodesGetHandler())
+            finally:
+                mod.remote = original_remote
+                mod.probe_node = original_probe_node
+                mod.node_status = original_node_status
+
+        self.assertEqual(captured_post["status"], 200)
+        self.assertEqual(captured_post["payload"]["status"], "ok")
+        self.assertEqual(captured_get["status"], 200)
+        self.assertEqual(captured_get["payload"]["count"], 1)
+        node = captured_get["payload"]["nodes"][0]
+        self.assertEqual(node["last_probe_action"], "retry")
+        self.assertEqual(node["last_probe_action_reason"], "ssh_exec_error")
+        self.assertEqual(node["last_probe_required_missing"], [])
+        self.assertEqual(node["last_probe_optional_missing"], ["tmux"])
+        self.assertTrue(node["last_probe_checked_at"])
+
     def test_bootstrap_plan_node_is_non_executing_plan(self):
         mod = load_control_api()
 
