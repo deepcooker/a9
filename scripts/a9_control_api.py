@@ -489,6 +489,73 @@ def gateway_runtime_evidence_decision(
     }
 
 
+def gateway_reconnect_evidence_decision(
+    latest_event: dict[str, Any],
+    *,
+    stale_seconds: int = GATEWAY_CONTRACT_EVENT_STALE_SECONDS,
+    now_ms_value: int | None = None,
+) -> dict[str, Any]:
+    event_status = str(latest_event.get("status") or "")
+    if event_status in {"missing", "unavailable"}:
+        return {
+            "status": "degraded",
+            "action": "observe",
+            "reason": "gateway_reconnect_event_missing",
+        }
+    if event_status != "ok":
+        return {
+            "status": "fail",
+            "action": "block",
+            "reason": "gateway_reconnect_event_failed",
+            "event_id": latest_event.get("event_id", ""),
+        }
+    age = event_age_seconds(latest_event, now_ms_value=now_ms_value)
+    if age is None:
+        return {
+            "status": "degraded",
+            "action": "observe",
+            "reason": "gateway_reconnect_event_missing_timestamp",
+            "event_id": latest_event.get("event_id", ""),
+        }
+    if age > stale_seconds:
+        return {
+            "status": "degraded",
+            "action": "observe",
+            "reason": "gateway_reconnect_event_stale",
+            "event_id": latest_event.get("event_id", ""),
+            "age_seconds": age,
+            "stale_seconds": stale_seconds,
+        }
+    return {
+        "status": "ok",
+        "action": "continue",
+        "reason": "gateway_reconnect_event_fresh",
+        "event_id": latest_event.get("event_id", ""),
+        "age_seconds": age,
+        "stale_seconds": stale_seconds,
+    }
+
+
+def gateway_health_refresh(root: Path = ROOT) -> dict[str, Any]:
+    contract = gateway_transport_contract(root, emit_event=True)
+    reconnect_event = latest_gateway_reconnect_decision_event()
+    reconnect_evidence = gateway_reconnect_evidence_decision(reconnect_event)
+    status = "ok"
+    if contract.get("status") != "ok" or contract.get("runtime_evidence", {}).get("action") == "block":
+        status = "fail"
+    elif reconnect_evidence.get("status") != "ok":
+        status = "degraded"
+    return {
+        "status": status,
+        "kind": "gateway_health_refresh",
+        "contract": contract,
+        "reconnect": {
+            "latest_event": reconnect_event,
+            "runtime_evidence": reconnect_evidence,
+        },
+    }
+
+
 def bool_field(value: Any) -> bool | None:
     text = str(value).strip().lower()
     if text == "true":
@@ -790,6 +857,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
             "gateway_transport_contract": "/api/gateway/transport-contract",
             "gateway_reconnect_decision": "/api/gateway/reconnect-decision",
+            "gateway_health_refresh": "/api/gateway/health-refresh",
             "events": "/api/events",
         },
         "runtime": {
@@ -1955,6 +2023,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))
             elif parsed.path == "/api/gateway/reconnect-decision":
                 self.write_json(200, latest_gateway_reconnect_decision_event())
+            elif parsed.path == "/api/gateway/health-refresh":
+                self.write_json(200, gateway_health_refresh())
             elif parsed.path == "/api/nodes/evidence":
                 self.write_json(
                     200,

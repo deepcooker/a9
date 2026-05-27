@@ -474,6 +474,12 @@ Mechanisms to adapt:
   `/api/gateway/reconnect-decision`. This keeps the phone UI from depending on
   the full `/api/status` payload when it only needs the latest gateway
   reconnect/reset state.
+- `scripts/a9_control_api.py`: `/api/gateway/health-refresh` now performs the
+  operator-facing refresh action for communication health. It emits a fresh
+  transport-contract runtime event and returns reconnect decision freshness
+  separately. Missing reconnect evidence is `degraded/action=observe`, not
+  faked as success, because reconnect evidence must come from real gateway
+  lifecycle events.
 
 ## Client Skeleton Reference Notes
 

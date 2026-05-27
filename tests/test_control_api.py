@@ -408,6 +408,62 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(fresh["action"], "continue")
         self.assertEqual(fresh["reason"], "gateway_runtime_event_fresh")
 
+    def test_gateway_reconnect_evidence_decision_reports_missing_stale_and_fresh(self):
+        mod = load_control_api()
+
+        missing = mod.gateway_reconnect_evidence_decision({"status": "missing"}, now_ms_value=1_000_000)
+        self.assertEqual(missing["status"], "degraded")
+        self.assertEqual(missing["action"], "observe")
+        self.assertEqual(missing["reason"], "gateway_reconnect_event_missing")
+
+        stale = mod.gateway_reconnect_evidence_decision(
+            {"status": "ok", "event_id": "1-0", "ts": "600000"},
+            stale_seconds=300,
+            now_ms_value=1_000_000,
+        )
+        self.assertEqual(stale["status"], "degraded")
+        self.assertEqual(stale["action"], "observe")
+        self.assertEqual(stale["reason"], "gateway_reconnect_event_stale")
+        self.assertEqual(stale["age_seconds"], 400)
+
+        fresh = mod.gateway_reconnect_evidence_decision(
+            {"status": "ok", "event_id": "2-0", "ts": "900000"},
+            stale_seconds=300,
+            now_ms_value=1_000_000,
+        )
+        self.assertEqual(fresh["status"], "ok")
+        self.assertEqual(fresh["action"], "continue")
+        self.assertEqual(fresh["reason"], "gateway_reconnect_event_fresh")
+
+    def test_gateway_health_refresh_emits_contract_and_reports_reconnect_gap(self):
+        mod = load_control_api()
+        calls = []
+        original_contract = mod.gateway_transport_contract
+        original_reconnect = mod.latest_gateway_reconnect_decision_event
+        try:
+            mod.gateway_transport_contract = lambda root=mod.ROOT, *, emit_event=False: (
+                calls.append(emit_event)
+                or {
+                    "status": "ok",
+                    "kind": "gateway_transport_contract",
+                    "runtime_evidence": {"status": "ok", "action": "continue"},
+                }
+            )
+            mod.latest_gateway_reconnect_decision_event = lambda: {
+                "status": "missing",
+                "kind": "gateway_reconnect_decision",
+            }
+            result = mod.gateway_health_refresh()
+        finally:
+            mod.gateway_transport_contract = original_contract
+            mod.latest_gateway_reconnect_decision_event = original_reconnect
+
+        self.assertEqual(calls, [True])
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["kind"], "gateway_health_refresh")
+        self.assertEqual(result["reconnect"]["runtime_evidence"]["action"], "observe")
+        self.assertEqual(result["reconnect"]["runtime_evidence"]["reason"], "gateway_reconnect_event_missing")
+
     def test_register_and_heartbeat_node_write_controller_registry(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -610,6 +666,29 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "gateway_reconnect_decision")
         self.assertTrue(captured["payload"]["reset_on_success"])
+
+    def test_gateway_health_refresh_get_endpoint_returns_refresh_payload(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None}
+
+        class DummyGatewayHealthRefreshHandler:
+            path = "/api/gateway/health-refresh"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_refresh = mod.gateway_health_refresh
+        try:
+            mod.gateway_health_refresh = lambda: {"status": "ok", "kind": "gateway_health_refresh"}
+            mod.ControlHandler.do_GET(DummyGatewayHealthRefreshHandler())
+        finally:
+            mod.gateway_health_refresh = original_refresh
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "gateway_health_refresh")
 
     def test_node_status_aggregates_latest_tmux_action_from_evidence(self):
         mod = load_control_api()
@@ -2201,6 +2280,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["register_node"], "/api/nodes/register")
         self.assertEqual(discovery["endpoints"]["gateway_transport_contract"], "/api/gateway/transport-contract")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")
+        self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)
