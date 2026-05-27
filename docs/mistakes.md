@@ -601,3 +601,20 @@
 - control API 这种边界层不应该因为测试/插件 fake 缺少新 helper 就整体 400。
 - reconnect backoff 只对 `reconnect` 动作有意义；`connected`/`terminate` 应记录
   `reconnect_backoff_seconds=0`，避免 UI/调度误以为还会自动重试。
+
+## 2026-05-27：MoE 评审不能先写代码再补方法论
+
+现象：
+
+- 先实现了 `a9_monitor.py` 的多专家评分雏形，但专家维度主要来自工程直觉：
+  product/testing/architecture/business/governance。
+- 用户指出金融系统需求组 20 年经验文档才是方法论源头，不能自己拍脑袋做 MoE。
+
+规则：
+
+- MoE reviewer 必须先读需求方法论和外部顶级评审方法，再定义专家角色。
+- 专家不是“几个分数”，而是需求评审委员会：
+  why、scope/dependency、system requirement、tradeoff architecture、
+  role boundary、test verifiability、quality、exception governance、
+  NFR/security、execution governance。
+- 合议不能平均分，必须有 hard gate、tradeoff gate、execution gate、progress gate。

@@ -613,3 +613,83 @@ Rust gateway + Redis hot event/state path
 
 Do not spend this slice on GPT-like drawer polish. Do not make SSH/tmux the
 primary bus. Do not jump directly to WebSocket without Redis replay semantics.
+
+
+## Auto Session Extract Index
+
+- turn 258-292: external session extract `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-258-292.json` lines `18444-26688`.
+- turn 258, line 18444: 没问题，但是先做几个事情，就是第一，我们有很多文档了，没卵用的全部干掉，否则噪音太大了，另外代码里没用的噪音全部清理掉
+- turn 259, line 18596: 第二件事情，是，/root/a9/app.md /root/a9/codex.md /root/a9/Gemini.md /root/a9/Gemini2.md /root/a9/需求.md A9 下面的我的这些原始想法，我们再精读一下，这里面包含了一些我的一些奇思妙想，但是这些才是好产品的来源，我们统一整理到一份，这里面要细节很关键原始想法很关键，总...
+- turn 260, line 18705: 好，现在你觉得还想需要清理一把噪音吗，如果没有我们要让24小时机器开始干活了
+- turn 261, line 18732: 该提交的提交，保持干净的，然后在和我确认一下，知道现在24小时work和你主要干什么吗
+- turn 262, line 18772: 对的，记得，他除了监控以外，一定要把好主线，如果出现问题，你要干预他，不能让他偏。开始把
+- turn 263, line 19010: 做吧
+- turn 264, line 19256: 为什么没有然24小时机器人连续工作
+- turn 265, line 19264: 好的
+- turn 266, line 20071: 继续继续
+- turn 267, line 20682: 嗯，可以，但是还是参考项目为为第一逻辑。
+- turn 268, line 20690: ok去做
+- turn 269, line 21558: 我们的进度如何
+- turn 270, line 21578: 我知道我想知道整个通讯进度
+- turn 271, line 21599: 百分之多少，还有几个大任务
+- turn 272, line 21608: 监控的质量如何
+- turn 273, line 21617: 先暂时不用，还是正好好好观测，主动介入，多跑2轮，把问题都记录了，我们不是有5大块吗，再监控2块，介入2块，然后我们修好，在走，多关注session的并行的问题，我记得codex是可以并行的。接下来继续观测，强行介入纠偏。记录问题。继续走
+- turn 274, line 21881: 可以的，不过我提醒你agent并行应该是codex 的功能，不是自己去高，按你的做
+- turn 275, line 21889: 对，我们先能用codex先用，后面再抄，跑稳定在说
+- turn 276, line 21897: 继续24小时机器，你监控介入
+- turn 277, line 23491: 继续
+- turn 278, line 23774: 继续
+- turn 279, line 24154: 继续
+- turn 280, line 24699: 继续
+- turn 281, line 25198: 你是让24小时机器人做的吗，他的质量怎么样，有什么问题吗
+- turn 282, line 25206: 首先最好监控一下，他的意图，提示词，和查询session的方式 exec的情况，要好好观测，你才知道怎么修， 下一大块建议继续做：多机器接入/SSH/Tailscale/tmux 的稳定治理可以做，观测他介入他
+- turn 283, line 25744: 继续
+- turn 284, line 26342: 整体情况如何。记忆观测情况如何呢
+- turn 285, line 26368: 还有他的思维链观测情况如何呢
+- turn 286, line 26386: ok
+- turn 287, line 26453: 这里有个问题评分是moe吗，如果是的话必须是几个决策，如果你没有顶级的方法轮是没有用的，产品经理把主线和进度，测试视角，架构视角，业务视角 ，没有怎么可能做的好
+- turn 288, line 26529: 你可以先停一下 ，/root/a9/需求管理及分析工作指南.doc 你方法轮都没有怎么做呢
+- turn 289, line 26540: 另外顶级moe 评审，你不找外部资料自己做把
+- turn 290, line 26610: 再深度解读我给你的文档，这是20年总结的金融系统需求组组长的累积
+- turn 291, line 26656: 这个才是开发核心，但是从ai时代，未必要流程复杂，但是点都要到位，我们也应该顺应趋势，需要核心openai，google和你刚才的资料，我们再去看看是否顺应，也就是说系统工程，方法轮必须到位
+- turn 292, line 26688: 你可以归档，清理一下噪音，同时增量跑一下 session精读，然后老样子，正好考考你要怎么做
+
+## Current External Session Coverage Update
+
+- source session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- indexed_at: `2026-05-27T10:18:44+00:00`
+- current source size: `292` user turns, about `26717` JSONL lines
+- latest extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-258-292.json`
+- approximate JSONL lines: `18444-26688`
+
+### Turns 258-292 Mainline
+
+1. `turn 258-262`: the user pulled the project back to hygiene and mainline
+   control: archive noisy documents, consolidate original ideas, commit cleanly,
+   and clarify that the 24-hour worker executes while the monitor guards
+   direction, architecture, and acceptance.
+2. `turn 263-283`: the 24-hour worker was observed on communication governance.
+   The user emphasized reference-first work, active intervention, session-query
+   inspection, prompt/intent inspection, and multi-machine SSH/Tailscale/tmux
+   stability as the next major product slice.
+3. `turn 284-292`: memory/thought-chain observation exposed a methodology gap.
+   The user rejected a shallow single-score MoE and required a requirements
+   review method with product/mainline/progress/test/architecture/business
+   perspectives. The 20-year financial requirements guide became a primary
+   local methodology source, with OpenAI/Google methods used as external checks.
+
+### Current Decision
+
+Pause feature expansion until MoE review is refactored from "several scores" to
+a lightweight requirements review committee:
+
+```text
+requirements guide + OpenAI/Google eval/SRE/testing doctrine
+-> A9 MoE experts and hard gates
+-> monitor output that can block worker drift
+-> then resume communication governance worker slices
+```
+
+The queued communication handler test stays paused until the methodology and
+current clean commit are recorded. Do not treat UI/mobile polish as the current
+mainline.
