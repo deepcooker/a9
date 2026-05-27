@@ -310,6 +310,65 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(event["response_waits_on_backpressure"])
         self.assertTrue(event["writer_full_preserves_existing_message"])
 
+    def test_latest_gateway_reconnect_decision_event_reads_reset_state(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "\n".join(
+                [
+                    "1779893553471-0",
+                    "type",
+                    "gateway_reconnect_decision",
+                    "kind",
+                    "gateway_reconnect_decision",
+                    "phase",
+                    "connect",
+                    "action",
+                    "continue",
+                    "error_class",
+                    "none",
+                    "attempt",
+                    "1",
+                    "delay_ms",
+                    "0",
+                    "policy_budget_remaining",
+                    "2",
+                    "origin",
+                    "connect_success",
+                    "reset_on_success",
+                    "true",
+                    "ts",
+                    "1779893553000",
+                ]
+            )
+
+        calls = []
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        try:
+            mod.redis_cli = fake_redis
+            event = mod.latest_gateway_reconnect_decision_event()
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(calls[0], ["--raw", "XREVRANGE", "a9:events", "+", "-", "COUNT", "50"])
+        self.assertEqual(event["status"], "ok")
+        self.assertEqual(event["kind"], "gateway_reconnect_decision")
+        self.assertEqual(event["event_id"], "1779893553471-0")
+        self.assertEqual(event["phase"], "connect")
+        self.assertEqual(event["action"], "continue")
+        self.assertEqual(event["error_class"], "none")
+        self.assertEqual(event["attempt"], 1)
+        self.assertEqual(event["delay_ms"], 0)
+        self.assertEqual(event["policy_budget_remaining"], 2)
+        self.assertEqual(event["origin"], "connect_success")
+        self.assertTrue(event["reset_on_success"])
+
     def test_gateway_runtime_evidence_decision_requires_fresh_event(self):
         mod = load_control_api()
         local = {"status": "ok"}

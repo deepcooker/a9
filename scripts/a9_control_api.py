@@ -415,6 +415,9 @@ def gateway_transport_contract(root: Path = ROOT, *, emit_event: bool = False) -
         "return_code": proc.returncode,
         "reason": "gateway_contract_pass" if passed else "gateway_contract_failed",
         "latest_event": latest_event,
+        "reconnect": {
+            "latest_event": latest_gateway_reconnect_decision_event(),
+        },
     }
     result["runtime_evidence"] = gateway_runtime_evidence_decision(result, latest_event)
     return result
@@ -534,6 +537,51 @@ def latest_gateway_transport_contract_event(limit: int = 50) -> dict[str, Any]:
         "status": "missing",
         "kind": "gateway_transport_contract",
         "reason": "no_gateway_transport_contract_event",
+    }
+
+
+def latest_gateway_reconnect_decision_event(limit: int = 50) -> dict[str, Any]:
+    try:
+        proc = redis_cli(["--raw", "XREVRANGE", EVENTS_STREAM_KEY, "+", "-", "COUNT", str(max(1, limit))])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "unavailable",
+            "kind": "gateway_reconnect_decision",
+            "reason": "redis_unavailable",
+            "error": str(exc),
+        }
+    if proc.returncode != 0:
+        return {
+            "status": "unavailable",
+            "kind": "gateway_reconnect_decision",
+            "reason": "redis_command_failed",
+            "error": proc.stdout.strip(),
+        }
+    for event in parse_xrange_events(proc.stdout):
+        fields = event.get("fields", {})
+        if not isinstance(fields, dict):
+            continue
+        if fields.get("kind") != "gateway_reconnect_decision" and fields.get("type") != "gateway_reconnect_decision":
+            continue
+        return {
+            "status": "ok",
+            "kind": "gateway_reconnect_decision",
+            "event_id": event.get("id", ""),
+            "phase": str(fields.get("phase") or ""),
+            "action": str(fields.get("action") or ""),
+            "error_class": str(fields.get("error_class") or ""),
+            "attempt": parse_int(fields.get("attempt"), default=0),
+            "delay_ms": parse_int(fields.get("delay_ms"), default=0),
+            "policy_budget_remaining": parse_int(fields.get("policy_budget_remaining"), default=0),
+            "origin": str(fields.get("origin") or ""),
+            "reset_on_success": bool_field(fields.get("reset_on_success")),
+            "ts": fields.get("ts", ""),
+            "source": "redis_stream",
+        }
+    return {
+        "status": "missing",
+        "kind": "gateway_reconnect_decision",
+        "reason": "no_gateway_reconnect_decision_event",
     }
 
 

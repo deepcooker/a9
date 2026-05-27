@@ -464,6 +464,11 @@ Mechanisms to adapt:
   while `AttemptSucceeded` emits a `connect_success` decision with
   `reset_on_success=true`. This keeps long-running gateway state machine
   recovery auditable instead of inferring reset behavior from missing errors.
+- `scripts/a9_control_api.py`: control status now reads the latest
+  `gateway_reconnect_decision` Redis Stream event and exposes it under
+  `gateway.reconnect.latest_event`. This gives the mobile/control plane the
+  same data-first view as the supervisor: phase, action, error class, attempt,
+  delay, remaining retry budget, origin, and `reset_on_success`.
 
 ## Client Skeleton Reference Notes
 
