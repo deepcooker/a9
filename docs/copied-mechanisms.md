@@ -456,6 +456,14 @@ Mechanisms to adapt:
   tasks are blocked unless `gateway.runtime_evidence.action=continue`; ordinary
   docs/session tasks skip the gate. This makes the runtime evidence actionable
   instead of only visible.
+- `crates/a9-gateway`: Barter-rs reconnect/backoff lifecycle evidence now
+  includes `reset_on_success`. The gateway already copied typed connect and
+  stream action domains, retry classification, bounded backoff, and Redis Stream
+  `gateway_reconnect_decision` evidence. The new field records the success path
+  explicitly: failed/retry/terminal decisions emit `reset_on_success=false`,
+  while `AttemptSucceeded` emits a `connect_success` decision with
+  `reset_on_success=true`. This keeps long-running gateway state machine
+  recovery auditable instead of inferring reset behavior from missing errors.
 
 ## Client Skeleton Reference Notes
 

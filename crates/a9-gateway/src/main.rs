@@ -97,6 +97,7 @@ struct GatewayReconnectDecision {
     delay_ms: u64,
     policy_budget_remaining: u32,
     origin: &'static str,
+    reset_on_success: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -480,6 +481,7 @@ fn emit_decision_evidence(addr: &str, max_retries: u32, event: ReconnectLifecycl
             decision.delay_ms,
             decision.policy_budget_remaining,
             decision.origin,
+            decision.reset_on_success,
         );
     }
 }
@@ -509,6 +511,7 @@ fn decisions_from_lifecycle_event(
                 delay_ms,
                 policy_budget_remaining: max_retries.saturating_sub(attempt),
                 origin: "connect_error",
+                reset_on_success: false,
             });
             let stream_action = stream_error_action(kind);
             decisions.push(GatewayReconnectDecision {
@@ -519,6 +522,7 @@ fn decisions_from_lifecycle_event(
                 delay_ms: 0,
                 policy_budget_remaining: max_retries.saturating_sub(attempt),
                 origin: "stream_error",
+                reset_on_success: false,
             });
             decisions
         }
@@ -531,6 +535,7 @@ fn decisions_from_lifecycle_event(
                 delay_ms,
                 policy_budget_remaining: max_retries.saturating_sub(attempt),
                 origin: "connect_error",
+                reset_on_success: false,
             }]
         }
         ReconnectLifecycleEvent::ExhaustedRetries { max_retries } => {
@@ -542,11 +547,20 @@ fn decisions_from_lifecycle_event(
                 delay_ms: 0,
                 policy_budget_remaining: 0,
                 origin: "connect_error",
+                reset_on_success: false,
             }]
         }
-        ReconnectLifecycleEvent::AttemptStarted { .. } | ReconnectLifecycleEvent::AttemptSucceeded { .. } => {
-            Vec::new()
-        }
+        ReconnectLifecycleEvent::AttemptSucceeded { attempt } => vec![GatewayReconnectDecision {
+            phase: "connect",
+            action: "continue",
+            error_class: "none",
+            attempt,
+            delay_ms: 0,
+            policy_budget_remaining: max_retries.saturating_sub(attempt),
+            origin: "connect_success",
+            reset_on_success: true,
+        }],
+        ReconnectLifecycleEvent::AttemptStarted { .. } => Vec::new(),
     }
 }
 
@@ -559,6 +573,7 @@ fn emit_gateway_decision(
     delay_ms: u64,
     policy_budget_remaining: u32,
     origin: &str,
+    reset_on_success: bool,
 ) {
     let _ = redis_roundtrip_once(
         addr,
@@ -584,6 +599,8 @@ fn emit_gateway_decision(
             policy_budget_remaining.to_string(),
             "origin".to_string(),
             origin.to_string(),
+            "reset_on_success".to_string(),
+            reset_on_success.to_string(),
             "ts".to_string(),
             now_ms(),
         ],
@@ -1275,6 +1292,22 @@ mod tests {
         assert_eq!(decisions[1].action, StreamErrorAction::Reconnect.as_str());
     }
 
+    #[test]
+    fn success_decision_marks_reconnect_state_reset() {
+        let decisions = decisions_from_lifecycle_event(
+            3,
+            ReconnectLifecycleEvent::AttemptSucceeded { attempt: 1 },
+        );
+
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].phase, "connect");
+        assert_eq!(decisions[0].action, "continue");
+        assert_eq!(decisions[0].origin, "connect_success");
+        assert_eq!(decisions[0].error_class, "none");
+        assert!(decisions[0].reset_on_success);
+        assert_eq!(decisions[0].delay_ms, 0);
+    }
+
     fn parse_resp_array(input: &[u8]) -> Option<Vec<String>> {
         if input.first().copied()? != b'*' {
             return None;
@@ -1358,6 +1391,7 @@ mod tests {
                 decision.delay_ms,
                 decision.policy_budget_remaining,
                 decision.origin,
+                decision.reset_on_success,
             );
         }
 
@@ -1373,6 +1407,7 @@ mod tests {
         );
         assert_eq!(field(&transcript[0], "origin"), Some("connect_error"));
         assert_eq!(field(&transcript[0], "error_class"), Some("timeout"));
+        assert_eq!(field(&transcript[0], "reset_on_success"), Some("false"));
 
         assert_eq!(field(&transcript[1], "phase"), Some("stream"));
         assert_eq!(
@@ -1381,6 +1416,7 @@ mod tests {
         );
         assert_eq!(field(&transcript[1], "origin"), Some("stream_error"));
         assert_eq!(field(&transcript[1], "error_class"), Some("timeout"));
+        assert_eq!(field(&transcript[1], "reset_on_success"), Some("false"));
 
         assert_eq!(field(&transcript[2], "phase"), Some("connect"));
         assert_eq!(
@@ -1389,6 +1425,7 @@ mod tests {
         );
         assert_eq!(field(&transcript[2], "origin"), Some("connect_error"));
         assert_eq!(field(&transcript[2], "error_class"), Some("unknown"));
+        assert_eq!(field(&transcript[2], "reset_on_success"), Some("false"));
     }
 
     #[test]
@@ -1427,6 +1464,7 @@ mod tests {
                 decision.delay_ms,
                 decision.policy_budget_remaining,
                 decision.origin,
+                decision.reset_on_success,
             );
         }
 
