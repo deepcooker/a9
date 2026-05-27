@@ -1236,6 +1236,29 @@ Do the work.
             any("normalized protocolVersion alias" in finding.get("message", "") for finding in envelope.get("findings", []))
         )
 
+    def test_worker_envelope_protocol_version_alias_openclaw_lobster_v1_normalizes_to_1(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final_path = run_dir / "final.md"
+            final_path.write_text(
+                'done\n{"protocolVersion":"openclaw-lobster-v1","ok":true,"status":"completed","output":{"changed_files":[]}}\n',
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="envelope-alias-openclaw-lobster-v1",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final_path), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+            status = mod.decide_status(worker, {"diff_bytes": 120}, [], worker_envelope=envelope)
+
+        self.assertEqual(envelope["status"], "pass")
+        self.assertEqual(status, "pass")
+        self.assertEqual(envelope["envelope"]["protocolVersion"], 1)
+        self.assertEqual(envelope["envelope"]["status"], "ok")
+
     def test_worker_envelope_protocol_version_alias_named_v1_normalizes_to_1(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

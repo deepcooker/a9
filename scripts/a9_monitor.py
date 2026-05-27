@@ -471,7 +471,7 @@ def evaluate_performance_depth_expert(text: str, summary: dict[str, Any], worker
 def evaluate_business_boundary(commands: list[dict[str, Any]]) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     score = 0.0
-    business_terms = ("quant", "trading", "strategy", "backtest", "finance", "金融", "交易", "量化")
+    business_terms = ("quant", "trading", "trading_strategy", "backtest", "finance", "金融", "交易", "量化")
     for event in commands:
         command = normalize_command(str(event.get("command") or "")).lower()
         if any(term in command for term in business_terms):

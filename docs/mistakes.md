@@ -22,6 +22,15 @@
 - 当前先做限制和观测，不追求一次把阈值调到最优。
 - 这符合 A9 的核心：执行机器可以读参考项目，但必须留下原因、边界和证据。
 
+复盘：
+
+- 实测 `refscan-remote-node-watch-loop-20260528` 后确认：质量大于行数。
+  220/260 行 bounded read 有说明原因，不应该成为主要阻断。
+- 真正的质量问题是：无关 session/service 读取、rg 输出过大、final envelope
+  协议错、next_slice 是否可执行。
+- monitor 还误把 Barter-rs 的 `strategy/on_disconnect.rs` 路径当成业务漂移；
+  这是评审误伤，已把 `strategy` 从单独业务漂移词中移除。
+
 ## 2026-05-28：targeted rg 不能只写在 prompt 里
 
 现象：

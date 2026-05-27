@@ -147,6 +147,25 @@ class MonitorTests(unittest.TestCase):
         self.assertIn("business_scope_drift", kinds)
         self.assertIn("broad_reference_scan", kinds)
 
+    def test_business_boundary_does_not_flag_barter_strategy_reference_path(self):
+        mod = load_monitor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self.write_run(
+                Path(tmp),
+                {"status": "pass", "worker": {}, "worker_envelope": {"status": "pass"}, "checks": []},
+                [
+                    {
+                        "item_type": "command_execution",
+                        "command": "sed -n '1,120p' reference-projects/barter-rs/barter/src/strategy/on_disconnect.rs",
+                    }
+                ],
+            )
+
+            score = mod.score_run(run_dir)
+
+        kinds = {item["kind"] for item in score["findings"]}
+        self.assertNotIn("business_scope_drift", kinds)
+
     def test_write_score_creates_monitor_score_json(self):
         mod = load_monitor()
         with tempfile.TemporaryDirectory() as tmp:
