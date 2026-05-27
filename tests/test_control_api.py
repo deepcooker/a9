@@ -710,6 +710,62 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["tasks_stream"]["reason"], "consumer_group_missing")
         self.assertIsNone(status["tasks_stream"]["lag"])
         self.assertIsNone(status["tasks_stream"]["pending"])
+        self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
+        self.assertEqual(status["tasks_stream"]["stream_action"], "watch")
+        self.assertEqual(status["tasks_stream"]["stream_action_reason"], "consumer_group_missing")
+
+    def test_node_status_tasks_stream_probe_degraded_when_xinfo_groups_failed(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("1\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("ERR no such key\n", returncode=1)
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("0\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            status = mod.node_status(Path("/tmp/a9-test-nodes-empty"))
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status["tasks_stream"]["status"], "degraded")
+        self.assertEqual(status["tasks_stream"]["reason"], "xinfo_groups_failed")
+        self.assertIsNone(status["tasks_stream"]["lag"])
+        self.assertIsNone(status["tasks_stream"]["pending"])
+        self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
+        self.assertEqual(status["tasks_stream"]["stream_action"], "intervene")
+        self.assertEqual(status["tasks_stream"]["stream_action_reason"], "xinfo_groups_failed")
+
+    def test_node_status_tasks_stream_probe_unavailable_keeps_action_fields(self):
+        mod = load_control_api()
+        original_redis_available = mod.redis_available
+        mod.redis_available = lambda: False
+        try:
+            status = mod.node_status(Path("/tmp/a9-test-nodes-empty"))
+        finally:
+            mod.redis_available = original_redis_available
+
+        self.assertEqual(status["tasks_stream"]["status"], "unavailable")
+        self.assertEqual(status["tasks_stream"]["reason"], "redis_unavailable")
+        self.assertIsNone(status["tasks_stream"]["lag"])
+        self.assertIsNone(status["tasks_stream"]["pending"])
+        self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
+        self.assertEqual(status["tasks_stream"]["stream_action"], "intervene")
+        self.assertEqual(status["tasks_stream"]["stream_action_reason"], "redis_unavailable")
 
     def test_enrich_node_connection_marks_stale_and_offline(self):
         mod = load_control_api()

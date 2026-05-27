@@ -857,21 +857,42 @@ def xinfo_consumers_rows_malformed(output: str, rows: list[dict[str, str]]) -> b
 
 
 def redis_tasks_stream_probe() -> dict[str, Any]:
+    def early_result(*, status: str, reason: str, error: str | None = None) -> dict[str, Any]:
+        action_by_reason = {
+            "redis_unavailable": "intervene",
+            "redis_probe_error": "intervene",
+            "xinfo_groups_failed": "intervene",
+            "consumer_group_missing": "watch",
+            "invalid_lag": "watch",
+        }
+        result: dict[str, Any] = {
+            "status": status,
+            "reason": reason,
+            "lag": None,
+            "pending": None,
+            "thresholds_version": "redis_streams_v1",
+            "stream_action": action_by_reason.get(reason, "watch"),
+            "stream_action_reason": reason,
+        }
+        if error is not None:
+            result["error"] = error
+        return result
+
     if not redis_available():
-        return {"status": "unavailable", "reason": "redis_unavailable", "lag": None, "pending": None}
+        return early_result(status="unavailable", reason="redis_unavailable")
     try:
         groups = redis_cli(["--raw", "XINFO", "GROUPS", TASKS_STREAM_KEY])
         pending = redis_cli(["--raw", "XPENDING", TASKS_STREAM_KEY, TASKS_STREAM_GROUP])
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"status": "degraded", "reason": "redis_probe_error", "lag": None, "pending": None, "error": str(exc)}
+        return early_result(status="degraded", reason="redis_probe_error", error=str(exc))
     if groups.returncode != 0:
-        return {"status": "degraded", "reason": "xinfo_groups_failed", "lag": None, "pending": None}
+        return early_result(status="degraded", reason="xinfo_groups_failed")
     group = next((row for row in parse_xinfo_groups_rows(groups.stdout) if row.get("name") == TASKS_STREAM_GROUP), None)
     if not group:
-        return {"status": "degraded", "reason": "consumer_group_missing", "lag": None, "pending": None}
+        return early_result(status="degraded", reason="consumer_group_missing")
     lag = parse_int(group.get("lag"), default=-1)
     if lag < 0:
-        return {"status": "degraded", "reason": "invalid_lag", "lag": None, "pending": None}
+        return early_result(status="degraded", reason="invalid_lag")
     result: dict[str, Any] = {
         "status": "ok",
         "reason": "healthy",
