@@ -494,6 +494,36 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["stream_reason"], "decode_error")
         self.assertEqual(node["reconnect_lifecycle"], {"event": "reconnecting", "phase": "backoff"})
 
+    def test_gateway_transport_contract_get_endpoint_emits_event(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None, "emit_event": None}
+
+        class DummyTransportContractGetHandler:
+            path = "/api/gateway/transport-contract?emit_event=1"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_gateway_transport_contract = mod.gateway_transport_contract
+
+        def fake_gateway_transport_contract(*, emit_event: bool = False) -> dict[str, object]:
+            captured["emit_event"] = emit_event
+            return {"status": "ok", "kind": "gateway_transport_contract"}
+
+        try:
+            mod.gateway_transport_contract = fake_gateway_transport_contract
+            mod.ControlHandler.do_GET(DummyTransportContractGetHandler())
+        finally:
+            mod.gateway_transport_contract = original_gateway_transport_contract
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["status"], "ok")
+        self.assertEqual(captured["payload"]["kind"], "gateway_transport_contract")
+        self.assertTrue(captured["emit_event"])
+
     def test_node_status_aggregates_latest_tmux_action_from_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
