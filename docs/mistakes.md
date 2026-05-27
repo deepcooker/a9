@@ -30,6 +30,10 @@
   协议错、next_slice 是否可执行。
 - monitor 还误把 Barter-rs 的 `strategy/on_disconnect.rs` 路径当成业务漂移；
   这是评审误伤，已把 `strategy` 从单独业务漂移词中移除。
+- 后续 `implement-remote-reconnect-decision-contract-20260528` 又暴露：
+  `python3 -m unittest tests.test_remote` 和
+  `python3 -m unittest tests/test_remote.py` 是同一测试目标，不能因为表现形式
+  不同就回滚有效 patch。已把 unittest module/file 形式做等价归一。
 
 ## 2026-05-28：targeted rg 不能只写在 prompt 里
 

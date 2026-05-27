@@ -165,6 +165,60 @@ def lifecycle_update(event: str, *, node_id: str = "", at: str = "", details: di
     }
 
 
+def gateway_reconnect_decision(
+    *,
+    phase: str,
+    error_class: str = "",
+    attempt: int = 0,
+    node_id: str = "",
+    origin: str = "gateway",
+    policy_budget_remaining: int = 0,
+    attempt_cap: int = 8,
+    at: str = "",
+) -> dict[str, Any]:
+    normalized_phase = str(phase or "").strip() or "stream"
+    normalized_error = str(error_class or "").strip()
+    safe_attempt = max(0, int(attempt))
+    safe_budget = max(0, int(policy_budget_remaining))
+    safe_cap = max(0, int(attempt_cap))
+    action = "terminate"
+    kind = "error"
+    delay_ms = 0
+
+    if normalized_phase == "success":
+        action = "connected"
+        kind = "lifecycle"
+        safe_attempt = 0
+    elif safe_budget <= 0:
+        action = "terminate"
+    elif normalized_phase == "connect":
+        action = connect_error_action(normalized_error)
+    elif normalized_phase == "stream":
+        action = stream_error_action(normalized_error)
+    else:
+        action = "terminate"
+
+    if action == "reconnect":
+        if safe_attempt >= safe_cap:
+            action = "terminate"
+        else:
+            delay_ms = capped_reconnect_backoff_seconds(safe_attempt) * 1000
+            safe_attempt += 1
+
+    return {
+        "kind": kind,
+        "phase": normalized_phase,
+        "action": action,
+        "error_class": normalized_error,
+        "attempt": safe_attempt,
+        "delay_ms": delay_ms,
+        "policy_budget_remaining": safe_budget,
+        "node_id": node_id,
+        "origin": origin,
+        "ts": at or utc_now(),
+    }
+
+
 def build_bootstrap_script(args: argparse.Namespace) -> str:
     remote_dir = args.remote_dir
     repo = args.repo

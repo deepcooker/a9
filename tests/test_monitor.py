@@ -121,6 +121,31 @@ class MonitorTests(unittest.TestCase):
         self.assertIn("undeclared_check", kinds)
         self.assertIn("pytest_not_declared", kinds)
 
+    def test_unittest_file_and_module_forms_match_declared_check(self):
+        mod = load_monitor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self.write_run(
+                Path(tmp),
+                {
+                    "status": "pass",
+                    "worker": {"budget_stopped": False},
+                    "worker_envelope": {"status": "pass"},
+                    "checks": [{"command": "python3 -m unittest tests/test_remote.py", "return_code": 0}],
+                },
+                [
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_remote'",
+                        "exit_code": 0,
+                    }
+                ],
+            )
+
+            score = mod.score_run(run_dir)
+
+        kinds = {item["kind"] for item in score["findings"]}
+        self.assertNotIn("undeclared_check", kinds)
+
     def test_moe_flags_architecture_and_business_scope_separately(self):
         mod = load_monitor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -1700,8 +1700,29 @@ def command_looks_like_test(command: str) -> bool:
 
 def command_matches_declared_check(command: str, checks: list[str]) -> bool:
     normalized = normalize_shell_command(command)
-    declared = [normalize_shell_command(item) for item in checks]
-    return any(normalized == item or normalized in item or item in normalized for item in declared)
+    normalized_variants = command_equivalence_variants(normalized)
+    declared_variants = [variant for item in checks for variant in command_equivalence_variants(normalize_shell_command(item))]
+    return any(
+        command_variant == declared_variant
+        or command_variant in declared_variant
+        or declared_variant in command_variant
+        for command_variant in normalized_variants
+        for declared_variant in declared_variants
+    )
+
+
+def command_equivalence_variants(command: str) -> set[str]:
+    normalized = normalize_shell_command(command)
+    variants = {normalized}
+    match = re.search(r"python3?\s+-m\s+unittest\s+([A-Za-z0-9_./-]+\.py)\b", normalized)
+    if match:
+        module = match.group(1)[:-3].replace("/", ".").replace("\\", ".")
+        variants.add(normalized[: match.start(1)] + module + normalized[match.end(1) :])
+    match = re.search(r"python3?\s+-m\s+unittest\s+([A-Za-z0-9_.-]+)\b", normalized)
+    if match and "." in match.group(1):
+        path = match.group(1).replace(".", "/") + ".py"
+        variants.add(normalized[: match.start(1)] + path + normalized[match.end(1) :])
+    return variants
 
 
 def prompt_forbids_rg_files(prompt: str) -> bool:

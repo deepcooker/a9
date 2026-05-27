@@ -489,6 +489,14 @@ Mechanisms to adapt:
   `reset_on_success=true`. The control API exposes this as
   `/api/gateway/reconnect-diagnostic?success=1`; the explicit success flag keeps
   diagnostic evidence separate from organic gateway reconnect lifecycle events.
+- `scripts/a9_remote.py`: remote SSH/Tailscale/tmux governance now has the same
+  typed reconnect-decision evidence shape as the Rust gateway. The copied
+  mechanism comes from Barter-rs `on_connect_err.rs`, `on_stream_err.rs`, and
+  `backoff.rs`: connect errors map to `reconnect|terminate`, stream errors map
+  to `continue|reconnect`, retry delay is a capped function of attempt, and a
+  success phase resets the attempt baseline. A9 adapts this into
+  `gateway_reconnect_decision(...)` with bounded fields
+  `phase/action/error_class/attempt/delay_ms/policy_budget_remaining/node_id/origin/ts`.
 
 ## Client Skeleton Reference Notes
 

@@ -940,6 +940,22 @@ Do the work.
         self.assertEqual(undeclared["kind"], "undeclared_check")
         self.assertEqual(declared, {})
 
+    def test_declared_unittest_file_and_module_forms_are_equivalent(self):
+        mod = load_supervisor()
+
+        self.assertTrue(
+            mod.command_matches_declared_check(
+                "/bin/bash -lc 'python3 -m unittest tests.test_remote'",
+                ["python3 -m unittest tests/test_remote.py"],
+            )
+        )
+        self.assertTrue(
+            mod.command_matches_declared_check(
+                "/bin/bash -lc 'python3 -m unittest tests/test_remote.py'",
+                ["python3 -m unittest tests.test_remote"],
+            )
+        )
+
     def test_live_worker_allows_read_heavy_batched_sed_with_rationale(self):
         mod = load_supervisor()
         task = mod.Task(

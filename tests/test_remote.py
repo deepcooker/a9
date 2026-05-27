@@ -119,6 +119,88 @@ class RemoteBootstrapTests(unittest.TestCase):
         self.assertEqual(event["node_id"], "node-1")
         self.assertEqual(event["details"]["k"], "v")
 
+    def test_gateway_reconnect_decision_connect_retry(self):
+        mod = load_module()
+        decision = mod.gateway_reconnect_decision(
+            phase="connect",
+            error_class="ssh_exec_error",
+            attempt=0,
+            policy_budget_remaining=3,
+            node_id="node-1",
+            origin="probe",
+            at="2026-05-28T00:00:00+00:00",
+        )
+        self.assertEqual(decision["kind"], "error")
+        self.assertEqual(decision["action"], "reconnect")
+        self.assertEqual(decision["attempt"], 1)
+        self.assertEqual(decision["delay_ms"], 1000)
+        self.assertEqual(decision["phase"], "connect")
+
+    def test_gateway_reconnect_decision_connect_terminate(self):
+        mod = load_module()
+        decision = mod.gateway_reconnect_decision(
+            phase="connect",
+            error_class="auth_invalid",
+            attempt=2,
+            policy_budget_remaining=3,
+        )
+        self.assertEqual(decision["action"], "terminate")
+        self.assertEqual(decision["attempt"], 2)
+        self.assertEqual(decision["delay_ms"], 0)
+
+    def test_gateway_reconnect_decision_stream_continue(self):
+        mod = load_module()
+        decision = mod.gateway_reconnect_decision(
+            phase="stream",
+            error_class="decode_error",
+            attempt=3,
+            policy_budget_remaining=3,
+        )
+        self.assertEqual(decision["action"], "continue")
+        self.assertEqual(decision["attempt"], 3)
+        self.assertEqual(decision["delay_ms"], 0)
+
+    def test_gateway_reconnect_decision_stream_reconnect(self):
+        mod = load_module()
+        decision = mod.gateway_reconnect_decision(
+            phase="stream",
+            error_class="broken_pipe",
+            attempt=2,
+            policy_budget_remaining=3,
+        )
+        self.assertEqual(decision["action"], "reconnect")
+        self.assertEqual(decision["attempt"], 3)
+        self.assertEqual(decision["delay_ms"], 4000)
+
+    def test_gateway_reconnect_decision_attempt_cap_terminates(self):
+        mod = load_module()
+        decision = mod.gateway_reconnect_decision(
+            phase="connect",
+            error_class="ssh_exec_error",
+            attempt=3,
+            attempt_cap=3,
+            policy_budget_remaining=3,
+        )
+        self.assertEqual(decision["action"], "terminate")
+        self.assertEqual(decision["attempt"], 3)
+        self.assertEqual(decision["delay_ms"], 0)
+
+    def test_gateway_reconnect_decision_success_resets_baseline(self):
+        mod = load_module()
+        decision = mod.gateway_reconnect_decision(
+            phase="success",
+            error_class="",
+            attempt=5,
+            policy_budget_remaining=3,
+            node_id="node-1",
+            origin="stream",
+        )
+        self.assertEqual(decision["kind"], "lifecycle")
+        self.assertEqual(decision["action"], "connected")
+        self.assertEqual(decision["attempt"], 0)
+        self.assertEqual(decision["delay_ms"], 0)
+        self.assertEqual(decision["node_id"], "node-1")
+
 
 if __name__ == "__main__":
     unittest.main()
