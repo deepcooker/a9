@@ -1,6 +1,7 @@
 use std::env;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -8,6 +9,12 @@ const TASK_STREAM: &str = "a9:tasks";
 const EVENT_STREAM: &str = "a9:events";
 const HEARTBEAT_STREAM: &str = "a9:heartbeats";
 const WORKER_GROUP: &str = "a9-workers";
+#[allow(dead_code)]
+const CONTROL_CHANNEL_CAPACITY: usize = 128;
+#[allow(dead_code)]
+const OVERLOADED_ERROR_CODE: i64 = -32001;
+#[allow(dead_code)]
+const OVERLOADED_ERROR_MESSAGE: &str = "Server overloaded; retry later.";
 
 trait ReconnectBackoff {
     fn delay(&self, attempt: u32) -> Duration;
@@ -95,6 +102,76 @@ struct GatewayReconnectDecision {
     origin: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+struct GatewayConnectionId(u64);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+enum GatewayIncomingMessage {
+    Request { id: u64, method: String },
+    Response { id: u64, result: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+enum GatewayTransportEvent {
+    IncomingMessage {
+        connection_id: GatewayConnectionId,
+        message: GatewayIncomingMessage,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+enum GatewayOutgoingMessage {
+    OverloadedError { request_id: u64, code: i64, message: &'static str },
+}
+
+#[allow(dead_code)]
+fn gateway_channel_capacity() -> usize {
+    CONTROL_CHANNEL_CAPACITY
+}
+
+#[allow(dead_code)]
+fn forward_incoming_gateway_message(
+    transport_tx: &SyncSender<GatewayTransportEvent>,
+    writer_tx: &SyncSender<GatewayOutgoingMessage>,
+    connection_id: GatewayConnectionId,
+    message: GatewayIncomingMessage,
+) -> bool {
+    let event = GatewayTransportEvent::IncomingMessage {
+        connection_id,
+        message,
+    };
+    match transport_tx.try_send(event) {
+        Ok(()) => true,
+        Err(TrySendError::Disconnected(_)) => false,
+        Err(TrySendError::Full(event)) => match event {
+            GatewayTransportEvent::IncomingMessage {
+                message: GatewayIncomingMessage::Request { id, .. },
+                ..
+            } => {
+                let _ = writer_tx.try_send(GatewayOutgoingMessage::OverloadedError {
+                    request_id: id,
+                    code: OVERLOADED_ERROR_CODE,
+                    message: OVERLOADED_ERROR_MESSAGE,
+                });
+                true
+            }
+            GatewayTransportEvent::IncomingMessage { .. } => transport_tx.send(event).is_ok(),
+        },
+    }
+}
+
+#[allow(dead_code)]
+fn recv_gateway_event(receiver: &Receiver<GatewayTransportEvent>) -> Option<GatewayTransportEvent> {
+    match receiver.try_recv() {
+        Ok(event) => Some(event),
+        Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
+    }
+}
+
 impl DefaultReconnectBackoff {
     fn classify_failure(error: &std::io::Error) -> RedisFailureKind {
         match error.kind() {
@@ -142,6 +219,7 @@ fn redis_roundtrip_once(addr: &str, parts: &[String]) -> std::io::Result<String>
     Ok(String::from_utf8_lossy(&buf[..n]).to_string())
 }
 
+#[cfg(test)]
 fn redis_roundtrip_with_retries<B: ReconnectBackoff>(
     attempt: impl FnMut() -> std::io::Result<String>,
     backoff: &B,
@@ -741,6 +819,141 @@ mod tests {
             stream_error_action(RedisFailureKind::Terminal),
             StreamErrorAction::Reconnect
         );
+    }
+
+    #[test]
+    fn codex_style_gateway_capacity_is_explicit() {
+        assert_eq!(gateway_channel_capacity(), 128);
+    }
+
+    #[test]
+    fn incoming_request_overload_returns_retry_error_without_blocking() {
+        let (transport_tx, transport_rx) = mpsc::sync_channel(1);
+        let (writer_tx, writer_rx) = mpsc::sync_channel(1);
+        transport_tx
+            .send(GatewayTransportEvent::IncomingMessage {
+                connection_id: GatewayConnectionId(7),
+                message: GatewayIncomingMessage::Response {
+                    id: 1,
+                    result: "queued".to_string(),
+                },
+            })
+            .expect("seed full inbound queue");
+
+        let forwarded = forward_incoming_gateway_message(
+            &transport_tx,
+            &writer_tx,
+            GatewayConnectionId(7),
+            GatewayIncomingMessage::Request {
+                id: 99,
+                method: "submit".to_string(),
+            },
+        );
+
+        assert!(forwarded);
+        assert_eq!(
+            writer_rx.try_recv().expect("overload response is queued"),
+            GatewayOutgoingMessage::OverloadedError {
+                request_id: 99,
+                code: OVERLOADED_ERROR_CODE,
+                message: OVERLOADED_ERROR_MESSAGE,
+            }
+        );
+        assert!(matches!(
+            recv_gateway_event(&transport_rx),
+            Some(GatewayTransportEvent::IncomingMessage {
+                message: GatewayIncomingMessage::Response { id: 1, .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn incoming_response_waits_on_backpressure_until_inbound_queue_drains() {
+        let (transport_tx, transport_rx) = mpsc::sync_channel(1);
+        let (writer_tx, writer_rx) = mpsc::sync_channel(1);
+        transport_tx
+            .send(GatewayTransportEvent::IncomingMessage {
+                connection_id: GatewayConnectionId(3),
+                message: GatewayIncomingMessage::Request {
+                    id: 1,
+                    method: "queued".to_string(),
+                },
+            })
+            .expect("seed full inbound queue");
+
+        let handle = thread::spawn(move || {
+            forward_incoming_gateway_message(
+                &transport_tx,
+                &writer_tx,
+                GatewayConnectionId(3),
+                GatewayIncomingMessage::Response {
+                    id: 2,
+                    result: "ok".to_string(),
+                },
+            )
+        });
+        thread::sleep(Duration::from_millis(25));
+        assert!(writer_rx.try_recv().is_err(), "responses should not emit overload errors");
+        assert!(matches!(
+            recv_gateway_event(&transport_rx),
+            Some(GatewayTransportEvent::IncomingMessage {
+                message: GatewayIncomingMessage::Request { id: 1, .. },
+                ..
+            })
+        ));
+
+        assert!(handle.join().expect("response sender exits after queue drains"));
+        assert!(matches!(
+            recv_gateway_event(&transport_rx),
+            Some(GatewayTransportEvent::IncomingMessage {
+                message: GatewayIncomingMessage::Response { id: 2, .. },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn writer_full_drops_only_overload_feedback_and_preserves_writer_queue() {
+        let (transport_tx, _transport_rx) = mpsc::sync_channel(1);
+        let (writer_tx, writer_rx) = mpsc::sync_channel(1);
+        transport_tx
+            .send(GatewayTransportEvent::IncomingMessage {
+                connection_id: GatewayConnectionId(4),
+                message: GatewayIncomingMessage::Response {
+                    id: 1,
+                    result: "queued".to_string(),
+                },
+            })
+            .expect("seed full inbound queue");
+        writer_tx
+            .send(GatewayOutgoingMessage::OverloadedError {
+                request_id: 1,
+                code: OVERLOADED_ERROR_CODE,
+                message: OVERLOADED_ERROR_MESSAGE,
+            })
+            .expect("seed full writer queue");
+
+        let forwarded = forward_incoming_gateway_message(
+            &transport_tx,
+            &writer_tx,
+            GatewayConnectionId(4),
+            GatewayIncomingMessage::Request {
+                id: 2,
+                method: "submit".to_string(),
+            },
+        );
+
+        assert!(forwarded);
+        assert_eq!(
+            writer_rx.try_recv().expect("original writer message remains queued"),
+            GatewayOutgoingMessage::OverloadedError {
+                request_id: 1,
+                code: OVERLOADED_ERROR_CODE,
+                message: OVERLOADED_ERROR_MESSAGE,
+            }
+        );
+        assert!(writer_rx.try_recv().is_err());
     }
 
     #[test]

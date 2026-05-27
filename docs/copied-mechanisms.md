@@ -420,6 +420,13 @@ Mechanisms to adapt:
   lines`, oversized `sed -n start,endp` reads are blocked. This copies the
   Codex-style principle that prompt policy must become runtime policy when
   token cost and reference discipline matter.
+- `crates/a9-gateway`: Codex app-server transport backpressure semantics are now
+  captured as A9's first in-memory communication contract. The copied mechanism
+  is asymmetric queue handling: request messages on a full inbound queue return
+  an explicit overload retry error, response messages wait for inbound capacity,
+  and a full writer queue drops only the overload feedback without blocking or
+  corrupting the existing writer queue. This is a test contract before the
+  production WS/Redis/SSH transport grows around it.
 
 ## Client Skeleton Reference Notes
 
