@@ -1,5 +1,33 @@
 # A9 错题本
 
+## 2026-05-27：supervisor pass 不能覆盖 monitor hard gate
+
+现象：
+
+- `test-reconnect-governance-api-handler-20260527T085000Z` 的代码 patch 有价值，
+  声明检查 `python3 -m unittest tests/test_control_api.py` 也通过。
+- 但 worker 过程里擅自跑了未声明的 `pytest`，并把环境缺 pytest 写成
+  `next_slice`。
+- 新 `requirements_review_council_v1` 正确给出：
+  `hard_gate=fail`, `failed_experts=["test_verifiability_expert"]`,
+  `recommended_action=block_and_rewrite_task`。
+- supervisor 仍按 `status=pass` 生成了 auto-next reference_scan，说明 auto-next 还没
+  把 monitor hard gate 当成阻断条件。
+
+修正：
+
+- 监控者接管：cherry-pick 有价值 patch，废弃错误 auto-next。
+- 后续 supervisor 应在 `monitor_score.gates.hard_gate.status == "fail"` 时阻断
+  auto-next，或者强制生成 repair/monitor_review 任务。
+- worker prompt 已经写“只跑声明检查”，但仍不足；需要执行层把未声明测试当成
+  过程违规，不允许用错误 next_slice 污染队列。
+
+产品标准：
+
+- 本次 patch 满足数据第一：新增 `/api/nodes` response schema/state 对 reconnect
+  governance 字段的验收。
+- 性能第二的边界也正确：使用 in-process API handler test，没有真实网络和服务探测。
+
 ## 2026-05-27：通讯观察中不要机械相信 auto-next 阶段
 
 现象：
