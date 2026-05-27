@@ -504,3 +504,34 @@ Next monitoring target:
      tests/test_control_api.py tests/test_remote.py` passed with `64` tests,
      and full `python3 -m unittest tests/test_supervisor.py` passed with `81`
      tests in `132.361s`.
+
+35. Remote probe state now survives into the node list.
+   - Task:
+     `implement-node-last-probe-action-20260527T074000Z`.
+   - Run:
+     `.a9/runs/implement-node-last-probe-action-20260527T074000Z-20260527T073815Z-a1`.
+   - Worker implemented a small control-plane state contract: `/api/nodes/probe`
+     stores `last_probe_action`, `last_probe_action_reason`,
+     `last_probe_required_missing`, `last_probe_optional_missing`, and
+     `last_probe_checked_at` on the canonical node record.
+   - Monitor cherry-picked worker commit `9523d6b...` as `1060bbf` and verified
+     `python3 -m unittest tests/test_control_api.py tests/test_remote.py`
+     passed with `64` tests.
+   - Quality note: worker initially tried an exact test name that did not exist,
+     then corrected to the declared control API suite. This is acceptable but
+     should be counted as command-friction in future run scoring.
+
+36. Auto-test added handler-level evidence for persisted probe state.
+   - Task:
+     `auto-test-implement-node-last-probe-action-2026-e98bdb766a-20260527T074046Z`.
+   - Run:
+     `.a9/runs/auto-test-implement-node-last-probe-action-2026-e98bdb766a-20260527T074046Z-20260527T075137Z-a1`.
+   - Worker added a focused HTTP handler test: `POST /api/nodes/probe` followed
+     by `GET /api/nodes` must expose the persisted `last_probe_*` fields.
+   - Monitor cherry-picked worker commit `0b1e526...` as `6a734df` and verified
+     `python3 -m unittest tests/test_control_api.py tests/test_remote.py`
+     passed with `65` tests.
+   - Drift note: the worker read previous run context and used a broad directory
+     listing even though the task only needed local control API tests. This did
+     not break scope, but the next worker prompt should be narrower and should
+     avoid automatic `reference_scan` when the next slice is explicitly a test.

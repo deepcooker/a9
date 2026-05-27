@@ -521,3 +521,33 @@
   `tests/test_supervisor.py` 时，worker idle timeout 至少 `420s`。
 - run summary 现在记录实际使用的 `idle_timeout_seconds`，方便后续判断是否又是
   长测试误杀。
+
+## 2026-05-27：auto-next 会把明确 test next_slice 误包装成 reference_scan
+
+现象：
+
+- `auto-test-implement-node-last-probe-action-2026-e98bdb766a` 通过后输出的
+  next_slice 很明确：补一个 `/api/nodes/probe` 非零返回路径的 handler 测试。
+- 自动生成的下一单却变成
+  `auto-reference_scan-auto-test-implement-node-last-probe-a-0a973d9d72`。
+- 这个 phase 名会诱导 worker 去读参考项目、读前序 context，而不是直接补测试。
+
+规则：
+
+- 当 next_slice 明确是测试补强时，监控者应改写为 `phase: test`，只开放测试文件
+  和声明的最小检查。
+- auto-next 后续应根据 next_slice 动词识别 phase，而不是固定回到
+  `reference_scan`。
+
+## 2026-05-27：worker 通过了但仍有轻微上下文噪音
+
+现象：
+
+- handler 级 last-probe auto-test 没有越权改文件，也没有 web/service 查询。
+- 但它读取了前序 run context，并执行了目录列表；对这个小测试来说不是必要证据。
+
+规则：
+
+- 小测试任务只给目标文件、失败日志和接口合同，不给前序 run context。
+- 监控质量不能只看 pass/fail，还要记录 prompt 是否过宽、命令是否噪音、是否有
+  不必要的大范围读取。
