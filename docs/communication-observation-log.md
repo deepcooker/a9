@@ -570,3 +570,9 @@ Next monitoring target:
      multi-machine reference work must be split into one reference project and
      one mechanism per task. The next task is narrowed to Barter-rs reconnect
      action/backoff files only.
+
+39. Barter-rs reconnect contract extraction bounded to 5 socket files.
+   - Scope:
+     `backoff.rs`, `on_connect_err.rs`, `on_stream_err.rs`, `update.rs`, `mod.rs` only.
+   - Mechanism note:
+     keep reconnect as explicit lifecycle events (`Connected -> Item* -> Reconnecting`) and separate connect-failure action (`Reconnect|Terminate`) from stream-failure action (`Continue|Reconnect`) so multi-machine SSH/Tailscale/tmux orchestration can decide retry vs. hard-stop deterministically.
