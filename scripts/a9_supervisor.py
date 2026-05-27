@@ -1656,7 +1656,11 @@ def prompt_forbids_ls(prompt: str) -> bool:
 
 
 def prompt_sed_window_limit(prompt: str) -> int | None:
-    match = re.search(r"sed windows?\s*<=\s*(\d+)\s*lines?", str(prompt or ""), flags=re.IGNORECASE)
+    match = re.search(
+        r"sed windows?\s*(?:must\s+be\s*)?<=\s*(\d+)\s*lines?",
+        str(prompt or ""),
+        flags=re.IGNORECASE,
+    )
     if not match:
         return None
     return int(match.group(1))

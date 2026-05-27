@@ -810,7 +810,7 @@ Do the work.
                 prompt=(
                     "Hard bounds:\n"
                     "- Do not run ls or rg --files.\n"
-                    "- Use sed windows <= 120 lines and targeted rg only.\n"
+                    "- Use sed windows must be <= 120 lines and targeted rg only.\n"
                 ),
                 checks=["python3 -m py_compile scripts/a9_supervisor.py"],
             )
