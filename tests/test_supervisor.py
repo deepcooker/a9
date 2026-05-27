@@ -95,6 +95,40 @@ Do the work.
         )
         self.assertEqual(mod.effective_worker_idle_timeout_seconds(short), 120)
 
+    def test_create_monitor_score_records_moe_findings(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events_path = run_dir / "event_summaries.jsonl"
+            events_path.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "python3 -m pytest -q tests/test_control_api.py",
+                        "output_preview": "/usr/bin/python3: No module named pytest\n",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "status": "pass",
+                        "worker": {"event_summaries_path": str(events_path)},
+                        "worker_envelope": {"status": "pass"},
+                        "checks": [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            score = mod.create_monitor_score(run_dir)
+            self.assertTrue(Path(score["output_path"]).exists())
+
+        self.assertEqual(score["recommended_action"], "monitor_review")
+        self.assertIn("testing", {item["name"] for item in score["experts"]})
+
     def test_default_worker_uses_stable_codex_model_and_can_be_overridden(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="model-test", prompt="demo")

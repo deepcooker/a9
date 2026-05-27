@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -1766,6 +1767,38 @@ def read_json_file(path: Path) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def create_monitor_score(run_dir: Path) -> dict[str, Any]:
+    output_path = run_dir / "monitor_score.json"
+    monitor_path = ROOT / "scripts" / "a9_monitor.py"
+    if not monitor_path.exists():
+        payload = {
+            "status": "unavailable",
+            "score": 0.0,
+            "recommended_action": "continue",
+            "findings": [{"level": "warn", "kind": "monitor_missing", "message": "a9_monitor.py missing"}],
+            "output_path": str(output_path),
+        }
+        write_json(output_path, payload)
+        return payload
+    spec = importlib.util.spec_from_file_location("a9_monitor_runtime", monitor_path)
+    if not spec or not spec.loader:
+        payload = {
+            "status": "unavailable",
+            "score": 0.0,
+            "recommended_action": "continue",
+            "findings": [{"level": "warn", "kind": "monitor_load_failed", "message": "cannot load monitor module"}],
+            "output_path": str(output_path),
+        }
+        write_json(output_path, payload)
+        return payload
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    payload = module.score_run(run_dir)
+    module.write_score(run_dir, payload)
+    payload["output_path"] = str(output_path)
+    return payload
 
 
 def json_compact(payload: Any) -> str:
@@ -4396,6 +4429,8 @@ def run_one(*, auto_next: bool = False) -> int:
             "checks": checks,
         }
         summary["policy_attestation"] = create_policy_attestation(task, run_dir, summary)
+        write_json(run_dir / "summary.json", summary)
+        summary["monitor_score"] = create_monitor_score(run_dir)
         summary["context_pressure"] = compact_context_pressure(summary)
         summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)
