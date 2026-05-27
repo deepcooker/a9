@@ -144,6 +144,34 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["nodes"][0]["connection_state"], "online")
         self.assertEqual(status["nodes"][0]["connection_action"], "continue")
 
+    def test_register_node_persists_reconnect_governance_fields_for_node_status(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "node/a",
+                    "ssh_target": "root@worker-a",
+                    "reconnect_action": "reconnect",
+                    "reconnect_reason": "ssh_exec_error",
+                    "reconnect_attempt": 3,
+                    "reconnect_backoff_seconds": 8,
+                    "stream_action": "continue",
+                    "stream_reason": "decode_error",
+                    "reconnect_lifecycle": {"event": "reconnecting"},
+                },
+                root=root,
+            )
+            status = mod.node_status(root)
+        node = status["nodes"][0]
+        self.assertEqual(node["reconnect_action"], "reconnect")
+        self.assertEqual(node["reconnect_reason"], "ssh_exec_error")
+        self.assertEqual(node["reconnect_attempt"], 3)
+        self.assertEqual(node["reconnect_backoff_seconds"], 8)
+        self.assertEqual(node["stream_action"], "continue")
+        self.assertEqual(node["stream_reason"], "decode_error")
+        self.assertEqual(node["reconnect_lifecycle"]["event"], "reconnecting")
+
     def test_api_nodes_endpoint_includes_connection_action_fields(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1172,10 +1200,12 @@ class ControlApiTests(unittest.TestCase):
             original_remote = mod.remote
             try:
                 mod.remote = lambda: FakeRemote
-                result = mod.probe_node({"ssh_target": "root@node1"}, root=root)
+                result = mod.probe_node({"ssh_target": "root@node1", "reconnect_attempt": 3}, root=root)
+                status = mod.node_status(root)
             finally:
                 mod.remote = original_remote
 
+        node = status["nodes"][0]
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["return_code"], 255)
         self.assertEqual(result["probe"]["host"], "node1")
@@ -1185,6 +1215,78 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["supervisor_followup"]["status"], "retryable-remote-probe")
         self.assertEqual(result["supervisor_followup"]["phase"], "repair")
         self.assertEqual(result["missing_required_tools"], [])
+        self.assertEqual(node["reconnect_action"], "reconnect")
+        self.assertEqual(node["reconnect_reason"], "ssh_exec_error")
+        self.assertEqual(node["reconnect_attempt"], 3)
+        self.assertEqual(node["reconnect_backoff_seconds"], 8)
+        self.assertEqual(node["reconnect_lifecycle"]["event"], "reconnecting")
+
+    def test_probe_node_sets_reconnect_backoff_and_terminal_action_fields(self):
+        mod = load_control_api()
+
+        class FakeRemote:
+            @staticmethod
+            def ssh_base(target, *, connect_timeout=10, identity_file=""):
+                return ["echo", "host=node1\nuser=root\npython3=/usr/bin/python3\n"]
+
+            @staticmethod
+            def remote_probe_script():
+                return "ignored"
+
+            @staticmethod
+            def parse_probe(text):
+                return {
+                    line.split("=", 1)[0]: line.split("=", 1)[1]
+                    for line in text.splitlines()
+                    if "=" in line
+                }
+
+            @staticmethod
+            def classify_probe_result(return_code, output):
+                return {
+                    "probe_action": "repair",
+                    "probe_action_reason": "auth_invalid",
+                    "required_missing": [],
+                    "optional_missing": [],
+                }
+
+            @staticmethod
+            def connect_error_action(error_kind):
+                return "terminate"
+
+            @staticmethod
+            def capped_reconnect_backoff_seconds(attempt, *, base_seconds=1, cap_seconds=30):
+                return min(cap_seconds, base_seconds * (2**attempt))
+
+            @staticmethod
+            def stream_error_action(error_kind):
+                return "continue" if error_kind == "decode_error" else "reconnect"
+
+            @staticmethod
+            def lifecycle_update(event, *, node_id="", at="", details=None):
+                return {"event": event, "node_id": node_id, "at": at, "details": details or {}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_remote = mod.remote
+            try:
+                mod.remote = lambda: FakeRemote
+                result = mod.probe_node(
+                    {"ssh_target": "root@node1", "reconnect_attempt": 4, "stream_reason": "decode_error"},
+                    root=root,
+                )
+                status = mod.node_status(root)
+            finally:
+                mod.remote = original_remote
+        node = status["nodes"][0]
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(node["reconnect_action"], "terminate")
+        self.assertEqual(node["reconnect_reason"], "auth_invalid")
+        self.assertEqual(node["reconnect_attempt"], 4)
+        self.assertEqual(node["reconnect_backoff_seconds"], 0)
+        self.assertEqual(node["stream_action"], "continue")
+        self.assertEqual(node["stream_reason"], "decode_error")
+        self.assertEqual(node["reconnect_lifecycle"]["event"], "connected")
 
     def test_api_nodes_returns_persisted_last_probe_fields_after_probe_post(self):
         mod = load_control_api()

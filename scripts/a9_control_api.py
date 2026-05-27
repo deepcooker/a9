@@ -1103,6 +1103,17 @@ def register_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, An
             payload.get("last_probe_optional_missing") or existing.get("last_probe_optional_missing") or []
         ),
         "last_probe_checked_at": str(payload.get("last_probe_checked_at") or existing.get("last_probe_checked_at") or ""),
+        "reconnect_action": str(payload.get("reconnect_action") or existing.get("reconnect_action") or ""),
+        "reconnect_reason": str(payload.get("reconnect_reason") or existing.get("reconnect_reason") or ""),
+        "reconnect_attempt": int(payload.get("reconnect_attempt") or existing.get("reconnect_attempt") or 0),
+        "reconnect_backoff_seconds": int(
+            payload.get("reconnect_backoff_seconds") or existing.get("reconnect_backoff_seconds") or 0
+        ),
+        "stream_action": str(payload.get("stream_action") or existing.get("stream_action") or ""),
+        "stream_reason": str(payload.get("stream_reason") or existing.get("stream_reason") or ""),
+        "reconnect_lifecycle": payload.get("reconnect_lifecycle")
+        or existing.get("reconnect_lifecycle")
+        or {},
         "controller_seen": True,
     }
     record = enrich_node_connection(record)
@@ -1131,6 +1142,38 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     parsed = mod.parse_probe(proc.stdout)
     classification = mod.classify_probe_result(proc.returncode, parsed)
     checked_at = utc_now()
+    reconnect_reason = str(classification.get("probe_action_reason") or "probe_ok")
+    connect_error_action = getattr(mod, "connect_error_action", None)
+    if connect_error_action is None:
+        connect_error_action = lambda reason: "reconnect" if reason == "ssh_exec_error" else "connected"
+    reconnect_action = connect_error_action(reconnect_reason)
+    reconnect_attempt = int(payload.get("reconnect_attempt") or 0)
+    backoff_seconds = getattr(mod, "capped_reconnect_backoff_seconds", lambda attempt: min(30, 2 ** max(0, int(attempt))))
+    reconnect_backoff_seconds = backoff_seconds(reconnect_attempt) if reconnect_action == "reconnect" else 0
+    lifecycle_event = "reconnecting" if reconnect_action == "reconnect" else "connected"
+    lifecycle_update = getattr(
+        mod,
+        "lifecycle_update",
+        lambda event, *, node_id="", at="", details=None: {
+            "event": event,
+            "node_id": node_id,
+            "at": at,
+            "details": details or {},
+        },
+    )
+    lifecycle = lifecycle_update(
+        lifecycle_event,
+        node_id=str(payload.get("node_id") or target),
+        at=checked_at,
+        details={
+            "reason": reconnect_reason,
+            "attempt": reconnect_attempt,
+            "backoff_seconds": reconnect_backoff_seconds,
+        },
+    )
+    stream_reason = str(payload.get("stream_reason") or "")
+    stream_error_action = getattr(mod, "stream_error_action", lambda reason: "reconnect")
+    stream_action = stream_error_action(stream_reason) if stream_reason else ""
     followup = probe_action_to_followup(
         classification.get("probe_action"),
         classification.get("probe_action_reason"),
@@ -1154,6 +1197,13 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
             "last_probe_required_missing": classification.get("required_missing") or [],
             "last_probe_optional_missing": classification.get("optional_missing") or [],
             "last_probe_checked_at": checked_at,
+            "reconnect_action": reconnect_action,
+            "reconnect_reason": reconnect_reason,
+            "reconnect_attempt": reconnect_attempt,
+            "reconnect_backoff_seconds": reconnect_backoff_seconds,
+            "stream_action": stream_action,
+            "stream_reason": stream_reason,
+            "reconnect_lifecycle": lifecycle,
         },
         root=root,
     )

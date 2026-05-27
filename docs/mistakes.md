@@ -585,3 +585,19 @@
   `target`、`node_modules`、`dist`。
 - task prompt 不能同时要求“看顶级项目”和“不要输出太多”而不给具体文件锚点；
   监控者应先做轻量定位，再把精确 source path 交给 worker。
+
+## 2026-05-27：新增 production helper 会打破旧 FakeRemote 测试契约
+
+现象：
+
+- reconnect governance patch 在 `probe_node()` 里直接调用
+  `mod.connect_error_action()`、`mod.capped_reconnect_backoff_seconds()` 等新 helper。
+- 旧的 `tests/test_control_api.py` FakeRemote 只实现了 probe 相关方法，导致
+  `/api/nodes/probe` handler 测试返回 400。
+
+规则：
+
+- 给生产路径增加 helper 时，要么更新所有旧 fake，要么在生产代码里保持兼容 fallback。
+- control API 这种边界层不应该因为测试/插件 fake 缺少新 helper 就整体 400。
+- reconnect backoff 只对 `reconnect` 动作有意义；`connected`/`terminate` 应记录
+  `reconnect_backoff_seconds=0`，避免 UI/调度误以为还会自动重试。

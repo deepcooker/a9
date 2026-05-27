@@ -576,3 +576,20 @@ Next monitoring target:
      `backoff.rs`, `on_connect_err.rs`, `on_stream_err.rs`, `update.rs`, `mod.rs` only.
    - Mechanism note:
      keep reconnect as explicit lifecycle events (`Connected -> Item* -> Reconnecting`) and separate connect-failure action (`Reconnect|Terminate`) from stream-failure action (`Continue|Reconnect`) so multi-machine SSH/Tailscale/tmux orchestration can decide retry vs. hard-stop deterministically.
+
+40. Reconnect governance implementation required monitor repair.
+   - Task:
+     `implement-remote-reconnect-governance-contract-20260527T084000Z`.
+   - Run:
+     `.a9/runs/implement-remote-reconnect-governance-contract-20260527T084000Z-20260527T082504Z-a1`.
+   - Worker produced a scoped patch but hit `retryable-worker-budget` after the
+     declared tests failed. Scope/patch guards passed, but git governance rolled
+     the patch back because final envelope was missing.
+   - Failure cause:
+     `probe_node()` hard-called new `FakeRemote` helper methods, breaking older
+     handler tests whose fakes only implemented the probe contract.
+   - Monitor reapplied the patch, added compatibility fallbacks, corrected
+     non-reconnect backoff to `0`, and verified:
+     `python3 -m py_compile scripts/a9_remote.py scripts/a9_control_api.py
+     scripts/a9_supervisor.py && python3 -m unittest tests/test_remote.py
+     tests/test_control_api.py` passed with `69` tests.

@@ -124,6 +124,47 @@ def classify_probe_result(return_code: int, output: dict[str, str]) -> dict[str,
     }
 
 
+def capped_reconnect_backoff_seconds(attempt: int, *, base_seconds: int = 1, cap_seconds: int = 30) -> int:
+    safe_attempt = max(0, int(attempt))
+    return min(cap_seconds, base_seconds * (2**safe_attempt))
+
+
+def connect_error_action(error_kind: str) -> str:
+    healthy = {"probe_ok", "optional_tools_missing"}
+    reconnectable = {
+        "ssh_exec_error",
+        "ssh_connect_timeout",
+        "ssh_connection_refused",
+        "tailscale_down",
+        "tmux_probe_timeout",
+        "tmux_session_missing",
+    }
+    normalized = str(error_kind)
+    if normalized in healthy:
+        return "connected"
+    return "reconnect" if normalized in reconnectable else "terminate"
+
+
+def stream_error_action(error_kind: str) -> str:
+    reconnectable = {"broken_pipe", "stream_io_error", "stream_timeout", "stream_reset"}
+    nonfatal_continue = {"decode_error", "heartbeat_gap", "optional_event_parse_error"}
+    normalized = str(error_kind)
+    if normalized in reconnectable:
+        return "reconnect"
+    if normalized in nonfatal_continue:
+        return "continue"
+    return "reconnect"
+
+
+def lifecycle_update(event: str, *, node_id: str = "", at: str = "", details: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "event": event,
+        "node_id": node_id,
+        "at": at or utc_now(),
+        "details": details or {},
+    }
+
+
 def build_bootstrap_script(args: argparse.Namespace) -> str:
     remote_dir = args.remote_dir
     repo = args.repo

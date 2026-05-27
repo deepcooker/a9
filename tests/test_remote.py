@@ -105,6 +105,20 @@ class RemoteBootstrapTests(unittest.TestCase):
         self.assertEqual(result["required_missing"], ["git"])
         self.assertEqual(result["optional_missing"], ["tmux", "tailscale"])
 
+    def test_reconnect_governance_helpers_cover_backoff_connect_stream_and_lifecycle(self):
+        mod = load_module()
+        self.assertEqual(mod.capped_reconnect_backoff_seconds(0), 1)
+        self.assertEqual(mod.capped_reconnect_backoff_seconds(3), 8)
+        self.assertEqual(mod.capped_reconnect_backoff_seconds(10), 30)
+        self.assertEqual(mod.connect_error_action("ssh_exec_error"), "reconnect")
+        self.assertEqual(mod.connect_error_action("auth_invalid"), "terminate")
+        self.assertEqual(mod.stream_error_action("decode_error"), "continue")
+        self.assertEqual(mod.stream_error_action("broken_pipe"), "reconnect")
+        event = mod.lifecycle_update("reconnecting", node_id="node-1", at="2026-05-27T00:00:00+00:00", details={"k": "v"})
+        self.assertEqual(event["event"], "reconnecting")
+        self.assertEqual(event["node_id"], "node-1")
+        self.assertEqual(event["details"]["k"], "v")
+
 
 if __name__ == "__main__":
     unittest.main()
