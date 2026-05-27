@@ -32,6 +32,11 @@ BROAD_SCAN_PATTERNS = [
 ]
 
 TEST_COMMAND_HINTS = ("pytest", "unittest", "cargo test", "npm test", "pnpm test", "yarn test")
+REFERENCE_HINTS = ("reference-projects/", "vendor-src/", "docs/copied-mechanisms.md", "docs/vendor-strategy.md")
+MAINLINE_HINTS = ("主线", "mainline", "philosophy", "哲学", "业务逻辑", "causal", "原始想法", "requirements", "需求")
+PRODUCT_PRESSURE_HINTS = ("tradeoff", "权衡", "reject", "拒绝", "推翻", "压榨", "shrink", "收缩", "scope", "边界")
+DATA_MODEL_HINTS = ("data", "schema", "model", "table", "event", "state", "数据", "表", "结构", "状态", "事件")
+PERFORMANCE_HINTS = ("performance", "latency", "throughput", "budget", "timeout", "cache", "性能", "延迟", "吞吐", "压测", "稳定")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -58,6 +63,29 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
         if isinstance(item, dict):
             rows.append(item)
     return rows
+
+
+def read_text(path: Path) -> str:
+    try:
+        if path.exists():
+            return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return ""
+
+
+def run_text(summary: dict[str, Any], run_dir: Path) -> str:
+    parts: list[str] = []
+    task_path = summary.get("task_path")
+    if isinstance(task_path, str):
+        parts.append(read_text(Path(task_path)))
+    worker = summary.get("worker") if isinstance(summary.get("worker"), dict) else {}
+    raw_task_path = worker.get("raw_task_path")
+    if isinstance(raw_task_path, str):
+        parts.append(read_text(Path(raw_task_path)))
+    parts.append(read_text(run_dir / "raw_task.md"))
+    parts.append(read_text(run_dir / "prompt.md"))
+    return "\n".join(part for part in parts if part)
 
 
 def command_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -107,6 +135,23 @@ def finding(level: str, kind: str, message: str, **extra: Any) -> dict[str, Any]
     return payload
 
 
+def contains_any(text: str, needles: tuple[str, ...] | list[str]) -> bool:
+    lowered = text.lower()
+    return any(needle.lower() in lowered for needle in needles)
+
+
+def contains_domain_hint(text: str, needles: tuple[str, ...] | list[str]) -> bool:
+    lowered = text.lower()
+    for needle in needles:
+        lowered_needle = needle.lower()
+        if lowered_needle.isascii() and re.fullmatch(r"[a-z0-9_]+", lowered_needle):
+            if re.search(rf"(?<![a-z0-9_]){re.escape(lowered_needle)}(?![a-z0-9_])", lowered):
+                return True
+        elif lowered_needle in lowered:
+            return True
+    return False
+
+
 def add_score(score: float, amount: float) -> float:
     return min(1.0, round(score + amount, 3))
 
@@ -124,8 +169,10 @@ def action_rank(action: str) -> int:
     ranks = {
         "continue": 0,
         "monitor_review": 1,
+        "needs_tradeoff": 2,
         "narrow_task": 2,
         "repair": 3,
+        "product_rewrite": 4,
         "block_and_rewrite_task": 4,
     }
     return ranks.get(action, 1)
@@ -137,6 +184,76 @@ def action_from_score(score: float) -> str:
     if score >= 0.35:
         return "monitor_review"
     return "continue"
+
+
+def evaluate_why_expert(text: str, summary: dict[str, Any]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    if not contains_any(text, ("goal:", "目标", "why", "为什么", "background", "背景", "problem", "问题")):
+        score = add_score(score, 0.35)
+        findings.append(finding("error", "missing_real_problem", "task lacks explicit goal/background/real problem"))
+    if str(summary.get("status") or "").startswith("retryable-"):
+        score = add_score(score, 0.15)
+        findings.append(finding("warn", "why_not_advanced", "retryable run needs renewed why before continuing"))
+    action = "block_and_rewrite_task" if score >= 0.5 else action_from_score(score)
+    return expert_result("why_expert", score, action, findings)
+
+
+def evaluate_scope_dependency_expert(text: str, summary: dict[str, Any]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    scope_guard = summary.get("scope_guard") if isinstance(summary.get("scope_guard"), dict) else {}
+    allowed_paths = scope_guard.get("allowed_paths", []) if isinstance(scope_guard.get("allowed_paths"), list) else []
+    changed_files = scope_guard.get("changed_files", []) if isinstance(scope_guard.get("changed_files"), list) else []
+    if changed_files and len(changed_files) > 4:
+        score = add_score(score, 0.25)
+        findings.append(finding("warn", "large_change_surface", "task changed too many files for one bounded worker slice", changed_files=changed_files))
+    if changed_files and allowed_paths and not all(any(str(path).startswith(str(allowed)) for allowed in allowed_paths) for path in changed_files):
+        score = add_score(score, 0.45)
+        findings.append(finding("error", "scope_guard_mismatch", "changed files do not fit allowed paths", changed_files=changed_files, allowed_paths=allowed_paths))
+    if not contains_any(text, ("allowed_paths", "Hard bounds", "边界", "scope", "范围")):
+        score = add_score(score, 0.18)
+        findings.append(finding("warn", "scope_not_explicit", "task prompt does not make scope/bounds explicit"))
+    return expert_result("scope_dependency_expert", score, "narrow_task" if score >= 0.25 else "continue", findings)
+
+
+def evaluate_system_requirement_expert(text: str) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    if not contains_any(text, ("input", "output", "state", "error", "contract", "行为", "输入", "输出", "状态", "错误", "接口")):
+        score = add_score(score, 0.28)
+        findings.append(finding("warn", "system_behavior_unclear", "task does not translate intent into system behavior"))
+    return expert_result("system_requirement_expert", score, action_from_score(score), findings)
+
+
+def evaluate_tradeoff_architecture_expert(text: str, commands: list[dict[str, Any]]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    if not contains_any(text, ("tradeoff", "权衡", "方案", "option", "复杂度", "耦合", "risk", "风险")):
+        score = add_score(score, 0.22)
+        findings.append(finding("warn", "missing_tradeoff", "task lacks explicit option/tradeoff/risk framing"))
+    for event in commands:
+        command = normalize_command(str(event.get("command") or ""))
+        if any(re.search(pattern, command) for pattern in BROAD_SCAN_PATTERNS):
+            score = add_score(score, 0.25)
+            findings.append(finding("warn", "broad_reference_scan", "worker ran broad reference-projects scan", command=command))
+    action = "needs_tradeoff" if any(item["kind"] == "missing_tradeoff" for item in findings) else "continue"
+    if any(item["kind"] == "broad_reference_scan" for item in findings):
+        action = "narrow_task"
+    return expert_result("tradeoff_architecture_expert", score, action, findings)
+
+
+def evaluate_role_boundary_expert(text: str) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    if contains_any(text, ("worker decide", "worker decides", "自己决定主线", "自动决定主线")):
+        score = add_score(score, 0.5)
+        findings.append(finding("error", "worker_oversteps_strategy", "worker appears to own strategic direction"))
+    if not contains_any(text, ("human", "monitor", "worker", "supervisor", "监控", "执行机器")):
+        score = add_score(score, 0.16)
+        findings.append(finding("warn", "roles_not_explicit", "task does not state human/monitor/worker/runtime boundaries"))
+    action = "block_and_rewrite_task" if score >= 0.5 else action_from_score(score)
+    return expert_result("role_boundary_expert", score, action, findings)
 
 
 def evaluate_governance(summary: dict[str, Any], worker: dict[str, Any], commands: list[dict[str, Any]]) -> dict[str, Any]:
@@ -170,10 +287,10 @@ def evaluate_governance(summary: dict[str, Any], worker: dict[str, Any], command
     action = "narrow_task" if worker.get("budget_stopped") else action_from_score(score)
     if score >= 0.75:
         action = "block_and_rewrite_task"
-    return expert_result("governance", score, action, findings)
+    return expert_result("execution_governance_expert", score, action, findings)
 
 
-def evaluate_testing(summary: dict[str, Any], commands: list[dict[str, Any]], checks: list[str]) -> dict[str, Any]:
+def evaluate_testing(summary: dict[str, Any], commands: list[dict[str, Any]], checks: list[str], text: str) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     score = 0.0
     for check in summary.get("checks", []) or []:
@@ -197,36 +314,158 @@ def evaluate_testing(summary: dict[str, Any], commands: list[dict[str, Any]], ch
         if "No module named pytest" in output_preview:
             score = add_score(score, 0.2)
             findings.append(finding("warn", "pytest_not_declared", "worker treated missing pytest as task direction", command=command))
+    data_sensitive = str(summary.get("phase") or "") in {"implement", "test"} or contains_any(
+        text, ("api", "control", "session", "flow", "run", "memory", "redis", "mysql", "业务", "页面")
+    )
+    data_terms = ("schema", "table", "event", "state", "数据", "表结构", "状态", "事件")
+    has_data_acceptance = contains_domain_hint(text, data_terms)
+    test_commands = " ".join(normalize_command(str(event.get("command") or "")) for event in commands if looks_like_test_command(str(event.get("command") or "")))
+    checks_text = " ".join(checks)
+    has_data_test = contains_domain_hint(test_commands + " " + checks_text + " " + text, data_terms)
+    if data_sensitive and not (has_data_acceptance and has_data_test):
+        score = add_score(score, 0.35)
+        findings.append(
+            finding(
+                "error",
+                "data_structure_acceptance_missing",
+                "data-sensitive task lacks test/acceptance coverage for schema/table/state/event structure",
+            )
+        )
     action = "repair" if any(item["kind"] == "declared_check_failed" for item in findings) else action_from_score(score)
-    return expert_result("testing", score, action, findings)
+    return expert_result("test_verifiability_expert", score, action, findings)
 
 
-def evaluate_architecture(commands: list[dict[str, Any]]) -> dict[str, Any]:
+def evaluate_quality_expert(summary: dict[str, Any]) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     score = 0.0
+    patch_guard = summary.get("patch_guard") if isinstance(summary.get("patch_guard"), dict) else {}
+    scope_guard = summary.get("scope_guard") if isinstance(summary.get("scope_guard"), dict) else {}
+    if patch_guard.get("status") == "fail":
+        score = add_score(score, 0.35)
+        findings.append(finding("error", "patch_guard_failed", "patch guard failed", output_path=patch_guard.get("output_path", "")))
+    if scope_guard.get("status") == "fail":
+        score = add_score(score, 0.35)
+        findings.append(finding("error", "scope_guard_failed", "scope guard failed", output_path=scope_guard.get("output_path", "")))
+    if summary.get("status") == "pass" and not (patch_guard or scope_guard or summary.get("checks")):
+        score = add_score(score, 0.2)
+        findings.append(finding("warn", "thin_evidence", "pass status has thin patch/scope/check evidence"))
+    return expert_result("quality_expert", score, "repair" if score >= 0.35 else action_from_score(score), findings)
+
+
+def evaluate_exception_governance_expert(summary: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    failure = summary.get("worker_failure") if isinstance(summary.get("worker_failure"), dict) else {}
+    if failure.get("category") or str(summary.get("status") or "").startswith("retryable-"):
+        score = add_score(score, 0.22)
+        findings.append(finding("warn", "worker_failure_requires_policy", "worker failure/retryable state needs explicit recovery policy", worker_failure=failure))
+    if worker.get("idle_timed_out") or worker.get("timed_out"):
+        score = add_score(score, 0.3)
+        findings.append(finding("error", "worker_timeout", "worker timed out or idle timed out"))
+    return expert_result("exception_governance_expert", score, "repair" if score >= 0.3 else action_from_score(score), findings)
+
+
+def evaluate_nfr_security_expert(text: str, commands: list[dict[str, Any]]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    if contains_any(text, ("mobile", "control api", "ssh", "tailscale", "remote", "远程", "手机")) and not contains_any(text, ("audit", "permission", "权限", "审计", "token", "secret", "安全")):
+        score = add_score(score, 0.22)
+        findings.append(finding("warn", "remote_security_not_explicit", "remote/control task lacks explicit permission/audit/security framing"))
     for event in commands:
         command = normalize_command(str(event.get("command") or ""))
-        if any(re.search(pattern, command) for pattern in BROAD_SCAN_PATTERNS):
-            score = add_score(score, 0.25)
-            findings.append(
-                finding("warn", "broad_reference_scan", "worker ran broad reference-projects scan", command=command)
-            )
-    action = "narrow_task" if findings else "continue"
-    return expert_result("architecture", score, action, findings)
+        if any(secret in command.lower() for secret in ("id_ed25519", "secret", "token=", "password")):
+            score = add_score(score, 0.35)
+            findings.append(finding("error", "sensitive_surface_touched", "worker command touched sensitive credential/token surface", command=command))
+    action = "block_and_rewrite_task" if score >= 0.35 else action_from_score(score)
+    return expert_result("nfr_security_expert", score, action, findings)
 
 
-def evaluate_product_mainline(summary: dict[str, Any]) -> dict[str, Any]:
+def evaluate_product_mainline(summary: dict[str, Any], text: str) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     score = 0.0
     phase = str(summary.get("phase") or "")
     status = str(summary.get("status") or "")
+    if not contains_any(text, MAINLINE_HINTS):
+        score = add_score(score, 0.2)
+        findings.append(finding("warn", "mainline_not_named", "task does not name product mainline/philosophy/business logic"))
     if phase == "vendor_import" and status == "pass":
         score = add_score(score, 0.15)
         findings.append(finding("info", "vendor_import_requires_license_review", "vendor import should be license-reviewed"))
     if status.startswith("retryable-"):
         score = add_score(score, 0.25)
         findings.append(finding("warn", "mainline_not_advanced", "retryable run did not advance product mainline"))
-    return expert_result("product_mainline", score, action_from_score(score), findings)
+    action = "product_rewrite" if score >= 0.45 else action_from_score(score)
+    return expert_result("product_mainline_expert", score, action, findings)
+
+
+def evaluate_external_learning_expert(text: str, commands: list[dict[str, Any]], summary: dict[str, Any]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    phase = str(summary.get("phase") or "")
+    references_needed = phase in {"reference_scan", "mechanism_extract", "vendor_import"} or contains_any(
+        text, ("抄", "copy", "mature", "reference", "顶级", "外部", "上网")
+    )
+    touched_reference = contains_any(text, REFERENCE_HINTS) or any(
+        contains_any(normalize_command(str(event.get("command") or "")), REFERENCE_HINTS) for event in commands
+    )
+    touched_web_or_docs = any(
+        contains_any(normalize_command(str(event.get("command") or "")), ("web", "curl ", "docs/", "reference-projects/", "vendor-src/"))
+        for event in commands
+    )
+    if references_needed and not (touched_reference or touched_web_or_docs):
+        score = add_score(score, 0.35)
+        findings.append(finding("error", "no_external_or_reference_learning", "copy/reference task lacks observable reference or external learning evidence"))
+    action = "block_and_rewrite_task" if score >= 0.35 else action_from_score(score)
+    return expert_result("external_learning_expert", score, action, findings)
+
+
+def evaluate_product_pressure_expert(text: str, summary: dict[str, Any]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    scope_guard = summary.get("scope_guard") if isinstance(summary.get("scope_guard"), dict) else {}
+    changed_files = scope_guard.get("changed_files", []) if isinstance(scope_guard.get("changed_files"), list) else []
+    if not contains_any(text, PRODUCT_PRESSURE_HINTS):
+        score = add_score(score, 0.22)
+        findings.append(finding("warn", "no_pressure_or_rejection_frame", "task lacks product pressure: no tradeoff/rejection/shrink criteria"))
+    if summary.get("status") == "pass" and not changed_files and summary.get("phase") not in {"reference_scan", "mechanism_extract", "record"}:
+        score = add_score(score, 0.28)
+        findings.append(finding("warn", "pass_without_material_change", "implementation/test pass produced no material change; pressure for stronger artifact needed"))
+    action = "product_rewrite" if score >= 0.45 else action_from_score(score)
+    return expert_result("product_pressure_expert", score, action, findings)
+
+
+def evaluate_data_model_expert(text: str, summary: dict[str, Any]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    phase = str(summary.get("phase") or "")
+    data_sensitive = phase in {"implement", "mechanism_extract", "vendor_import"} or contains_any(
+        text, ("api", "control", "session", "flow", "run", "memory", "redis", "mysql", "页面", "业务")
+    )
+    if data_sensitive and not contains_domain_hint(text, DATA_MODEL_HINTS):
+        score = add_score(score, 0.35)
+        findings.append(
+            finding(
+                "error",
+                "data_model_not_explicit",
+                "task does not state the data/event/state/table model that reflects real business structure",
+            )
+        )
+    return expert_result("data_model_expert", score, "block_and_rewrite_task" if score >= 0.35 else action_from_score(score), findings)
+
+
+def evaluate_performance_depth_expert(text: str, summary: dict[str, Any], worker: dict[str, Any]) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    score = 0.0
+    phase = str(summary.get("phase") or "")
+    performance_sensitive = phase in {"implement", "test"} or contains_any(text, ("gateway", "redis", "stream", "ws", "ssh", "tailscale", "tmux", "mobile", "control"))
+    if performance_sensitive and not contains_any(text, PERFORMANCE_HINTS):
+        score = add_score(score, 0.22)
+        findings.append(finding("warn", "performance_depth_not_explicit", "task lacks performance/stability/budget framing"))
+    event_bytes = int(worker.get("event_bytes") or 0)
+    if event_bytes > 100000:
+        score = add_score(score, 0.2)
+        findings.append(finding("warn", "trace_heavy", "worker trace is heavy and may indicate low execution efficiency", event_bytes=event_bytes))
+    return expert_result("performance_depth_expert", score, "needs_tradeoff" if score >= 0.22 else action_from_score(score), findings)
 
 
 def evaluate_business_boundary(commands: list[dict[str, Any]]) -> dict[str, Any]:
@@ -238,7 +477,7 @@ def evaluate_business_boundary(commands: list[dict[str, Any]]) -> dict[str, Any]
         if any(term in command for term in business_terms):
             score = add_score(score, 0.25)
             findings.append(finding("warn", "business_scope_drift", "worker touched business/quant surface during runtime work", command=command))
-    return expert_result("business_boundary", score, action_from_score(score), findings)
+    return expert_result("business_boundary_expert", score, action_from_score(score), findings)
 
 
 def merge_experts(experts: list[dict[str, Any]]) -> tuple[float, str, list[dict[str, Any]]]:
@@ -255,6 +494,36 @@ def merge_experts(experts: list[dict[str, Any]]) -> tuple[float, str, list[dict[
     return score, action, findings
 
 
+def gate_state(experts: list[dict[str, Any]]) -> dict[str, Any]:
+    by_name = {str(item.get("name")): item for item in experts}
+
+    def failed(names: list[str], threshold: float = 0.35) -> list[str]:
+        return [name for name in names if float(by_name.get(name, {}).get("score", 0.0)) >= threshold]
+
+    hard_failed = failed(["why_expert", "test_verifiability_expert", "exception_governance_expert", "nfr_security_expert", "data_model_expert"])
+    tradeoff_failed = failed(["tradeoff_architecture_expert", "product_pressure_expert"], threshold=0.22)
+    execution_failed = failed(["execution_governance_expert", "quality_expert"], threshold=0.35)
+    progress_failed = failed(["product_mainline_expert", "external_learning_expert", "performance_depth_expert"], threshold=0.35)
+    return {
+        "hard_gate": {"status": "fail" if hard_failed else "pass", "failed_experts": hard_failed},
+        "tradeoff_gate": {"status": "fail" if tradeoff_failed else "pass", "failed_experts": tradeoff_failed},
+        "execution_gate": {"status": "fail" if execution_failed else "pass", "failed_experts": execution_failed},
+        "progress_gate": {"status": "fail" if progress_failed else "pass", "failed_experts": progress_failed},
+    }
+
+
+def apply_gate_action(action: str, gates: dict[str, Any]) -> str:
+    if gates["hard_gate"]["status"] == "fail":
+        return "block_and_rewrite_task"
+    if gates["execution_gate"]["status"] == "fail" and action_rank(action) < action_rank("repair"):
+        return "repair"
+    if gates["tradeoff_gate"]["status"] == "fail" and action_rank(action) < action_rank("needs_tradeoff"):
+        return "needs_tradeoff"
+    if gates["progress_gate"]["status"] == "fail" and action_rank(action) < action_rank("monitor_review"):
+        return "monitor_review"
+    return action
+
+
 def score_run(run_dir: Path) -> dict[str, Any]:
     summary = read_json(run_dir / "summary.json")
     worker = summary.get("worker") if isinstance(summary.get("worker"), dict) else {}
@@ -262,20 +531,36 @@ def score_run(run_dir: Path) -> dict[str, Any]:
     events = read_jsonl(event_path)
     commands = command_events(events)
     checks = declared_checks(summary)
+    text = run_text(summary, run_dir)
     experts = [
-        evaluate_product_mainline(summary),
-        evaluate_testing(summary, commands, checks),
-        evaluate_architecture(commands),
-        evaluate_business_boundary(commands),
+        evaluate_why_expert(text, summary),
+        evaluate_scope_dependency_expert(text, summary),
+        evaluate_system_requirement_expert(text),
+        evaluate_tradeoff_architecture_expert(text, commands),
+        evaluate_role_boundary_expert(text),
+        evaluate_testing(summary, commands, checks, text),
+        evaluate_quality_expert(summary),
+        evaluate_exception_governance_expert(summary, worker),
+        evaluate_nfr_security_expert(text, commands),
         evaluate_governance(summary, worker, commands),
+        evaluate_product_mainline(summary, text),
+        evaluate_external_learning_expert(text, commands, summary),
+        evaluate_product_pressure_expert(text, summary),
+        evaluate_data_model_expert(text, summary),
+        evaluate_performance_depth_expert(text, summary, worker),
+        evaluate_business_boundary(commands),
     ]
     score, recommended_action, findings = merge_experts(experts)
+    gates = gate_state(experts)
+    recommended_action = apply_gate_action(recommended_action, gates)
 
     payload = {
         "status": "ok",
         "run_dir": str(run_dir),
         "score": score,
         "recommended_action": recommended_action,
+        "decision_model": "requirements_review_council_v1",
+        "gates": gates,
         "experts": experts,
         "findings": findings,
         "observed": {

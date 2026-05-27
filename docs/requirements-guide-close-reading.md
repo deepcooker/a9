@@ -295,6 +295,7 @@ A9 目前真正要抄的不是某个 UI，而是这套异常治理心智：
 
 6. `test_verifiability_expert`
    - 检查可量化、可测试、测试点是否来自业务关注点。
+   - 对数据敏感任务，必须看 schema/table/state/event 是否被验收。
 
 7. `quality_expert`
    - 检查无歧义、可读、完整、一致、可修改、可追踪。
@@ -307,6 +308,22 @@ A9 目前真正要抄的不是某个 UI，而是这套异常治理心智：
 
 10. `execution_governance_expert`
     - 检查 worker 外显行为：scope、commands、tests、license、token、evidence。
+
+11. `product_mainline_expert`
+    - 检查哲学/业务逻辑/主线是否大于工程实现。
+
+12. `external_learning_expert`
+    - 检查需要抄和考证时是否真的看了参考项目或外部资料。
+
+13. `product_pressure_expert`
+    - 检查是否有推翻弱方案、压缩范围、提高验收标准的能力。
+
+14. `data_model_expert`
+    - 检查数据、表结构、状态、事件是否映射真实业务结构。
+    - 数据结构对了，业务大概率对；但仍要覆盖权限、流程、异常和时序。
+
+15. `performance_depth_expert`
+    - 检查性能、稳定性、预算和压测边界是否体现产品厚度。
 
 ## 合议规则
 

@@ -187,6 +187,7 @@ A9 对应：
 
 - 是否可量化、可测试？
 - 是否覆盖业务关注点？
+- 数据敏感任务是否验收 schema/table/state/event，而不是只验接口返回 200？
 - 测试属于 small/medium/large 哪一类？
 - 是否只跑声明检查？
 
@@ -194,6 +195,7 @@ A9 对应：
 
 - 无测试。
 - 不可验证。
+- 数据结构/状态结构没有测试验收。
 - 额外测试失败却误导主线，例如未声明 pytest。
 
 ### 7. quality_expert
@@ -257,6 +259,75 @@ A9 对应：
 - 爆 event budget。
 - 无证据说完成。
 
+### 11. product_mainline_expert
+
+问题：
+
+- 任务是否服务当前主线，而不是被工程细节牵着走？
+- 是否体现哲学/业务逻辑优先于工程实现？
+- 是否能抓大放小，把 worker 从低价值支线拉回主线？
+
+否决：
+
+- 工程改动成立，但产品主线不成立。
+- worker 继续旧队列惯性，忽略最新因果变迁。
+
+### 12. external_learning_expert
+
+问题：
+
+- 需要抄/对标/考证时，是否真的看了参考项目、文档或外部资料？
+- 是否记录了参考来源、机制、边界和不能直接抄的部分？
+
+否决：
+
+- 需要外部学习却只凭自己想。
+- 没有 evidence/source 就宣称“参考了顶级项目”。
+
+### 13. product_pressure_expert
+
+问题：
+
+- 是否有推翻弱方案、压缩范围、提高验收标准的能力？
+- 是否明确 reject/shrink/tradeoff 条件？
+- 是否避免“能跑就算好产品”的工程自嗨？
+
+否决：
+
+- 没有压榨标准，弱方案也放行。
+- pass 了但没有形成更强的产品能力或证据。
+
+### 14. data_model_expert
+
+问题：
+
+- 数据、表结构、状态、事件是否反映真实业务结构？
+- 页面结构是否只是业务数据结构的表现层？
+- 数据模型是否能解释权限、流程、异常和时序，而不是只堆字段？
+
+判断：
+
+- “数据对了，业务大概率对”是重要产品架构原则。
+- 但不要机械说 99%。数据结构通常能反映大部分业务真实，剩余风险在权限、
+  流程、异常、时序、用户心理和组织约束。
+
+否决：
+
+- 数据敏感任务没有 schema/table/state/event 结构。
+- 页面/API 做出来了，但数据结构不能代表真实业务对象。
+
+### 15. performance_depth_expert
+
+问题：
+
+- 性能、延迟、吞吐、缓存、超时、预算和稳定性是否被明确考虑？
+- 性能是否服务产品厚度和长期可用性，而不是只做跑分快？
+
+否决：
+
+- 通讯/网关/控制面任务没有性能和稳定性边界。
+- trace/token/log 异常膨胀却继续放行。
+
 ## Council Decision Rules
 
 不能平均分。
@@ -265,16 +336,16 @@ A9 对应：
 
 ```text
 hard gate:
-  why/security/exception/verifiability 任一失败 -> block
+  why/security/exception/verifiability/data_model 任一失败 -> block
 
 tradeoff gate:
-  方案复杂度、耦合、收益不清楚 -> needs_tradeoff
+  方案复杂度、耦合、收益不清楚，或缺少产品压榨标准 -> needs_tradeoff
 
 execution gate:
   worker 越权、爆 token、缺证据、测试错跑 -> repair/narrow
 
 progress gate:
-  主线清楚、证据完整、测试通过、异常覆盖 -> continue
+  主线清楚、数据结构正确、证据完整、测试通过、异常覆盖、性能边界清楚 -> continue
 ```
 
 ## What Changes In A9

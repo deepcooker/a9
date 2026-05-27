@@ -126,8 +126,9 @@ Do the work.
             score = mod.create_monitor_score(run_dir)
             self.assertTrue(Path(score["output_path"]).exists())
 
-        self.assertEqual(score["recommended_action"], "monitor_review")
-        self.assertIn("testing", {item["name"] for item in score["experts"]})
+        self.assertEqual(score["recommended_action"], "block_and_rewrite_task")
+        self.assertIn("test_verifiability_expert", {item["name"] for item in score["experts"]})
+        self.assertEqual(score["gates"]["hard_gate"]["status"], "fail")
 
     def test_default_worker_uses_stable_codex_model_and_can_be_overridden(self):
         mod = load_supervisor()
