@@ -1131,6 +1131,11 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["count"], 1)
         self.assertEqual(status["nodes"][0]["host"], "node1")
         self.assertEqual(status["nodes"][0]["capabilities"]["python3"], "/usr/bin/python3")
+        self.assertEqual(status["nodes"][0]["last_probe_action"], "repair")
+        self.assertEqual(status["nodes"][0]["last_probe_action_reason"], "missing_required_tools")
+        self.assertEqual(status["nodes"][0]["last_probe_required_missing"], ["git", "curl"])
+        self.assertEqual(status["nodes"][0]["last_probe_optional_missing"], ["tmux", "tailscale"])
+        self.assertTrue(status["nodes"][0]["last_probe_checked_at"])
 
     def test_probe_node_nonzero_return_code_is_retry_action(self):
         mod = load_control_api()

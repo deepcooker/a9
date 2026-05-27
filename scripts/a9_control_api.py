@@ -1092,6 +1092,17 @@ def register_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, An
         "ssh_target": str(payload.get("ssh_target") or existing.get("ssh_target") or ""),
         "capabilities": payload.get("capabilities") or existing.get("capabilities") or {},
         "labels": payload.get("labels") or existing.get("labels") or [],
+        "last_probe_action": str(payload.get("last_probe_action") or existing.get("last_probe_action") or ""),
+        "last_probe_action_reason": str(
+            payload.get("last_probe_action_reason") or existing.get("last_probe_action_reason") or ""
+        ),
+        "last_probe_required_missing": list(
+            payload.get("last_probe_required_missing") or existing.get("last_probe_required_missing") or []
+        ),
+        "last_probe_optional_missing": list(
+            payload.get("last_probe_optional_missing") or existing.get("last_probe_optional_missing") or []
+        ),
+        "last_probe_checked_at": str(payload.get("last_probe_checked_at") or existing.get("last_probe_checked_at") or ""),
         "controller_seen": True,
     }
     record = enrich_node_connection(record)
@@ -1119,6 +1130,7 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     )
     parsed = mod.parse_probe(proc.stdout)
     classification = mod.classify_probe_result(proc.returncode, parsed)
+    checked_at = utc_now()
     followup = probe_action_to_followup(
         classification.get("probe_action"),
         classification.get("probe_action_reason"),
@@ -1137,12 +1149,17 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
                 if key not in {"host", "user", "kernel"} and value
             },
             "labels": payload.get("labels") or ["mobile-probed"],
+            "last_probe_action": classification.get("probe_action"),
+            "last_probe_action_reason": classification.get("probe_action_reason"),
+            "last_probe_required_missing": classification.get("required_missing") or [],
+            "last_probe_optional_missing": classification.get("optional_missing") or [],
+            "last_probe_checked_at": checked_at,
         },
         root=root,
     )
     return {
         "status": "ok" if proc.returncode == 0 else "failed",
-        "checked_at": utc_now(),
+        "checked_at": checked_at,
         "ssh_target": target,
         "return_code": proc.returncode,
         "probe_action": classification["probe_action"],
