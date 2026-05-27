@@ -427,6 +427,12 @@ Mechanisms to adapt:
   and a full writer queue drops only the overload feedback without blocking or
   corrupting the existing writer queue. This is a test contract before the
   production WS/Redis/SSH transport grows around it.
+- `crates/a9-gateway` plus `scripts/a9_control_api.py`: the backpressure contract
+  is now a runnable gateway health check, not only a unit test. `a9-gateway
+  transport-contract` emits machine-readable JSON, and the mobile/control status
+  includes `gateway.reason=gateway_contract_pass|gateway_contract_failed` so
+  phones and supervisors can verify the Rust communication contract without
+  Redis or a live remote node.
 
 ## Client Skeleton Reference Notes
 

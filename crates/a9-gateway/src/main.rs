@@ -9,11 +9,8 @@ const TASK_STREAM: &str = "a9:tasks";
 const EVENT_STREAM: &str = "a9:events";
 const HEARTBEAT_STREAM: &str = "a9:heartbeats";
 const WORKER_GROUP: &str = "a9-workers";
-#[allow(dead_code)]
 const CONTROL_CHANNEL_CAPACITY: usize = 128;
-#[allow(dead_code)]
 const OVERLOADED_ERROR_CODE: i64 = -32001;
-#[allow(dead_code)]
 const OVERLOADED_ERROR_MESSAGE: &str = "Server overloaded; retry later.";
 
 trait ReconnectBackoff {
@@ -103,18 +100,15 @@ struct GatewayReconnectDecision {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 struct GatewayConnectionId(u64);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 enum GatewayIncomingMessage {
     Request { id: u64, method: String },
     Response { id: u64, result: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 enum GatewayTransportEvent {
     IncomingMessage {
         connection_id: GatewayConnectionId,
@@ -123,17 +117,23 @@ enum GatewayTransportEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 enum GatewayOutgoingMessage {
     OverloadedError { request_id: u64, code: i64, message: &'static str },
 }
 
-#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GatewayTransportContractReport {
+    capacity: usize,
+    overload_error_code: i64,
+    request_overload_returns_retry_error: bool,
+    response_waits_on_backpressure: bool,
+    writer_full_preserves_existing_message: bool,
+}
+
 fn gateway_channel_capacity() -> usize {
     CONTROL_CHANNEL_CAPACITY
 }
 
-#[allow(dead_code)]
 fn forward_incoming_gateway_message(
     transport_tx: &SyncSender<GatewayTransportEvent>,
     writer_tx: &SyncSender<GatewayOutgoingMessage>,
@@ -164,12 +164,156 @@ fn forward_incoming_gateway_message(
     }
 }
 
-#[allow(dead_code)]
 fn recv_gateway_event(receiver: &Receiver<GatewayTransportEvent>) -> Option<GatewayTransportEvent> {
     match receiver.try_recv() {
         Ok(event) => Some(event),
         Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => None,
     }
+}
+
+fn gateway_transport_contract_report() -> GatewayTransportContractReport {
+    GatewayTransportContractReport {
+        capacity: gateway_channel_capacity(),
+        overload_error_code: OVERLOADED_ERROR_CODE,
+        request_overload_returns_retry_error: request_overload_returns_retry_error(),
+        response_waits_on_backpressure: response_waits_on_backpressure(),
+        writer_full_preserves_existing_message: writer_full_preserves_existing_message(),
+    }
+}
+
+fn request_overload_returns_retry_error() -> bool {
+    let (transport_tx, transport_rx) = std::sync::mpsc::sync_channel(1);
+    let (writer_tx, writer_rx) = std::sync::mpsc::sync_channel(1);
+    if transport_tx
+        .send(GatewayTransportEvent::IncomingMessage {
+            connection_id: GatewayConnectionId(7),
+            message: GatewayIncomingMessage::Response {
+                id: 1,
+                result: "queued".to_string(),
+            },
+        })
+        .is_err()
+    {
+        return false;
+    }
+    let forwarded = forward_incoming_gateway_message(
+        &transport_tx,
+        &writer_tx,
+        GatewayConnectionId(7),
+        GatewayIncomingMessage::Request {
+            id: 99,
+            method: "submit".to_string(),
+        },
+    );
+    let overload = writer_rx.try_recv().ok();
+    let seeded_event_still_queued = matches!(
+        recv_gateway_event(&transport_rx),
+        Some(GatewayTransportEvent::IncomingMessage {
+            message: GatewayIncomingMessage::Response { id: 1, .. },
+            ..
+        })
+    );
+    forwarded
+        && seeded_event_still_queued
+        && overload
+            == Some(GatewayOutgoingMessage::OverloadedError {
+                request_id: 99,
+                code: OVERLOADED_ERROR_CODE,
+                message: OVERLOADED_ERROR_MESSAGE,
+            })
+}
+
+fn response_waits_on_backpressure() -> bool {
+    let (transport_tx, transport_rx) = std::sync::mpsc::sync_channel(1);
+    let (writer_tx, writer_rx) = std::sync::mpsc::sync_channel(1);
+    if transport_tx
+        .send(GatewayTransportEvent::IncomingMessage {
+            connection_id: GatewayConnectionId(3),
+            message: GatewayIncomingMessage::Request {
+                id: 1,
+                method: "queued".to_string(),
+            },
+        })
+        .is_err()
+    {
+        return false;
+    }
+    let handle = thread::spawn(move || {
+        forward_incoming_gateway_message(
+            &transport_tx,
+            &writer_tx,
+            GatewayConnectionId(3),
+            GatewayIncomingMessage::Response {
+                id: 2,
+                result: "ok".to_string(),
+            },
+        )
+    });
+    thread::sleep(Duration::from_millis(25));
+    let no_overload = writer_rx.try_recv().is_err();
+    let first = recv_gateway_event(&transport_rx);
+    let first_was_seeded = matches!(
+        first,
+        Some(GatewayTransportEvent::IncomingMessage {
+            message: GatewayIncomingMessage::Request { id: 1, .. },
+            ..
+        })
+    );
+    let joined = handle.join().unwrap_or(false);
+    let second_was_response = matches!(
+        recv_gateway_event(&transport_rx),
+        Some(GatewayTransportEvent::IncomingMessage {
+            message: GatewayIncomingMessage::Response { id: 2, .. },
+            ..
+        })
+    );
+    no_overload && first_was_seeded && joined && second_was_response
+}
+
+fn writer_full_preserves_existing_message() -> bool {
+    let (transport_tx, _transport_rx) = std::sync::mpsc::sync_channel(1);
+    let (writer_tx, writer_rx) = std::sync::mpsc::sync_channel(1);
+    if transport_tx
+        .send(GatewayTransportEvent::IncomingMessage {
+            connection_id: GatewayConnectionId(4),
+            message: GatewayIncomingMessage::Response {
+                id: 1,
+                result: "queued".to_string(),
+            },
+        })
+        .is_err()
+    {
+        return false;
+    }
+    let original = GatewayOutgoingMessage::OverloadedError {
+        request_id: 1,
+        code: OVERLOADED_ERROR_CODE,
+        message: OVERLOADED_ERROR_MESSAGE,
+    };
+    if writer_tx.send(original.clone()).is_err() {
+        return false;
+    }
+    let forwarded = forward_incoming_gateway_message(
+        &transport_tx,
+        &writer_tx,
+        GatewayConnectionId(4),
+        GatewayIncomingMessage::Request {
+            id: 2,
+            method: "submit".to_string(),
+        },
+    );
+    forwarded && writer_rx.try_recv().ok() == Some(original) && writer_rx.try_recv().is_err()
+}
+
+fn print_transport_contract_report(report: GatewayTransportContractReport) {
+    println!(
+        "{{\"status\":\"ok\",\"kind\":\"gateway_transport_contract\",\"capacity\":{},\"overload_error_code\":{},\"request_overload_returns_retry_error\":{},\"response_waits_on_backpressure\":{},\"writer_full_preserves_existing_message\":{}}}",
+        report.capacity,
+        report.overload_error_code,
+        report.request_overload_returns_retry_error,
+        report.response_waits_on_backpressure,
+        report.writer_full_preserves_existing_message
+    );
 }
 
 impl DefaultReconnectBackoff {
@@ -441,7 +585,8 @@ fn usage() -> ! {
   a9-gateway ack <stream_id>
   a9-gateway fail <stream_id> <reason>
   a9-gateway heartbeat [worker_id]
-  a9-gateway status"
+  a9-gateway status
+  a9-gateway transport-contract"
     );
     std::process::exit(2);
 }
@@ -574,6 +719,9 @@ fn main() -> std::io::Result<()> {
             ] {
                 println!("{}", redis_roundtrip(&addr, &parts)?.replace("\r\n", " ").trim());
             }
+        }
+        "transport-contract" => {
+            print_transport_contract_report(gateway_transport_contract_report());
         }
         _ => usage(),
     }
@@ -824,6 +972,20 @@ mod tests {
     #[test]
     fn codex_style_gateway_capacity_is_explicit() {
         assert_eq!(gateway_channel_capacity(), 128);
+    }
+
+    #[test]
+    fn transport_contract_report_runs_all_backpressure_checks() {
+        assert_eq!(
+            gateway_transport_contract_report(),
+            GatewayTransportContractReport {
+                capacity: 128,
+                overload_error_code: -32001,
+                request_overload_returns_retry_error: true,
+                response_waits_on_backpressure: true,
+                writer_full_preserves_existing_message: true,
+            }
+        );
     }
 
     #[test]

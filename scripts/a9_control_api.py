@@ -29,6 +29,7 @@ SESSION_REFRESH_PATH = ROOT / "scripts" / "a9_session_refresh.py"
 REMOTE_PATH = ROOT / "scripts" / "a9_remote.py"
 NODES_DIR = ROOT / ".a9" / "nodes"
 PHONE_CONTROL_REL_PATH = Path(".a9") / "control" / "phone_control.json"
+GATEWAY_BIN_REL_PATH = Path("target") / "debug" / "a9-gateway"
 TAILSCALE_SOCKET = "/run/tailscale/tailscaled.sock"
 DEFAULT_SSH_IDENTITY_FILE = "/root/id_ed25519"
 NODE_ONLINE_TTL_SECONDS = 90
@@ -349,6 +350,65 @@ def supervisor_status(root: Path = ROOT) -> dict[str, Any]:
         "progress": read_json(progress_path) if progress_path.exists() else {},
         "daemon_heartbeat": read_json(heartbeat_path) if heartbeat_path.exists() else {},
         "nodes": node_status(root),
+        "gateway": gateway_transport_contract(root),
+    }
+
+
+def gateway_transport_contract(root: Path = ROOT) -> dict[str, Any]:
+    binary = root / GATEWAY_BIN_REL_PATH
+    if not binary.exists():
+        return {
+            "status": "missing",
+            "kind": "gateway_transport_contract",
+            "binary": str(binary),
+            "reason": "gateway_binary_missing",
+        }
+    try:
+        proc = subprocess.run(
+            [str(binary), "transport-contract"],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "fail",
+            "kind": "gateway_transport_contract",
+            "binary": str(binary),
+            "reason": "gateway_contract_timeout",
+        }
+    output = (proc.stdout or "").strip()
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return {
+            "status": "fail",
+            "kind": "gateway_transport_contract",
+            "binary": str(binary),
+            "return_code": proc.returncode,
+            "reason": "gateway_contract_invalid_json",
+            "output": output[:1000],
+        }
+    required_true = [
+        "request_overload_returns_retry_error",
+        "response_waits_on_backpressure",
+        "writer_full_preserves_existing_message",
+    ]
+    passed = (
+        proc.returncode == 0
+        and payload.get("status") == "ok"
+        and payload.get("capacity") == 128
+        and payload.get("overload_error_code") == -32001
+        and all(payload.get(name) is True for name in required_true)
+    )
+    return {
+        **payload,
+        "status": "ok" if passed else "fail",
+        "binary": str(binary),
+        "return_code": proc.returncode,
+        "reason": "gateway_contract_pass" if passed else "gateway_contract_failed",
     }
 
 
@@ -560,6 +620,7 @@ def controller_discovery() -> dict[str, Any]:
         "runtime": {
             "ssh_bootstrap": True,
             "redis_streams_target": True,
+            "gateway_transport_contract": True,
             "worker_claim_ready": False,
         },
         "events": {

@@ -144,6 +144,68 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["latest_run"]["task_id"], "task")
         self.assertEqual(status["progress"]["progress_percent"], 1)
         self.assertEqual(status["nodes"]["count"], 0)
+        self.assertEqual(status["gateway"]["status"], "missing")
+
+    def test_gateway_transport_contract_runs_local_binary(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "target" / "debug" / "a9-gateway"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\n", encoding="utf-8")
+
+            class FakeProc:
+                returncode = 0
+                stdout = json.dumps(
+                    {
+                        "status": "ok",
+                        "kind": "gateway_transport_contract",
+                        "capacity": 128,
+                        "overload_error_code": -32001,
+                        "request_overload_returns_retry_error": True,
+                        "response_waits_on_backpressure": True,
+                        "writer_full_preserves_existing_message": True,
+                    }
+                )
+
+            original_run = mod.subprocess.run
+            try:
+                calls = []
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.gateway_transport_contract(root)
+            finally:
+                mod.subprocess.run = original_run
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["reason"], "gateway_contract_pass")
+        self.assertEqual(calls[0][0], [str(binary), "transport-contract"])
+
+    def test_gateway_transport_contract_fails_invalid_contract(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "target" / "debug" / "a9-gateway"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\n", encoding="utf-8")
+
+            class FakeProc:
+                returncode = 0
+                stdout = '{"status":"ok","capacity":999}'
+
+            original_run = mod.subprocess.run
+            try:
+                mod.subprocess.run = lambda *args, **kwargs: FakeProc()
+                result = mod.gateway_transport_contract(root)
+            finally:
+                mod.subprocess.run = original_run
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["reason"], "gateway_contract_failed")
 
     def test_register_and_heartbeat_node_write_controller_registry(self):
         mod = load_control_api()
