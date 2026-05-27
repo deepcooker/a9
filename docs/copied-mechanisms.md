@@ -433,6 +433,12 @@ Mechanisms to adapt:
   includes `gateway.reason=gateway_contract_pass|gateway_contract_failed` so
   phones and supervisors can verify the Rust communication contract without
   Redis or a live remote node.
+- `crates/a9-gateway`: the same contract can now be promoted from local health
+  check to replayable runtime evidence with `a9-gateway transport-contract
+  --emit-event`. The command writes a `gateway_transport_contract` entry to
+  Redis Stream `a9:events` with the pass/fail status, queue capacity, overload
+  code, and the three backpressure booleans, then returns the stream `event_id`
+  in its JSON output. The default command remains side-effect free.
 
 ## Client Skeleton Reference Notes
 

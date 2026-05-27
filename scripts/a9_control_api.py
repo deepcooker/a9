@@ -354,7 +354,7 @@ def supervisor_status(root: Path = ROOT) -> dict[str, Any]:
     }
 
 
-def gateway_transport_contract(root: Path = ROOT) -> dict[str, Any]:
+def gateway_transport_contract(root: Path = ROOT, *, emit_event: bool = False) -> dict[str, Any]:
     binary = root / GATEWAY_BIN_REL_PATH
     if not binary.exists():
         return {
@@ -364,8 +364,11 @@ def gateway_transport_contract(root: Path = ROOT) -> dict[str, Any]:
             "reason": "gateway_binary_missing",
         }
     try:
+        cmd = [str(binary), "transport-contract"]
+        if emit_event:
+            cmd.append("--emit-event")
         proc = subprocess.run(
-            [str(binary), "transport-contract"],
+            cmd,
             cwd=root,
             text=True,
             stdout=subprocess.PIPE,
@@ -615,6 +618,7 @@ def controller_discovery() -> dict[str, Any]:
             "submit": "/api/submit",
             "runtime_run_one": "/api/runtime/run-one",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
+            "gateway_transport_contract": "/api/gateway/transport-contract",
             "events": "/api/events",
         },
         "runtime": {
@@ -1775,6 +1779,9 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, tailscale_status())
             elif parsed.path == "/api/nodes":
                 self.write_json(200, node_status())
+            elif parsed.path == "/api/gateway/transport-contract":
+                emit_event = str(query.get("emit_event", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
+                self.write_json(200, gateway_transport_contract(emit_event=emit_event))
             elif parsed.path == "/api/nodes/evidence":
                 self.write_json(
                     200,

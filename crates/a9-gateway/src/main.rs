@@ -306,14 +306,40 @@ fn writer_full_preserves_existing_message() -> bool {
 }
 
 fn print_transport_contract_report(report: GatewayTransportContractReport) {
+    print_transport_contract_report_with_event(report, None);
+}
+
+fn transport_contract_passed(report: &GatewayTransportContractReport) -> bool {
+    report.capacity == CONTROL_CHANNEL_CAPACITY
+        && report.overload_error_code == OVERLOADED_ERROR_CODE
+        && report.request_overload_returns_retry_error
+        && report.response_waits_on_backpressure
+        && report.writer_full_preserves_existing_message
+}
+
+fn print_transport_contract_report_with_event(report: GatewayTransportContractReport, event_id: Option<&str>) {
+    let status = if transport_contract_passed(&report) { "ok" } else { "fail" };
+    let event_field = event_id
+        .map(|id| format!(",\"event_id\":\"{}\"", json_escape(id)))
+        .unwrap_or_default();
     println!(
-        "{{\"status\":\"ok\",\"kind\":\"gateway_transport_contract\",\"capacity\":{},\"overload_error_code\":{},\"request_overload_returns_retry_error\":{},\"response_waits_on_backpressure\":{},\"writer_full_preserves_existing_message\":{}}}",
+        "{{\"status\":\"{}\",\"kind\":\"gateway_transport_contract\",\"capacity\":{},\"overload_error_code\":{},\"request_overload_returns_retry_error\":{},\"response_waits_on_backpressure\":{},\"writer_full_preserves_existing_message\":{}{}}}",
+        status,
         report.capacity,
         report.overload_error_code,
         report.request_overload_returns_retry_error,
         report.response_waits_on_backpressure,
-        report.writer_full_preserves_existing_message
+        report.writer_full_preserves_existing_message,
+        event_field
     );
+}
+
+fn json_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 impl DefaultReconnectBackoff {
@@ -564,6 +590,57 @@ fn emit_gateway_decision(
     );
 }
 
+fn emit_gateway_transport_contract(addr: &str, report: &GatewayTransportContractReport) -> std::io::Result<String> {
+    let status = if transport_contract_passed(report) { "ok" } else { "fail" };
+    let response = redis_roundtrip_once(
+        addr,
+        &[
+            "XADD".to_string(),
+            EVENT_STREAM.to_string(),
+            "*".to_string(),
+            "type".to_string(),
+            "gateway_transport_contract".to_string(),
+            "kind".to_string(),
+            "gateway_transport_contract".to_string(),
+            "status".to_string(),
+            status.to_string(),
+            "capacity".to_string(),
+            report.capacity.to_string(),
+            "overload_error_code".to_string(),
+            report.overload_error_code.to_string(),
+            "request_overload_returns_retry_error".to_string(),
+            report.request_overload_returns_retry_error.to_string(),
+            "response_waits_on_backpressure".to_string(),
+            report.response_waits_on_backpressure.to_string(),
+            "writer_full_preserves_existing_message".to_string(),
+            report.writer_full_preserves_existing_message.to_string(),
+            "ts".to_string(),
+            now_ms(),
+        ],
+    )?;
+    Ok(resp_scalar(&response).unwrap_or_else(|| response.trim().to_string()))
+}
+
+fn resp_scalar(response: &str) -> Option<String> {
+    let trimmed = response.trim_end_matches(['\r', '\n']);
+    if let Some(value) = trimmed.strip_prefix('+') {
+        return Some(value.to_string());
+    }
+    if let Some(value) = trimmed.strip_prefix(':') {
+        return Some(value.to_string());
+    }
+    if trimmed.starts_with('$') {
+        let mut lines = response.split("\r\n");
+        let header = lines.next()?;
+        let len = header.strip_prefix('$')?.parse::<usize>().ok()?;
+        let value = lines.next()?;
+        if value.len() == len {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
 fn cmd(parts: &[&str]) -> Vec<String> {
     parts.iter().map(|part| (*part).to_string()).collect()
 }
@@ -586,7 +663,7 @@ fn usage() -> ! {
   a9-gateway fail <stream_id> <reason>
   a9-gateway heartbeat [worker_id]
   a9-gateway status
-  a9-gateway transport-contract"
+  a9-gateway transport-contract [--emit-event]"
     );
     std::process::exit(2);
 }
@@ -721,7 +798,13 @@ fn main() -> std::io::Result<()> {
             }
         }
         "transport-contract" => {
-            print_transport_contract_report(gateway_transport_contract_report());
+            let report = gateway_transport_contract_report();
+            if args.iter().any(|arg| arg == "--emit-event") {
+                let event_id = emit_gateway_transport_contract(&addr, &report)?;
+                print_transport_contract_report_with_event(report, Some(&event_id));
+            } else {
+                print_transport_contract_report(report);
+            }
         }
         _ => usage(),
     }
@@ -976,8 +1059,9 @@ mod tests {
 
     #[test]
     fn transport_contract_report_runs_all_backpressure_checks() {
+        let report = gateway_transport_contract_report();
         assert_eq!(
-            gateway_transport_contract_report(),
+            report,
             GatewayTransportContractReport {
                 capacity: 128,
                 overload_error_code: -32001,
@@ -986,6 +1070,27 @@ mod tests {
                 writer_full_preserves_existing_message: true,
             }
         );
+        assert!(transport_contract_passed(&report));
+    }
+
+    #[test]
+    fn transport_contract_report_fails_if_any_required_check_is_false() {
+        let report = GatewayTransportContractReport {
+            capacity: 128,
+            overload_error_code: -32001,
+            request_overload_returns_retry_error: true,
+            response_waits_on_backpressure: false,
+            writer_full_preserves_existing_message: true,
+        };
+
+        assert!(!transport_contract_passed(&report));
+    }
+
+    #[test]
+    fn resp_scalar_decodes_simple_integer_and_bulk_values() {
+        assert_eq!(resp_scalar("+OK\r\n").as_deref(), Some("OK"));
+        assert_eq!(resp_scalar(":3\r\n").as_deref(), Some("3"));
+        assert_eq!(resp_scalar("$12\r\n1700000000-0\r\n").as_deref(), Some("1700000000-0"));
     }
 
     #[test]
@@ -1345,5 +1450,37 @@ mod tests {
         );
         assert_eq!(field(&transcript[1], "origin"), Some("stream_error"));
         assert_eq!(field(&transcript[1], "error_class"), Some("auth"));
+    }
+
+    #[test]
+    fn transport_contract_event_writes_machine_readable_redis_stream_entry() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake redis listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let (tx, rx) = mpsc::channel::<Vec<String>>();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fake redis client");
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).expect("read redis command");
+            let parts = parse_resp_array(&buf[..n]).expect("parse RESP array command");
+            stream.write_all(b"$12\r\n1700000000-0\r\n").expect("reply stream id");
+            tx.send(parts).expect("send transcript");
+        });
+
+        let report = gateway_transport_contract_report();
+        let event_id = emit_gateway_transport_contract(&addr.to_string(), &report).expect("emit contract event");
+
+        server.join().expect("fake redis server exits");
+        let parts = rx.recv().expect("receive transcript");
+        assert_eq!(event_id, "1700000000-0");
+        assert_eq!(parts[0], "XADD");
+        assert_eq!(parts[1], EVENT_STREAM);
+        assert_eq!(field(&parts, "type"), Some("gateway_transport_contract"));
+        assert_eq!(field(&parts, "kind"), Some("gateway_transport_contract"));
+        assert_eq!(field(&parts, "status"), Some("ok"));
+        assert_eq!(field(&parts, "capacity"), Some("128"));
+        assert_eq!(field(&parts, "overload_error_code"), Some("-32001"));
+        assert_eq!(field(&parts, "request_overload_returns_retry_error"), Some("true"));
+        assert_eq!(field(&parts, "response_waits_on_backpressure"), Some("true"));
+        assert_eq!(field(&parts, "writer_full_preserves_existing_message"), Some("true"));
     }
 }
