@@ -184,6 +184,37 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["connection_action"], "continue")
         self.assertEqual(node["connection_action_reason"], "heartbeat_fresh")
 
+    def test_node_status_aggregates_latest_tmux_action_from_evidence(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@node-a"}, root=root)
+            mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+
+            mod.write_node_evidence(
+                "tmux-plan",
+                "node/a",
+                {"status": "planned", "transport": "tailscale+ssh+tmux"},
+                root=root,
+            )
+            tmux_status = {
+                "status": "exists",
+                "target": "root@node-a",
+                "session": "a9-main",
+                "tmux_action": "continue",
+                "tmux_action_reason": "tmux_session_exists",
+                "reason": "tmux_session_exists",
+            }
+            evidence_path = mod.write_node_evidence("tmux-status", "node/a", tmux_status, root=root)
+
+            status = mod.node_status(root)
+
+        node = status["nodes"][0]
+        self.assertEqual(node["tmux_action"], "continue")
+        self.assertEqual(node["tmux_action_reason"], "tmux_session_exists")
+        self.assertEqual(node["tmux_status"], "exists")
+        self.assertEqual(node["tmux_evidence_path"], str(evidence_path))
+
     def test_node_status_includes_tasks_stream_pending_lag_probe(self):
         mod = load_control_api()
 

@@ -728,7 +728,9 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
     if nodes_dir.exists():
         for path in sorted(nodes_dir.glob("*.json"), key=lambda item: item.stat().st_mtime):
             try:
-                nodes.append(enrich_node_connection(read_json(path)))
+                record = enrich_node_connection(read_json(path))
+                record = enrich_node_tmux_action(record, root=root)
+                nodes.append(record)
             except json.JSONDecodeError:
                 nodes.append({"node_id": path.stem, "status": "invalid", "connection_state": "invalid"})
     return {
@@ -776,6 +778,39 @@ def enrich_node_connection(record: dict[str, Any]) -> dict[str, Any]:
         "last_seen_age_seconds": age,
         "heartbeat_ttl_seconds": NODE_ONLINE_TTL_SECONDS,
     }
+
+
+def latest_tmux_action_for_node(node_id: str, *, root: Path = ROOT) -> dict[str, Any] | None:
+    evidence_dir = node_evidence_dir(node_id, root)
+    if not evidence_dir.exists():
+        return None
+    candidates = sorted(evidence_dir.glob("tmux-*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for path in candidates:
+        try:
+            payload = read_json(path)
+        except (json.JSONDecodeError, OSError):
+            continue
+        action = payload.get("tmux_action")
+        reason = payload.get("tmux_action_reason") or payload.get("reason")
+        if not action:
+            continue
+        return {
+            "tmux_action": str(action),
+            "tmux_action_reason": str(reason or ""),
+            "tmux_status": str(payload.get("status") or ""),
+            "tmux_evidence_path": str(path),
+        }
+    return None
+
+
+def enrich_node_tmux_action(record: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    node_id = str(record.get("node_id") or "")
+    if not node_id:
+        return record
+    tmux = latest_tmux_action_for_node(node_id, root=root)
+    if not tmux:
+        return record
+    return {**record, **tmux}
 
 
 def redis_node_hot_status() -> dict[str, Any]:
