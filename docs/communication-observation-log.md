@@ -552,3 +552,21 @@ Next monitoring target:
      attempted pytest, and then proposed installing pytest even though the
      supervisor check already passed. The next queued task was rewritten away
      from this wrong next_slice.
+
+38. Broad multi-reference scan exceeded event budget and violated task bounds.
+   - Task:
+     `reference-scan-multimachine-ssh-tailscale-tmux-20260527T082000Z`.
+   - Run:
+     `.a9/runs/reference-scan-multimachine-ssh-tailscale-tmux-20260527T082000Z-20260527T081137Z-a1`.
+   - Status:
+     `retryable-worker-budget`; worker event bytes reached `1067843`, above the
+     `120000` event budget, and no final envelope was produced.
+   - Worker violated explicit bounds before scanning references: it read service
+     process status and session summary/close-reading docs even though the task
+     forbade service status and raw/session docs.
+   - Worker then launched broad `rg` scans across four large reference projects;
+     the Aider fixture output alone was enough to blow the event budget.
+   - Monitor conclusion:
+     multi-machine reference work must be split into one reference project and
+     one mechanism per task. The next task is narrowed to Barter-rs reconnect
+     action/backoff files only.

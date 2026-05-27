@@ -567,3 +567,21 @@
 - supervisor/monitor 评价任务时以 declared checks 为准，同时把额外命令失败记录为
   worker 纪律问题。
 - 下一步不能为了 worker 的误判安装依赖；应回到产品主线和参考项目机制。
+
+## 2026-05-27：多参考项目扫描会瞬间炸 event budget
+
+现象：
+
+- `reference-scan-multimachine-ssh-tailscale-tmux-20260527T082000Z` 要求同时看
+  Codex、Cline、Aider、barter-rs。
+- worker 先违反边界读取 `scripts/a9_service.py ps` 和 session summary 文档。
+- 随后对四个大参考项目发起宽泛 `rg`，Aider fixtures 输出巨大，最终
+  `worker event bytes exceeded 120000`。
+
+规则：
+
+- reference_scan 任务必须“一项目一机制”，不要让 worker 同时扫多个大型仓库。
+- `rg` 必须带精确路径和更窄关键词，必要时用 `--glob` 排除 `tests/fixtures`、
+  `target`、`node_modules`、`dist`。
+- task prompt 不能同时要求“看顶级项目”和“不要输出太多”而不给具体文件锚点；
+  监控者应先做轻量定位，再把精确 source path 交给 worker。
