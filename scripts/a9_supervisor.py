@@ -3578,6 +3578,19 @@ def monitor_score_blocks_next(summary: dict[str, Any]) -> bool:
     return hard_gate.get("status") == "fail"
 
 
+def monitor_block_summary(monitor_score: dict[str, Any]) -> dict[str, Any]:
+    gates = monitor_score.get("gates") if isinstance(monitor_score.get("gates"), dict) else {}
+    hard_gate = gates.get("hard_gate") if isinstance(gates.get("hard_gate"), dict) else {}
+    blocked = hard_gate.get("status") == "fail"
+    failed_experts = hard_gate.get("failed_experts")
+    return {
+        "blocked": blocked,
+        "reason": "monitor_hard_gate_failed" if blocked else "",
+        "recommended_action": monitor_score.get("recommended_action", ""),
+        "failed_experts": failed_experts if isinstance(failed_experts, list) else [],
+    }
+
+
 def schedule_next_session_refresh_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if summary.get("status") != "pass":
         return None
@@ -3774,6 +3787,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         ),
         "latest_git_governance": summary.get("git_governance", {}) if summary else {},
         "latest_worker_failure": summary.get("worker_failure", {}) if summary else {},
+        "latest_monitor_block": summary.get("monitor_block", {}) if summary else {},
         "auto_loop_guard": summary.get("auto_loop_guard", read_json_file(AUTO_LOOP_GUARD_PATH)) if summary else read_json_file(AUTO_LOOP_GUARD_PATH),
         "next_task_path": str(next_task_path) if next_task_path else "",
         "auto_next_scheduled": next_task_path is not None,
@@ -4446,6 +4460,7 @@ def run_one(*, auto_next: bool = False) -> int:
         summary["policy_attestation"] = create_policy_attestation(task, run_dir, summary)
         write_json(run_dir / "summary.json", summary)
         summary["monitor_score"] = create_monitor_score(run_dir)
+        summary["monitor_block"] = monitor_block_summary(summary["monitor_score"])
         summary["context_pressure"] = compact_context_pressure(summary)
         summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)

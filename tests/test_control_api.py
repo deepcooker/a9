@@ -44,6 +44,11 @@ class ControlApiTests(unittest.TestCase):
             "scope_guard": {"status": "pass"},
             "git_governance": {"status": "skip"},
             "policy_attestation": {"attestation_hash": "abc"},
+            "monitor_block": {
+                "blocked": True,
+                "reason": "monitor_hard_gate_failed",
+                "failed_experts": ["data_model_expert"],
+            },
             "monitor_score": {
                 "decision_model": "requirements_review_council",
                 "score": 0.41,
@@ -67,6 +72,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(compact["task_id"], "task-1")
         self.assertEqual(compact["worker_envelope"]["status"], "pass")
         self.assertEqual(compact["policy_attestation"]["attestation_hash"], "abc")
+        self.assertTrue(compact["monitor_block"]["blocked"])
+        self.assertEqual(compact["monitor_block"]["failed_experts"], ["data_model_expert"])
         self.assertEqual(compact["monitor_score"]["decision_model"], "requirements_review_council")
         self.assertEqual(compact["monitor_score"]["recommended_action"], "repair")
         self.assertEqual(compact["monitor_score"]["gates"]["data_model"]["status"], "fail")

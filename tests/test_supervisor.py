@@ -1672,6 +1672,33 @@ index 0000000..3e75765
         self.assertTrue(mod.monitor_score_blocks_next(summary))
         self.assertIsNone(mod.schedule_next_task(task, summary))
 
+    def test_monitor_block_summary_projects_hard_gate_for_progress(self):
+        mod = load_supervisor()
+        monitor_score = {
+            "recommended_action": "block_and_rewrite_task",
+            "gates": {
+                "hard_gate": {
+                    "status": "fail",
+                    "failed_experts": ["data_model_expert", "test_verifiability_expert"],
+                }
+            },
+        }
+
+        block = mod.monitor_block_summary(monitor_score)
+        progress = mod.service_progress(
+            {
+                "task_id": "blocked",
+                "status": "pass",
+                "run_dir": "/tmp/run",
+                "monitor_block": block,
+            }
+        )
+
+        self.assertTrue(block["blocked"])
+        self.assertEqual(block["reason"], "monitor_hard_gate_failed")
+        self.assertEqual(block["failed_experts"], ["data_model_expert", "test_verifiability_expert"])
+        self.assertEqual(progress["latest_monitor_block"], block)
+
     def test_schedule_next_task_records_deterministically_without_record_worker(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

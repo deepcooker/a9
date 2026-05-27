@@ -319,6 +319,7 @@ def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
         "scope_guard": summary.get("scope_guard", {}),
         "git_governance": summary.get("git_governance", {}),
         "policy_attestation": summary.get("policy_attestation", {}),
+        "monitor_block": summary.get("monitor_block", {}),
         "monitor_score": {
             "decision_model": monitor_score.get("decision_model"),
             "score": monitor_score.get("score"),
