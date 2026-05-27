@@ -3243,7 +3243,7 @@ def bounded_inline(text: str, limit: int = 500) -> str:
 
 
 def next_phase_for(status: str, current_phase: str) -> str:
-    if status == "needs-repair" or status.startswith("retryable-"):
+    if status in {"needs-repair", "monitor-blocked"} or status.startswith("retryable-"):
         return "repair"
     if status == "needs-followup":
         return current_phase or "implement"
@@ -3361,6 +3361,20 @@ Phase-specific bounds:
         repair_hint = f"""
 {patch_apply_hint}
 """
+    if summary.get("status") == "monitor-blocked":
+        diff_path = summary.get("diff", {}).get("diff_path", "") if isinstance(summary.get("diff"), dict) else ""
+        process_governance = summary.get("process_governance", {})
+        monitor_block = summary.get("monitor_block", {})
+        repair_hint = f"""
+Monitor-blocked repair:
+- The previous run was blocked by monitor/process governance; do not continue the normal pipeline.
+- patch_diff: {diff_path}
+- process_governance: {bounded_inline(json.dumps(process_governance, ensure_ascii=False), 1200)}
+- monitor_block: {bounded_inline(json.dumps(monitor_block, ensure_ascii=False), 800)}
+- First inspect the blocked run evidence and patch diff, then salvage only the useful minimal changes.
+- Declared checks are authoritative. Do not rerun undeclared checks, especially broad pytest/cargo commands.
+- Preserve data-first acceptance and performance-second constraints before applying or rewriting any patch.
+"""
     flow = summary.get("flow_transition", {})
     flow_lines = ""
     if isinstance(flow, dict) and flow.get("flow_id") and flow.get("revision") is not None:
@@ -3439,7 +3453,7 @@ def auto_loop_failure_kind(summary: dict[str, Any]) -> str:
         return status
     if failure_status.startswith("retryable-"):
         return failure_status
-    if status in {"needs-repair", "worker-failed", "failed"}:
+    if status in {"needs-repair", "monitor-blocked", "worker-failed", "failed"}:
         return status
     envelope = summary.get("worker_envelope", {})
     if isinstance(envelope, dict) and envelope.get("status") == "fail":
@@ -3595,6 +3609,22 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         return schedule_next_session_refresh_task(task, summary)
     if task.phase == SESSION_CLOSE_READING_PHASE:
         return schedule_next_session_close_reading_task(task, summary)
+    if summary["status"] == "monitor-blocked":
+        phase = next_phase_for(summary["status"], task.phase)
+        checks = checks_for_next_phase(phase, task)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        parent_ref = compact_task_ref(task.task_id)
+        task_id = f"auto-{phase}-{parent_ref}-{timestamp}"
+        return enqueue_task_file(
+            task_id,
+            next_task_prompt(task, summary, phase),
+            phase=phase,
+            checks=checks,
+            timeout_seconds=3600,
+            idle_timeout_seconds=300,
+            max_attempts=1,
+            allowed_paths=task.allowed_paths,
+        )
     if monitor_score_blocks_next(summary):
         return None
     if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:

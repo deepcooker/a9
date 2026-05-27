@@ -1713,6 +1713,53 @@ index 0000000..3e75765
         self.assertTrue(mod.monitor_score_blocks_next(summary))
         self.assertIsNone(mod.schedule_next_task(task, summary))
 
+    def test_schedule_next_task_routes_monitor_blocked_to_repair_takeover(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "monitor-blocked.md",
+            task_id="monitor-blocked",
+            prompt="test data schema",
+            phase="test",
+            checks=["python3 -m unittest tests/test_control_api.py"],
+            allowed_paths=["scripts/a9_control_api.py", "tests/test_control_api.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "monitor-blocked",
+            "run_dir": str(mod.RUNS_DIR / "monitor-blocked-run"),
+            "context_path": str(mod.RUNS_DIR / "monitor-blocked-run" / "context.md"),
+            "diff": {"diff_path": str(mod.RUNS_DIR / "monitor-blocked-run" / "patch.diff"), "diff_bytes": 120},
+            "process_governance": {
+                "status": "fail",
+                "findings": [{"kind": "undeclared_check", "command": "python3 -m pytest -q"}],
+            },
+            "monitor_score": {
+                "decision_model": "requirements_review_council_v1",
+                "recommended_action": "block_and_rewrite_task",
+                "gates": {"hard_gate": {"status": "fail", "failed_experts": ["test_verifiability_expert"]}},
+            },
+            "monitor_block": {
+                "blocked": True,
+                "reason": "monitor_hard_gate_failed",
+                "failed_experts": ["test_verifiability_expert"],
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "repair"', text)
+            self.assertIn("Monitor-blocked repair", text)
+            self.assertIn("process_governance", text)
+            self.assertIn("patch.diff", text)
+            self.assertIn("Declared checks are authoritative", text)
+            self.assertIn("python3 -m unittest tests/test_control_api.py", text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
     def test_monitor_block_summary_projects_hard_gate_for_progress(self):
         mod = load_supervisor()
         monitor_score = {
@@ -2788,6 +2835,7 @@ auto_continue: false
         self.assertEqual(mod.next_phase_for("pass", "vendor_import"), "implement")
         self.assertEqual(mod.next_phase_for("pass", "record"), "reference_scan")
         self.assertEqual(mod.next_phase_for("needs-repair", "implement"), "repair")
+        self.assertEqual(mod.next_phase_for("monitor-blocked", "test"), "repair")
         self.assertEqual(mod.next_phase_for("needs-followup", "test"), "test")
 
     def test_worktree_branch_name_is_scoped_to_worktree_root(self):

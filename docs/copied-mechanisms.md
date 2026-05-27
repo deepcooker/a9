@@ -407,6 +407,13 @@ Mechanisms to adapt:
   with git governance. A retained failed worktree tells the worker not to resend
   successful blocks; a rolled-back failed worktree tells it to inspect current
   file content before deciding whether those blocks must be resent.
+- `scripts/a9_supervisor.py`: monitor/process-governance blocks now route into
+  an explicit repair takeover task instead of silently stopping or continuing
+  the normal copy pipeline. The repair prompt carries the blocked run's patch
+  diff path, process-governance findings, monitor block summary, declared-check
+  rule, and data-first/performance-second acceptance constraint. This copies the
+  mature agent-runtime pattern that hard failures become bounded recovery work
+  with evidence, not free-form self-justification by the same worker.
 
 ## Client Skeleton Reference Notes
 
