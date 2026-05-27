@@ -796,6 +796,12 @@ Do the work.
                         json.dumps(
                             {
                                 "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'rg -n \"command_window_exceeded\" /tmp/run docs . -g \"*.json\"'",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
                                 "command": "/bin/bash -lc \"sed -n '1,200p' reference-projects/codex/mod.rs\"",
                             }
                         ),
@@ -819,6 +825,7 @@ Do the work.
         kinds = [finding["kind"] for finding in result["findings"]]
         self.assertEqual(result["status"], "fail")
         self.assertEqual(kinds.count("forbidden_command"), 2)
+        self.assertIn("broad_rg_command", kinds)
         self.assertIn("command_window_exceeded", kinds)
         window = next(finding for finding in result["findings"] if finding["kind"] == "command_window_exceeded")
         self.assertEqual(window["lines"], 200)

@@ -1,5 +1,29 @@
 # A9 错题本
 
+## 2026-05-28：targeted rg 不能只写在 prompt 里
+
+现象：
+
+- `refscan-remote-runtime-governance-clean-20260528` 要求 `sed windows <= 120 lines`，
+  worker 多次读取 180-240 行窗口。
+- supervisor 修复后能把这类 run 标为 `monitor-blocked`，说明过程治理生效。
+- 自动生成的 repair 任务又用 `rg ... docs .` 做宽根搜索，输出超过
+  `120000` event bytes，触发 `retryable-worker-budget`。
+
+修正：
+
+- `process_governance` 已扩展：当任务要求 `targeted rg` 时，worker 对 `.` 或
+  `docs .` 这类宽根运行 `rg` 会记录 `broad_rg_command`。
+- 后续 repair 任务不能把大段 `process_governance` findings 原样塞进 prompt；
+  应只传失败种类、前几条样例和证据路径。
+- 对 Spark 低成本 worker，参考扫描必须更小：先 `rg -n` 定位，再每次
+  `sed <= 120`，不要跨 docs/reference 全面扫。
+
+产品判断：
+
+- 这次没有推进功能，但验证了监控岗位的价值：worker 选出的 Barter-rs
+  reconnect/backoff 方向可保留为候选，过程违规不能放行到实现。
+
 ## 2026-05-27：supervisor pass 不能覆盖 monitor hard gate
 
 现象：

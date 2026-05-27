@@ -1655,6 +1655,10 @@ def prompt_forbids_ls(prompt: str) -> bool:
     return bool(re.search(r"\bdo not run ls\b", str(prompt or ""), flags=re.IGNORECASE))
 
 
+def prompt_requires_targeted_rg(prompt: str) -> bool:
+    return "targeted rg" in str(prompt or "").lower()
+
+
 def prompt_sed_window_limit(prompt: str) -> int | None:
     match = re.search(
         r"sed windows?\s*(?:must\s+be\s*)?<=\s*(\d+)\s*lines?",
@@ -1669,6 +1673,13 @@ def prompt_sed_window_limit(prompt: str) -> int | None:
 def command_runs_ls(command: str) -> bool:
     normalized = normalize_shell_command(command)
     return bool(re.search(r"(?:^|\s)(?:/bin/)?(?:bash|sh)\s+-lc\s+['\"]?ls(?:['\"]?|\s|$)", normalized)) or normalized == "ls"
+
+
+def command_runs_broad_rg(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    if not re.search(r"(?:^|[\s'\"])rg\s", normalized):
+        return False
+    return bool(re.search(r"(?:^|\s)(?:\.|docs\s+\.)(?:\s|['\"]|$)", normalized))
 
 
 def sed_windows_from_command(command: str) -> list[tuple[int, int]]:
@@ -1704,6 +1715,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     commands_seen: set[str] = set()
     forbids_rg_files = prompt_forbids_rg_files(task.prompt)
     forbids_ls = prompt_forbids_ls(task.prompt)
+    requires_targeted_rg = prompt_requires_targeted_rg(task.prompt)
     sed_window_limit = prompt_sed_window_limit(task.prompt)
     for event in read_jsonl_file(event_path):
         if event.get("item_type") != "command_execution" or not isinstance(event.get("command"), str):
@@ -1737,6 +1749,15 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "level": "error",
                     "kind": "forbidden_command",
                     "message": "worker ran ls despite task command bounds",
+                    "command": command,
+                }
+            )
+        if requires_targeted_rg and command_runs_broad_rg(command):
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "broad_rg_command",
+                    "message": "worker ran rg against a broad root despite targeted rg bounds",
                     "command": command,
                 }
             )
