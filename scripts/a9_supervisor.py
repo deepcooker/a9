@@ -3266,6 +3266,7 @@ Core rule:
 - Run the declared checks.
 - Keep the task bounded; do not broaden beyond the task file's allowed paths.
 - Declared checks are authoritative. Do not add pytest or cargo unless they are explicitly declared in this task.
+- Do not use web search or browsing unless the task explicitly asks for internet research.
 - Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, raw session logs, or service/process status unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
 - Use `rg -n` first, then read small line windows only; avoid broad `sed` ranges and full-file dumps.
 - If `strict_worker_envelope: true` is present, final output must include:

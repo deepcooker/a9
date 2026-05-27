@@ -1232,6 +1232,7 @@ def tmux_ensure_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
             "status": "blocked",
             "execution_enabled": False,
             "tmux_action": "wait_for_approval",
+            "tmux_action_reason": str(gate.get("reason") or "phone_control_disarmed"),
             "gate": gate,
         }
     plan = read_tmux_plan_evidence(str(payload.get("evidence_path") or ""), root=root)
@@ -1269,6 +1270,7 @@ def tmux_ensure_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
         "output": compact_text(output, 4000),
         "plan_evidence_path": plan.get("evidence_path"),
         "tmux_action": tmux_action,
+        "tmux_action_reason": reason,
         "reason": reason,
         "gate": gate,
     }
@@ -1317,6 +1319,7 @@ def tmux_status_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
         "output": compact_text(output, 4000),
         "plan_evidence_path": plan.get("evidence_path"),
         "tmux_action": tmux_action,
+        "tmux_action_reason": reason,
         "reason": reason,
         "command_preview": command,
     }

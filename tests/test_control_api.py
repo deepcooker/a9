@@ -1225,6 +1225,7 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(blocked["status"], "blocked")
             self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
             self.assertEqual(blocked["tmux_action"], "wait_for_approval")
+            self.assertEqual(blocked["tmux_action_reason"], "phone_control_disarmed")
 
             mod.phone_control_arm(
                 {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
@@ -1251,6 +1252,7 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["return_code"], 0)
             self.assertEqual(result["tmux_action"], "continue")
+            self.assertEqual(result["tmux_action_reason"], "tmux_ensure_ok")
             self.assertEqual(result["reason"], "tmux_ensure_ok")
             self.assertIn("tmux ready", result["output"])
             self.assertEqual(calls[0][0][0], "ssh")
@@ -1289,6 +1291,7 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(result["return_code"], 124)
             self.assertTrue(result["timed_out"])
             self.assertEqual(result["tmux_action"], "retry")
+            self.assertEqual(result["tmux_action_reason"], "tmux_ensure_timeout")
             self.assertEqual(result["reason"], "tmux_ensure_timeout")
             self.assertTrue(Path(result["evidence_path"]).exists())
 
@@ -1316,6 +1319,7 @@ class ControlApiTests(unittest.TestCase):
 
             self.assertEqual(result["status"], "exists")
             self.assertEqual(result["tmux_action"], "continue")
+            self.assertEqual(result["tmux_action_reason"], "tmux_session_exists")
             self.assertEqual(result["reason"], "tmux_session_exists")
             self.assertEqual(
                 calls[0][0][-2:],
@@ -1366,6 +1370,7 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(result["return_code"], 124)
             self.assertTrue(result["timed_out"])
             self.assertEqual(result["tmux_action"], "retry")
+            self.assertEqual(result["tmux_action_reason"], "tmux_status_timeout")
             self.assertEqual(result["reason"], "tmux_status_timeout")
             self.assertTrue(Path(result["evidence_path"]).exists())
 
@@ -1388,6 +1393,7 @@ class ControlApiTests(unittest.TestCase):
 
             self.assertEqual(result["status"], "missing")
             self.assertEqual(result["tmux_action"], "repair")
+            self.assertEqual(result["tmux_action_reason"], "tmux_session_missing")
             self.assertEqual(result["reason"], "tmux_session_missing")
 
     def test_list_node_evidence_returns_recent_items(self):

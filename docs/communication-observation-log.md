@@ -329,3 +329,32 @@ Next monitoring target:
 - Then return to the five communication blocks: node state machine, Redis
   Streams production governance, multi-machine onboarding, SSE replay, and
   communication metrics/soak.
+
+27. Tmux action contract worker was useful, but monitor intervention was required.
+   - Task:
+     `implement-tmux-action-contract-20260527T053300Z`.
+   - Run:
+     `.a9/runs/implement-tmux-action-contract-20260527T053300Z-20260527T054014Z-a1`.
+   - Worker intent was correct: map tmux status/ensure results to deterministic
+     machine actions (`continue`, `repair`, `retry`, `wait_for_approval`) so
+     phone/control-plane consumers do not infer behavior from free text.
+   - Good behavior: it used targeted `rg`/bounded `sed`, avoided raw session
+     close-reading files, avoided service/process status, changed only
+     `scripts/a9_control_api.py` and `tests/test_control_api.py`, and the
+     supervisor-declared checks passed with `58` tests.
+   - Drift observed: it triggered a `web_search` event even though the task did
+     not request internet research. This is prompt discipline drift, not an
+     implementation need.
+   - Drift observed: it self-ran only `python3 -m unittest tests.test_control_api`
+     while the declared checks also included `tests/test_remote.py`. Supervisor
+     checks caught this and passed, but worker self-report was narrower than the
+     authoritative check surface.
+   - Monitor intervention: cherry-picked worker commit `154e6d2`, added explicit
+     `tmux_action_reason` fields for status/ensure/blocked outcomes, kept the
+     existing `reason` alias for compatibility, and added a supervisor prompt
+     rule forbidding web search/browsing unless the task explicitly asks for
+     internet research.
+   - Verification:
+     `python3 -m unittest tests/test_control_api.py tests/test_remote.py`
+     passed with `58` tests, and
+     `python3 -m unittest tests/test_supervisor.py` passed with `79` tests.

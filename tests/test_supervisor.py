@@ -1127,6 +1127,7 @@ Do the work.
 
         self.assertIn("Declared checks are authoritative", prompt)
         self.assertIn("Do not add pytest or cargo unless they are explicitly declared", prompt)
+        self.assertIn("Do not use web search or browsing unless the task explicitly asks", prompt)
         self.assertIn("Do not read `docs/session-raw-summary.md`", prompt)
         self.assertIn("raw session logs", prompt)
         self.assertIn("Use `rg -n` first", prompt)

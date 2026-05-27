@@ -392,3 +392,25 @@
   `a9-gateway` retry lifecycle、Redis Streams pending/lag。
 - worker 不再被要求“自由 inspect local reference projects”；要给它明确文件和
   行锚，否则容易重复触发 event budget。
+
+## 2026-05-27：窄任务也会无意义 web_search
+
+错误：
+
+- `implement-tmux-action-contract-20260527T053300Z` 是本地控制 API 小任务，
+  不需要联网，也明确禁止 broaden。
+- worker 仍然触发了一次 `web_search` 事件。
+- 这会浪费 token、引入不受控外部上下文，并污染“参考项目优先看本地证据”的
+  执行纪律。
+
+纠正：
+
+- 监控者没有直接放过该行为；先审查 prompt、event summaries、worker envelope、
+  patch 和 supervisor checks。
+- 合并可用 patch 后，补 supervisor prompt 纪律：
+  不允许 web search/browsing，除非任务明确要求 internet research。
+
+规则：
+
+- 小实现任务默认只看本地 repo、任务文件、精选参考切片和测试失败日志。
+- 需要联网研究时，任务必须显式写出 research 目标、来源边界和输出预算。
