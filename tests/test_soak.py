@@ -279,6 +279,76 @@ class SoakTests(unittest.TestCase):
                 mod.latest_run_summaries = original_latest_run_summaries
                 mod.communication_snapshot = original_communication_snapshot
 
+    def test_run_soak_latest_report_keeps_tasks_stream_degraded_action_fields(self):
+        mod = load_soak()
+        with tempfile.TemporaryDirectory() as tmp:
+            state_dir = Path(tmp) / ".a9"
+            queue_dir = state_dir / "tasks" / "queue"
+            queue_dir.mkdir(parents=True)
+            soak_dir = state_dir / "soak"
+            reports_dir = soak_dir / "reports"
+            task_id = "soak"
+
+            original_state_dir = mod.STATE_DIR
+            original_soak_dir = mod.SOAK_DIR
+            original_reports_dir = mod.REPORTS_DIR
+            original_progress_path = mod.PROGRESS_PATH
+            original_heartbeat_path = mod.HEARTBEAT_PATH
+            original_queue_dir = mod.QUEUE_DIR
+            original_enqueue_seed = mod.enqueue_seed
+            original_run_cmd = mod.run_cmd
+            original_latest_run_summaries = mod.latest_run_summaries
+            original_communication_snapshot = mod.communication_snapshot
+            try:
+                mod.STATE_DIR = state_dir
+                mod.SOAK_DIR = soak_dir
+                mod.REPORTS_DIR = reports_dir
+                mod.PROGRESS_PATH = state_dir / "progress.json"
+                mod.HEARTBEAT_PATH = state_dir / "daemon_heartbeat.json"
+                mod.QUEUE_DIR = queue_dir
+                mod.enqueue_seed = lambda *_args, **_kwargs: queue_dir / f"{task_id}.md"
+                mod.run_cmd = lambda *_args, **_kwargs: types.SimpleNamespace(returncode=0, stdout="run ok\n")
+                mod.latest_run_summaries = lambda _limit: []
+                mod.communication_snapshot = lambda: {
+                    "status": "ok",
+                    "tasks_stream": {
+                        "status": "degraded",
+                        "reason": "consumer_group_missing",
+                        "thresholds_version": "redis_streams_v1",
+                        "stream_action": "watch",
+                        "stream_action_reason": "consumer_group_missing",
+                    },
+                }
+
+                rc = mod.run_soak(
+                    types.SimpleNamespace(
+                        task_id=task_id,
+                        phase="test",
+                        fake_worker=True,
+                        sleep_seconds=0.0,
+                        tasks=1,
+                        keep_next=False,
+                    )
+                )
+
+                latest = json.loads((soak_dir / "latest.json").read_text(encoding="utf-8"))
+                stream = latest["communication"]["tasks_stream"]
+                self.assertEqual(rc, 0)
+                self.assertEqual(stream["thresholds_version"], "redis_streams_v1")
+                self.assertEqual(stream["stream_action"], "watch")
+                self.assertEqual(stream["stream_action_reason"], "consumer_group_missing")
+            finally:
+                mod.STATE_DIR = original_state_dir
+                mod.SOAK_DIR = original_soak_dir
+                mod.REPORTS_DIR = original_reports_dir
+                mod.PROGRESS_PATH = original_progress_path
+                mod.HEARTBEAT_PATH = original_heartbeat_path
+                mod.QUEUE_DIR = original_queue_dir
+                mod.enqueue_seed = original_enqueue_seed
+                mod.run_cmd = original_run_cmd
+                mod.latest_run_summaries = original_latest_run_summaries
+                mod.communication_snapshot = original_communication_snapshot
+
 
 if __name__ == "__main__":
     unittest.main()
