@@ -34,13 +34,15 @@ original trading/philosophy idea
 -> pull back from UI polish to stable communication/runtime governance
 -> discover monitor quality depends on a real methodology, not score labels
 -> refactor MoE monitor into a lightweight requirements review council
+-> lock product acceptance as data first, performance second
 ```
 
 Immediate active constraint:
 
 ```text
-Do not resume broad communication feature work until the MoE/monitor gate is
-method-driven enough to block drift and shallow worker execution.
+Communication work may resume only as bounded slices observed by the new
+requirements-review monitor. Each slice must prove data/state/event/schema
+correctness first and performance/stability second.
 ```
 
 ## Causal Timeline
@@ -161,9 +163,30 @@ Current status:
 
 Current status:
 
-- Current top priority.
-- Existing `a9_monitor.py` MoE observer is only a prototype and should be
-  refactored before broad worker continuation.
+- Implemented as `requirements_review_council_v1`.
+- Current monitor includes product mainline, external learning, product
+  pressure, data model, performance depth, test verifiability, security,
+  exception, and execution governance gates.
+
+### 8. Product Standard Became Data First, Performance Second
+
+- Problem discovered: product/architecture judgment cannot be reduced to code
+  shape. Real business structure is primarily reflected by data, tables, state,
+  events and schema; UI/API are projections of that structure.
+- Resulting decision: A9 acceptance order is data first, performance second.
+  Other engineering concerns are subordinate.
+- Important nuance: data structure is the main business skeleton, but not the
+  whole product. Permissions, workflow, exceptions, timing and user behavior
+  still need coverage.
+- Evidence: latest operator instruction after MoE refactor.
+
+Current status:
+
+- Active hard rule.
+- Tests must validate data/schema/state/event structure when a task is data
+  sensitive.
+- Performance/stability/latency/budget is the second standard and must not hide
+  a wrong data model.
 
 ## Expired Or Downgraded Branches
 
@@ -188,10 +211,9 @@ Current status:
 3. External operator session and A9 runtime session stay separate.
 4. `session_refresh` and `session_close_reading` produce evidence, but causal
    memory must be curated after each meaningful batch.
-5. Monitor/MoE methodology must be upgraded before resuming broader worker
-   automation.
-6. Communication governance remains the next large runtime slice after the MoE
-   gate is fixed.
+5. Monitor/MoE methodology is upgraded; use it to observe next worker slices.
+6. Communication governance remains the next large runtime slice, but each task
+   must satisfy data-first and performance-second acceptance.
 7. Mobile/control plane remains product-critical but should not pull the current
    engineering line back into UI polish.
 
@@ -216,16 +238,16 @@ After each incremental close-reading batch:
 
 ## Next Bounded Task
 
-Refactor the monitor/MoE implementation according to
-`docs/moe-review-methodology.md`:
+Resume the queued communication governance handler test with the upgraded
+monitor:
 
 ```text
-requirements-review experts
--> hard gates
--> explicit reasons and evidence refs
--> block/continue decision
--> tests proving shallow score-only behavior is no longer accepted
+reconnect governance API test
+-> assert response schema/state fields exactly
+-> keep test bounded and no raw-session reads
+-> run declared check
+-> inspect monitor_score gates
 ```
 
-Only after that should A9 resume the queued communication governance handler
-test and the multi-machine SSH/Tailscale/tmux stability line.
+If the worker drifts, stop and rewrite the task. If it passes with clean gates,
+continue the multi-machine SSH/Tailscale/tmux stability line.
