@@ -751,6 +751,10 @@ def node_connection_action(connection_state: str) -> tuple[str, str]:
     return ("reconnect", "heartbeat_unknown")
 
 
+def probe_action_to_followup(probe_action: Any, probe_action_reason: Any = "") -> dict[str, str]:
+    return supervisor().probe_action_to_followup(probe_action, probe_action_reason)
+
+
 def enrich_node_connection(record: dict[str, Any]) -> dict[str, Any]:
     heartbeat_at = parse_iso_datetime(str(record.get("last_heartbeat_at") or record.get("updated_at") or ""))
     if not heartbeat_at:
@@ -1115,6 +1119,10 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     )
     parsed = mod.parse_probe(proc.stdout)
     classification = mod.classify_probe_result(proc.returncode, parsed)
+    followup = probe_action_to_followup(
+        classification.get("probe_action"),
+        classification.get("probe_action_reason"),
+    )
     host = str(payload.get("host") or parsed.get("host") or target.split("@")[-1].split(":")[0])
     registered = register_node(
         {
@@ -1139,6 +1147,7 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         "return_code": proc.returncode,
         "probe_action": classification["probe_action"],
         "probe_action_reason": classification["probe_action_reason"],
+        "supervisor_followup": followup,
         "missing_required_tools": classification["required_missing"],
         "missing_optional_tools": classification["optional_missing"],
         "probe": parsed,

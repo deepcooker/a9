@@ -3163,6 +3163,38 @@ def phase_from_next_slice(next_slice: Any) -> str | None:
     return NEXT_SLICE_PHASE_PREFIXES.get(prefix)
 
 
+def probe_action_to_followup(probe_action: Any, probe_action_reason: Any = "") -> dict[str, str]:
+    action = str(probe_action or "").strip().lower()
+    reason = str(probe_action_reason or "").strip()
+    if action == "continue":
+        return {
+            "action": "continue",
+            "status": "needs-followup",
+            "phase": "implement",
+            "reason": reason or "probe_continue",
+        }
+    if action == "repair":
+        return {
+            "action": "repair",
+            "status": "needs-repair",
+            "phase": "repair",
+            "reason": reason or "probe_repair",
+        }
+    if action == "retry":
+        return {
+            "action": "retry",
+            "status": "retryable-remote-probe",
+            "phase": "repair",
+            "reason": reason or "probe_retry",
+        }
+    return {
+        "action": "retry",
+        "status": "retryable-remote-probe",
+        "phase": "repair",
+        "reason": reason or "probe_action_unknown",
+    }
+
+
 def flow_status_for_task(phase: str, status: str) -> str:
     if status == "pass":
         return f"{phase}_done"

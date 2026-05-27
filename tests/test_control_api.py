@@ -1121,6 +1121,10 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["probe_action"], "repair")
         self.assertEqual(result["probe_action_reason"], "missing_required_tools")
+        self.assertEqual(result["supervisor_followup"]["action"], "repair")
+        self.assertEqual(result["supervisor_followup"]["status"], "needs-repair")
+        self.assertEqual(result["supervisor_followup"]["phase"], "repair")
+        self.assertEqual(result["supervisor_followup"]["reason"], "missing_required_tools")
         self.assertEqual(result["missing_required_tools"], ["git", "curl"])
         self.assertEqual(result["missing_optional_tools"], ["tmux", "tailscale"])
         self.assertEqual(result["probe"]["python3"], "/usr/bin/python3")
@@ -1171,6 +1175,9 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["probe"]["host"], "node1")
         self.assertEqual(result["probe_action"], "retry")
         self.assertEqual(result["probe_action_reason"], "ssh_exec_error")
+        self.assertEqual(result["supervisor_followup"]["action"], "retry")
+        self.assertEqual(result["supervisor_followup"]["status"], "retryable-remote-probe")
+        self.assertEqual(result["supervisor_followup"]["phase"], "repair")
         self.assertEqual(result["missing_required_tools"], [])
 
     def test_bootstrap_plan_node_is_non_executing_plan(self):

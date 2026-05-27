@@ -26,6 +26,24 @@ def load_supervisor():
 
 
 class SupervisorTests(unittest.TestCase):
+    def test_probe_action_to_followup_maps_continue_repair_retry(self):
+        mod = load_supervisor()
+        cont = mod.probe_action_to_followup("continue", "heartbeat_fresh")
+        self.assertEqual(cont["action"], "continue")
+        self.assertEqual(cont["status"], "needs-followup")
+        self.assertEqual(cont["phase"], "implement")
+        self.assertEqual(cont["reason"], "heartbeat_fresh")
+
+        rep = mod.probe_action_to_followup("repair", "missing_required_tools")
+        self.assertEqual(rep["action"], "repair")
+        self.assertEqual(rep["status"], "needs-repair")
+        self.assertEqual(rep["phase"], "repair")
+
+        retry = mod.probe_action_to_followup("retry", "ssh_exec_error")
+        self.assertEqual(retry["action"], "retry")
+        self.assertEqual(retry["status"], "retryable-remote-probe")
+        self.assertEqual(retry["phase"], "repair")
+
     def test_parse_task_frontmatter(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
