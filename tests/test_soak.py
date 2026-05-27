@@ -80,6 +80,47 @@ class SoakTests(unittest.TestCase):
                 mod.QUEUE_DIR = original_queue_dir
                 mod.HEARTBEAT_PATH = original_heartbeat_path
 
+    def test_communication_snapshot_reads_control_api_node_status(self):
+        mod = load_soak()
+        with tempfile.TemporaryDirectory() as tmp:
+            control_api_path = Path(tmp) / "a9_control_api.py"
+            control_api_path.write_text(
+                "\n".join(
+                    [
+                        "def node_status(root=None):",
+                        "    return {",
+                        "        'count': 2,",
+                        "        'redis': {'status': 'ok'},",
+                        "        'tasks_stream': {'thresholds_version': 'redis_streams_v1', 'stream_action': 'continue'}",
+                        "    }",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            original_control_api_path = mod.CONTROL_API_PATH
+            mod.CONTROL_API_PATH = control_api_path
+            try:
+                snapshot = mod.communication_snapshot()
+                self.assertEqual(snapshot["status"], "ok")
+                self.assertEqual(snapshot["nodes_count"], 2)
+                self.assertEqual(snapshot["redis"]["status"], "ok")
+                self.assertEqual(snapshot["tasks_stream"]["thresholds_version"], "redis_streams_v1")
+            finally:
+                mod.CONTROL_API_PATH = original_control_api_path
+
+    def test_communication_snapshot_degrades_when_control_api_is_unavailable(self):
+        mod = load_soak()
+        with tempfile.TemporaryDirectory() as tmp:
+            original_control_api_path = mod.CONTROL_API_PATH
+            mod.CONTROL_API_PATH = Path(tmp) / "missing_a9_control_api.py"
+            try:
+                snapshot = mod.communication_snapshot()
+                self.assertEqual(snapshot["status"], "unavailable")
+                self.assertIn("reason", snapshot)
+            finally:
+                mod.CONTROL_API_PATH = original_control_api_path
+
     def test_cleanup_next_tasks_removes_only_matching_auto_tasks(self):
         mod = load_soak()
         with tempfile.TemporaryDirectory() as tmp:

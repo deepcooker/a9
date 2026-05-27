@@ -9,6 +9,7 @@ and auto-next without spending model tokens.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -27,6 +28,7 @@ HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 RUNS_DIR = STATE_DIR / "runs"
 QUEUE_DIR = STATE_DIR / "tasks" / "queue"
 SUPERVISOR = ROOT / "scripts" / "a9_supervisor.py"
+CONTROL_API_PATH = ROOT / "scripts" / "a9_control_api.py"
 
 
 def utc_now() -> str:
@@ -177,6 +179,33 @@ def refresh_heartbeat_after_cleanup() -> dict[str, Any]:
     return heartbeat
 
 
+def communication_snapshot() -> dict[str, Any]:
+    unavailable = {"status": "unavailable", "reason": "control_api_unavailable"}
+    try:
+        spec = importlib.util.spec_from_file_location("a9_control_api_for_soak", CONTROL_API_PATH)
+        if not spec or not spec.loader:
+            return unavailable
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        node_status = getattr(module, "node_status", None)
+        if not callable(node_status):
+            return {"status": "unavailable", "reason": "node_status_missing"}
+        try:
+            snapshot = node_status(ROOT)
+        except TypeError:
+            snapshot = node_status()
+        if not isinstance(snapshot, dict):
+            return {"status": "unavailable", "reason": "node_status_invalid"}
+        return {
+            "status": "ok",
+            "nodes_count": snapshot.get("count"),
+            "redis": snapshot.get("redis"),
+            "tasks_stream": snapshot.get("tasks_stream"),
+        }
+    except Exception as exc:
+        return {"status": "unavailable", "reason": str(exc).strip().splitlines()[0][:120] or "snapshot_failed"}
+
+
 def write_report(payload: dict[str, Any]) -> Path:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     path = REPORTS_DIR / f"soak-{timestamp()}.json"
@@ -226,6 +255,7 @@ def run_soak(args: argparse.Namespace) -> int:
         "cleaned_next_tasks": cleaned_next_tasks,
         "progress": progress,
         "heartbeat": heartbeat,
+        "communication": communication_snapshot(),
         "queued_tail": queued[-20:],
         "latest_runs": latest_run_summaries(max(1, args.tasks)),
     }
