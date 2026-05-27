@@ -169,6 +169,7 @@ class ControlApiTests(unittest.TestCase):
                 )
 
             original_run = mod.subprocess.run
+            original_redis = mod.redis_cli
             try:
                 calls = []
 
@@ -177,13 +178,16 @@ class ControlApiTests(unittest.TestCase):
                     return FakeProc()
 
                 mod.subprocess.run = fake_run
+                mod.redis_cli = lambda *args, **kwargs: type("FakeRedis", (), {"returncode": 0, "stdout": ""})()
                 result = mod.gateway_transport_contract(root)
             finally:
                 mod.subprocess.run = original_run
+                mod.redis_cli = original_redis
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["reason"], "gateway_contract_pass")
         self.assertEqual(calls[0][0], [str(binary), "transport-contract"])
+        self.assertEqual(result["latest_event"]["status"], "missing")
 
     def test_gateway_transport_contract_can_request_event_emission(self):
         mod = load_control_api()
@@ -209,6 +213,7 @@ class ControlApiTests(unittest.TestCase):
                 )
 
             original_run = mod.subprocess.run
+            original_redis = mod.redis_cli
             try:
                 calls = []
 
@@ -217,9 +222,11 @@ class ControlApiTests(unittest.TestCase):
                     return FakeProc()
 
                 mod.subprocess.run = fake_run
+                mod.redis_cli = lambda *args, **kwargs: type("FakeRedis", (), {"returncode": 0, "stdout": ""})()
                 result = mod.gateway_transport_contract(root, emit_event=True)
             finally:
                 mod.subprocess.run = original_run
+                mod.redis_cli = original_redis
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["event_id"], "1700000000-0")
@@ -238,14 +245,68 @@ class ControlApiTests(unittest.TestCase):
                 stdout = '{"status":"ok","capacity":999}'
 
             original_run = mod.subprocess.run
+            original_redis = mod.redis_cli
             try:
                 mod.subprocess.run = lambda *args, **kwargs: FakeProc()
+                mod.redis_cli = lambda *args, **kwargs: type("FakeRedis", (), {"returncode": 0, "stdout": ""})()
                 result = mod.gateway_transport_contract(root)
             finally:
                 mod.subprocess.run = original_run
+                mod.redis_cli = original_redis
 
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["reason"], "gateway_contract_failed")
+
+    def test_latest_gateway_transport_contract_event_reads_newest_matching_event(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "\n".join(
+                [
+                    "1779893553470-0",
+                    "type",
+                    "gateway_transport_contract",
+                    "kind",
+                    "gateway_transport_contract",
+                    "status",
+                    "ok",
+                    "capacity",
+                    "128",
+                    "overload_error_code",
+                    "-32001",
+                    "request_overload_returns_retry_error",
+                    "true",
+                    "response_waits_on_backpressure",
+                    "true",
+                    "writer_full_preserves_existing_message",
+                    "true",
+                    "ts",
+                    "1779893553000",
+                ]
+            )
+
+        calls = []
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        try:
+            mod.redis_cli = fake_redis
+            event = mod.latest_gateway_transport_contract_event()
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(calls[0], ["--raw", "XREVRANGE", "a9:events", "+", "-", "COUNT", "50"])
+        self.assertEqual(event["status"], "ok")
+        self.assertEqual(event["event_id"], "1779893553470-0")
+        self.assertEqual(event["capacity"], 128)
+        self.assertEqual(event["overload_error_code"], -32001)
+        self.assertTrue(event["request_overload_returns_retry_error"])
+        self.assertTrue(event["response_waits_on_backpressure"])
+        self.assertTrue(event["writer_full_preserves_existing_message"])
 
     def test_register_and_heartbeat_node_write_controller_registry(self):
         mod = load_control_api()

@@ -412,6 +412,58 @@ def gateway_transport_contract(root: Path = ROOT, *, emit_event: bool = False) -
         "binary": str(binary),
         "return_code": proc.returncode,
         "reason": "gateway_contract_pass" if passed else "gateway_contract_failed",
+        "latest_event": latest_gateway_transport_contract_event(),
+    }
+
+
+def bool_field(value: Any) -> bool | None:
+    text = str(value).strip().lower()
+    if text == "true":
+        return True
+    if text == "false":
+        return False
+    return None
+
+
+def latest_gateway_transport_contract_event(limit: int = 50) -> dict[str, Any]:
+    try:
+        proc = redis_cli(["--raw", "XREVRANGE", EVENTS_STREAM_KEY, "+", "-", "COUNT", str(max(1, limit))])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "unavailable",
+            "kind": "gateway_transport_contract",
+            "reason": "redis_unavailable",
+            "error": str(exc),
+        }
+    if proc.returncode != 0:
+        return {
+            "status": "unavailable",
+            "kind": "gateway_transport_contract",
+            "reason": "redis_command_failed",
+            "error": proc.stdout.strip(),
+        }
+    for event in parse_xrange_events(proc.stdout):
+        fields = event.get("fields", {})
+        if not isinstance(fields, dict):
+            continue
+        if fields.get("kind") != "gateway_transport_contract" and fields.get("type") != "gateway_transport_contract":
+            continue
+        return {
+            "status": str(fields.get("status") or "unknown"),
+            "kind": "gateway_transport_contract",
+            "event_id": event.get("id", ""),
+            "capacity": parse_int(fields.get("capacity"), default=0),
+            "overload_error_code": parse_int(fields.get("overload_error_code"), default=0),
+            "request_overload_returns_retry_error": bool_field(fields.get("request_overload_returns_retry_error")),
+            "response_waits_on_backpressure": bool_field(fields.get("response_waits_on_backpressure")),
+            "writer_full_preserves_existing_message": bool_field(fields.get("writer_full_preserves_existing_message")),
+            "ts": fields.get("ts", ""),
+            "source": "redis_stream",
+        }
+    return {
+        "status": "missing",
+        "kind": "gateway_transport_contract",
+        "reason": "no_gateway_transport_contract_event",
     }
 
 

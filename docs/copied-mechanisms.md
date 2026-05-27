@@ -439,6 +439,11 @@ Mechanisms to adapt:
   Redis Stream `a9:events` with the pass/fail status, queue capacity, overload
   code, and the three backpressure booleans, then returns the stream `event_id`
   in its JSON output. The default command remains side-effect free.
+- `scripts/a9_control_api.py`: control status now reads the latest
+  `gateway_transport_contract` event back from Redis Stream `a9:events` and
+  exposes it under `gateway.latest_event`. This closes the loop from Rust
+  gateway check -> Redis replay evidence -> mobile/supervisor status, while
+  preserving `/api/status` as a read-only view.
 
 ## Client Skeleton Reference Notes
 
