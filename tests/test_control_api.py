@@ -583,6 +583,34 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["kind"], "gateway_transport_contract")
         self.assertTrue(captured["emit_event"])
 
+    def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None}
+
+        class DummyReconnectDecisionGetHandler:
+            path = "/api/gateway/reconnect-decision"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_latest = mod.latest_gateway_reconnect_decision_event
+        try:
+            mod.latest_gateway_reconnect_decision_event = lambda: {
+                "status": "ok",
+                "kind": "gateway_reconnect_decision",
+                "reset_on_success": True,
+            }
+            mod.ControlHandler.do_GET(DummyReconnectDecisionGetHandler())
+        finally:
+            mod.latest_gateway_reconnect_decision_event = original_latest
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "gateway_reconnect_decision")
+        self.assertTrue(captured["payload"]["reset_on_success"])
+
     def test_node_status_aggregates_latest_tmux_action_from_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2172,6 +2200,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["service"], "a9-controller")
         self.assertEqual(discovery["endpoints"]["register_node"], "/api/nodes/register")
         self.assertEqual(discovery["endpoints"]["gateway_transport_contract"], "/api/gateway/transport-contract")
+        self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)

@@ -469,6 +469,11 @@ Mechanisms to adapt:
   `gateway.reconnect.latest_event`. This gives the mobile/control plane the
   same data-first view as the supervisor: phase, action, error class, attempt,
   delay, remaining retry budget, origin, and `reset_on_success`.
+- `scripts/a9_control_api.py`: the same reconnect decision evidence is also
+  available as a direct read-only endpoint:
+  `/api/gateway/reconnect-decision`. This keeps the phone UI from depending on
+  the full `/api/status` payload when it only needs the latest gateway
+  reconnect/reset state.
 
 ## Client Skeleton Reference Notes
 

@@ -789,6 +789,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_run_one": "/api/runtime/run-one",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
             "gateway_transport_contract": "/api/gateway/transport-contract",
+            "gateway_reconnect_decision": "/api/gateway/reconnect-decision",
             "events": "/api/events",
         },
         "runtime": {
@@ -1952,6 +1953,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/gateway/transport-contract":
                 emit_event = str(query.get("emit_event", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))
+            elif parsed.path == "/api/gateway/reconnect-decision":
+                self.write_json(200, latest_gateway_reconnect_decision_event())
             elif parsed.path == "/api/nodes/evidence":
                 self.write_json(
                     200,
