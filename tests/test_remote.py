@@ -54,6 +54,57 @@ class RemoteBootstrapTests(unittest.TestCase):
         self.assertIn("2200", cmd)
         self.assertEqual(cmd[-1], "root@example")
 
+    def test_remote_probe_script_lists_required_before_optional_tools(self):
+        mod = load_module()
+        script = mod.remote_probe_script()
+        self.assertLess(script.index("git"), script.index("tmux"))
+        self.assertLess(script.index("python3"), script.index("tmux"))
+        self.assertLess(script.index("curl"), script.index("tailscale"))
+
+    def test_classify_probe_result_repairs_when_required_tools_missing(self):
+        mod = load_module()
+        result = mod.classify_probe_result(
+            0,
+            {
+                "git": "",
+                "python3": "/usr/bin/python3",
+                "curl": "",
+                "tmux": "",
+                "tailscale": "/usr/bin/tailscale",
+            },
+        )
+        self.assertEqual(result["probe_action"], "repair")
+        self.assertEqual(result["probe_action_reason"], "missing_required_tools")
+        self.assertEqual(result["required_missing"], ["git", "curl"])
+        self.assertEqual(result["optional_missing"], ["tmux"])
+
+    def test_classify_probe_result_optional_missing_is_continue(self):
+        mod = load_module()
+        result = mod.classify_probe_result(
+            0,
+            {
+                "git": "/usr/bin/git",
+                "python3": "/usr/bin/python3",
+                "curl": "/usr/bin/curl",
+                "tmux": "",
+                "tailscale": "",
+            },
+        )
+        self.assertEqual(result["probe_action"], "continue")
+        self.assertEqual(result["probe_action_reason"], "optional_tools_missing")
+        self.assertEqual(result["required_missing"], [])
+        self.assertEqual(result["optional_missing"], ["tmux", "tailscale"])
+
+    def test_classify_probe_result_nonzero_return_code_is_retry_and_preserves_parse(self):
+        mod = load_module()
+        parsed = mod.parse_probe("git=\npython3=/usr/bin/python3\ncurl=/usr/bin/curl\ntmux=\n")
+        result = mod.classify_probe_result(255, parsed)
+        self.assertEqual(parsed["python3"], "/usr/bin/python3")
+        self.assertEqual(result["probe_action"], "retry")
+        self.assertEqual(result["probe_action_reason"], "ssh_exec_error")
+        self.assertEqual(result["required_missing"], ["git"])
+        self.assertEqual(result["optional_missing"], ["tmux", "tailscale"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -90,6 +90,40 @@ def parse_probe(text: str) -> dict[str, str]:
     return payload
 
 
+def classify_probe_result(return_code: int, output: dict[str, str]) -> dict[str, Any]:
+    required_tools = ("git", "python3", "curl")
+    optional_tools = ("tmux", "tailscale")
+    required_missing = [name for name in required_tools if not output.get(name, "").strip()]
+    optional_missing = [name for name in optional_tools if not output.get(name, "").strip()]
+    if return_code != 0:
+        return {
+            "probe_action": "retry",
+            "probe_action_reason": "ssh_exec_error",
+            "required_missing": required_missing,
+            "optional_missing": optional_missing,
+        }
+    if required_missing:
+        return {
+            "probe_action": "repair",
+            "probe_action_reason": "missing_required_tools",
+            "required_missing": required_missing,
+            "optional_missing": optional_missing,
+        }
+    if optional_missing:
+        return {
+            "probe_action": "continue",
+            "probe_action_reason": "optional_tools_missing",
+            "required_missing": required_missing,
+            "optional_missing": optional_missing,
+        }
+    return {
+        "probe_action": "continue",
+        "probe_action_reason": "probe_ok",
+        "required_missing": required_missing,
+        "optional_missing": optional_missing,
+    }
+
+
 def build_bootstrap_script(args: argparse.Namespace) -> str:
     remote_dir = args.remote_dir
     repo = args.repo
@@ -143,12 +177,18 @@ def plan(args: argparse.Namespace) -> int:
 def probe(args: argparse.Namespace) -> int:
     cmd = ssh_base(args.target, connect_timeout=args.connect_timeout, identity_file=args.identity_file)
     proc = run([*cmd, remote_probe_script()])
+    parsed_probe = parse_probe(proc.stdout)
+    classification = classify_probe_result(proc.returncode, parsed_probe)
     payload: dict[str, Any] = {
         "checked_at": utc_now(),
         "target": args.target,
         "return_code": proc.returncode,
         "raw": proc.stdout,
-        "probe": parse_probe(proc.stdout) if proc.returncode == 0 else {},
+        "probe": parsed_probe,
+        "probe_action": classification["probe_action"],
+        "probe_action_reason": classification["probe_action_reason"],
+        "required_missing": classification["required_missing"],
+        "optional_missing": classification["optional_missing"],
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if proc.returncode == 0 else proc.returncode
