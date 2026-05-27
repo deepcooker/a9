@@ -3357,6 +3357,38 @@ def bounded_inline(text: str, limit: int = 500) -> str:
     return normalized[: limit - 3] + "..."
 
 
+def process_governance_prompt_summary(process_governance: dict[str, Any]) -> dict[str, Any]:
+    findings = process_governance.get("findings", []) if isinstance(process_governance, dict) else []
+    findings = findings if isinstance(findings, list) else []
+    by_kind: dict[str, int] = {}
+    samples: list[dict[str, Any]] = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        kind = str(finding.get("kind") or "unknown")
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+        if len(samples) < 3:
+            sample = {
+                "kind": kind,
+                "message": bounded_inline(str(finding.get("message") or ""), 120),
+            }
+            if finding.get("command"):
+                sample["command"] = bounded_inline(str(finding.get("command") or ""), 220)
+            if finding.get("limit") is not None:
+                sample["limit"] = finding.get("limit")
+            if finding.get("lines") is not None:
+                sample["lines"] = finding.get("lines")
+            samples.append(sample)
+    return {
+        "status": process_governance.get("status", "") if isinstance(process_governance, dict) else "",
+        "policy": process_governance.get("policy", "") if isinstance(process_governance, dict) else "",
+        "findings_count": len(findings),
+        "by_kind": by_kind,
+        "samples": samples,
+        "output_path": process_governance.get("output_path", "") if isinstance(process_governance, dict) else "",
+    }
+
+
 def next_phase_for(status: str, current_phase: str) -> str:
     if status in {"needs-repair", "monitor-blocked"} or status.startswith("retryable-"):
         return "repair"
@@ -3478,16 +3510,17 @@ Phase-specific bounds:
 """
     if summary.get("status") == "monitor-blocked":
         diff_path = summary.get("diff", {}).get("diff_path", "") if isinstance(summary.get("diff"), dict) else ""
-        process_governance = summary.get("process_governance", {})
+        process_governance = process_governance_prompt_summary(summary.get("process_governance", {}))
         monitor_block = summary.get("monitor_block", {})
         repair_hint = f"""
 Monitor-blocked repair:
 - The previous run was blocked by monitor/process governance; do not continue the normal pipeline.
 - patch_diff: {diff_path}
-- process_governance: {bounded_inline(json.dumps(process_governance, ensure_ascii=False), 1200)}
+- process_governance_summary: {bounded_inline(json.dumps(process_governance, ensure_ascii=False), 900)}
 - monitor_block: {bounded_inline(json.dumps(monitor_block, ensure_ascii=False), 800)}
 - First inspect the blocked run evidence and patch diff, then salvage only the useful minimal changes.
 - Declared checks are authoritative. Do not rerun undeclared checks, especially broad pytest/cargo commands.
+- If process_governance_summary cites an output_path, inspect that file with <=120 line windows only.
 - Preserve data-first acceptance and performance-second constraints before applying or rewriting any patch.
 """
     flow = summary.get("flow_transition", {})

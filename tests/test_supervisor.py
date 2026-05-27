@@ -1956,7 +1956,20 @@ index 0000000..3e75765
             "diff": {"diff_path": str(mod.RUNS_DIR / "monitor-blocked-run" / "patch.diff"), "diff_bytes": 120},
             "process_governance": {
                 "status": "fail",
-                "findings": [{"kind": "undeclared_check", "command": "python3 -m pytest -q"}],
+                "policy": "declared_checks_and_task_command_bounds_are_authoritative",
+                "output_path": "/tmp/run/process_governance.json",
+                "findings": [
+                    {"kind": "undeclared_check", "message": "bad check", "command": "python3 -m pytest -q"},
+                    {
+                        "kind": "command_window_exceeded",
+                        "message": "too many lines",
+                        "command": "/bin/bash -lc \"sed -n '1,240p' huge/file\"",
+                        "lines": 240,
+                        "limit": 120,
+                    },
+                    {"kind": "broad_rg_command", "message": "broad rg", "command": "rg -n needle docs ."},
+                    {"kind": "broad_rg_command", "message": "broad rg again", "command": "rg -n other docs ."},
+                ],
             },
             "monitor_score": {
                 "decision_model": "requirements_review_council_v1",
@@ -1977,10 +1990,15 @@ index 0000000..3e75765
             text = next_path.read_text(encoding="utf-8")
             self.assertIn('phase: "repair"', text)
             self.assertIn("Monitor-blocked repair", text)
-            self.assertIn("process_governance", text)
+            self.assertIn("process_governance_summary", text)
+            self.assertIn('"findings_count": 4', text)
+            self.assertIn('"broad_rg_command": 2', text)
+            self.assertIn("/tmp/run/process_governance.json", text)
             self.assertIn("patch.diff", text)
             self.assertIn("Declared checks are authoritative", text)
+            self.assertIn("<=120 line windows", text)
             self.assertIn("python3 -m unittest tests/test_control_api.py", text)
+            self.assertNotIn("rg -n other docs .", text)
         finally:
             next_path.unlink(missing_ok=True)
 
