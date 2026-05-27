@@ -75,6 +75,26 @@ Do the work.
         self.assertEqual(task.allowed_paths, ["scripts/", "tests/*.py"])
         self.assertEqual(task.prompt, "Do the work.")
 
+    def test_effective_worker_idle_timeout_extends_supervisor_suite(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="long-supervisor",
+            prompt="demo",
+            checks=["python3 -m unittest tests/test_supervisor.py"],
+            idle_timeout_seconds=120,
+        )
+        self.assertEqual(mod.effective_worker_idle_timeout_seconds(task), 420)
+
+        short = mod.Task(
+            path=Path("task.md"),
+            task_id="short",
+            prompt="demo",
+            checks=["python3 -m unittest tests/test_remote.py"],
+            idle_timeout_seconds=120,
+        )
+        self.assertEqual(mod.effective_worker_idle_timeout_seconds(short), 120)
+
     def test_default_worker_uses_stable_codex_model_and_can_be_overridden(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="model-test", prompt="demo")

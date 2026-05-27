@@ -209,6 +209,12 @@ class Task:
     allowed_paths: list[str] = field(default_factory=list)
 
 
+def effective_worker_idle_timeout_seconds(task: Task) -> int:
+    if any("tests/test_supervisor.py" in check for check in task.checks):
+        return max(task.idle_timeout_seconds, 420)
+    return task.idle_timeout_seconds
+
+
 def parse_task(path: Path) -> Task:
     raw = path.read_text(encoding="utf-8")
     meta: dict[str, Any] = {}
@@ -1052,6 +1058,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     cmd = build_worker_cmd(task, worktree, run_dir, final_path, context_packet["prompt"])
     started = time.monotonic()
     last_output = started
+    idle_timeout_seconds = effective_worker_idle_timeout_seconds(task)
     event_counts: dict[str, int] = {}
     event_summaries: list[dict[str, Any]] = []
     seen_event_summaries: set[str] = set()
@@ -1082,7 +1089,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                 timed_out = True
                 proc.kill()
                 break
-            if now - last_output > task.idle_timeout_seconds:
+            if now - last_output > idle_timeout_seconds:
                 idle_timed_out = True
                 proc.kill()
                 break
@@ -1141,6 +1148,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "return_code": return_code,
         "timed_out": timed_out,
         "idle_timed_out": idle_timed_out,
+        "idle_timeout_seconds": idle_timeout_seconds,
         "budget_stopped": budget_stopped,
         "budget_reason": budget_reason,
         "event_count": event_count,
