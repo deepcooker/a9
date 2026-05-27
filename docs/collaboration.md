@@ -156,10 +156,14 @@ operator chat / Codex JSONL
 
 1. 原始文件、运行证据、测试输出、参考项目源码。
 2. `docs/session-raw-close-reading.md` 和 `docs/session-raw-summary.md`。
-3. `docs/project.md`、`AGENTS.md`、`docs/communication-governance-framework.md`。
-4. 旧总结或聊天记忆。
+3. `docs/session-causal-memory.md`。
+4. `docs/project.md`、`AGENTS.md`、`docs/communication-governance-framework.md`。
+5. 旧总结或聊天记忆。
 
 如果 2 和 4 冲突，以 raw 精读为准。
+
+如果 raw 精读更新后还没有同步 `docs/session-causal-memory.md`，不应直接恢复
+worker。先做因果统筹：记录变迁原因、过期支线、当前有效决策和下一步禁止项。
 
 ## 怎么用
 
@@ -206,6 +210,7 @@ python3 scripts/a9_service.py ps
 python3 scripts/a9_supervisor.py status
 tail -n 180 docs/session-raw-summary.md
 tail -n 220 docs/session-raw-close-reading.md
+sed -n '1,240p' docs/session-causal-memory.md
 ```
 
 如果发现 raw session 已经落后当前聊天，就先跑外部 session mini-flow：
