@@ -434,3 +434,19 @@
 
 - worker 行为治理要从提示词升级到事件审计：命令事件里出现宽 sed、full
   dump、无意义 `ls`、未授权 web search，都应该进入 run summary finding。
+
+## 2026-05-27：worker worktree 的参考项目路径要用绝对路径
+
+现象：
+
+- `reference_scan-multimachine-ssh-tailscale-tmux-governance-20260527T062000Z`
+  被要求读取 `reference-projects/openhands/...`。
+- worker 在自己的 `.a9/worktrees/...` 下执行，那里没有相对
+  `reference-projects/openhands`，第一次 `sed` 和 `rg` 失败。
+- worker 后续改用 `/root/a9/reference-projects/openhands/...` 才恢复。
+
+规则：
+
+- 给 worker 的参考项目锚点必须写绝对路径 `/root/a9/reference-projects/...`。
+- 如果任务需要本仓库文件和参考仓库文件混读，二者路径边界要明确：
+  worktree 内读 A9 文件，主仓库绝对路径读 reference projects。

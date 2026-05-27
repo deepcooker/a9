@@ -381,3 +381,27 @@ Next monitoring target:
    - Verification after cherry-pick:
      `python3 -m unittest tests/test_control_api.py tests/test_remote.py`
      passed with `59` tests.
+
+29. Multi-machine reference scan stayed bounded after monitor rewrote the task.
+   - Task:
+     `reference_scan-multimachine-ssh-tailscale-tmux-governance-20260527T062000Z`.
+   - Run:
+     `.a9/runs/reference_scan-multimachine-ssh-tailscale-tmux-governance-20260527T062000Z-20260527T062110Z-a1`.
+   - Monitor intervention: replaced the auto-generated tmux follow-up with a
+     focused multi-machine SSH/Tailscale/tmux reference scan using only A9
+     `scripts/a9_remote.py`, `tests/test_remote.py`, and OpenHands
+     SSH/tmux bounded anchors.
+   - Good behavior: no web search, no raw session reads, no `ls -la`, no file
+     changes in `reference_scan`, strict envelope passed, and declared
+     `py_compile` check passed.
+   - Copied mechanism selected: OpenHands-style preflight contract before
+     install, tmux as optional-but-visible governance signal, SSH hygiene
+     diagnostics, and A9's existing `plan -> probe -> bootstrap` split.
+   - Concrete next slice selected: deterministic remote probe action contract in
+     `scripts/a9_remote.py` with focused tests in `tests/test_remote.py`.
+   - Remaining issue: relative `reference-projects/openhands/...` paths failed
+     inside the worker worktree. Worker recovered via absolute
+     `/root/a9/reference-projects/openhands/...`, but future reference tasks
+     should use absolute reference paths directly to avoid wasted events.
+   - Cost/behavior evidence: `event_count=22`, `event_bytes=21042`,
+     `prompt_approx_tokens=6660`, and actual uncached input was `17896`.
