@@ -3779,6 +3779,13 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     phase = next_phase_for(summary["status"], task.phase)
     if summary["status"] in {"pass", "needs-followup"}:
         worker_output = worker_output_from_summary(summary)
+        if "worker_envelope" in summary and not str(worker_output.get("next_slice", "")).strip():
+            summary["auto_next_block"] = {
+                "reason": "missing_worker_next_slice",
+                "status": summary["status"],
+                "task_id": task.task_id,
+            }
+            return None
         routed_phase = phase_from_next_slice(worker_output.get("next_slice"))
         if routed_phase:
             phase = routed_phase
