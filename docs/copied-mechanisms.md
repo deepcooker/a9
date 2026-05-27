@@ -414,6 +414,12 @@ Mechanisms to adapt:
   rule, and data-first/performance-second acceptance constraint. This copies the
   mature agent-runtime pattern that hard failures become bounded recovery work
   with evidence, not free-form self-justification by the same worker.
+- `scripts/a9_supervisor.py`: process governance now turns task-level command
+  bounds into deterministic checks. If a prompt forbids `ls` or `rg --files`,
+  those commands become blocking findings; if it declares `sed windows <= N
+  lines`, oversized `sed -n start,endp` reads are blocked. This copies the
+  Codex-style principle that prompt policy must become runtime policy when
+  token cost and reference discipline matter.
 
 ## Client Skeleton Reference Notes
 

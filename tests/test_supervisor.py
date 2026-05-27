@@ -778,6 +778,52 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "undeclared_check")
         self.assertIn("pytest", result["findings"][0]["command"])
 
+    def test_process_governance_enforces_task_command_bounds(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"item_type": "command_execution", "command": "/bin/bash -lc ls"}),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'rg --files reference-projects | head -n 200'",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc \"sed -n '1,200p' reference-projects/codex/mod.rs\"",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="process-command-bounds",
+                prompt=(
+                    "Hard bounds:\n"
+                    "- Do not run ls or rg --files.\n"
+                    "- Use sed windows <= 120 lines and targeted rg only.\n"
+                ),
+                checks=["python3 -m py_compile scripts/a9_supervisor.py"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [finding["kind"] for finding in result["findings"]]
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(kinds.count("forbidden_command"), 2)
+        self.assertIn("command_window_exceeded", kinds)
+        window = next(finding for finding in result["findings"] if finding["kind"] == "command_window_exceeded")
+        self.assertEqual(window["lines"], 200)
+        self.assertEqual(window["limit"], 120)
+
     def test_process_governance_failure_blocks_status_even_when_checks_pass(self):
         mod = load_supervisor()
         worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
@@ -1019,6 +1065,32 @@ Do the work.
             final = run_dir / "final.md"
             final.write_text(
                 'done\n{"protocolVersion":"openclaw/1","ok":true,"status":"ok","output":{"changed_files":[]}}\n',
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+            status = mod.decide_status(worker, {"diff_bytes": 120}, [], worker_envelope=envelope)
+
+        self.assertEqual(envelope["status"], "pass")
+        self.assertEqual(envelope["envelope"]["protocolVersion"], 1)
+        self.assertEqual(status, "pass")
+        self.assertTrue(
+            any("normalized protocolVersion alias" in finding.get("message", "") for finding in envelope.get("findings", []))
+        )
+
+    def test_worker_envelope_protocol_version_alias_openclaw_lobster_normalizes_to_1(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                'done\n{"protocolVersion":"openclaw-lobster-worker-envelope/1.0","ok":true,"status":"ok","output":{"changed_files":[]}}\n',
                 encoding="utf-8",
             )
             task = mod.Task(

@@ -1303,6 +1303,7 @@ def normalize_worker_envelope_protocol_version(protocol_version: Any, ok: Any) -
         "1": 1,
         "1.0": 1,
         "openclaw/1": 1,
+        "openclaw-lobster-worker-envelope/1.0": 1,
         "a9.strict_worker_envelope.v1": 1,
     }
     if protocol_version in {1, "1"}:
@@ -1626,6 +1627,36 @@ def command_matches_declared_check(command: str, checks: list[str]) -> bool:
     return any(normalized == item or normalized in item or item in normalized for item in declared)
 
 
+def prompt_forbids_rg_files(prompt: str) -> bool:
+    return "rg --files" in str(prompt or "").lower() and "do not" in str(prompt or "").lower()
+
+
+def prompt_forbids_ls(prompt: str) -> bool:
+    return bool(re.search(r"\bdo not run ls\b", str(prompt or ""), flags=re.IGNORECASE))
+
+
+def prompt_sed_window_limit(prompt: str) -> int | None:
+    match = re.search(r"sed windows?\s*<=\s*(\d+)\s*lines?", str(prompt or ""), flags=re.IGNORECASE)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def command_runs_ls(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    return bool(re.search(r"(?:^|\s)(?:/bin/)?(?:bash|sh)\s+-lc\s+['\"]?ls(?:['\"]?|\s|$)", normalized)) or normalized == "ls"
+
+
+def sed_windows_from_command(command: str) -> list[tuple[int, int]]:
+    windows: list[tuple[int, int]] = []
+    for match in re.finditer(r"sed\s+-n\s+['\"]?(\d+)\s*,\s*(\d+)p", command):
+        start = int(match.group(1))
+        end = int(match.group(2))
+        if end >= start:
+            windows.append((start, end))
+    return windows
+
+
 def read_jsonl_file(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     if not path.exists():
@@ -1647,6 +1678,9 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     event_path = Path(str(worker.get("event_summaries_path") or ""))
     findings: list[dict[str, Any]] = []
     commands_seen: set[str] = set()
+    forbids_rg_files = prompt_forbids_rg_files(task.prompt)
+    forbids_ls = prompt_forbids_ls(task.prompt)
+    sed_window_limit = prompt_sed_window_limit(task.prompt)
     for event in read_jsonl_file(event_path):
         if event.get("item_type") != "command_execution" or not isinstance(event.get("command"), str):
             continue
@@ -1664,9 +1698,43 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "declared_checks": task.checks,
                 }
             )
+        if forbids_rg_files and "rg --files" in command:
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "forbidden_command",
+                    "message": "worker ran rg --files despite task command bounds",
+                    "command": command,
+                }
+            )
+        if forbids_ls and command_runs_ls(command):
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "forbidden_command",
+                    "message": "worker ran ls despite task command bounds",
+                    "command": command,
+                }
+            )
+        if sed_window_limit is not None:
+            for start, end in sed_windows_from_command(command):
+                lines = end - start + 1
+                if lines > sed_window_limit:
+                    findings.append(
+                        {
+                            "level": "error",
+                            "kind": "command_window_exceeded",
+                            "message": "worker read more sed lines than the task allowed",
+                            "command": command,
+                            "start": start,
+                            "end": end,
+                            "lines": lines,
+                            "limit": sed_window_limit,
+                        }
+                    )
     result = {
         "status": "fail" if findings else "pass",
-        "policy": "declared_checks_are_authoritative",
+        "policy": "declared_checks_and_task_command_bounds_are_authoritative",
         "findings": findings,
         "output_path": str(output_path),
     }

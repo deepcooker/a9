@@ -122,6 +122,9 @@
 - `refscan-codex-transport-backpressure-retry-20260527` 再次暴露 Spark 会输出
   `status=reference_scan_complete`；该类“明确阶段完成 + ok=true”的别名已受限归一到
   `ok`，但任意 `done` 仍保持失败，避免放宽协议边界。
+- `refscan-codex-transport-backpressure-pass-20260527` 又暴露
+  `protocolVersion=openclaw-lobster-worker-envelope/1.0`；该 OpenClaw/Lobster
+  风格版本别名已归一为 `1`，仍保留 info finding。
 
 ## 2026-05-27：worker worktree 看不到参考项目路径
 
@@ -143,12 +146,18 @@
   但该 Codex transport slice 没有被 hydrate 进 worker worktree。
 - worker 找不到路径后扩散到 `rg --files reference-projects`、Barter-rs 和
   OpenClaw，最终 `worker event bytes exceeded 120000`。
+- 后续 pass 重跑中，worker 不再扩散，但仍违反 `sed windows <= 120 lines`，
+  读取 200/240 行窗口；这说明 prompt 约束不足，必须进入 supervisor
+  process governance。
 
 修复：
 
 - `worker_reference_slices()` 增加 Codex app-server transport 小切片。
 - reference task 必须优先验证 worker worktree 可见的 reference slice；路径不可见
   时先修 hydrate，不让 worker 自行换参考项目。
+- process governance 现在会把任务 prompt 中的 `Do not run ls or rg --files`
+  和 `sed windows <= N lines` 转成机器检查；违反时进入 `monitor-blocked`，
+  不靠人工读日志才发现。
 
 ## 2026-05-27：不要把编排级测试目标一次性丢给 worker
 
