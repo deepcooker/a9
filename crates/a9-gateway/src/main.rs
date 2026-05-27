@@ -575,36 +575,99 @@ fn emit_gateway_decision(
     origin: &str,
     reset_on_success: bool,
 ) {
-    let _ = redis_roundtrip_once(
+    let _ = emit_gateway_decision_event(
         addr,
-        &[
-            "XADD".to_string(),
-            EVENT_STREAM.to_string(),
-            "*".to_string(),
-            "type".to_string(),
-            "gateway_reconnect_decision".to_string(),
-            "kind".to_string(),
-            "gateway_reconnect_decision".to_string(),
-            "phase".to_string(),
-            phase.to_string(),
-            "action".to_string(),
-            action.to_string(),
-            "error_class".to_string(),
-            error_class.to_string(),
-            "attempt".to_string(),
-            attempt.to_string(),
-            "delay_ms".to_string(),
-            delay_ms.to_string(),
-            "policy_budget_remaining".to_string(),
-            policy_budget_remaining.to_string(),
-            "origin".to_string(),
-            origin.to_string(),
-            "reset_on_success".to_string(),
-            reset_on_success.to_string(),
-            "ts".to_string(),
-            now_ms(),
-        ],
+        phase,
+        action,
+        error_class,
+        attempt,
+        delay_ms,
+        policy_budget_remaining,
+        origin,
+        reset_on_success,
     );
+}
+
+fn emit_gateway_decision_event(
+    addr: &str,
+    phase: &str,
+    action: &str,
+    error_class: &str,
+    attempt: u32,
+    delay_ms: u64,
+    policy_budget_remaining: u32,
+    origin: &str,
+    reset_on_success: bool,
+) -> std::io::Result<String> {
+    let response = redis_roundtrip_once(
+        addr,
+        &gateway_decision_xadd_parts(
+            phase,
+            action,
+            error_class,
+            attempt,
+            delay_ms,
+            policy_budget_remaining,
+            origin,
+            reset_on_success,
+        ),
+    )?;
+    Ok(resp_scalar(&response).unwrap_or_else(|| response.trim().to_string()))
+}
+
+fn gateway_decision_xadd_parts(
+    phase: &str,
+    action: &str,
+    error_class: &str,
+    attempt: u32,
+    delay_ms: u64,
+    policy_budget_remaining: u32,
+    origin: &str,
+    reset_on_success: bool,
+) -> Vec<String> {
+    vec![
+        "XADD".to_string(),
+        EVENT_STREAM.to_string(),
+        "*".to_string(),
+        "type".to_string(),
+        "gateway_reconnect_decision".to_string(),
+        "kind".to_string(),
+        "gateway_reconnect_decision".to_string(),
+        "phase".to_string(),
+        phase.to_string(),
+        "action".to_string(),
+        action.to_string(),
+        "error_class".to_string(),
+        error_class.to_string(),
+        "attempt".to_string(),
+        attempt.to_string(),
+        "delay_ms".to_string(),
+        delay_ms.to_string(),
+        "policy_budget_remaining".to_string(),
+        policy_budget_remaining.to_string(),
+        "origin".to_string(),
+        origin.to_string(),
+        "reset_on_success".to_string(),
+        reset_on_success.to_string(),
+        "ts".to_string(),
+        now_ms(),
+    ]
+}
+
+fn emit_gateway_reconnect_success_diagnostic(addr: &str) -> std::io::Result<String> {
+    let mut decisions = decisions_from_lifecycle_event(3, ReconnectLifecycleEvent::AttemptSucceeded { attempt: 0 });
+    let decision = decisions.remove(0);
+    emit_gateway_decision_event(
+        addr,
+        decision.phase,
+        decision.action,
+        decision.error_class,
+        decision.attempt,
+        decision.delay_ms,
+        decision.policy_budget_remaining,
+        "diagnostic_success",
+        decision.reset_on_success,
+    )
 }
 
 fn emit_gateway_transport_contract(addr: &str, report: &GatewayTransportContractReport) -> std::io::Result<String> {
@@ -680,7 +743,8 @@ fn usage() -> ! {
   a9-gateway fail <stream_id> <reason>
   a9-gateway heartbeat [worker_id]
   a9-gateway status
-  a9-gateway transport-contract [--emit-event]"
+  a9-gateway transport-contract [--emit-event]
+  a9-gateway reconnect-diagnostic --success"
     );
     std::process::exit(2);
 }
@@ -822,6 +886,16 @@ fn main() -> std::io::Result<()> {
             } else {
                 print_transport_contract_report(report);
             }
+        }
+        "reconnect-diagnostic" => {
+            if !args.iter().any(|arg| arg == "--success") {
+                usage();
+            }
+            let event_id = emit_gateway_reconnect_success_diagnostic(&addr)?;
+            println!(
+                "{{\"status\":\"ok\",\"kind\":\"gateway_reconnect_decision\",\"diagnostic\":\"success\",\"event_id\":\"{}\"}}",
+                event_id.trim()
+            );
         }
         _ => usage(),
     }
@@ -1488,6 +1562,36 @@ mod tests {
         );
         assert_eq!(field(&transcript[1], "origin"), Some("stream_error"));
         assert_eq!(field(&transcript[1], "error_class"), Some("auth"));
+    }
+
+    #[test]
+    fn reconnect_success_diagnostic_emits_reset_decision_event() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake redis listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let (tx, rx) = mpsc::channel::<Vec<String>>();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept fake redis client");
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).expect("read redis command");
+            let parts = parse_resp_array(&buf[..n]).expect("parse RESP array command");
+            stream
+                .write_all(b"$12\r\n1779900000-0\r\n")
+                .expect("reply event id");
+            tx.send(parts).expect("send transcript");
+        });
+
+        let event_id = emit_gateway_reconnect_success_diagnostic(&addr.to_string()).expect("emit diagnostic");
+
+        server.join().expect("fake redis server exits");
+        let parts = rx.recv().expect("receive transcript");
+        assert_eq!(event_id, "1779900000-0");
+        assert_eq!(parts[0], "XADD");
+        assert_eq!(field(&parts, "kind"), Some("gateway_reconnect_decision"));
+        assert_eq!(field(&parts, "phase"), Some("connect"));
+        assert_eq!(field(&parts, "action"), Some("continue"));
+        assert_eq!(field(&parts, "error_class"), Some("none"));
+        assert_eq!(field(&parts, "origin"), Some("diagnostic_success"));
+        assert_eq!(field(&parts, "reset_on_success"), Some("true"));
     }
 
     #[test]

@@ -259,6 +259,52 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["reason"], "gateway_contract_failed")
 
+    def test_gateway_reconnect_diagnostic_runs_success_probe(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            binary = root / "target" / "debug" / "a9-gateway"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/sh\n", encoding="utf-8")
+
+            class FakeProc:
+                returncode = 0
+                stdout = json.dumps(
+                    {
+                        "status": "ok",
+                        "kind": "gateway_reconnect_decision",
+                        "diagnostic": "success",
+                        "event_id": "1779900000-0",
+                    }
+                )
+
+            calls = []
+            original_run = mod.subprocess.run
+            original_redis = mod.redis_cli
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                mod.redis_cli = lambda *args, **kwargs: type("FakeRedis", (), {"returncode": 0, "stdout": ""})()
+                result = mod.gateway_reconnect_diagnostic(root, success=True)
+            finally:
+                mod.subprocess.run = original_run
+                mod.redis_cli = original_redis
+
+        self.assertEqual(calls[0][0], [str(binary), "reconnect-diagnostic", "--success"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["kind"], "gateway_reconnect_diagnostic")
+        self.assertEqual(result["event_id"], "1779900000-0")
+        self.assertEqual(result["latest_event"]["status"], "missing")
+
+    def test_gateway_reconnect_diagnostic_requires_success_flag(self):
+        mod = load_control_api()
+        result = mod.gateway_reconnect_diagnostic(success=False)
+        self.assertEqual(result["status"], "needs_approval")
+        self.assertEqual(result["reason"], "diagnostic_success_flag_required")
+
     def test_latest_gateway_transport_contract_event_reads_newest_matching_event(self):
         mod = load_control_api()
 
@@ -689,6 +735,34 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "gateway_health_refresh")
+
+    def test_gateway_reconnect_diagnostic_get_endpoint_requires_success_flag(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None, "success": None}
+
+        class DummyGatewayReconnectDiagnosticHandler:
+            path = "/api/gateway/reconnect-diagnostic?success=1"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_diagnostic = mod.gateway_reconnect_diagnostic
+        try:
+            def fake_diagnostic(*, success: bool = False):
+                captured["success"] = success
+                return {"status": "ok", "kind": "gateway_reconnect_diagnostic"}
+
+            mod.gateway_reconnect_diagnostic = fake_diagnostic
+            mod.ControlHandler.do_GET(DummyGatewayReconnectDiagnosticHandler())
+        finally:
+            mod.gateway_reconnect_diagnostic = original_diagnostic
+
+        self.assertEqual(captured["status"], 200)
+        self.assertTrue(captured["success"])
+        self.assertEqual(captured["payload"]["kind"], "gateway_reconnect_diagnostic")
 
     def test_node_status_aggregates_latest_tmux_action_from_evidence(self):
         mod = load_control_api()
@@ -2280,6 +2354,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["register_node"], "/api/nodes/register")
         self.assertEqual(discovery["endpoints"]["gateway_transport_contract"], "/api/gateway/transport-contract")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")
+        self.assertEqual(discovery["endpoints"]["gateway_reconnect_diagnostic"], "/api/gateway/reconnect-diagnostic")
         self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])

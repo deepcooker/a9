@@ -480,6 +480,12 @@ Mechanisms to adapt:
   separately. Missing reconnect evidence is `degraded/action=observe`, not
   faked as success, because reconnect evidence must come from real gateway
   lifecycle events.
+- `crates/a9-gateway` plus `scripts/a9_control_api.py`: a bounded
+  `reconnect-diagnostic --success` path now emits a real
+  `gateway_reconnect_decision` event with `origin=diagnostic_success` and
+  `reset_on_success=true`. The control API exposes this as
+  `/api/gateway/reconnect-diagnostic?success=1`; the explicit success flag keeps
+  diagnostic evidence separate from organic gateway reconnect lifecycle events.
 
 ## Client Skeleton Reference Notes
 

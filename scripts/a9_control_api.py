@@ -423,6 +423,62 @@ def gateway_transport_contract(root: Path = ROOT, *, emit_event: bool = False) -
     return result
 
 
+def gateway_reconnect_diagnostic(root: Path = ROOT, *, success: bool = False) -> dict[str, Any]:
+    binary = root / GATEWAY_BIN_REL_PATH
+    if not binary.exists():
+        return {
+            "status": "missing",
+            "kind": "gateway_reconnect_diagnostic",
+            "binary": str(binary),
+            "reason": "gateway_binary_missing",
+        }
+    if not success:
+        return {
+            "status": "needs_approval",
+            "kind": "gateway_reconnect_diagnostic",
+            "reason": "diagnostic_success_flag_required",
+        }
+    try:
+        proc = subprocess.run(
+            [str(binary), "reconnect-diagnostic", "--success"],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired:
+        return {
+            "status": "fail",
+            "kind": "gateway_reconnect_diagnostic",
+            "binary": str(binary),
+            "reason": "gateway_reconnect_diagnostic_timeout",
+        }
+    output = (proc.stdout or "").strip()
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return {
+            "status": "fail",
+            "kind": "gateway_reconnect_diagnostic",
+            "binary": str(binary),
+            "return_code": proc.returncode,
+            "reason": "gateway_reconnect_diagnostic_invalid_json",
+            "output": output[:1000],
+        }
+    return {
+        **payload,
+        "status": "ok" if proc.returncode == 0 and payload.get("status") == "ok" else "fail",
+        "kind": "gateway_reconnect_diagnostic",
+        "binary": str(binary),
+        "return_code": proc.returncode,
+        "reason": "gateway_reconnect_diagnostic_pass"
+        if proc.returncode == 0 and payload.get("status") == "ok"
+        else "gateway_reconnect_diagnostic_failed",
+        "latest_event": latest_gateway_reconnect_decision_event(),
+    }
+
+
 def event_age_seconds(event: dict[str, Any], *, now_ms_value: int | None = None) -> int | None:
     raw_ts = event.get("ts") if isinstance(event, dict) else None
     if raw_ts in {None, ""}:
@@ -857,6 +913,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
             "gateway_transport_contract": "/api/gateway/transport-contract",
             "gateway_reconnect_decision": "/api/gateway/reconnect-decision",
+            "gateway_reconnect_diagnostic": "/api/gateway/reconnect-diagnostic",
             "gateway_health_refresh": "/api/gateway/health-refresh",
             "events": "/api/events",
         },
@@ -2023,6 +2080,9 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))
             elif parsed.path == "/api/gateway/reconnect-decision":
                 self.write_json(200, latest_gateway_reconnect_decision_event())
+            elif parsed.path == "/api/gateway/reconnect-diagnostic":
+                success = str(query.get("success", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
+                self.write_json(200, gateway_reconnect_diagnostic(success=success))
             elif parsed.path == "/api/gateway/health-refresh":
                 self.write_json(200, gateway_health_refresh())
             elif parsed.path == "/api/nodes/evidence":
