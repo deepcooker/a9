@@ -1168,6 +1168,12 @@ Do the work.
                                 "command": "/bin/bash -lc 'tail -n 60 docs/mistakes.md'",
                             }
                         ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'tail -n 120 docs/mistakes.md'",
+                            }
+                        ),
                     ]
                 )
                 + "\n",
@@ -1182,8 +1188,9 @@ Do the work.
 
         findings = [item for item in result["findings"] if item["kind"] == "outside_bounded_read_scope"]
         self.assertEqual(result["status"], "fail")
-        self.assertEqual(len(findings), 1)
+        self.assertEqual(len(findings), 2)
         self.assertIn("a9_service.py ps", findings[0]["command"])
+        self.assertIn("tail -n 120", findings[1]["command"])
 
     def test_process_governance_observes_batched_sed_reads_with_rationale(self):
         mod = load_supervisor()
@@ -1443,6 +1450,7 @@ Do the work.
             "/bin/bash -lc 'python3 scripts/a9_service.py ps && tail -n 60 docs/mistakes.md'",
         )
         allowed_read = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 60 docs/mistakes.md'")
+        oversized_read = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 120 docs/mistakes.md'")
         allowed_check = mod.live_worker_command_violation(
             task,
             "/bin/bash -lc 'python3 -m unittest tests.test_patch_guard.PatchGuardTests.test_search_replace_extracts_embedded_inline_path'",
@@ -1450,6 +1458,7 @@ Do the work.
 
         self.assertEqual(extra_probe["kind"], "outside_bounded_read_scope")
         self.assertEqual(allowed_read, {})
+        self.assertEqual(oversized_read["kind"], "outside_bounded_read_scope")
         self.assertEqual(allowed_check, {})
 
     def test_live_worker_blocks_session_context_reads_outside_session_tasks(self):
