@@ -948,3 +948,15 @@
 - context 按 phase 分预算：`reference_scan/mechanism_extract` 给参考片段预算，
   `implement/test/repair` 只保留最小代码与失败证据预算。
 - summary 只做索引；事实回溯必须落到具体 evidence path。
+
+## 2026-05-28：worker 文件改动必须走 deterministic apply，不允许 shell 重定向
+
+现象：
+
+- worker 直接用 shell 重定向/tee/heredoc 改文件会绕过 SEARCH/REPLACE 审计路径，
+  导致补丁可追溯性和 gate 一致性下降。
+
+规则：
+
+- 文档与代码改动统一输出 SEARCH/REPLACE 块，由 deterministic apply 落盘。
+- 禁用 `>`, `>>`, `tee`, `sed -i`, heredoc、python 文件写入等旁路写法。

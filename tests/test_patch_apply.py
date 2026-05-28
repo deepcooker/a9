@@ -282,6 +282,29 @@ gamma
             )
             self.assertEqual(target.read_text(encoding="utf-8"), "gamma\n")
 
+    def test_applies_embedded_inline_path_heading(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "docs" / "mistakes.md"
+            target.parent.mkdir()
+            target.write_text("alpha\n", encoding="utf-8")
+
+            patch = (
+                "SEARCH/REPLACE block for `docs/mistakes.md`:\n"
+                "<<<<<<< SEARCH\n"
+                "alpha\n"
+                "=======\n"
+                "gamma\n"
+                ">>>>>>> REPLACE\n"
+            )
+            result = mod.apply_search_replace(patch, root)
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["applied"][0]["effective_path"], "docs/mistakes.md")
+            self.assertIn("path:embedded_inline_path", result["applied"][0]["normalizations"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "gamma\n")
+
     def test_unique_basename_path_resolves_to_repository_file(self):
         mod = load_patch_apply()
         with tempfile.TemporaryDirectory() as tmp:

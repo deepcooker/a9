@@ -97,6 +97,30 @@ gamma
         self.assertEqual(findings, [])
         self.assertEqual(result["status"], "pass")
 
+    def test_search_replace_extracts_embedded_inline_path(self):
+        mod = load_patch_guard()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "docs" / "mistakes.md"
+            target.parent.mkdir()
+            target.write_text("alpha\n", encoding="utf-8")
+
+            patch = (
+                "SEARCH/REPLACE block for `docs/mistakes.md`:\n"
+                "<<<<<<< SEARCH\n"
+                "alpha\n"
+                "=======\n"
+                "gamma\n"
+                ">>>>>>> REPLACE\n"
+            )
+            blocks, findings = mod.parse_search_replace(patch)
+            result = mod.validate(patch, root, "auto")
+
+        self.assertEqual(blocks[0].path, "docs/mistakes.md")
+        self.assertEqual(blocks[0].path_normalizations, ["path:trailing_colon", "path:embedded_inline_path"])
+        self.assertEqual(findings, [])
+        self.assertEqual(result["status"], "pass")
+
     def test_search_replace_rejects_ambiguous_match(self):
         mod = load_patch_guard()
         with tempfile.TemporaryDirectory() as tmp:

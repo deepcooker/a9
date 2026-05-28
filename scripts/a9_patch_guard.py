@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,6 +85,11 @@ def normalize_search_replace_path(raw: str) -> tuple[str, list[str]]:
     if path.startswith("#"):
         path = path.lstrip("#").strip()
         normalizations.append("path:leading_hash")
+    embedded = re.findall(r"`([^`\n]+)`", path)
+    embedded_paths = [item.strip() for item in embedded if "." in item or "/" in item]
+    if len(embedded_paths) == 1 and not (path.startswith("`") and path.endswith("`")):
+        path = embedded_paths[0]
+        normalizations.append("path:embedded_inline_path")
     stripped = path.strip("`").strip("*").strip()
     if stripped != path:
         path = stripped
