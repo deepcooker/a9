@@ -894,3 +894,20 @@
 - 大测试文件必须按锚点读取：先 `rg -n "def test_xxx"`，再 `sed -n '<start>,<end>p'`。
 - worker prompt 要明确禁止 `sed -n '1,260p'` 这类大窗口。
 - 触发 budget 后不要自动重跑同一 prompt，先缩小上下文和目标。
+
+## 2026-05-28：strict envelope 失败不等于 patch 失败
+
+现象：
+
+- `multimachine-negative-lifecycle-contract-20260528` 新增了负向 fake-SSH
+  lifecycle 测试，并且声明测试全部通过。
+- 但 final envelope 使用了 `protocolVersion: "openclaw/v1"`，strict gate 要求
+  `protocolVersion: 1`，因此 supervisor 判 `needs-repair` 并回滚。
+- patch 本身范围小、测试通过、方向正确，应由监控者接管，而不是丢给重复模型运行。
+
+规则：
+
+- strict envelope 是执行协议 gate，不是代码质量本身。
+- envelope 失败时先读 `patch.diff`、checks、scope/patch guard；如果 patch 合格，
+  可以监控者接管、复测、提交。
+- worker prompt 要继续明确：`protocolVersion` 必须是数字 `1`。

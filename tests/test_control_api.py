@@ -3408,6 +3408,112 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(node["heartbeat_start_evidence_path"])
         self.assertEqual(node["connection_action"], "continue")
 
+    def test_fake_ssh_lifecycle_tmux_missing_then_heartbeat_start_failed_keeps_both_evidence(self):
+        mod = load_control_api()
+
+        class FakeRemote:
+            @staticmethod
+            def ssh_base(target, *, connect_timeout=10, identity_file=""):
+                return [
+                    "echo",
+                    "host=100.64.0.1\nuser=root\nkernel=Linux test\npython3=/usr/bin/python3\ntmux=tmux 3.2\n",
+                ]
+
+            @staticmethod
+            def remote_probe_script():
+                return "ignored"
+
+            @staticmethod
+            def parse_probe(text):
+                return {
+                    line.split("=", 1)[0]: line.split("=", 1)[1]
+                    for line in text.splitlines()
+                    if "=" in line
+                }
+
+            @staticmethod
+            def classify_probe_result(return_code, output):
+                return {
+                    "probe_action": "continue",
+                    "probe_action_reason": "probe_ok",
+                    "required_missing": [],
+                    "optional_missing": [],
+                }
+
+        class MissingProc:
+            returncode = 1
+            stdout = "can't find session"
+
+        class HeartbeatFailProc:
+            returncode = 7
+            stdout = "heartbeat start failed"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_remote = mod.remote
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                mod.remote = lambda: FakeRemote
+                probe = mod.probe_node({"ssh_target": "root@100.64.0.1"}, root=root)
+                tmux_plan = mod.tmux_plan_node({"ssh_target": "root@100.64.0.1", "session": "a9/main"}, root=root)
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    remote_cmd = cmd[-1]
+                    if "tmux has-session -t a9-main" in remote_cmd:
+                        return MissingProc()
+                    if ".a9/remote-node/heartbeat.sh" in remote_cmd:
+                        return HeartbeatFailProc()
+                    raise AssertionError(f"unexpected command: {cmd}")
+
+                mod.subprocess.run = fake_run
+                tmux_status = mod.tmux_status_node({"evidence_path": tmux_plan["evidence_path"]}, root=root)
+
+                heartbeat_plan = mod.heartbeat_tmux_plan_node(
+                    {"ssh_target": "root@100.64.0.1", "session": "a9/heartbeat"},
+                    root=root,
+                )
+                mod.phone_control_arm(
+                    {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                heartbeat_start = mod.heartbeat_tmux_start_node(
+                    {
+                        "evidence_path": heartbeat_plan["evidence_path"],
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+                mod.remote = original_remote
+
+            status = mod.node_status(root)
+            node = status["nodes"][0]
+
+            self.assertEqual(probe["status"], "ok")
+            self.assertEqual(tmux_status["status"], "missing")
+            self.assertEqual(tmux_status["tmux_action"], "repair")
+            self.assertEqual(heartbeat_start["status"], "failed")
+            self.assertEqual(heartbeat_start["heartbeat_action"], "repair")
+            self.assertEqual(heartbeat_start["return_code"], 7)
+            self.assertEqual(len(calls), 2)
+            for cmd, _kwargs in calls:
+                self.assertEqual(cmd[0], "ssh")
+                self.assertIn("ConnectTimeout=5", cmd)
+
+            self.assertTrue(Path(tmux_status["evidence_path"]).exists())
+            self.assertTrue(Path(heartbeat_start["evidence_path"]).exists())
+            self.assertEqual(node["tmux_status"], "missing")
+            self.assertEqual(node["tmux_action"], "repair")
+            self.assertTrue(node["tmux_evidence_path"])
+            self.assertEqual(node["heartbeat_start_status"], "failed")
+            self.assertEqual(node["heartbeat_start_action"], "repair")
+            self.assertTrue(node["heartbeat_start_evidence_path"])
+            self.assertEqual(node["last_probe_action"], "continue")
+            self.assertEqual(node["connection_action"], "continue")
+
     def test_tmux_plan_parses_target_port_and_identity(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
