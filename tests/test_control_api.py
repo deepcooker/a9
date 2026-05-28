@@ -956,6 +956,48 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["tmux_status"], "exists")
         self.assertEqual(node["tmux_evidence_path"], str(evidence_path))
 
+    def test_node_status_picks_filename_latest_tmux_evidence_when_mtime_ties(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@node-a"}, root=root)
+            mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+
+            older_path = mod.write_node_evidence(
+                "tmux-status",
+                "node/a",
+                {
+                    "status": "missing",
+                    "tmux_action": "repair",
+                    "tmux_action_reason": "tmux_session_missing",
+                    "reason": "tmux_session_missing",
+                },
+                root=root,
+            )
+            newer_path = mod.write_node_evidence(
+                "tmux-ensure",
+                "node/a",
+                {
+                    "status": "exists",
+                    "tmux_action": "continue",
+                    "tmux_action_reason": "tmux_ensure_ok",
+                    "reason": "tmux_ensure_ok",
+                },
+                root=root,
+            )
+
+            tied_mtime = older_path.stat().st_mtime
+            os.utime(newer_path, (tied_mtime, tied_mtime))
+            os.utime(older_path, (tied_mtime, tied_mtime))
+
+            status = mod.node_status(root)
+
+        node = status["nodes"][0]
+        self.assertEqual(node["tmux_action"], "continue")
+        self.assertEqual(node["tmux_action_reason"], "tmux_ensure_ok")
+        self.assertEqual(node["tmux_status"], "exists")
+        self.assertEqual(node["tmux_evidence_path"], str(newer_path))
+
     def test_node_status_aggregates_latest_probe_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

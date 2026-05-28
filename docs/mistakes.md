@@ -817,6 +817,8 @@
 - “最新一条”这类测试不能依赖低精度 mtime 单字段。
 - 证据文件名已经带时间戳时，排序必须把末尾时间戳纳入稳定 tie-breaker，不要让
   kind 前缀影响“最新”语义。
+- 同样的 mtime 陷阱也适用于 `tmux-*.json` 证据；`node_status` 聚合 tmux action
+  也必须使用 `(mtime, 文件名末尾时间戳)` 的稳定排序。
 - worker 通过后，主控合并到 main 后仍必须重跑声明测试；worktree pass 不是最终验收。
 
 ## 2026-05-28：远端 bootstrap heredoc 必须防提前展开
