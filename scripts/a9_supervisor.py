@@ -1598,7 +1598,7 @@ def extract_worker_search_replace_patch(text: str) -> tuple[str, str | None, lis
                         {"level": "warning", "message": "ignored non-object search_replace_blocks item", "index": index}
                     )
                     continue
-                path = str(item.get("path") or "").strip()
+                path = str(item.get("path") or item.get("file") or "").strip()
                 block = str(item.get("block") or "").strip()
                 search = item.get("search")
                 replace = item.get("replace")
