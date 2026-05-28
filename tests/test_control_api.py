@@ -1082,6 +1082,24 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["heartbeat_start_executed_at"], "2026-05-28T00:00:00Z")
         self.assertEqual(node["heartbeat_start_evidence_path"], str(valid_evidence_path))
 
+    def test_node_status_without_heartbeat_start_evidence_does_not_add_fields(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@node-a"}, root=root)
+            mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+
+            status = mod.node_status(root)
+
+        node = status["nodes"][0]
+        self.assertNotIn("heartbeat_start_status", node)
+        self.assertNotIn("heartbeat_start_action", node)
+        self.assertNotIn("heartbeat_start_action_reason", node)
+        self.assertNotIn("heartbeat_start_return_code", node)
+        self.assertNotIn("heartbeat_start_timed_out", node)
+        self.assertNotIn("heartbeat_start_executed_at", node)
+        self.assertNotIn("heartbeat_start_evidence_path", node)
+
     def test_node_status_includes_tasks_stream_pending_lag_probe(self):
         mod = load_control_api()
 
