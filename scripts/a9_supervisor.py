@@ -833,7 +833,8 @@ Hard rules:
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
 - Final answer must include files changed, reference ideas used, commands run, test result, and next recommended task.
 - If the task asks for `strict_worker_envelope: true`, the final answer must include a JSON object
-  shaped like OpenClaw/Lobster tool envelopes: protocolVersion, ok, status/output or error.
+  shaped like OpenClaw/Lobster tool envelopes, but A9 protocol is numeric:
+  {"protocolVersion":1,"ok":true,"status":"ok","output":{...}}.
 """,
         section_budgets["contract"],
     )
@@ -1559,6 +1560,7 @@ def normalize_worker_envelope_protocol_version(protocol_version: Any, ok: Any) -
         "1.0": 1,
         "openclaw/1": 1,
         "openclaw/v1": 1,
+        "openclaw-lobster/v1": 1,
         "openclaw-lobster-v1": 1,
         "openclaw-lobster-worker-envelope/1.0": 1,
         "a9.strict_worker_envelope.v1": 1,
