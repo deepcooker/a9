@@ -1493,6 +1493,63 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["tasks_stream"]["stream_action"], "intervene")
         self.assertEqual(status["tasks_stream"]["stream_action_reason"], "redis_unavailable")
 
+    def test_communication_followup_intent_continue_when_all_healthy(self):
+        mod = load_control_api()
+        followup = mod.communication_followup_intent(
+            [
+                {"node_id": "node-a", "connection_state": "online", "connection_action": "continue"},
+                {"node_id": "node-b", "connection_state": "online", "connection_action": "continue"},
+            ],
+            {"stream_action": "continue", "stream_action_reason": "none", "status": "ok"},
+        )
+        self.assertEqual(followup["action"], "continue")
+        self.assertEqual(followup["status"], "ok")
+        self.assertEqual(followup["reason"], "tasks_stream:none")
+        self.assertEqual(followup["evidence"]["tasks_stream"]["action"], "continue")
+
+    def test_communication_followup_intent_reconnect_for_degraded_node(self):
+        mod = load_control_api()
+        followup = mod.communication_followup_intent(
+            [
+                {
+                    "node_id": "node-a",
+                    "connection_state": "degraded",
+                    "connection_action": "reconnect",
+                    "connection_action_reason": "heartbeat_reported_degraded",
+                }
+            ],
+            {"stream_action": "continue", "stream_action_reason": "none", "status": "ok"},
+        )
+        self.assertEqual(followup["action"], "reconnect")
+        self.assertEqual(followup["status"], "degraded")
+        self.assertEqual(followup["reason"], "node:heartbeat_reported_degraded")
+        self.assertEqual(followup["evidence"]["nodes"][0]["node_id"], "node-a")
+
+    def test_communication_followup_intent_prioritizes_quarantine_and_intervene(self):
+        mod = load_control_api()
+        offline_first = mod.communication_followup_intent(
+            [
+                {
+                    "node_id": "node-offline",
+                    "connection_state": "offline",
+                    "connection_action": "quarantine",
+                    "connection_action_reason": "heartbeat_offline",
+                }
+            ],
+            {"stream_action": "intervene", "stream_action_reason": "pending_stuck", "status": "ok"},
+        )
+        self.assertEqual(offline_first["action"], "quarantine")
+        self.assertEqual(offline_first["reason"], "node:heartbeat_offline")
+        self.assertEqual(offline_first["status"], "needs_attention")
+        stream_intervene = mod.communication_followup_intent(
+            [{"node_id": "node-a", "connection_state": "online", "connection_action": "continue"}],
+            {"stream_action": "intervene", "stream_action_reason": "lag_critical", "status": "ok"},
+        )
+        self.assertEqual(stream_intervene["action"], "intervene")
+        self.assertEqual(stream_intervene["reason"], "tasks_stream:lag_critical")
+        self.assertEqual(stream_intervene["status"], "needs_attention")
+        self.assertEqual(stream_intervene["evidence"]["tasks_stream"]["reason"], "lag_critical")
+
     def test_enrich_node_connection_marks_stale_and_offline(self):
         mod = load_control_api()
         original_now = mod.utc_now_dt

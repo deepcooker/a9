@@ -1103,11 +1103,13 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
                 nodes.append(record)
             except json.JSONDecodeError:
                 nodes.append({"node_id": path.stem, "status": "invalid", "connection_state": "invalid"})
+    tasks_stream = redis_tasks_stream_probe()
     return {
         "count": len(nodes),
         "nodes": nodes[-50:],
         "redis": redis_node_hot_status(),
-        "tasks_stream": redis_tasks_stream_probe(),
+        "tasks_stream": tasks_stream,
+        "communication_followup": communication_followup_intent(nodes[-50:], tasks_stream),
     }
 
 
@@ -1125,6 +1127,73 @@ def node_connection_action(connection_state: str) -> tuple[str, str]:
 
 def probe_action_to_followup(probe_action: Any, probe_action_reason: Any = "") -> dict[str, str]:
     return supervisor().probe_action_to_followup(probe_action, probe_action_reason)
+
+
+def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dict[str, Any]) -> dict[str, Any]:
+    action_priority = {"continue": 1, "watch": 2, "reconnect": 3, "intervene": 4, "quarantine": 5}
+    status_by_action = {
+        "continue": "ok",
+        "watch": "degraded",
+        "reconnect": "degraded",
+        "intervene": "needs_attention",
+        "quarantine": "needs_attention",
+    }
+    best = {
+        "priority": action_priority["continue"],
+        "action": "continue",
+        "reason": "healthy",
+        "status": status_by_action["continue"],
+        "evidence": {"nodes": [], "tasks_stream": {"action": "continue", "reason": "none"}},
+    }
+    for node in nodes:
+        action = str(node.get("connection_action") or "continue")
+        if action not in action_priority:
+            continue
+        priority = action_priority[action]
+        if priority < best["priority"]:
+            continue
+        best = {
+            "priority": priority,
+            "action": action,
+            "reason": f"node:{node.get('connection_action_reason') or 'unknown'}",
+            "status": status_by_action[action],
+            "evidence": {
+                "nodes": [
+                    {
+                        "node_id": str(node.get("node_id") or ""),
+                        "connection_state": str(node.get("connection_state") or ""),
+                        "action": action,
+                        "reason": str(node.get("connection_action_reason") or ""),
+                    }
+                ],
+                "tasks_stream": {
+                    "action": str(tasks_stream.get("stream_action") or "continue"),
+                    "reason": str(tasks_stream.get("stream_action_reason") or "none"),
+                },
+            },
+        }
+    stream_action = str(tasks_stream.get("stream_action") or "continue")
+    if stream_action in action_priority and action_priority[stream_action] >= best["priority"]:
+        best = {
+            "priority": action_priority[stream_action],
+            "action": stream_action,
+            "reason": f"tasks_stream:{tasks_stream.get('stream_action_reason') or 'none'}",
+            "status": status_by_action[stream_action],
+            "evidence": {
+                "nodes": [],
+                "tasks_stream": {
+                    "action": stream_action,
+                    "reason": str(tasks_stream.get("stream_action_reason") or "none"),
+                    "status": str(tasks_stream.get("status") or ""),
+                },
+            },
+        }
+    return {
+        "action": best["action"],
+        "reason": best["reason"],
+        "status": best["status"],
+        "evidence": best["evidence"],
+    }
 
 
 def enrich_node_connection(record: dict[str, Any]) -> dict[str, Any]:
