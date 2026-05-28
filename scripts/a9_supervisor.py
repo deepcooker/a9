@@ -1438,6 +1438,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     idle_timed_out = False
     budget_stopped = False
     budget_reason = ""
+    budget_stop_kind = ""
     event_count = 0
     event_bytes = 0
     max_events = worker_budget_limit("A9_WORKER_MAX_EVENTS", DEFAULT_MAX_WORKER_EVENTS)
@@ -1493,6 +1494,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             blocked = blocked_worker_command(command)
                             if blocked:
                                 budget_stopped = True
+                                budget_stop_kind = "command_bounds"
                                 budget_reason = f"blocked nested worker command: {blocked}"
                                 proc.kill()
                                 break
@@ -1503,6 +1505,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             )
                             if violation:
                                 budget_stopped = True
+                                budget_stop_kind = "command_bounds"
                                 budget_reason = (
                                     f"blocked worker command by task bounds: {violation.get('kind')} "
                                     f"{bounded_inline(violation.get('command', ''), 240)}"
@@ -1511,11 +1514,13 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                                 break
                     if event_count > max_events:
                         budget_stopped = True
+                        budget_stop_kind = "event_count"
                         budget_reason = f"worker event count exceeded {max_events}"
                         proc.kill()
                         break
                     if event_bytes > max_event_bytes:
                         budget_stopped = True
+                        budget_stop_kind = "event_bytes"
                         budget_reason = f"worker event bytes exceeded {max_event_bytes}"
                         proc.kill()
                         break
@@ -1538,6 +1543,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "idle_timed_out": idle_timed_out,
         "idle_timeout_seconds": idle_timeout_seconds,
         "budget_stopped": budget_stopped,
+        "budget_stop_kind": budget_stop_kind,
         "budget_reason": budget_reason,
         "event_count": event_count,
         "event_bytes": event_bytes,
@@ -3677,6 +3683,13 @@ def worker_failure_text(worker: dict[str, Any], limit: int = 12000) -> str:
 
 def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
     if worker.get("budget_stopped"):
+        if worker.get("budget_stop_kind") == "command_bounds":
+            return {
+                "status": "monitor-blocked",
+                "category": "process_governance",
+                "reason": worker.get("budget_reason", "worker command blocked by task bounds"),
+                "matched_pattern": "command_bounds",
+            }
         return {
             "status": "retryable-worker-budget",
             "category": "budget",

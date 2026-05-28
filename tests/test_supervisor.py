@@ -2000,6 +2000,23 @@ Do the work.
 
         self.assertEqual(mod.decide_status(worker, diff, []), "retryable-worker-budget")
 
+    def test_worker_command_bound_stop_is_monitor_blocked(self):
+        mod = load_supervisor()
+        worker = {
+            "timed_out": False,
+            "idle_timed_out": False,
+            "budget_stopped": True,
+            "budget_stop_kind": "command_bounds",
+            "budget_reason": "blocked worker command by task bounds: forbidden_session_context_read",
+            "return_code": -9,
+        }
+        diff = {"diff_bytes": 0}
+        failure = mod.classify_worker_failure(worker)
+
+        self.assertEqual(failure["status"], "monitor-blocked")
+        self.assertEqual(failure["category"], "process_governance")
+        self.assertEqual(mod.decide_status(worker, diff, []), "monitor-blocked")
+
     def test_next_task_prompt_inlines_worker_next_slice(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="scan", prompt="demo", phase="reference_scan")
