@@ -1259,7 +1259,11 @@ def latest_probe_evidence_for_node(node_id: str, *, root: Path = ROOT) -> dict[s
     evidence_dir = node_evidence_dir(node_id, root)
     if not evidence_dir.exists():
         return None
-    candidates = sorted(evidence_dir.glob("probe*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    candidates = sorted(
+        evidence_dir.glob("probe*.json"),
+        key=lambda item: (item.stat().st_mtime, item.name.rsplit("-", 1)[-1]),
+        reverse=True,
+    )
     for path in candidates:
         try:
             payload = read_json(path)

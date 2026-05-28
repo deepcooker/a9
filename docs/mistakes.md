@@ -800,3 +800,21 @@
 - 测试 fake 不能只覆盖 happy path；至少要模拟会导致真实默认行为变化的字段。
 - monitor 不能只看 pass/fail 和 scope guard；要人工读 patch 中所有决策 helper
   的入参，尤其是 budget、cap、approval、policy 这类默认值。
+
+## 2026-05-28：latest evidence 测试不能只靠 mtime 排序
+
+现象：
+
+- `expose-latest-probe-evidence-in-node-status-20260528` worker 在 worktree 里通过
+  112 tests，但 cherry-pick 到主线后同一测试失败。
+- 原因是两条 probe evidence 写入太近，文件系统 `st_mtime` 可能相同，按 mtime
+  排序会偶发选到旧 evidence。
+- `write_node_evidence()` 文件名自带微秒时间戳，应该用文件名末尾时间戳作为
+  tie-breaker；不能用完整文件名，因为 `probe-timeout-*` 前缀会压过 `probe-*`。
+
+规则：
+
+- “最新一条”这类测试不能依赖低精度 mtime 单字段。
+- 证据文件名已经带时间戳时，排序必须把末尾时间戳纳入稳定 tie-breaker，不要让
+  kind 前缀影响“最新”语义。
+- worker 通过后，主控合并到 main 后仍必须重跑声明测试；worktree pass 不是最终验收。
