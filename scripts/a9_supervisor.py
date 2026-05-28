@@ -1600,6 +1600,12 @@ def extract_worker_search_replace_patch(text: str) -> tuple[str, str | None, lis
                     continue
                 path = str(item.get("path") or "").strip()
                 block = str(item.get("block") or "").strip()
+                search = item.get("search")
+                replace = item.get("replace")
+                if not block and isinstance(search, str) and isinstance(replace, str):
+                    search_text = search if search.endswith("\n") else f"{search}\n"
+                    replace_text = replace if replace.endswith("\n") else f"{replace}\n"
+                    block = f"<<<<<<< SEARCH\n{search_text}=======\n{replace_text}>>>>>>> REPLACE"
                 if not path or "<<<<<<< SEARCH" not in block or ">>>>>>> REPLACE" not in block:
                     findings.append(
                         {"level": "warning", "message": "ignored malformed search_replace_blocks item", "index": index}

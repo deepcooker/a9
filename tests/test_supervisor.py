@@ -953,6 +953,48 @@ Do the work.
         self.assertEqual(result["patch_source"], "worker_envelope.output.search_replace_blocks")
         self.assertTrue(any("output.search_replace_blocks" in item.get("message", "") for item in result["findings"]))
 
+    def test_apply_worker_search_replace_extracts_envelope_search_replace_fields(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            root.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "docs").mkdir()
+            (root / "docs" / "mistakes.md").write_text("alpha\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-m", "base"],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            final = run_dir / "final.md"
+            final.write_text(
+                json.dumps(
+                    {
+                        "protocolVersion": 1,
+                        "ok": True,
+                        "status": "ok",
+                        "output": {
+                            "search_replace_blocks": [
+                                {"path": "docs/mistakes.md", "search": "alpha\n", "replace": "delta\n"}
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = mod.apply_worker_search_replace({"final_path": str(final)}, root, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["applied_count"], 1)
+        self.assertEqual(result["touched_files"], ["docs/mistakes.md"])
+        self.assertEqual(result["patch_source"], "worker_envelope.output.search_replace_blocks")
+
     def test_previous_task_checkpoint_id_reads_done_state(self):
         mod = load_supervisor()
         mod.ensure_dirs()
