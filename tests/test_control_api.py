@@ -3312,6 +3312,102 @@ class ControlApiTests(unittest.TestCase):
             self.assertIn("ConnectTimeout=5", calls[0][0])
             self.assertTrue(Path(result["evidence_path"]).exists())
 
+    def test_fake_ssh_lifecycle_probe_tmux_heartbeat_updates_node_status(self):
+        mod = load_control_api()
+
+        class FakeRemote:
+            @staticmethod
+            def ssh_base(target, *, connect_timeout=10, identity_file=""):
+                return [
+                    "echo",
+                    "host=100.64.0.1\nuser=root\nkernel=Linux test\npython3=/usr/bin/python3\ntmux=tmux 3.2\n",
+                ]
+
+            @staticmethod
+            def remote_probe_script():
+                return "ignored"
+
+            @staticmethod
+            def parse_probe(text):
+                return {
+                    line.split("=", 1)[0]: line.split("=", 1)[1]
+                    for line in text.splitlines()
+                    if "=" in line
+                }
+
+            @staticmethod
+            def classify_probe_result(return_code, output):
+                return {
+                    "probe_action": "continue",
+                    "probe_action_reason": "probe_ok",
+                    "required_missing": [],
+                    "optional_missing": [],
+                }
+
+        class FakeProc:
+            returncode = 0
+            stdout = ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_remote = mod.remote
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                mod.remote = lambda: FakeRemote
+
+                probe = mod.probe_node({"ssh_target": "root@100.64.0.1"}, root=root)
+                tmux_plan = mod.tmux_plan_node({"ssh_target": "root@100.64.0.1", "session": "a9/main"}, root=root)
+                heartbeat_plan = mod.heartbeat_tmux_plan_node(
+                    {"ssh_target": "root@100.64.0.1", "session": "a9/heartbeat"},
+                    root=root,
+                )
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+
+                tmux_status = mod.tmux_status_node({"evidence_path": tmux_plan["evidence_path"]}, root=root)
+                mod.phone_control_arm(
+                    {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                heartbeat_start = mod.heartbeat_tmux_start_node(
+                    {
+                        "evidence_path": heartbeat_plan["evidence_path"],
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+                self.assertTrue(Path(tmux_status["evidence_path"]).exists())
+                self.assertTrue(Path(heartbeat_start["evidence_path"]).exists())
+            finally:
+                mod.subprocess.run = original_run
+                mod.remote = original_remote
+
+            status = mod.node_status(root)
+            node = status["nodes"][0]
+
+        self.assertEqual(probe["status"], "ok")
+        self.assertEqual(probe["probe_action"], "continue")
+        self.assertEqual(tmux_status["status"], "exists")
+        self.assertEqual(heartbeat_start["status"], "ok")
+        self.assertEqual(len(calls), 2)
+        for cmd, _kwargs in calls:
+            self.assertEqual(cmd[0], "ssh")
+            self.assertIn("ConnectTimeout=5", cmd)
+
+        self.assertEqual(node["last_probe_action"], "continue")
+        self.assertEqual(node["tmux_action"], "continue")
+        self.assertEqual(node["tmux_status"], "exists")
+        self.assertTrue(node["tmux_evidence_path"])
+        self.assertEqual(node["heartbeat_start_action"], "continue")
+        self.assertEqual(node["heartbeat_start_status"], "ok")
+        self.assertTrue(node["heartbeat_start_evidence_path"])
+        self.assertEqual(node["connection_action"], "continue")
+
     def test_tmux_plan_parses_target_port_and_identity(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
