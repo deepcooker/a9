@@ -1704,6 +1704,33 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         },
         root=root,
     )
+    evidence_payload = {
+        "status": "ok" if return_code == 0 else "failed",
+        "target": target,
+        "node_id": str(registered.get("node", {}).get("node_id") or target),
+        "host": host,
+        "checked_at": checked_at,
+        "return_code": return_code,
+        "timed_out": timed_out,
+        "probe_action": classification.get("probe_action"),
+        "probe_action_reason": classification.get("probe_action_reason"),
+        "supervisor_followup": followup,
+        "missing_required_tools": classification.get("required_missing") or [],
+        "missing_optional_tools": classification.get("optional_missing") or [],
+        "reconnect_action": reconnect_action,
+        "reconnect_reason": reconnect_reason,
+        "reconnect_attempt": reconnect_attempt,
+        "reconnect_backoff_seconds": reconnect_backoff_seconds,
+        "reconnect_lifecycle": lifecycle,
+        "raw": compact_text(raw_output, 4000),
+        "transport_quality": transport_quality(target),
+    }
+    evidence_path = write_node_evidence(
+        "probe-timeout" if timed_out else "probe",
+        str(registered.get("node", {}).get("node_id") or target),
+        evidence_payload,
+        root=root,
+    )
     return {
         "status": "ok" if return_code == 0 else "failed",
         "checked_at": checked_at,
@@ -1717,6 +1744,7 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         "missing_optional_tools": classification["optional_missing"],
         "probe": parsed,
         "raw": compact_text(raw_output, 4000),
+        "evidence_path": str(evidence_path),
         "node": registered["node"],
     }
 

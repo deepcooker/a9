@@ -2096,6 +2096,9 @@ class ControlApiTests(unittest.TestCase):
                 mod.remote = lambda: FakeRemote
                 result = mod.probe_node({"ssh_target": "root@node1", "reconnect_attempt": 3}, root=root)
                 status = mod.node_status(root)
+                listed = mod.list_node_evidence(str(result["node"]["node_id"]), root=root)
+                self.assertEqual(listed["status"], "ok")
+                self.assertEqual(any(item["path"] == result["evidence_path"] for item in listed["items"]), True)
             finally:
                 mod.remote = original_remote
 
@@ -2177,6 +2180,13 @@ class ControlApiTests(unittest.TestCase):
                     root=root,
                 )
                 status = mod.node_status(root)
+                self.assertTrue(Path(result["evidence_path"]).exists())
+                evidence_read = mod.read_evidence_file(str(result["evidence_path"]), root=root)
+                self.assertEqual(evidence_read["status"], "ok")
+                probe_evidence = json.loads(evidence_read["content"])
+                self.assertEqual(probe_evidence["probe_action"], "retry")
+                self.assertEqual(probe_evidence["reconnect_action"], "reconnect")
+                self.assertTrue(probe_evidence["timed_out"])
             finally:
                 mod.remote = original_remote
                 mod.subprocess.run = original_run
@@ -2202,6 +2212,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["reconnect_attempt"], 2)
         self.assertEqual(node["reconnect_backoff_seconds"], 4)
         self.assertEqual(node["reconnect_lifecycle"]["event"], "reconnecting")
+
 
     def test_probe_node_sets_reconnect_backoff_and_terminal_action_fields(self):
         mod = load_control_api()
