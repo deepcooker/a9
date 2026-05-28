@@ -2683,10 +2683,17 @@ class ControlApiTests(unittest.TestCase):
             original_remote = mod.remote
             original_probe_node = mod.probe_node
             original_node_status = mod.node_status
+            original_command_gate = mod.command_gate
             try:
                 mod.remote = lambda: FakeRemote
                 mod.probe_node = lambda payload: original_probe_node(payload, root=root)
                 mod.node_status = lambda: original_node_status(root)
+                mod.command_gate = lambda command: {
+                    "status": "allowed",
+                    "allowed": True,
+                    "command": command,
+                    "reason": "test_gate",
+                }
 
                 post_payload = {"ssh_target": "root@node1"}
                 post_body = json.dumps(post_payload).encode("utf-8")
@@ -2721,6 +2728,7 @@ class ControlApiTests(unittest.TestCase):
                 mod.remote = original_remote
                 mod.probe_node = original_probe_node
                 mod.node_status = original_node_status
+                mod.command_gate = original_command_gate
 
         self.assertEqual(captured_post["status"], 200)
         self.assertEqual(captured_post["payload"]["status"], "ok")
@@ -2767,10 +2775,17 @@ class ControlApiTests(unittest.TestCase):
             original_remote = mod.remote
             original_probe_node = mod.probe_node
             original_node_status = mod.node_status
+            original_command_gate = mod.command_gate
             try:
                 mod.remote = lambda: FakeRemote
                 mod.probe_node = lambda payload: original_probe_node(payload, root=root)
                 mod.node_status = lambda: original_node_status(root)
+                mod.command_gate = lambda command: {
+                    "status": "allowed",
+                    "allowed": True,
+                    "command": command,
+                    "reason": "test_gate",
+                }
 
                 post_payload = {"ssh_target": "root@node1"}
                 post_body = json.dumps(post_payload).encode("utf-8")
@@ -2805,6 +2820,7 @@ class ControlApiTests(unittest.TestCase):
                 mod.remote = original_remote
                 mod.probe_node = original_probe_node
                 mod.node_status = original_node_status
+                mod.command_gate = original_command_gate
 
         self.assertEqual(captured_post["status"], 200)
         self.assertEqual(captured_post["payload"]["status"], "ok")
@@ -2816,6 +2832,76 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["last_probe_required_missing"], [])
         self.assertEqual(node["last_probe_optional_missing"], ["tmux"])
         self.assertTrue(node["last_probe_checked_at"])
+
+    def test_api_nodes_probe_post_requires_remote_gate(self):
+        mod = load_control_api()
+        original_probe_node = mod.probe_node
+        original_command_gate = mod.command_gate
+        calls = []
+        try:
+            mod.probe_node = lambda payload: calls.append(payload) or {"status": "should-not-run"}
+            mod.command_gate = lambda command: {
+                "status": "blocked",
+                "allowed": False,
+                "command": command,
+                "reason": "phone_control_disarmed",
+            }
+            post_body = json.dumps({"ssh_target": "root@node1"}).encode("utf-8")
+            captured = {"status": None, "payload": None}
+
+            class DummyProbePostHandler:
+                path = "/api/nodes/probe"
+                headers = {"Content-Length": str(len(post_body))}
+                rfile = io.BytesIO(post_body)
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["payload"] = payload
+
+            mod.ControlHandler.do_POST(DummyProbePostHandler())
+        finally:
+            mod.probe_node = original_probe_node
+            mod.command_gate = original_command_gate
+
+        self.assertEqual(captured["status"], 403)
+        self.assertEqual(captured["payload"]["status"], "blocked")
+        self.assertEqual(captured["payload"]["gate"]["command"], "nodes.probe.execute")
+        self.assertEqual(calls, [])
+
+    def test_api_nodes_tmux_status_post_requires_remote_gate(self):
+        mod = load_control_api()
+        original_tmux_status_node = mod.tmux_status_node
+        original_command_gate = mod.command_gate
+        calls = []
+        try:
+            mod.tmux_status_node = lambda payload: calls.append(payload) or {"status": "should-not-run"}
+            mod.command_gate = lambda command: {
+                "status": "blocked",
+                "allowed": False,
+                "command": command,
+                "reason": "phone_control_disarmed",
+            }
+            post_body = json.dumps({"evidence_path": "/tmp/plan.json"}).encode("utf-8")
+            captured = {"status": None, "payload": None}
+
+            class DummyTmuxStatusPostHandler:
+                path = "/api/nodes/tmux-status"
+                headers = {"Content-Length": str(len(post_body))}
+                rfile = io.BytesIO(post_body)
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["payload"] = payload
+
+            mod.ControlHandler.do_POST(DummyTmuxStatusPostHandler())
+        finally:
+            mod.tmux_status_node = original_tmux_status_node
+            mod.command_gate = original_command_gate
+
+        self.assertEqual(captured["status"], 403)
+        self.assertEqual(captured["payload"]["status"], "blocked")
+        self.assertEqual(captured["payload"]["gate"]["command"], "nodes.tmux.status")
+        self.assertEqual(calls, [])
 
     def test_bootstrap_plan_node_is_non_executing_plan(self):
         mod = load_control_api()
@@ -3003,6 +3089,9 @@ class ControlApiTests(unittest.TestCase):
             allowed_probe = mod.command_gate("nodes.probe.execute", root=root)
             self.assertTrue(allowed_probe["allowed"])
             self.assertEqual(allowed_probe["status"], "allowed")
+            allowed_tmux_status = mod.command_gate("nodes.tmux.status", root=root)
+            self.assertTrue(allowed_tmux_status["allowed"])
+            self.assertEqual(allowed_tmux_status["status"], "allowed")
             allowed_heartbeat = mod.command_gate("nodes.heartbeat.tmux.start", root=root)
             self.assertTrue(allowed_heartbeat["allowed"])
             self.assertEqual(allowed_heartbeat["status"], "allowed")

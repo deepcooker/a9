@@ -44,6 +44,7 @@ PHONE_CONTROL_GROUPS = {
         "nodes.remote.install",
         "nodes.remote.repair",
         "nodes.tmux.ensure",
+        "nodes.tmux.status",
         "nodes.heartbeat.tmux.start",
     ],
 }
@@ -1111,6 +1112,13 @@ def command_gate(command: str, *, root: Path = ROOT) -> dict[str, Any]:
     }
 
 
+def guarded_remote_post(command: str, payload: dict[str, Any], action: Any) -> tuple[int, dict[str, Any]]:
+    gate = command_gate(command)
+    if not gate.get("allowed"):
+        return 403, {"status": "blocked", "gate": gate}
+    return 200, action(payload)
+
+
 def node_status(root: Path = ROOT) -> dict[str, Any]:
     nodes_dir = root / ".a9" / "nodes"
     nodes = []
@@ -1203,7 +1211,7 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
 
     if tmux_action in {"retry", "repair", "wait_for_approval"}:
         endpoint = "/api/nodes/tmux-status" if tmux_action == "wait_for_approval" else "/api/nodes/tmux-ensure"
-        command = None if tmux_action == "wait_for_approval" else "nodes.tmux.ensure"
+        command = "nodes.tmux.status" if tmux_action == "wait_for_approval" else "nodes.tmux.ensure"
         return {
             "action": "tmux",
             "reason": str(record.get("tmux_action_reason") or "tmux_repair_required"),
@@ -1213,7 +1221,7 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
                 "method": "POST",
                 "endpoint": endpoint,
                 "command": command,
-                "requires_arm": command is not None,
+                "requires_arm": True,
             },
         }
 
@@ -2666,7 +2674,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/nodes/register":
                 self.write_json(200, register_node(payload))
             elif self.path == "/api/nodes/probe":
-                self.write_json(200, probe_node(payload))
+                status, body = guarded_remote_post("nodes.probe.execute", payload, probe_node)
+                self.write_json(status, body)
             elif self.path == "/api/nodes/bootstrap-plan":
                 self.write_json(200, bootstrap_plan_node(payload))
             elif self.path == "/api/nodes/bootstrap-dry-run":
@@ -2676,7 +2685,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/nodes/tmux-ensure":
                 self.write_json(200, tmux_ensure_node(payload))
             elif self.path == "/api/nodes/tmux-status":
-                self.write_json(200, tmux_status_node(payload))
+                status, body = guarded_remote_post("nodes.tmux.status", payload, tmux_status_node)
+                self.write_json(status, body)
             elif self.path == "/api/nodes/heartbeat-tmux-start":
                 self.write_json(200, heartbeat_tmux_start_node(payload))
             elif self.path == "/api/nodes/heartbeat":

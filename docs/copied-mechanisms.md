@@ -231,6 +231,9 @@ Typed reconnect action contract extracted for A9:
 - `recovery_plan.route` is metadata only (no auto executor):
   `{method, endpoint, command, requires_arm}` maps each action to existing
   control API routes/commands; manual quarantine/observe/none keep null route.
+- Remote execution POST routes enforce the same command gate advertised by
+  route metadata; blocked probes/status checks return gate evidence instead of
+  touching SSH/Tailscale/tmux.
 - A9 evidence should always record `phase` and `action` together so the
   action-domain is auditable and machine-routable.
 - Minimum reconnect evidence keys:
