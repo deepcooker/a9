@@ -129,6 +129,10 @@ NOISE_PATTERNS = [
     re.compile(r"^\[.*truncated.*\]$", re.I),
     re.compile(r"^\.\.\.\[truncated.*\]\.\.\.$", re.I),
 ]
+PROMPTWARE_PATTERNS = [
+    re.compile(r"\bignore\s+previous\s+instructions?\b", re.I),
+    re.compile(r"\bsystem\s+prompt\b", re.I),
+]
 WORKER_NETWORK_ERROR_PATTERNS = [
     re.compile(r"\bConnection reset by peer\b", re.I),
     re.compile(r"\bConnection refused\b", re.I),
@@ -699,6 +703,57 @@ def read_budgeted(path: Path, budget: int, *, keep: str = "head") -> str:
     return truncate_to_token_budget(text, budget, keep=keep)
 
 
+def scan_promptware_findings(text: str) -> list[str]:
+    findings: list[str] = []
+    for pattern in PROMPTWARE_PATTERNS:
+        if pattern.search(text):
+            findings.append(pattern.pattern)
+    return findings
+
+
+def build_context_router_sections(
+    section_inputs: list[dict[str, Any]],
+) -> tuple[list[tuple[str, str]], dict[str, Any]]:
+    rendered_sections: list[tuple[str, str]] = []
+    section_meta: list[dict[str, Any]] = []
+    blocked_count = 0
+    for item in section_inputs:
+        name = str(item.get("name", "")).strip()
+        source = str(item.get("source", "")).strip()
+        role = str(item.get("role", "")).strip() or "reference"
+        budget_tokens = int(item.get("budget_tokens", 0) or 0)
+        reference_only = bool(item.get("reference_only", False))
+        body = str(item.get("body") or "")
+        findings: list[str] = []
+        blocked = False
+        if reference_only and body.strip():
+            findings = scan_promptware_findings(body)
+            if findings:
+                blocked = True
+                blocked_count += 1
+                body = "[blocked by context router: promptware detected in reference-only section]"
+        approx_tokens = approx_token_count(body) if body else 0
+        rendered_sections.append((name, body))
+        section_meta.append(
+            {
+                "name": name,
+                "source": source,
+                "role": role,
+                "budget_tokens": budget_tokens,
+                "approx_tokens": approx_tokens,
+                "reference_only": reference_only,
+                "blocked": blocked,
+                "findings": findings,
+            }
+        )
+
+    return rendered_sections, {
+        "strategy": "hermes_context_router_v1",
+        "sections": section_meta,
+        "blocked_sections": blocked_count,
+    }
+
+
 def build_context_packet(task: Task) -> dict[str, Any]:
     """Build a bounded prompt packet from durable channels.
 
@@ -783,16 +838,74 @@ Hard rules:
         section_budgets["contract"],
     )
 
-    sections = [
-        ("A9 Bounded Context Packet", ""),
-        ("Token Budget", f"approx_budget: {total_budget} tokens"),
-        ("Contract", contract),
-        ("Current Task", task_prompt),
-        ("Previous Task Context Tail", previous_context or "(none)"),
-        ("Repository Map", repo_map or "(none)"),
-        ("Reference Mechanisms To Copy", reference_mechanisms),
-        ("Doctrine Excerpts", doctrine or "(none)"),
-    ]
+    sections, context_router_meta = build_context_router_sections(
+        [
+            {
+                "name": "A9 Bounded Context Packet",
+                "source": "supervisor.template",
+                "role": "header",
+                "budget_tokens": 0,
+                "reference_only": False,
+                "body": "",
+            },
+            {
+                "name": "Token Budget",
+                "source": "supervisor.budget",
+                "role": "control",
+                "budget_tokens": 64,
+                "reference_only": False,
+                "body": f"approx_budget: {total_budget} tokens",
+            },
+            {
+                "name": "Contract",
+                "source": "supervisor.contract",
+                "role": "policy",
+                "budget_tokens": section_budgets["contract"],
+                "reference_only": False,
+                "body": contract,
+            },
+            {
+                "name": "Current Task",
+                "source": str(task.path),
+                "role": "task",
+                "budget_tokens": section_budgets["task"],
+                "reference_only": False,
+                "body": task_prompt,
+            },
+            {
+                "name": "Previous Task Context Tail",
+                "source": str(previous_context_path) if previous_context else "none",
+                "role": "memory",
+                "budget_tokens": section_budgets["previous_context"],
+                "reference_only": True,
+                "body": previous_context or "(none)",
+            },
+            {
+                "name": "Repository Map",
+                "source": "repo-map",
+                "role": "repo_map",
+                "budget_tokens": section_budgets["repo_map"],
+                "reference_only": True,
+                "body": repo_map or "(none)",
+            },
+            {
+                "name": "Reference Mechanisms To Copy",
+                "source": "docs/copied-mechanisms.md",
+                "role": "reference",
+                "budget_tokens": section_budgets["reference_mechanisms"],
+                "reference_only": True,
+                "body": reference_mechanisms,
+            },
+            {
+                "name": "Doctrine Excerpts",
+                "source": "原始想法需求.md,session-governance.md",
+                "role": "doctrine",
+                "budget_tokens": section_budgets["doctrine"],
+                "reference_only": True,
+                "body": doctrine or "(none)",
+            },
+        ]
+    )
     prompt = "\n\n".join(f"# {title}\n\n{body}".rstrip() for title, body in sections) + "\n"
     if approx_token_count(prompt) > total_budget:
         prompt = truncate_to_token_budget(prompt, total_budget, keep="middle")
@@ -804,6 +917,7 @@ Hard rules:
         "previous_context_path": str(previous_context_path) if previous_context else "",
         "previous_context_compression": previous_context_meta,
         "repo_map": repo_map_meta,
+        "context_router": context_router_meta,
     }
 
 
@@ -1767,13 +1881,37 @@ def command_matches_declared_check(command: str, checks: list[str]) -> bool:
     normalized = normalize_shell_command(command)
     normalized_variants = command_equivalence_variants(normalized)
     declared_variants = [variant for item in checks for variant in command_equivalence_variants(normalize_shell_command(item))]
-    return any(
+    if any(
         command_variant == declared_variant
         or command_variant in declared_variant
         or declared_variant in command_variant
         for command_variant in normalized_variants
         for declared_variant in declared_variants
+    ):
+        return True
+    command_targets = unittest_targets(normalized)
+    declared_targets = [target for item in checks for target in unittest_targets(normalize_shell_command(item))]
+    return any(
+        command_target and declared_target.startswith(command_target + ".")
+        for command_target in command_targets
+        for declared_target in declared_targets
     )
+
+
+def unittest_targets(command: str) -> list[str]:
+    normalized = normalize_shell_command(command)
+    match = re.search(r"python3?\s+-m\s+unittest\s+([^'\";&|]+)", normalized)
+    if not match:
+        return []
+    targets: list[str] = []
+    for target in match.group(1).split():
+        cleaned = target.strip()
+        if not cleaned or cleaned.startswith("-"):
+            continue
+        if cleaned.endswith(".py"):
+            cleaned = cleaned[:-3].replace("/", ".").replace("\\", ".")
+        targets.append(cleaned)
+    return targets
 
 
 def command_equivalence_variants(command: str) -> set[str]:
