@@ -60,6 +60,10 @@ COMMUNICATION_MONITOR_EXEMPT_HINTS = (
     "allowed_paths",
     "session-governance",
     "session-raw",
+    "context router",
+    "context-router",
+    "context_pressure",
+    "promptware",
 )
 FAILURE_CLASS_HINTS = ("timeout", "auth", "network", "protocol", "rate_limit")
 RECOVERY_ACTION_HINTS = ("retry", "repair", "quarantine", "terminate")
@@ -433,6 +437,51 @@ def evaluate_exception_governance_expert(summary: dict[str, Any], worker: dict[s
     if worker.get("idle_timed_out") or worker.get("timed_out"):
         score = add_score(score, 0.3)
         findings.append(finding("error", "worker_timeout", "worker timed out or idle timed out"))
+
+    # Make context-router promptware blocking visible to monitor/control without leaking raw section bodies.
+    blocked_sources: list[dict[str, Any]] = []
+    worker_context_router = worker.get("context_router") if isinstance(worker.get("context_router"), dict) else {}
+    if worker_context_router:
+        blocked_sources.append(worker_context_router)
+    context_pressure = summary.get("context_pressure") if isinstance(summary.get("context_pressure"), dict) else {}
+    pressure_context_router = (
+        context_pressure.get("context_router") if isinstance(context_pressure.get("context_router"), dict) else {}
+    )
+    if pressure_context_router:
+        blocked_sources.append(pressure_context_router)
+
+    blocked_sections_value = 0
+    blocked_section_names: list[str] = []
+    for source in blocked_sources:
+        raw_count = source.get("blocked_sections")
+        if isinstance(raw_count, int):
+            blocked_sections_value = max(blocked_sections_value, raw_count)
+        elif isinstance(raw_count, list):
+            blocked_sections_value = max(blocked_sections_value, len(raw_count))
+            for item in raw_count:
+                if isinstance(item, dict):
+                    name = item.get("name") or item.get("section") or item.get("id")
+                    if isinstance(name, str) and name.strip():
+                        blocked_section_names.append(name.strip())
+                elif isinstance(item, str) and item.strip():
+                    blocked_section_names.append(item.strip())
+        names = source.get("blocked_section_names")
+        if isinstance(names, list):
+            for item in names:
+                if isinstance(item, str) and item.strip():
+                    blocked_section_names.append(item.strip())
+
+    if blocked_sections_value > 0:
+        dedup_names = list(dict.fromkeys(blocked_section_names))
+        findings.append(
+            finding(
+                "warn",
+                "context_router_blocked_promptware",
+                "context-router blocked reference-only prompt sections; monitor-visible for governance",
+                blocked_sections=blocked_sections_value,
+                blocked_section_names=dedup_names,
+            )
+        )
     return expert_result("exception_governance_expert", score, "repair" if score >= 0.3 else action_from_score(score), findings)
 
 

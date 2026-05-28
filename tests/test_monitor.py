@@ -523,6 +523,70 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn("communication_failure_taxonomy_missing", kinds)
         self.assertNotIn("exception_governance_expert", score["gates"]["hard_gate"]["failed_experts"])
 
+    def test_context_router_blocked_sections_are_monitor_visible(self):
+        mod = load_monitor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self.write_run(
+                Path(tmp),
+                {
+                    "status": "pass",
+                    "phase": "implement",
+                    "worker": {
+                        "context_router": {
+                            "blocked_sections": 2,
+                            "blocked_section_names": ["reference_notes", "vendor_context"],
+                        }
+                    },
+                    "context_pressure": {
+                        "context_router": {
+                            "blocked_sections": [
+                                {"name": "reference_notes"},
+                                {"name": "vendor_context"},
+                            ]
+                        }
+                    },
+                    "worker_envelope": {"status": "pass"},
+                    "checks": [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+                },
+                [],
+            )
+            score = mod.score_run(run_dir)
+
+        finding = next(item for item in score["findings"] if item["kind"] == "context_router_blocked_promptware")
+        self.assertEqual(finding["level"], "warn")
+        self.assertEqual(finding["blocked_sections"], 2)
+        self.assertEqual(finding["blocked_section_names"], ["reference_notes", "vendor_context"])
+        self.assertEqual(score["gates"]["hard_gate"]["status"], "pass")
+        self.assertNotIn("exception_governance_expert", score["gates"]["hard_gate"]["failed_experts"])
+
+    def test_context_router_control_task_does_not_trigger_communication_taxonomy_gate(self):
+        mod = load_monitor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self.write_run(
+                Path(tmp),
+                {
+                    "status": "pass",
+                    "phase": "implement",
+                    "worker": {"context_router": {"blocked_sections": 1}},
+                    "worker_envelope": {"status": "pass"},
+                    "checks": [{"command": "python3 -m unittest tests/test_monitor.py", "return_code": 0}],
+                },
+                [],
+                task_text=(
+                    "Goal: expose context router promptware blocking in monitor/control evidence.\n"
+                    "Why: context governance findings must be visible to mobile/control without raw prompt text.\n"
+                    "System behavior: input summary context_router, output monitor finding and state evidence.\n"
+                    "Tradeoff: warn only because router already blocked the promptware; keep scope small.\n"
+                    "Hard bounds: allowed_paths are explicit; tests are declared.\n"
+                ),
+            )
+            score = mod.score_run(run_dir)
+
+        kinds = {item["kind"] for item in score["findings"]}
+        self.assertIn("context_router_blocked_promptware", kinds)
+        self.assertNotIn("communication_failure_taxonomy_missing", kinds)
+        self.assertEqual(score["gates"]["hard_gate"]["status"], "pass")
+
 
 if __name__ == "__main__":
     unittest.main()
