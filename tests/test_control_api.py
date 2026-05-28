@@ -2874,6 +2874,42 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(evidence_payload["return_code"], 3)
             self.assertEqual(evidence_payload["output"], "non-zero heartbeat start output")
 
+    def test_heartbeat_tmux_start_with_non_heartbeat_plan_path_raises(self):
+        mod = load_control_api()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = mod.tmux_plan_node({"ssh_target": "root@100.64.0.1", "session": "a9/main"}, root=root)
+            mod.phone_control_arm(
+                {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                class FakeProc:
+                    returncode = 0
+                    stdout = "should not run"
+
+                mod.subprocess.run = fake_run
+                with self.assertRaises(ValueError) as exc:
+                    mod.heartbeat_tmux_start_node(
+                        {
+                            "evidence_path": plan["evidence_path"],
+                            "operator_scopes": ["operator.admin"],
+                        },
+                        root=root,
+                    )
+            finally:
+                mod.subprocess.run = original_run
+
+            self.assertEqual(str(exc.exception), "evidence is not a heartbeat tmux plan")
+            self.assertEqual(calls, [])
+
     def test_api_nodes_heartbeat_tmux_start_uses_wrapped_root(self):
         mod = load_control_api()
 
@@ -2922,6 +2958,51 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(captured["status"], 200)
             self.assertEqual(captured["payload"]["status"], "ok")
             self.assertTrue(Path(captured["payload"]["evidence_path"]).exists())
+
+    def test_api_nodes_heartbeat_tmux_start_missing_evidence_path_returns_bad_request(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "heartbeat tmux start should not run"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_start_node = mod.heartbeat_tmux_start_node
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.phone_control_arm(
+                    {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                mod.heartbeat_tmux_start_node = lambda payload: original_start_node(payload, root=root)
+                mod.subprocess.run = fake_run
+
+                post_body = json.dumps({"operator_scopes": ["operator.admin"]}).encode("utf-8")
+                captured = {"status": None, "payload": None}
+
+                class DummyHeartbeatTmuxStartPostHandler:
+                    path = "/api/nodes/heartbeat-tmux-start"
+                    headers = {"Content-Length": str(len(post_body))}
+                    rfile = io.BytesIO(post_body)
+
+                    def write_json(self, status, payload):
+                        captured["status"] = status
+                        captured["payload"] = payload
+
+                mod.ControlHandler.do_POST(DummyHeartbeatTmuxStartPostHandler())
+            finally:
+                mod.heartbeat_tmux_start_node = original_start_node
+                mod.subprocess.run = original_run
+
+            self.assertEqual(captured["status"], 400)
+            self.assertIn("evidence_path is required", captured["payload"]["error"])
+            self.assertEqual(calls, [])
 
     def test_tmux_ensure_requires_arm_and_uses_persisted_plan(self):
         mod = load_control_api()
