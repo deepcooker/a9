@@ -258,6 +258,30 @@ Do the work.
             tmp_path = Path(tmp)
             source_root = tmp_path / "source"
             worktree = tmp_path / "worktree"
+            hermes_agent = source_root / "reference-projects" / "hermes-agent"
+            hermes_agent.mkdir(parents=True)
+            (hermes_agent / "README.md").write_text("Hermes README\n", encoding="utf-8")
+            (hermes_agent / "LICENSE").write_text("MIT\n", encoding="utf-8")
+            hermes_agent_code = hermes_agent / "agent"
+            hermes_agent_code.mkdir()
+            (hermes_agent_code / "prompt_builder.py").write_text("def build_prompt(): pass\n", encoding="utf-8")
+            (hermes_agent_code / "context_compressor.py").write_text("def compress(): pass\n", encoding="utf-8")
+            (hermes_agent_code / "memory_manager.py").write_text("class MemoryManager: pass\n", encoding="utf-8")
+            hermes_tools = hermes_agent / "tools"
+            hermes_tools.mkdir()
+            (hermes_tools / "delegate_tool.py").write_text("def delegate(): pass\n", encoding="utf-8")
+            hermes_tui = hermes_agent / "tui_gateway"
+            hermes_tui.mkdir()
+            (hermes_tui / "server.py").write_text("def serve(): pass\n", encoding="utf-8")
+            aider = source_root / "reference-projects" / "aider" / "aider"
+            aider.mkdir(parents=True)
+            (aider / "repomap.py").write_text("class RepoMap: pass\n", encoding="utf-8")
+            (aider / "history.py").write_text("def history(): pass\n", encoding="utf-8")
+            (aider / "prompts.py").write_text("prompt = 'x'\n", encoding="utf-8")
+            codex_core = source_root / "reference-projects" / "codex" / "codex-rs" / "core" / "src"
+            (codex_core / "context_manager").mkdir(parents=True)
+            (codex_core / "context_manager" / "history.rs").write_text("pub struct History;\n", encoding="utf-8")
+            (codex_core / "compact.rs").write_text("pub fn compact() {}\n", encoding="utf-8")
             codex_transport = (
                 source_root
                 / "reference-projects"
@@ -295,12 +319,48 @@ Do the work.
             finally:
                 mod.ROOT = original_root
 
+            self.assertIn("reference-projects/hermes-agent/README.md", copied)
+            self.assertIn("reference-projects/hermes-agent/agent/prompt_builder.py", copied)
+            self.assertIn("reference-projects/hermes-agent/tui_gateway", copied)
+            self.assertIn("reference-projects/aider/aider/repomap.py", copied)
+            self.assertIn("reference-projects/codex/codex-rs/core/src/context_manager", copied)
+            self.assertIn("reference-projects/codex/codex-rs/core/src/compact.rs", copied)
             self.assertIn("reference-projects/codex/codex-rs/app-server-transport/src/transport", copied)
             self.assertIn("reference-projects/openclaw/extensions/lobster", copied)
             self.assertIn("reference-projects/barter-rs/barter-integration/src/socket", copied)
             self.assertIn("reference-projects/barter-rs/barter/src/engine/audit", copied)
             self.assertIn("reference-projects/barter-rs/barter/src/strategy", copied)
             self.assertIn("vendor-src", copied)
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "hermes-agent"
+                    / "agent"
+                    / "prompt_builder.py"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "aider"
+                    / "aider"
+                    / "repomap.py"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "codex"
+                    / "codex-rs"
+                    / "core"
+                    / "src"
+                    / "context_manager"
+                    / "history.rs"
+                ).exists()
+            )
             self.assertTrue(
                 (
                     worktree

@@ -884,6 +884,18 @@ def create_isolated_git_copy(worktree: Path, *, replace_existing: bool = False) 
 
 def worker_reference_slices() -> list[str]:
     return [
+        "reference-projects/hermes-agent/README.md",
+        "reference-projects/hermes-agent/LICENSE",
+        "reference-projects/hermes-agent/agent/prompt_builder.py",
+        "reference-projects/hermes-agent/agent/context_compressor.py",
+        "reference-projects/hermes-agent/agent/memory_manager.py",
+        "reference-projects/hermes-agent/tools/delegate_tool.py",
+        "reference-projects/hermes-agent/tui_gateway",
+        "reference-projects/aider/aider/repomap.py",
+        "reference-projects/aider/aider/history.py",
+        "reference-projects/aider/aider/prompts.py",
+        "reference-projects/codex/codex-rs/core/src/context_manager",
+        "reference-projects/codex/codex-rs/core/src/compact.rs",
         "reference-projects/codex/codex-rs/app-server-transport/src/transport",
         "reference-projects/openclaw/extensions/lobster",
         "reference-projects/openclaw/extensions/policy",
