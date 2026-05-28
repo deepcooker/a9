@@ -38,6 +38,29 @@ PRODUCT_PRESSURE_HINTS = ("tradeoff", "权衡", "reject", "拒绝", "推翻", "�
 DATA_MODEL_HINTS = ("data", "schema", "model", "table", "event", "state", "数据", "表", "结构", "状态", "事件")
 PERFORMANCE_HINTS = ("performance", "latency", "throughput", "budget", "timeout", "cache", "性能", "延迟", "吞吐", "压测", "稳定")
 COMMUNICATION_HINTS = ("communication", "gateway", "control api", "ssh", "tmux", "redis", "reconnect", "通讯", "控制")
+COMMUNICATION_RUNTIME_HINTS = (
+    "gateway",
+    "control api",
+    "ssh",
+    "tmux",
+    "redis",
+    "reconnect",
+    "websocket",
+    "remote",
+    "node",
+    "heartbeat",
+    "通讯",
+    "远程",
+)
+COMMUNICATION_MONITOR_EXEMPT_HINTS = (
+    "repo map",
+    "context packet",
+    "token governance",
+    "prompt repo map",
+    "allowed_paths",
+    "session-governance",
+    "session-raw",
+)
 FAILURE_CLASS_HINTS = ("timeout", "auth", "network", "protocol", "rate_limit")
 RECOVERY_ACTION_HINTS = ("retry", "repair", "quarantine", "terminate")
 
@@ -386,6 +409,11 @@ def evaluate_exception_governance_expert(summary: dict[str, Any], worker: dict[s
         score = add_score(score, 0.22)
         findings.append(finding("warn", "worker_failure_requires_policy", "worker failure/retryable state needs explicit recovery policy", worker_failure=failure))
     communication_task = contains_any(text, COMMUNICATION_HINTS)
+    if communication_task and contains_any(text, COMMUNICATION_MONITOR_EXEMPT_HINTS):
+        communication_task = contains_any(text, COMMUNICATION_RUNTIME_HINTS) and contains_any(
+            text,
+            ("failure taxonomy", "recovery mapping", "error action", "异常", "失败", "恢复"),
+        )
     if communication_task:
         lowered = text.lower()
         failure_classes = [item for item in FAILURE_CLASS_HINTS if re.search(rf"(?<![a-z0-9_]){re.escape(item)}(?![a-z0-9_])", lowered)]

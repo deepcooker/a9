@@ -494,6 +494,35 @@ class MonitorTests(unittest.TestCase):
                         score["gates"]["hard_gate"]["failed_experts"],
                     )
 
+    def test_context_repo_map_task_does_not_trigger_communication_failure_taxonomy_gate(self):
+        mod = load_monitor()
+        task_text = (
+            "Goal: Make context packet repo map prefer task allowed_paths so narrow worker tasks do not receive "
+            "unrelated communication governance document noise.\n"
+            "Mainline: Context/token governance. Build repo map from allowed_paths and reduce prompt noise.\n"
+            "Scope: scripts/a9_supervisor.py and tests/test_supervisor.py.\n"
+            "Declared checks: python3 -m unittest tests/test_supervisor.py; git diff --check.\n"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self.write_run(
+                Path(tmp),
+                {
+                    "status": "pass",
+                    "phase": "implement",
+                    "worker": {},
+                    "worker_envelope": {"status": "pass"},
+                    "checks": [{"command": "python3 -m unittest tests/test_supervisor.py", "return_code": 0}],
+                },
+                [],
+                task_text=task_text,
+            )
+            score = mod.score_run(run_dir)
+
+        kinds = {item["kind"] for item in score["findings"]}
+        self.assertNotIn("communication_failure_taxonomy_missing", kinds)
+        self.assertNotIn("exception_governance_expert", score["gates"]["hard_gate"]["failed_experts"])
+
 
 if __name__ == "__main__":
     unittest.main()
