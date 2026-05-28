@@ -1550,9 +1550,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(stream_intervene["status"], "needs_attention")
         self.assertEqual(stream_intervene["evidence"]["tasks_stream"]["reason"], "lag_critical")
 
-    def test_node_status_communication_followup_continue_when_nodes_and_stream_healthy(self):
-        mod = load_control_api()
-
+    def _fake_redis_for_healthy_tasks_stream(self, mod, *, heartbeat_len: str):
         class FakeProc:
             def __init__(self, stdout: str = "", returncode: int = 0):
                 self.stdout = stdout
@@ -1562,7 +1560,7 @@ class ControlApiTests(unittest.TestCase):
             if args == ["PING"]:
                 return FakeProc("PONG\n")
             if args == ["XLEN", "a9:heartbeats"]:
-                return FakeProc("2\n")
+                return FakeProc(f"{heartbeat_len}\n")
             if args == ["XLEN", "a9:events"]:
                 return FakeProc("1\n")
             if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
@@ -1574,8 +1572,13 @@ class ControlApiTests(unittest.TestCase):
             raise AssertionError(f"unexpected redis args: {args}")
 
         original_redis = mod.redis_cli
-        original_now = mod.utc_now_dt
         mod.redis_cli = fake_redis
+        return original_redis
+
+    def test_node_status_communication_followup_continue_when_nodes_and_stream_healthy(self):
+        mod = load_control_api()
+        original_redis = self._fake_redis_for_healthy_tasks_stream(mod, heartbeat_len="2")
+        original_now = mod.utc_now_dt
         mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -1607,30 +1610,8 @@ class ControlApiTests(unittest.TestCase):
 
     def test_node_status_communication_followup_quarantine_for_offline_node(self):
         mod = load_control_api()
-
-        class FakeProc:
-            def __init__(self, stdout: str = "", returncode: int = 0):
-                self.stdout = stdout
-                self.returncode = returncode
-
-        def fake_redis(args, *, timeout=2):
-            if args == ["PING"]:
-                return FakeProc("PONG\n")
-            if args == ["XLEN", "a9:heartbeats"]:
-                return FakeProc("1\n")
-            if args == ["XLEN", "a9:events"]:
-                return FakeProc("1\n")
-            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
-                return FakeProc("name\na9-worker\nconsumers\n1\nentries-read\n9\nlag\n1\n")
-            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
-                return FakeProc("0\n1740000001-0\n1740000010-0\n\n0\n")
-            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
-                return FakeProc("name\nworker-a\npending\n0\nidle\n12\n")
-            raise AssertionError(f"unexpected redis args: {args}")
-
-        original_redis = mod.redis_cli
+        original_redis = self._fake_redis_for_healthy_tasks_stream(mod, heartbeat_len="1")
         original_now = mod.utc_now_dt
-        mod.redis_cli = fake_redis
         mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -1662,30 +1643,8 @@ class ControlApiTests(unittest.TestCase):
 
     def test_node_status_communication_followup_keeps_multiple_reconnect_node_evidence(self):
         mod = load_control_api()
-
-        class FakeProc:
-            def __init__(self, stdout: str = "", returncode: int = 0):
-                self.stdout = stdout
-                self.returncode = returncode
-
-        def fake_redis(args, *, timeout=2):
-            if args == ["PING"]:
-                return FakeProc("PONG\n")
-            if args == ["XLEN", "a9:heartbeats"]:
-                return FakeProc("2\n")
-            if args == ["XLEN", "a9:events"]:
-                return FakeProc("1\n")
-            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
-                return FakeProc("name\na9-worker\nconsumers\n1\nentries-read\n9\nlag\n1\n")
-            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
-                return FakeProc("0\n1740000001-0\n1740000010-0\n\n0\n")
-            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
-                return FakeProc("name\nworker-a\npending\n0\nidle\n12\n")
-            raise AssertionError(f"unexpected redis args: {args}")
-
-        original_redis = mod.redis_cli
+        original_redis = self._fake_redis_for_healthy_tasks_stream(mod, heartbeat_len="2")
         original_now = mod.utc_now_dt
-        mod.redis_cli = fake_redis
         mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
         try:
             with tempfile.TemporaryDirectory() as tmp:
