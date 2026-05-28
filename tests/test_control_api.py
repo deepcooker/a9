@@ -910,6 +910,51 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["tmux_status"], "exists")
         self.assertEqual(node["tmux_evidence_path"], str(evidence_path))
 
+    def test_node_status_aggregates_latest_probe_evidence(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@node-a"}, root=root)
+            mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+
+            mod.write_node_evidence(
+                "probe-timeout",
+                "node/a",
+                {
+                    "status": "failed",
+                    "return_code": 124,
+                    "timed_out": True,
+                    "probe_action": "retry",
+                    "probe_action_reason": "timeout",
+                    "checked_at": "2026-05-27T00:00:00Z",
+                },
+                root=root,
+            )
+            latest_evidence_path = mod.write_node_evidence(
+                "probe",
+                "node/a",
+                {
+                    "status": "ok",
+                    "return_code": 0,
+                    "timed_out": False,
+                    "probe_action": "continue",
+                    "probe_action_reason": "probe_ok",
+                    "checked_at": "2026-05-28T00:00:00Z",
+                },
+                root=root,
+            )
+
+            status = mod.node_status(root)
+
+        node = status["nodes"][0]
+        self.assertEqual(node["probe_status"], "ok")
+        self.assertEqual(node["probe_action"], "continue")
+        self.assertEqual(node["probe_action_reason"], "probe_ok")
+        self.assertEqual(node["probe_return_code"], 0)
+        self.assertFalse(node["probe_timed_out"])
+        self.assertEqual(node["probe_checked_at"], "2026-05-28T00:00:00Z")
+        self.assertEqual(node["probe_evidence_path"], str(latest_evidence_path))
+
     def test_node_status_includes_tasks_stream_pending_lag_probe(self):
         mod = load_control_api()
 
