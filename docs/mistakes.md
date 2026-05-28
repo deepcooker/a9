@@ -1000,6 +1000,8 @@
   继续禁止 runtime 广根搜索、管道和无路径搜索。
 - 多个 bounded read 可以用 `&&` 批处理，只要每个片段都在允许路径和窗口内；混入
   `a9_service ps` 这类状态探针仍然必须拦截。
+- `/bin/bash -lc` 的内层命令必须用 shell parser 解析；正则会在 `rg -n \"a|b\"`
+  这类转义引号处截断，导致合理 locator 被误判。
 
 ## 2026-05-29：patch_source 首次 bootstrap 的 patch_apply 摘要会滞后一轮
 

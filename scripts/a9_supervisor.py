@@ -2156,13 +2156,22 @@ def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> b
     if not paths:
         return True
     normalized = normalize_shell_command(command)
-    quoted = re.search(r"/bin/(?:ba)?sh\s+-lc\s+(['\"])(.*?)\1", normalized)
-    inner = quoted.group(2) if quoted else normalized
+    inner = shell_lc_inner_command(normalized)
     inner = inner.strip()
     if re.search(r"\s(?:\|\||;|\|)\s", inner):
         return False
     fragments = [part.strip() for part in re.split(r"\s+&&\s+", inner) if part.strip()]
     return bool(fragments) and all(command_fragment_is_bounded_read_of_paths(fragment, paths) for fragment in fragments)
+
+
+def shell_lc_inner_command(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return command
+    if len(parts) >= 3 and parts[0] in {"/bin/bash", "/bin/sh", "bash", "sh"} and parts[1] == "-lc":
+        return parts[2]
+    return command
 
 
 def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> bool:
