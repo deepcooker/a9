@@ -1103,6 +1103,43 @@ Do the work.
         self.assertEqual(window["soft_limit"], 180)
         self.assertEqual(window["hard_limit"], 240)
 
+    def test_process_governance_blocks_commands_outside_bounded_read_scope(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'python3 scripts/a9_service.py ps && tail -n 60 docs/mistakes.md'",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'tail -n 60 docs/mistakes.md'",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="bounded-read-scope",
+                prompt="Use at most one bounded read of docs/mistakes.md.",
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        findings = [item for item in result["findings"] if item["kind"] == "outside_bounded_read_scope"]
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("a9_service.py ps", findings[0]["command"])
+
     def test_process_governance_observes_batched_sed_reads_with_rationale(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1346,6 +1383,29 @@ Do the work.
         self.assertEqual(tee["kind"], "direct_workspace_write")
         self.assertEqual(sed_in_place["kind"], "direct_workspace_write")
         self.assertEqual(safe_final, {})
+
+    def test_live_worker_blocks_commands_outside_bounded_read_scope(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="bounded-read-live",
+            prompt="Use at most one bounded read of docs/mistakes.md.",
+            checks=["python3 -m unittest tests.test_patch_guard.PatchGuardTests.test_search_replace_extracts_embedded_inline_path"],
+        )
+
+        extra_probe = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'python3 scripts/a9_service.py ps && tail -n 60 docs/mistakes.md'",
+        )
+        allowed_read = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 60 docs/mistakes.md'")
+        allowed_check = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'python3 -m unittest tests.test_patch_guard.PatchGuardTests.test_search_replace_extracts_embedded_inline_path'",
+        )
+
+        self.assertEqual(extra_probe["kind"], "outside_bounded_read_scope")
+        self.assertEqual(allowed_read, {})
+        self.assertEqual(allowed_check, {})
 
     def test_live_worker_blocks_session_context_reads_outside_session_tasks(self):
         mod = load_supervisor()

@@ -1358,6 +1358,14 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
             "reason": "worker started a test/check outside declared checks",
             "command": normalized,
         }
+    bounded_paths = bounded_read_paths_from_prompt(task.prompt)
+    if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
+        return {
+            "kind": "outside_bounded_read_scope",
+            "reason": "worker started a non-test command outside the prompt's bounded read scope",
+            "command": normalized,
+            "allowed_paths": bounded_paths,
+        }
     if prompt_forbids_rg_files(task.prompt) and "rg --files" in normalized:
         return {
             "kind": "forbidden_rg_files",
@@ -2079,6 +2087,35 @@ def prompt_requires_targeted_rg(prompt: str) -> bool:
     return "targeted rg" in str(prompt or "").lower()
 
 
+def bounded_read_paths_from_prompt(prompt: str) -> list[str]:
+    paths: list[str] = []
+    for match in re.finditer(
+        r"bounded read of\s+([A-Za-z0-9_./-]+)",
+        str(prompt or ""),
+        flags=re.IGNORECASE,
+    ):
+        path = match.group(1).strip().rstrip(".,;:")
+        if path and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> bool:
+    if not paths:
+        return True
+    normalized = normalize_shell_command(command)
+    if re.search(r"\s(?:&&|\|\||;|\|)\s", normalized):
+        return False
+    quoted = re.search(r"/bin/(?:ba)?sh\s+-lc\s+(['\"])(.*?)\1", normalized)
+    inner = quoted.group(2) if quoted else normalized
+    inner = inner.strip()
+    target_pattern = "|".join(re.escape(path) for path in paths)
+    return bool(
+        re.search(rf"^tail\s+-n\s+\d+\s+['\"]?(?:{target_pattern})['\"]?$", inner)
+        or re.search(rf"^sed\s+-n\s+['\"]?\d+\s*,\s*\d+p['\"]?\s+['\"]?(?:{target_pattern})['\"]?$", inner)
+    )
+
+
 def task_allows_session_context_reads(task: Task) -> bool:
     if task.phase in SESSION_CONTEXT_READ_PHASES:
         return True
@@ -2274,6 +2311,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     forbids_rg_files = prompt_forbids_rg_files(task.prompt)
     forbids_ls = prompt_forbids_ls(task.prompt)
     requires_targeted_rg = prompt_requires_targeted_rg(task.prompt)
+    bounded_read_paths = bounded_read_paths_from_prompt(task.prompt)
     last_agent_rationale = ""
     for event in read_jsonl_file(event_path):
         if event.get("item_type") in {"agent_message", "reasoning"}:
@@ -2293,6 +2331,19 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "message": "worker ran test/check command outside declared checks",
                     "command": command,
                     "declared_checks": task.checks,
+                }
+            )
+        if bounded_read_paths and not command_looks_like_test(command) and not command_is_single_bounded_read_of_paths(
+            command,
+            bounded_read_paths,
+        ):
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "outside_bounded_read_scope",
+                    "message": "worker ran a non-test command outside the prompt's bounded read scope",
+                    "command": command,
+                    "allowed_paths": bounded_read_paths,
                 }
             )
         if forbids_rg_files and "rg --files" in command:
