@@ -2050,6 +2050,44 @@ Do the work.
         self.assertFalse(mod.worker_failure_short_circuits_checks({"status": ""}))
         self.assertFalse(mod.worker_failure_short_circuits_checks({"status": "needs-repair"}))
 
+    def test_retryable_budget_context_summary_keeps_evidence_by_reference(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="budget-context",
+            prompt="Task: " + ("do bounded work. " * 300),
+        )
+        summary = {
+            "finished_at": "2026-05-28T00:00:00+00:00",
+            "status": "retryable-worker-budget",
+            "attempt": 1,
+            "worktree": "/tmp/worktree",
+            "run_dir": "/tmp/run",
+            "worker_failure": {"status": "retryable-worker-budget", "reason": "worker event bytes exceeded 120000"},
+            "worker": {
+                "budget_reason": "worker event bytes exceeded 120000",
+                "event_count": 99,
+                "event_bytes": 120001,
+                "event_summaries_path": "/tmp/run/event_summaries.jsonl",
+            },
+            "diff": {"diff_path": "/tmp/run/patch.diff", "diff_bytes": 50000},
+            "patch_guard": {"status": "pass"},
+            "scope_guard": {"status": "pass", "changed_files": ["scripts/a9_supervisor.py"]},
+            "checks": [{"command": "true", "return_code": 0}],
+        }
+
+        text = mod.retryable_budget_context_summary(
+            task,
+            summary,
+            {"prompt_approx_tokens": 4000, "prompt_budget_tokens": 24000},
+        )
+
+        self.assertIn("Retryable Budget Failure", text)
+        self.assertIn("/tmp/run/event_summaries.jsonl", text)
+        self.assertIn("/tmp/run/patch.diff", text)
+        self.assertNotIn("Patch Preview", text)
+        self.assertLess(mod.approx_token_count(text), 900)
+
     def test_worker_network_error_is_classified_separately(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

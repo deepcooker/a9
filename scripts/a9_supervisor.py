@@ -3672,11 +3672,65 @@ Worktree: {summary['worktree']}
 
 Continue this task from the durable context above. If status is `needs-repair`, inspect the failed checks and patch, then produce a minimal repair. If status is `needs-followup`, make the next concrete progress step. If status is `pass`, propose the next task in the same project direction.
 """
+    if summary.get("status") == "retryable-worker-budget":
+        content = retryable_budget_context_summary(task, summary, context_pressure)
     context_path = run_dir / "context.md"
     context_path.write_text(content, encoding="utf-8")
     task_context_path = STATE_DIR / "tasks" / "done" / f"{artifact_task_ref(task.task_id)}.context.md"
     task_context_path.write_text(content, encoding="utf-8")
     return context_path
+
+
+def retryable_budget_context_summary(
+    task: Task,
+    summary: dict[str, Any],
+    context_pressure: dict[str, Any],
+) -> str:
+    worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+    diff = summary.get("diff", {}) if isinstance(summary.get("diff"), dict) else {}
+    patch_guard = summary.get("patch_guard", {}) if isinstance(summary.get("patch_guard"), dict) else {}
+    scope_guard = summary.get("scope_guard", {}) if isinstance(summary.get("scope_guard"), dict) else {}
+    checks = summary.get("checks", []) if isinstance(summary.get("checks"), list) else []
+    failed_checks = [item for item in checks if isinstance(item, dict) and item.get("return_code") != 0]
+    return f"""# Task Context: {task.task_id}
+
+Updated: {summary.get('finished_at', '')}
+Status: {summary.get('status', '')}
+Attempt: {summary.get('attempt', '')}
+Worktree: {summary.get('worktree', '')}
+
+## Objective
+
+{truncate_to_token_budget(task.prompt, 500, keep="tail")}
+
+## Retryable Budget Failure
+
+- failure_status: {summary.get('worker_failure', {}).get('status', '')}
+- failure_reason: {summary.get('worker_failure', {}).get('reason', '')}
+- budget_reason: {worker.get('budget_reason', '')}
+- event_count: {worker.get('event_count', 0)}
+- event_bytes: {worker.get('event_bytes', 0)}
+- prompt_tokens: {context_pressure.get('prompt_approx_tokens', 'missing')}
+- budget_tokens: {context_pressure.get('prompt_budget_tokens', 'missing')}
+- run_dir: {summary.get('run_dir', '')}
+- events_path: {worker.get('event_summaries_path', '')}
+- diff_path: {diff.get('diff_path', '')}
+
+## Evidence Summary
+
+- diff_bytes: {diff.get('diff_bytes', 0)}
+- patch_guard: {patch_guard.get('status', 'missing')}
+- scope_guard: {scope_guard.get('status', 'missing')}
+- changed_files: {json.dumps(scope_guard.get('changed_files', []), ensure_ascii=False)}
+- checks_count: {len(checks)}
+- failed_checks_count: {len(failed_checks)}
+
+## Continuation Rule
+
+The previous attempt exceeded the worker budget. Do not read this context file
+back in full. Inspect only the specific evidence path needed, with bounded sed
+windows or capped rg, then make the smallest repair or continuation step.
+"""
 
 
 def previous_task_checkpoint_id(task: Task) -> str | None:
