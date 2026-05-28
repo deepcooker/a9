@@ -482,9 +482,17 @@ class MonitorTests(unittest.TestCase):
                 exception_expert = next(item for item in score["experts"] if item["name"] == "exception_governance_expert")
                 if case["expects_missing"]:
                     self.assertIn("communication_failure_taxonomy_missing", kinds)
+                    self.assertIn(
+                        "exception_governance_expert",
+                        score["gates"]["hard_gate"]["failed_experts"],
+                    )
                     self.assertNotEqual(exception_expert["recommended_action"], "continue")
                 else:
                     self.assertNotIn("communication_failure_taxonomy_missing", kinds)
+                    self.assertNotIn(
+                        "exception_governance_expert",
+                        score["gates"]["hard_gate"]["failed_experts"],
+                    )
 
 
 if __name__ == "__main__":
