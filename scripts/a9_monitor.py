@@ -37,6 +37,9 @@ MAINLINE_HINTS = ("主线", "mainline", "philosophy", "哲学", "业务逻辑", 
 PRODUCT_PRESSURE_HINTS = ("tradeoff", "权衡", "reject", "拒绝", "推翻", "压榨", "shrink", "收缩", "scope", "边界")
 DATA_MODEL_HINTS = ("data", "schema", "model", "table", "event", "state", "数据", "表", "结构", "状态", "事件")
 PERFORMANCE_HINTS = ("performance", "latency", "throughput", "budget", "timeout", "cache", "性能", "延迟", "吞吐", "压测", "稳定")
+COMMUNICATION_HINTS = ("communication", "gateway", "control api", "ssh", "tmux", "redis", "reconnect", "通讯", "控制")
+FAILURE_CLASS_HINTS = ("timeout", "auth", "network", "protocol", "rate_limit")
+RECOVERY_ACTION_HINTS = ("retry", "repair", "quarantine", "terminate")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -378,9 +381,27 @@ def evaluate_exception_governance_expert(summary: dict[str, Any], worker: dict[s
     findings: list[dict[str, Any]] = []
     score = 0.0
     failure = summary.get("worker_failure") if isinstance(summary.get("worker_failure"), dict) else {}
+    text = str(summary.get("_monitor_task_text") or "")
     if failure.get("category") or str(summary.get("status") or "").startswith("retryable-"):
         score = add_score(score, 0.22)
         findings.append(finding("warn", "worker_failure_requires_policy", "worker failure/retryable state needs explicit recovery policy", worker_failure=failure))
+    communication_task = contains_any(text, COMMUNICATION_HINTS)
+    if communication_task:
+        lowered = text.lower()
+        failure_classes = [item for item in FAILURE_CLASS_HINTS if re.search(rf"(?<![a-z0-9_]){re.escape(item)}(?![a-z0-9_])", lowered)]
+        recovery_actions = [item for item in RECOVERY_ACTION_HINTS if re.search(rf"(?<![a-z0-9_]){re.escape(item)}(?![a-z0-9_])", lowered)]
+        has_mapping = "->" in text or "map" in lowered or "mapping" in lowered or "映射" in text
+        if len(failure_classes) < len(FAILURE_CLASS_HINTS) or len(recovery_actions) < 3 or not has_mapping:
+            score = add_score(score, 0.35)
+            findings.append(
+                finding(
+                    "error",
+                    "communication_failure_taxonomy_missing",
+                    "communication task must state failure classes and mapped recovery actions",
+                    required_failure_classes=list(FAILURE_CLASS_HINTS),
+                    required_recovery_actions=list(RECOVERY_ACTION_HINTS),
+                )
+            )
     if worker.get("idle_timed_out") or worker.get("timed_out"):
         score = add_score(score, 0.3)
         findings.append(finding("error", "worker_timeout", "worker timed out or idle timed out"))
@@ -554,6 +575,7 @@ def score_run(run_dir: Path) -> dict[str, Any]:
     commands = command_events(events)
     checks = declared_checks(summary)
     text = run_text(summary, run_dir)
+    summary["_monitor_task_text"] = text
     experts = [
         evaluate_why_expert(text, summary),
         evaluate_scope_dependency_expert(text, summary),
