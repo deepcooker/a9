@@ -605,6 +605,121 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["connection_action"], "continue")
         self.assertEqual(node["connection_action_reason"], "heartbeat_fresh")
 
+    def test_heartbeat_degraded_status_propagates_to_node_status_and_api_nodes(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@worker-a"}, root=root)
+            heartbeat = mod.heartbeat_node(
+                {"node_id": "node/a", "status": "degraded", "message": "network jitter"},
+                root=root,
+            )
+            status = mod.node_status(root)
+
+            captured = {"status": None, "payload": None}
+
+            class DummyNodesGetHandler:
+                path = "/api/nodes"
+                headers = {}
+
+                def write_json(self, status_code, payload):
+                    captured["status"] = status_code
+                    captured["payload"] = payload
+
+                def write_sse(self, status_code, payload):
+                    raise AssertionError("write_sse should not be used for /api/nodes")
+
+            original_node_status = mod.node_status
+            mod.node_status = lambda: original_node_status(root)
+            try:
+                mod.ControlHandler.do_GET(DummyNodesGetHandler())
+            finally:
+                mod.node_status = original_node_status
+
+        self.assertEqual(heartbeat["node"]["node_id"], "node-a")
+        self.assertEqual(heartbeat["node"]["status"], "degraded")
+        self.assertEqual(heartbeat["node"]["connection_state"], "degraded")
+        self.assertEqual(heartbeat["node"]["connection_action"], "reconnect")
+        self.assertEqual(heartbeat["node"]["connection_action_reason"], "heartbeat_reported_degraded")
+        self.assertEqual(status["nodes"][0]["connection_state"], "degraded")
+        self.assertEqual(status["nodes"][0]["connection_action"], "reconnect")
+        self.assertEqual(status["nodes"][0]["connection_action_reason"], "heartbeat_reported_degraded")
+        self.assertEqual(captured["status"], 200)
+        api_node = captured["payload"]["nodes"][0]
+        self.assertEqual(api_node["status"], "degraded")
+        self.assertEqual(api_node["connection_state"], "degraded")
+        self.assertEqual(api_node["connection_action"], "reconnect")
+        self.assertEqual(api_node["connection_action_reason"], "heartbeat_reported_degraded")
+
+    def test_heartbeat_error_and_failed_statuses_propagate_to_node_status(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@worker-a"}, root=root)
+            for reported_status in ("error", "failed"):
+                heartbeat = mod.heartbeat_node({"node_id": "node/a", "status": reported_status}, root=root)
+                status = mod.node_status(root)
+                node = status["nodes"][0]
+                with self.subTest(reported_status=reported_status):
+                    self.assertEqual(heartbeat["node"]["status"], reported_status)
+                    self.assertEqual(node["status"], reported_status)
+                    self.assertEqual(node["connection_state"], "degraded")
+                    self.assertEqual(node["connection_action"], "reconnect")
+                    self.assertEqual(node["connection_action_reason"], "heartbeat_reported_degraded")
+
+    def test_heartbeat_node_entry_writes_degraded_fields_to_redis_json_and_xadd(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "OK\n", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args[:2] == ["XADD", "a9:heartbeats"]:
+                return FakeProc("1740000010-0\n")
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                mod.register_node({"node_id": "node/a", "ssh_target": "root@worker-a"}, root=root)
+                result = mod.heartbeat_node({"node_id": "node/a", "status": "error"}, root=root)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["node"]["connection_state"], "degraded")
+        self.assertEqual(result["redis"]["status"], "ok")
+        json_set_calls = [call for call in calls if call[:2] == ["JSON.SET", "a9:node:node-a"]]
+        self.assertGreaterEqual(len(json_set_calls), 2)
+        json_set_call = json_set_calls[-1]
+        json_payload = json.loads(json_set_call[3])
+        self.assertEqual(json_payload["node_id"], "node-a")
+        self.assertEqual(json_payload["status"], "error")
+        self.assertEqual(json_payload["connection_state"], "degraded")
+        self.assertEqual(json_payload["connection_action"], "reconnect")
+        self.assertEqual(json_payload["connection_action_reason"], "heartbeat_reported_degraded")
+        xadd_calls = [call for call in calls if call[:2] == ["XADD", "a9:heartbeats"]]
+        self.assertGreaterEqual(len(xadd_calls), 2)
+        xadd_call = xadd_calls[-1]
+        self.assertIn("node_id", xadd_call)
+        self.assertIn("node-a", xadd_call)
+        self.assertIn("status", xadd_call)
+        self.assertIn("error", xadd_call)
+        self.assertIn("connection_state", xadd_call)
+        self.assertIn("degraded", xadd_call)
+        self.assertIn("connection_action", xadd_call)
+        self.assertIn("reconnect", xadd_call)
+        self.assertIn("connection_action_reason", xadd_call)
+        self.assertIn("heartbeat_reported_degraded", xadd_call)
+
     def test_api_nodes_endpoint_preserves_reconnect_governance_fields(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
