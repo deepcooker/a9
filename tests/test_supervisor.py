@@ -1333,6 +1333,20 @@ Do the work.
         self.assertEqual(broad["kind"], "runtime_evidence_root_read")
         self.assertEqual(specific, {})
 
+    def test_live_worker_blocks_direct_workspace_writes(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="direct-write", prompt="Use SEARCH/REPLACE only.")
+
+        heredoc = mod.live_worker_command_violation(task, "/bin/bash -lc 'cat <<EOF >> docs/mistakes.md'")
+        tee = mod.live_worker_command_violation(task, "/bin/bash -lc 'printf x | tee scripts/a9_supervisor.py'")
+        sed_in_place = mod.live_worker_command_violation(task, "/bin/bash -lc 'sed -i s/a/b/ tests/test_supervisor.py'")
+        safe_final = mod.live_worker_command_violation(task, "/bin/bash -lc 'cat <<EOF > /tmp/final.md'")
+
+        self.assertEqual(heredoc["kind"], "direct_workspace_write")
+        self.assertEqual(tee["kind"], "direct_workspace_write")
+        self.assertEqual(sed_in_place["kind"], "direct_workspace_write")
+        self.assertEqual(safe_final, {})
+
     def test_live_worker_blocks_session_context_reads_outside_session_tasks(self):
         mod = load_supervisor()
         task = mod.Task(

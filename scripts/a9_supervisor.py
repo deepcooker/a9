@@ -97,6 +97,17 @@ RUNTIME_EVIDENCE_ROOTS = (
     ".a9/worktrees",
     ".a9/runs",
 )
+WORKSPACE_WRITE_PREFIXES = (
+    "AGENTS.md",
+    "README.md",
+    "docs/",
+    "scripts/",
+    "tests/",
+    "crates/",
+    "infra/",
+    "session-governance.md",
+    "原始想法需求.md",
+)
 FLOW_KEY_PREFIX = "a9:flow:"
 PHASE_ORDER = [
     "reference_scan",
@@ -911,6 +922,7 @@ Hard rules:
 - Prefer Codex session/compaction/context governance before weaker alternatives.
 - Do not inline huge raw logs or whole reference repositories.
 - Do not search `.a9/tasks/done`, `.a9/worktrees`, or `.a9/runs` as broad roots; read only explicit evidence paths.
+- Do not edit repository files with shell redirection, `tee`, or `sed -i`; output SEARCH/REPLACE blocks in final and let A9 deterministic apply write files.
 - Cite local source paths when borrowing ideas from reference projects.
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
 - Final answer must include files changed, reference ideas used, commands run, test result, and next recommended task.
@@ -1325,6 +1337,19 @@ def command_reads_runtime_evidence_root(command: str) -> bool:
     return False
 
 
+def command_directly_writes_workspace(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    prefix_pattern = "|".join(re.escape(item) for item in WORKSPACE_WRITE_PREFIXES)
+    path_pattern = rf"(?:\./)?(?:{prefix_pattern})"
+    if re.search(rf"(?:>>|>)\s*['\"]?{path_pattern}", normalized):
+        return True
+    if re.search(rf"\btee\b(?:\s+-[A-Za-z]+)*\s+['\"]?{path_pattern}", normalized):
+        return True
+    if re.search(r"\bsed\s+-i(?:\s|$)", normalized):
+        return True
+    return False
+
+
 def live_worker_command_violation(task: Task, command: str, *, rationale: str = "") -> dict[str, Any]:
     normalized = normalize_shell_command(command)
     if command_looks_like_test(normalized) and task.checks and not command_matches_declared_check(normalized, task.checks):
@@ -1361,6 +1386,12 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         return {
             "kind": "runtime_evidence_root_read",
             "reason": "worker searched a runtime evidence root instead of a specific evidence path",
+            "command": normalized,
+        }
+    if command_directly_writes_workspace(normalized):
+        return {
+            "kind": "direct_workspace_write",
+            "reason": "worker tried to edit repository files directly instead of using SEARCH/REPLACE final output",
             "command": normalized,
         }
     session_read_finding = forbidden_session_context_read(task, normalized)
@@ -2300,6 +2331,15 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "level": "error",
                     "kind": "runtime_evidence_root_read",
                     "message": "worker searched a runtime evidence root instead of a specific evidence path",
+                    "command": command,
+                }
+            )
+        if command_directly_writes_workspace(command):
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "direct_workspace_write",
+                    "message": "worker edited repository files directly instead of using SEARCH/REPLACE final output",
                     "command": command,
                 }
             )
