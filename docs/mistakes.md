@@ -960,3 +960,13 @@
 
 - 文档与代码改动统一输出 SEARCH/REPLACE 块，由 deterministic apply 落盘。
 - 禁用 `>`, `>>`, `tee`, `sed -i`, heredoc、python 文件写入等旁路写法。
+
+## 2026-05-28：窄范围 record 任务必须保持窄读，避免无关探测
+
+现象：
+
+- 在只需补一条记录的任务里，额外探测如 `python3 scripts/a9_service.py ps` 会引入与当前目标无关的运行态噪音。
+
+规则：
+
+- 窄任务只读目标文件和明确证据路径；不做与交付无关的状态探针。
