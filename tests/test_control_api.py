@@ -1942,7 +1942,40 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(followup["reason"], "node:heartbeat_offline")
         self.assertEqual(followup["evidence"]["nodes"][0]["node_id"], "node-offline")
         self.assertEqual(followup["evidence"]["nodes"][0]["action"], "quarantine")
+        self.assertEqual(followup["evidence"]["nodes"][0]["recovery_plan"]["action"], "quarantine")
+        self.assertTrue(followup["evidence"]["nodes"][0]["recovery_plan"]["requires_operator"])
         self.assertEqual(followup["evidence"]["tasks_stream"]["action"], "continue")
+
+    def test_node_status_includes_recovery_plan_with_probe_priority(self):
+        mod = load_control_api()
+        original_now = mod.utc_now_dt
+        mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                mod.register_node({"node_id": "node/a", "ssh_target": "root@node-a"}, root=root)
+                mod.heartbeat_node({"node_id": "node/a", "status": "degraded"}, root=root)
+                mod.write_node_evidence(
+                    "probe",
+                    "node/a",
+                    {
+                        "status": "failed",
+                        "probe_action": "retry",
+                        "probe_action_reason": "ssh_exec_error",
+                        "checked_at": "2026-05-26T11:59:50Z",
+                    },
+                    root=root,
+                )
+                status = mod.node_status(root)
+        finally:
+            mod.utc_now_dt = original_now
+
+        node = status["nodes"][0]
+        self.assertEqual(node["connection_action"], "reconnect")
+        self.assertEqual(node["recovery_plan"]["action"], "probe")
+        self.assertEqual(node["recovery_plan"]["reason"], "ssh_exec_error")
+        self.assertEqual(node["recovery_plan"]["steps"], ["run_node_communication_probe", "refresh_node_status"])
+        self.assertFalse(node["recovery_plan"]["requires_operator"])
 
     def test_node_status_communication_followup_keeps_multiple_reconnect_node_evidence(self):
         mod = load_control_api()
@@ -2041,6 +2074,20 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(offline["connection_state"], "offline")
         self.assertEqual(offline["connection_action"], "quarantine")
         self.assertEqual(offline["connection_action_reason"], "heartbeat_offline")
+
+    def test_node_recovery_plan_requires_operator_for_quarantine(self):
+        mod = load_control_api()
+        plan = mod.node_recovery_plan(
+            {
+                "connection_state": "offline",
+                "connection_action": "quarantine",
+                "connection_action_reason": "heartbeat_offline",
+            }
+        )
+        self.assertEqual(plan["action"], "quarantine")
+        self.assertEqual(plan["reason"], "heartbeat_offline")
+        self.assertTrue(plan["requires_operator"])
+        self.assertIn("verify_ssh_target_reachable", plan["steps"])
 
     def test_publish_node_heartbeat_redis_writes_json_stream_and_timeseries(self):
         mod = load_control_api()

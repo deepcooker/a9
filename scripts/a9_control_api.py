@@ -1120,6 +1120,7 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
                 record = enrich_node_tmux_action(record, root=root)
                 record = enrich_node_probe_evidence(record, root=root)
                 record = enrich_node_heartbeat_start_evidence(record, root=root)
+                record = enrich_node_recovery_plan(record)
                 nodes.append(record)
             except json.JSONDecodeError:
                 nodes.append({"node_id": path.stem, "status": "invalid", "connection_state": "invalid"})
@@ -1143,6 +1144,78 @@ def node_connection_action(connection_state: str) -> tuple[str, str]:
     if connection_state == "offline":
         return ("quarantine", "heartbeat_offline")
     return ("reconnect", "heartbeat_unknown")
+
+
+def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
+    connection_action = str(record.get("connection_action") or "")
+    connection_state = str(record.get("connection_state") or "")
+    connection_reason = str(record.get("connection_action_reason") or "")
+    probe_action = str(record.get("probe_action") or "")
+    tmux_action = str(record.get("tmux_action") or "")
+    heartbeat_start_action = str(record.get("heartbeat_start_action") or "")
+
+    if connection_action in {"continue", "watch"} or connection_state == "online":
+        return {
+            "action": "observe",
+            "reason": connection_reason or "healthy",
+            "steps": [],
+            "requires_operator": False,
+        }
+
+    if connection_action == "quarantine" or connection_state == "offline":
+        return {
+            "action": "quarantine",
+            "reason": connection_reason or "heartbeat_offline",
+            "steps": [
+                "verify_ssh_target_reachable",
+                "verify_tailscale_and_tmux_state",
+                "run_manual_recovery_before_resume",
+            ],
+            "requires_operator": True,
+        }
+
+    if probe_action in {"retry", "repair"}:
+        return {
+            "action": "probe",
+            "reason": str(record.get("probe_action_reason") or "probe_required"),
+            "steps": ["run_node_communication_probe", "refresh_node_status"],
+            "requires_operator": False,
+        }
+
+    if tmux_action in {"retry", "repair", "wait_for_approval"}:
+        return {
+            "action": "tmux",
+            "reason": str(record.get("tmux_action_reason") or "tmux_repair_required"),
+            "steps": ["ensure_tmux_session", "refresh_node_status"],
+            "requires_operator": tmux_action == "wait_for_approval",
+        }
+
+    if heartbeat_start_action in {"retry", "repair"}:
+        return {
+            "action": "heartbeat_start",
+            "reason": str(record.get("heartbeat_start_action_reason") or "heartbeat_start_required"),
+            "steps": ["start_heartbeat_tmux", "refresh_node_status"],
+            "requires_operator": False,
+        }
+
+    if connection_action == "reconnect" or connection_state in {"stale", "degraded", "unknown"}:
+        return {
+            "action": "observe",
+            "reason": connection_reason or "reconnect_required",
+            "steps": ["refresh_node_status"],
+            "requires_operator": False,
+        }
+
+    return {
+        "action": "none",
+        "reason": connection_reason or "no_recovery_needed",
+        "steps": [],
+        "requires_operator": False,
+    }
+
+
+def enrich_node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
+    return {**record, "recovery_plan": node_recovery_plan(record)}
 
 
 def probe_action_to_followup(probe_action: Any, probe_action_reason: Any = "") -> dict[str, str]:
@@ -1177,6 +1250,7 @@ def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dic
             "connection_state": str(node.get("connection_state") or ""),
             "action": action,
             "reason": str(node.get("connection_action_reason") or ""),
+            "recovery_plan": node.get("recovery_plan") or node_recovery_plan(node),
         }
         if priority == best["priority"] and best["reason"].startswith("node:") and best["action"] == action:
             best["evidence"]["nodes"].append(node_evidence)

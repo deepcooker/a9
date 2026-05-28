@@ -223,6 +223,11 @@ Typed reconnect action contract extracted for A9:
 - Controller node record action domain is intentionally narrower and
   deterministic: `continue | reconnect | quarantine`, derived only from
   `connection_state`.
+- Recovery-plan adaptation for mobile/control: each node emits a compact,
+  deterministic `recovery_plan` (`action/reason/steps/requires_operator`)
+  derived only from `connection_action/state/reason` plus latest
+  `probe_action`, `tmux_action`, and `heartbeat_start_action`, mirroring
+  Barter-style typed action routing without guessing hidden state.
 - A9 evidence should always record `phase` and `action` together so the
   action-domain is auditable and machine-routable.
 - Minimum reconnect evidence keys:
