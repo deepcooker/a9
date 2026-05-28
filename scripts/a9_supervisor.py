@@ -117,6 +117,72 @@ SECTION_TOKEN_BUDGETS = {
     "reference_mechanisms": 2500,
     "contract": 1500,
 }
+PHASE_SECTION_TOKEN_BUDGETS = {
+    "implement": {
+        "doctrine": 1800,
+        "task": 4000,
+        "previous_context": 1800,
+        "repo_map": 2500,
+        "reference_mechanisms": 1200,
+        "contract": 1200,
+    },
+    "test": {
+        "doctrine": 1200,
+        "task": 4000,
+        "previous_context": 2000,
+        "repo_map": 3000,
+        "reference_mechanisms": 1000,
+        "contract": 1200,
+    },
+    "repair": {
+        "doctrine": 1000,
+        "task": 4200,
+        "previous_context": 2500,
+        "repo_map": 2500,
+        "reference_mechanisms": 800,
+        "contract": 1200,
+    },
+    "reference_scan": {
+        "doctrine": 2000,
+        "task": 3600,
+        "previous_context": 1000,
+        "repo_map": 2500,
+        "reference_mechanisms": 3500,
+        "contract": 1200,
+    },
+    "mechanism_extract": {
+        "doctrine": 2200,
+        "task": 3600,
+        "previous_context": 1200,
+        "repo_map": 2500,
+        "reference_mechanisms": 3200,
+        "contract": 1200,
+    },
+    "vendor_import": {
+        "doctrine": 1500,
+        "task": 3800,
+        "previous_context": 1200,
+        "repo_map": 2600,
+        "reference_mechanisms": 2800,
+        "contract": 1400,
+    },
+    SESSION_REFRESH_PHASE: {
+        "doctrine": 1000,
+        "task": 4200,
+        "previous_context": 800,
+        "repo_map": 1600,
+        "reference_mechanisms": 700,
+        "contract": 1000,
+    },
+    SESSION_CLOSE_READING_PHASE: {
+        "doctrine": 1300,
+        "task": 4200,
+        "previous_context": 1200,
+        "repo_map": 1800,
+        "reference_mechanisms": 800,
+        "contract": 1000,
+    },
+}
 SUMMARY_MIN_SPLIT = 4
 SUMMARY_MAX_DEPTH = 3
 NOISE_PATTERNS = [
@@ -320,6 +386,18 @@ def token_budget() -> int:
         return max(4000, int(value))
     except ValueError:
         return DEFAULT_CONTEXT_TOKEN_BUDGET
+
+
+def section_token_budgets_for_phase(phase: str, total_budget: int) -> dict[str, int]:
+    """Route context budget by phase instead of sending every worker the same large packet."""
+    phase_budget = PHASE_SECTION_TOKEN_BUDGETS.get(phase, PHASE_SECTION_TOKEN_BUDGETS["implement"])
+    section_budgets = {**SECTION_TOKEN_BUDGETS, **phase_budget}
+    scale = min(1.0, total_budget / sum(section_budgets.values()))
+    if scale < 1.0:
+        section_budgets = {
+            name: max(256, int(value * scale)) for name, value in section_budgets.items()
+        }
+    return section_budgets
 
 
 def truncate_to_token_budget(text: str, budget: int, *, keep: str = "head") -> str:
@@ -762,12 +840,7 @@ def build_context_packet(task: Task) -> dict[str, Any]:
     and leave raw evidence on disk instead of inlining everything.
     """
     total_budget = token_budget()
-    section_budgets = SECTION_TOKEN_BUDGETS.copy()
-    scale = min(1.0, total_budget / sum(section_budgets.values()))
-    if scale < 1.0:
-        section_budgets = {
-            name: max(256, int(value * scale)) for name, value in section_budgets.items()
-        }
+    section_budgets = section_token_budgets_for_phase(task.phase, total_budget)
 
     doctrine_parts = []
     for path in [ROOT / "原始想法需求.md", ROOT / "session-governance.md"]:

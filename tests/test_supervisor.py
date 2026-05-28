@@ -332,6 +332,19 @@ Do the work.
         self.assertIn("context_router", packet)
         self.assertIn("blocked by context router", packet["prompt"])
 
+    def test_context_budget_profile_is_phase_specific(self):
+        mod = load_supervisor()
+        implement = mod.section_token_budgets_for_phase("implement", 24000)
+        reference_scan = mod.section_token_budgets_for_phase("reference_scan", 24000)
+        repair = mod.section_token_budgets_for_phase("repair", 24000)
+        scaled = mod.section_token_budgets_for_phase("implement", 4000)
+
+        self.assertLess(implement["doctrine"], mod.SECTION_TOKEN_BUDGETS["doctrine"])
+        self.assertLess(implement["reference_mechanisms"], reference_scan["reference_mechanisms"])
+        self.assertGreater(repair["previous_context"], implement["previous_context"])
+        self.assertLessEqual(sum(scaled.values()), 4000 + len(scaled) * 256)
+        self.assertGreaterEqual(min(scaled.values()), 256)
+
     def test_hydrate_worker_reference_slices_copies_bounded_references(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
