@@ -224,10 +224,13 @@ Typed reconnect action contract extracted for A9:
   deterministic: `continue | reconnect | quarantine`, derived only from
   `connection_state`.
 - Recovery-plan adaptation for mobile/control: each node emits a compact,
-  deterministic `recovery_plan` (`action/reason/steps/requires_operator`)
+  deterministic `recovery_plan` (`action/reason/steps/requires_operator/route`)
   derived only from `connection_action/state/reason` plus latest
   `probe_action`, `tmux_action`, and `heartbeat_start_action`, mirroring
   Barter-style typed action routing without guessing hidden state.
+- `recovery_plan.route` is metadata only (no auto executor):
+  `{method, endpoint, command, requires_arm}` maps each action to existing
+  control API routes/commands; manual quarantine/observe/none keep null route.
 - A9 evidence should always record `phase` and `action` together so the
   action-domain is auditable and machine-routable.
 - Minimum reconnect evidence keys:

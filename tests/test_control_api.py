@@ -1976,6 +1976,15 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["recovery_plan"]["reason"], "ssh_exec_error")
         self.assertEqual(node["recovery_plan"]["steps"], ["run_node_communication_probe", "refresh_node_status"])
         self.assertFalse(node["recovery_plan"]["requires_operator"])
+        self.assertEqual(
+            node["recovery_plan"]["route"],
+            {
+                "method": "POST",
+                "endpoint": "/api/nodes/probe",
+                "command": "nodes.probe.execute",
+                "requires_arm": True,
+            },
+        )
 
     def test_node_status_communication_followup_keeps_multiple_reconnect_node_evidence(self):
         mod = load_control_api()
@@ -2088,6 +2097,15 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(plan["reason"], "heartbeat_offline")
         self.assertTrue(plan["requires_operator"])
         self.assertIn("verify_ssh_target_reachable", plan["steps"])
+        self.assertEqual(
+            plan["route"],
+            {
+                "method": None,
+                "endpoint": None,
+                "command": None,
+                "requires_arm": False,
+            },
+        )
 
     def test_publish_node_heartbeat_redis_writes_json_stream_and_timeseries(self):
         mod = load_control_api()
@@ -2982,6 +3000,9 @@ class ControlApiTests(unittest.TestCase):
             allowed = mod.command_gate("nodes.bootstrap.execute", root=root)
             self.assertTrue(allowed["allowed"])
             self.assertEqual(allowed["status"], "allowed")
+            allowed_probe = mod.command_gate("nodes.probe.execute", root=root)
+            self.assertTrue(allowed_probe["allowed"])
+            self.assertEqual(allowed_probe["status"], "allowed")
             allowed_heartbeat = mod.command_gate("nodes.heartbeat.tmux.start", root=root)
             self.assertTrue(allowed_heartbeat["allowed"])
             self.assertEqual(allowed_heartbeat["status"], "allowed")

@@ -40,6 +40,7 @@ PHONE_CONTROL_GROUPS = {
     "runtime": ["submit.run", "session.refresh.trial", "flow.resume", "approval.approve", "approval.reject"],
     "remote": [
         "nodes.bootstrap.execute",
+        "nodes.probe.execute",
         "nodes.remote.install",
         "nodes.remote.repair",
         "nodes.tmux.ensure",
@@ -1160,6 +1161,12 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
             "reason": connection_reason or "healthy",
             "steps": [],
             "requires_operator": False,
+            "route": {
+                "method": None,
+                "endpoint": None,
+                "command": None,
+                "requires_arm": False,
+            },
         }
 
     if connection_action == "quarantine" or connection_state == "offline":
@@ -1172,6 +1179,12 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
                 "run_manual_recovery_before_resume",
             ],
             "requires_operator": True,
+            "route": {
+                "method": None,
+                "endpoint": None,
+                "command": None,
+                "requires_arm": False,
+            },
         }
 
     if probe_action in {"retry", "repair"}:
@@ -1180,14 +1193,28 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
             "reason": str(record.get("probe_action_reason") or "probe_required"),
             "steps": ["run_node_communication_probe", "refresh_node_status"],
             "requires_operator": False,
+            "route": {
+                "method": "POST",
+                "endpoint": "/api/nodes/probe",
+                "command": "nodes.probe.execute",
+                "requires_arm": True,
+            },
         }
 
     if tmux_action in {"retry", "repair", "wait_for_approval"}:
+        endpoint = "/api/nodes/tmux-status" if tmux_action == "wait_for_approval" else "/api/nodes/tmux-ensure"
+        command = None if tmux_action == "wait_for_approval" else "nodes.tmux.ensure"
         return {
             "action": "tmux",
             "reason": str(record.get("tmux_action_reason") or "tmux_repair_required"),
             "steps": ["ensure_tmux_session", "refresh_node_status"],
             "requires_operator": tmux_action == "wait_for_approval",
+            "route": {
+                "method": "POST",
+                "endpoint": endpoint,
+                "command": command,
+                "requires_arm": command is not None,
+            },
         }
 
     if heartbeat_start_action in {"retry", "repair"}:
@@ -1196,6 +1223,12 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
             "reason": str(record.get("heartbeat_start_action_reason") or "heartbeat_start_required"),
             "steps": ["start_heartbeat_tmux", "refresh_node_status"],
             "requires_operator": False,
+            "route": {
+                "method": "POST",
+                "endpoint": "/api/nodes/heartbeat-tmux-start",
+                "command": "nodes.heartbeat.tmux.start",
+                "requires_arm": True,
+            },
         }
 
     if connection_action == "reconnect" or connection_state in {"stale", "degraded", "unknown"}:
@@ -1204,6 +1237,12 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
             "reason": connection_reason or "reconnect_required",
             "steps": ["refresh_node_status"],
             "requires_operator": False,
+            "route": {
+                "method": None,
+                "endpoint": None,
+                "command": None,
+                "requires_arm": False,
+            },
         }
 
     return {
@@ -1211,6 +1250,12 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
         "reason": connection_reason or "no_recovery_needed",
         "steps": [],
         "requires_operator": False,
+        "route": {
+            "method": None,
+            "endpoint": None,
+            "command": None,
+            "requires_arm": False,
+        },
     }
 
 
