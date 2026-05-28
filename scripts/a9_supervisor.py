@@ -1583,7 +1583,7 @@ def capture_diff(worktree: Path, run_dir: Path) -> dict[str, Any]:
     return {"diff_path": str(diff_path), "diff_bytes": len(diff.encode("utf-8"))}
 
 
-def extract_worker_search_replace_patch(text: str) -> tuple[str, list[dict[str, Any]]]:
+def extract_worker_search_replace_patch(text: str) -> tuple[str, str | None, list[dict[str, Any]]]:
     findings: list[dict[str, Any]] = []
     candidates = [item for item in find_json_objects(text) if is_worker_envelope_candidate(item)]
     if candidates:
@@ -1614,11 +1614,11 @@ def extract_worker_search_replace_patch(text: str) -> tuple[str, list[dict[str, 
                         "count": len(parts),
                     }
                 )
-                return "\n".join(parts), findings
+                return "\n".join(parts), "worker_envelope.output.search_replace_blocks", findings
 
     if "<<<<<<< SEARCH" in text and ">>>>>>> REPLACE" in text:
-        return text, []
-    return "", findings
+        return text, "final_message", findings
+    return "", None, findings
 
 
 def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir: Path) -> dict[str, Any]:
@@ -1631,6 +1631,7 @@ def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir:
         "return_code": 0,
         "output_path": str(output_path),
         "patch_path": str(patch_path),
+        "patch_source": None,
         "findings": [{"level": "info", "message": "no SEARCH/REPLACE patch in final message"}],
     }
     if not final_path.exists():
@@ -1638,7 +1639,8 @@ def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir:
         return result
 
     text = final_path.read_text(encoding="utf-8", errors="backslashreplace")
-    patch_text, extraction_findings = extract_worker_search_replace_patch(text)
+    patch_text, patch_source, extraction_findings = extract_worker_search_replace_patch(text)
+    result["patch_source"] = patch_source
     if not patch_text:
         result["findings"].extend(extraction_findings)
         write_json(output_path, result)
@@ -1696,6 +1698,7 @@ def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir:
     result["return_code"] = proc.returncode
     result["output_path"] = str(output_path)
     result["patch_path"] = str(patch_path)
+    result["patch_source"] = patch_source
     result.setdefault("findings", [])
     result["findings"] = extraction_findings + result["findings"]
     write_json(output_path, result)
