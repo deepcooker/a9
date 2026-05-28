@@ -4126,6 +4126,46 @@ def monitor_block_summary(monitor_score: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def reconcile_status_with_monitor_block(
+    status: str,
+    monitor_block: dict[str, Any],
+    worker_envelope_check_conflict: dict[str, Any] | None = None,
+    worker_envelope: dict[str, Any] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    block = dict(monitor_block) if isinstance(monitor_block, dict) else {}
+    if not block.get("blocked") or status != "pass":
+        return status, block
+    if isinstance(worker_envelope, dict) and worker_envelope.get("status") == "skip":
+        previous_reason = str(block.get("reason") or "")
+        previous_failed_experts = block.get("failed_experts")
+        block["blocked"] = False
+        block["reason"] = "monitor_block_advisory_for_non_strict_worker"
+        block["override"] = {
+            "status": "advisory",
+            "source": "non_strict_worker_envelope",
+            "previous_reason": previous_reason,
+            "previous_failed_experts": previous_failed_experts if isinstance(previous_failed_experts, list) else [],
+        }
+        return "pass", block
+    if isinstance(worker_envelope_check_conflict, dict) and worker_envelope_check_conflict.get("status") == "reconciled-pass":
+        previous_reason = str(block.get("reason") or "")
+        previous_failed_experts = block.get("failed_experts")
+        block["blocked"] = False
+        block["reason"] = "monitor_block_overridden_by_supervisor_reconciliation"
+        block["override"] = {
+            "status": "overridden",
+            "source": "worker_envelope_check_conflict",
+            "conflict_status": worker_envelope_check_conflict.get("status"),
+            "conflict_reason": worker_envelope_check_conflict.get("reason", ""),
+            "previous_reason": previous_reason,
+            "previous_failed_experts": previous_failed_experts if isinstance(previous_failed_experts, list) else [],
+        }
+        return "pass", block
+    if not str(block.get("reason") or "").strip():
+        block["reason"] = "monitor_hard_gate_failed"
+    return "monitor-blocked", block
+
+
 def schedule_next_session_refresh_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if summary.get("status") != "pass":
         return None
@@ -4987,6 +5027,14 @@ def run_one(*, auto_next: bool = False) -> int:
         )
         if status == "needs-repair" and worker_envelope_check_conflict:
             status = "pass"
+        monitor_score = create_monitor_score(run_dir)
+        monitor_block = monitor_block_summary(monitor_score)
+        status, monitor_block = reconcile_status_with_monitor_block(
+        status,
+        monitor_block,
+        worker_envelope_check_conflict=worker_envelope_check_conflict,
+        worker_envelope=worker_envelope,
+    )
         git_governance = apply_git_governance(worktree, run_dir, task, status, diff)
         summary = {
             **lease,
@@ -5003,13 +5051,13 @@ def run_one(*, auto_next: bool = False) -> int:
             "scope_guard": scope_guard,
             "process_governance": process_governance,
             "worker_envelope_check_conflict": worker_envelope_check_conflict,
+            "monitor_score": monitor_score,
+            "monitor_block": monitor_block,
             "git_governance": git_governance,
             "checks": checks,
         }
         summary["policy_attestation"] = create_policy_attestation(task, run_dir, summary)
         write_json(run_dir / "summary.json", summary)
-        summary["monitor_score"] = create_monitor_score(run_dir)
-        summary["monitor_block"] = monitor_block_summary(summary["monitor_score"])
         summary["context_pressure"] = compact_context_pressure(summary)
         summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)

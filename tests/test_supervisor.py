@@ -2348,6 +2348,64 @@ index 0000000..3e75765
         self.assertEqual(block["failed_experts"], ["data_model_expert", "test_verifiability_expert"])
         self.assertEqual(progress["latest_monitor_block"], block)
 
+    def test_reconcile_status_with_monitor_block_overrides_with_conflict_evidence(self):
+        mod = load_supervisor()
+        status, block = mod.reconcile_status_with_monitor_block(
+            "pass",
+            {
+                "blocked": True,
+                "reason": "monitor_hard_gate_failed",
+                "failed_experts": ["exception_governance_expert"],
+                "recommended_action": "block_and_rewrite_task",
+            },
+            worker_envelope_check_conflict={
+                "status": "reconciled-pass",
+                "reason": "worker self-reported declared check failure/timeout but supervisor checks passed",
+            },
+        )
+
+        self.assertEqual(status, "pass")
+        self.assertFalse(block["blocked"])
+        self.assertEqual(block["reason"], "monitor_block_overridden_by_supervisor_reconciliation")
+        self.assertEqual(block["override"]["source"], "worker_envelope_check_conflict")
+        self.assertEqual(block["override"]["previous_failed_experts"], ["exception_governance_expert"])
+
+    def test_reconcile_status_with_monitor_block_blocks_non_reconciled_pass(self):
+        mod = load_supervisor()
+        status, block = mod.reconcile_status_with_monitor_block(
+            "pass",
+            {
+                "blocked": True,
+                "reason": "monitor_hard_gate_failed",
+                "failed_experts": ["exception_governance_expert"],
+                "recommended_action": "block_and_rewrite_task",
+            },
+            worker_envelope_check_conflict=None,
+        )
+
+        self.assertEqual(status, "monitor-blocked")
+        self.assertTrue(block["blocked"])
+        self.assertEqual(block["reason"], "monitor_hard_gate_failed")
+
+    def test_reconcile_status_with_monitor_block_keeps_non_strict_worker_advisory(self):
+        mod = load_supervisor()
+        status, block = mod.reconcile_status_with_monitor_block(
+            "pass",
+            {
+                "blocked": True,
+                "reason": "monitor_hard_gate_failed",
+                "failed_experts": ["exception_governance_expert"],
+                "recommended_action": "block_and_rewrite_task",
+            },
+            worker_envelope_check_conflict=None,
+            worker_envelope={"status": "skip", "required": False},
+        )
+
+        self.assertEqual(status, "pass")
+        self.assertFalse(block["blocked"])
+        self.assertEqual(block["reason"], "monitor_block_advisory_for_non_strict_worker")
+        self.assertEqual(block["override"]["source"], "non_strict_worker_envelope")
+
     def test_schedule_next_task_records_deterministically_without_record_worker(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
