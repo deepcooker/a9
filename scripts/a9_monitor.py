@@ -64,6 +64,18 @@ COMMUNICATION_MONITOR_EXEMPT_HINTS = (
     "context-router",
     "context_pressure",
     "promptware",
+    "strict worker envelope",
+    "worker envelope",
+    "search_replace_blocks",
+    "output.search_replace_blocks",
+    "deterministic apply",
+)
+APPLY_PROTOCOL_EXEMPT_HINTS = (
+    "strict worker envelope",
+    "worker envelope",
+    "search_replace_blocks",
+    "output.search_replace_blocks",
+    "deterministic apply",
 )
 FAILURE_CLASS_HINTS = ("timeout", "auth", "network", "protocol", "rate_limit")
 RECOVERY_ACTION_HINTS = ("retry", "repair", "quarantine", "terminate")
@@ -413,6 +425,8 @@ def evaluate_exception_governance_expert(summary: dict[str, Any], worker: dict[s
         score = add_score(score, 0.22)
         findings.append(finding("warn", "worker_failure_requires_policy", "worker failure/retryable state needs explicit recovery policy", worker_failure=failure))
     communication_task = contains_any(text, COMMUNICATION_HINTS)
+    if communication_task and contains_any(text, APPLY_PROTOCOL_EXEMPT_HINTS):
+        communication_task = False
     if communication_task and contains_any(text, COMMUNICATION_MONITOR_EXEMPT_HINTS):
         communication_task = contains_any(text, COMMUNICATION_RUNTIME_HINTS) and contains_any(
             text,

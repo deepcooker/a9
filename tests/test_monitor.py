@@ -523,6 +523,34 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn("communication_failure_taxonomy_missing", kinds)
         self.assertNotIn("exception_governance_expert", score["gates"]["hard_gate"]["failed_experts"])
 
+    def test_worker_envelope_apply_task_does_not_trigger_communication_failure_taxonomy_gate(self):
+        mod = load_monitor()
+        task_text = (
+            "Goal: verify strict worker envelope protocol for deterministic apply.\n"
+            "Task: emit output.search_replace_blocks so A9 can apply SEARCH/REPLACE patches.\n"
+            "Scope: docs/mistakes.md only; this is an apply protocol smoke, not communication gateway work.\n"
+            "Hard bounds: one bounded read, strict JSON envelope, deterministic apply.\n"
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self.write_run(
+                Path(tmp),
+                {
+                    "status": "pass",
+                    "phase": "record",
+                    "worker": {},
+                    "worker_envelope": {"status": "pass"},
+                    "checks": [{"command": "python3 -m unittest tests/test_supervisor.py", "return_code": 0}],
+                },
+                [],
+                task_text=task_text,
+            )
+            score = mod.score_run(run_dir)
+
+        kinds = {item["kind"] for item in score["findings"]}
+        self.assertNotIn("communication_failure_taxonomy_missing", kinds)
+        self.assertNotIn("exception_governance_expert", score["gates"]["hard_gate"]["failed_experts"])
+
     def test_context_router_blocked_sections_are_monitor_visible(self):
         mod = load_monitor()
         with tempfile.TemporaryDirectory() as tmp:

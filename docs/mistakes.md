@@ -970,3 +970,15 @@
 规则：
 
 - 窄任务只读目标文件和明确证据路径；不做与交付无关的状态探针。
+
+## 2026-05-28：strict envelope 现已支持 output.search_replace_blocks 作为改动载体
+
+现象：
+
+- 以往 strict worker 常把补丁放在自由文本里，导致 apply 路径不稳定、审计链不一致。
+- 现在 A9 接受 strict worker envelope 的 `output.search_replace_blocks`，可以直接走 deterministic apply。
+
+规则：
+
+- strict worker 产出文件改动时，优先把补丁放进 `output.search_replace_blocks`。
+- block 必须可直接 deterministic apply，且 path 明确、范围最小。
