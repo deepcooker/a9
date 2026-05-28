@@ -37,6 +37,29 @@ class RemoteBootstrapTests(unittest.TestCase):
         self.assertIn("REMOTE_DIR='~/a9-worker'", script)
         self.assertIn("WORKER_NAME=node-a", script)
         self.assertIn("git clone", script)
+        self.assertIn(".a9/remote-node/heartbeat.sh", script)
+        self.assertIn("chmod +x .a9/remote-node/heartbeat.sh", script)
+        self.assertIn("api/nodes/heartbeat", script)
+        self.assertIn("A9_HEARTBEAT_ONCE", script)
+
+    def test_heartbeat_loop_script_contains_heartbeat_payload_fields(self):
+        mod = load_module()
+        args = Namespace(
+            controller_url="http://controller:8787",
+            worker_name="node-a",
+            repo="git@example.com:a9.git",
+            remote_dir="~/a9-worker",
+        )
+        heartbeat_script = mod.heartbeat_loop_script(args)
+        self.assertIn("#!/bin/sh", heartbeat_script)
+        self.assertIn("CONTROLLER_URL=http://controller:8787", heartbeat_script)
+        self.assertIn("WORKER_NAME=node-a", heartbeat_script)
+        self.assertIn("/api/nodes/heartbeat", heartbeat_script)
+        self.assertIn("A9_HEARTBEAT_ONCE", heartbeat_script)
+        self.assertIn('"node_id"', heartbeat_script)
+        self.assertIn('"current_task"', heartbeat_script)
+        self.assertIn('"message"', heartbeat_script)
+        self.assertIn('"load"', heartbeat_script)
 
     def test_ssh_base_uses_batch_mode_and_identity(self):
         mod = load_module()

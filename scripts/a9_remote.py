@@ -224,6 +224,7 @@ def build_bootstrap_script(args: argparse.Namespace) -> str:
     repo = args.repo
     controller_url = args.controller_url
     worker_name = args.worker_name or "$(hostname)-a9-worker"
+    heartbeat_script = heartbeat_loop_script(args)
     lines = [
         "set -eu",
         f"REMOTE_DIR={quote(remote_dir)}",
@@ -243,9 +244,76 @@ def build_bootstrap_script(args: argparse.Namespace) -> str:
         '  "installed_at": "' + utc_now() + '"',
         "}",
         "EOF",
+        'cat > .a9/remote-node/heartbeat.sh <<EOF',
+        heartbeat_script,
+        "EOF",
+        "chmod +x .a9/remote-node/heartbeat.sh",
         'printf "A9 remote node prepared: %s -> %s\\n" "$WORKER_NAME" "$CONTROLLER_URL"',
     ]
     return "\n".join(lines)
+
+
+def heartbeat_loop_script(args: argparse.Namespace) -> str:
+    controller_url = args.controller_url
+    worker_name = args.worker_name or "$(hostname)-a9-worker"
+    return "\n".join(
+        [
+            "#!/bin/sh",
+            "set -eu",
+            f"CONTROLLER_URL={quote(controller_url)}",
+            f"WORKER_NAME={quote(worker_name)}",
+            'NODE_ID="${WORKER_NAME}"',
+            'HOSTNAME="$(hostname 2>/dev/null || true)"',
+            'USERNAME="$(id -un 2>/dev/null || true)"',
+            'if [ -z "$NODE_ID" ]; then',
+            '  if [ -n "$HOSTNAME" ] && [ -n "$USERNAME" ]; then',
+            '    NODE_ID="${HOSTNAME}-${USERNAME}"',
+            "  elif [ -n \"$HOSTNAME\" ]; then",
+            "    NODE_ID=\"$HOSTNAME\"",
+            "  else",
+            "    NODE_ID=unknown",
+            "  fi",
+            "fi",
+            'HEARTBEAT_INTERVAL="${A9_HEARTBEAT_INTERVAL:-30}"',
+            'if [ -z "$HEARTBEAT_INTERVAL" ]; then',
+            '  HEARTBEAT_INTERVAL="30"',
+            "fi",
+            "send_once() {",
+            "  STATUS=\"${A9_HEARTBEAT_STATUS:-online}\"",
+            "  CURRENT_TASK=\"${A9_HEARTBEAT_CURRENT_TASK:-${CURRENT_TASK:-}}\"",
+            "  MESSAGE=\"${A9_HEARTBEAT_MESSAGE:-${NODE_MESSAGE:-}}\"",
+            "  LOAD=\"${A9_HEARTBEAT_LOAD:-$(cat /proc/loadavg 2>/dev/null | awk '{print $1\",\"$2\",\"$3}' || true)}\"",
+            "  CAPABILITIES=\"${A9_HEARTBEAT_CAPABILITIES:-worker}\"",
+            "  PAYLOAD=$(python3 - <<'PY'",
+            'import json, os',
+            "print(json.dumps({",
+            '    "node_id": os.environ.get("NODE_ID", "unknown"),',
+            '    "status": os.environ.get("STATUS", "online"),',
+            '    "current_task": os.environ.get("CURRENT_TASK", ""),',
+            '    "message": os.environ.get("MESSAGE", ""),',
+            '    "load": os.environ.get("LOAD", ""),',
+            '    "capabilities": os.environ.get("CAPABILITIES", "worker"),',
+            "}, separators=(\",\", \":\")))",
+            "PY)",
+            "  if ! RESPONSE_CODE=$(curl -sS -o /dev/null -w \"%{http_code}\" -H \"Content-Type: application/json\" -d \"$PAYLOAD\" \"$CONTROLLER_URL/api/nodes/heartbeat\" 2>&1); then",
+            '    >&2 printf "heartbeat failed node_id=%s error=%s\\n" "$NODE_ID" "$RESPONSE_CODE"',
+            "  else",
+            '    if [ "$RESPONSE_CODE" -lt 200 ] || [ "$RESPONSE_CODE" -ge 300 ]; then',
+            '      >&2 printf "heartbeat non-2xx node_id=%s status=%s\\n" "$NODE_ID" "$RESPONSE_CODE"',
+            "    fi",
+            "  fi",
+            "}",
+            'if [ "${A9_HEARTBEAT_ONCE:-0}" = "1" ]; then',
+            "  send_once",
+            "  exit 0",
+            "fi",
+            'while :; do',
+            "  send_once",
+            '  sleep "$HEARTBEAT_INTERVAL"',
+            "done",
+            "",
+        ]
+    )
 
 
 def plan(args: argparse.Namespace) -> int:
@@ -261,8 +329,8 @@ def plan(args: argparse.Namespace) -> int:
             "ensure git/python3/curl are present",
             "clone or update A9 repo on remote host",
             "write remote-node config with controller URL",
-            "later install worker daemon and Redis Streams consumer",
-            "later register heartbeat back to controller",
+            "install heartbeat loop script at .a9/remote-node/heartbeat.sh",
+            "later supervise/start heartbeat script and worker daemon",
         ],
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
