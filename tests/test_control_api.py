@@ -2642,6 +2642,25 @@ class ControlApiTests(unittest.TestCase):
             self.assertNotIn("A9_HEARTBEAT_ONCE=1", default_plan["command_preview"][0][-1])
             self.assertIn("A9_HEARTBEAT_ONCE=1", smoke_plan["command_preview"][0][-1])
 
+    def test_heartbeat_tmux_plan_node_quotes_remote_dir_and_script(self):
+        mod = load_control_api()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = mod.heartbeat_tmux_plan_node(
+                {
+                    "ssh_target": "root@100.64.0.1",
+                    "session": "a9/heartbeat",
+                    "remote_dir": "/tmp/a9;bad",
+                },
+                root=root,
+            )
+
+            command = result["command_preview"][0][-1]
+            self.assertIn("mkdir -p '/tmp/a9;bad'", command)
+            self.assertIn("'/tmp/a9;bad/.a9/remote-node/heartbeat.sh'", command)
+            self.assertNotIn("mkdir -p /tmp/a9;bad", command)
+
     def test_phone_control_requires_admin_and_expires_to_disarmed(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

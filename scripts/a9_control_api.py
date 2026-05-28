@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import importlib.util
+import shlex
 import json
 import re
 import shutil
@@ -1894,13 +1895,18 @@ def heartbeat_tmux_plan_node(payload: dict[str, Any], *, root: Path = ROOT) -> d
     heartbeat_interval = int(payload.get("heartbeat_interval") or 30)
     smoke = bool(payload.get("smoke_test") or payload.get("smoke"))
     heartbeat_script = f"{remote_dir.rstrip('/')}/.a9/remote-node/heartbeat.sh"
-    heartbeat_env = [f"A9_HEARTBEAT_INTERVAL={heartbeat_interval}"]
-    if smoke:
-        heartbeat_env.append("A9_HEARTBEAT_ONCE=1")
-    heartbeat_env_value = " ".join(heartbeat_env)
+    quoted_remote_dir = shlex.quote(remote_dir)
+    quoted_session = shlex.quote(session)
+    quoted_heartbeat_script = shlex.quote(heartbeat_script)
+    heartbeat_env_value = " ".join(
+        [
+            f"A9_HEARTBEAT_INTERVAL={shlex.quote(str(heartbeat_interval))}",
+            *( [f"A9_HEARTBEAT_ONCE={shlex.quote('1')}"] if smoke else []),
+        ]
+    )
     ensure_command = (
-        f'mkdir -p {remote_dir} && (tmux has-session -t {session} 2>/dev/null || '
-        f'tmux new-session -d -s {session} -c {remote_dir} "{heartbeat_env_value} {heartbeat_script}")'
+        f"mkdir -p {quoted_remote_dir} && (tmux has-session -t {quoted_session} 2>/dev/null || "
+        f"tmux new-session -d -s {quoted_session} -c {quoted_remote_dir} {heartbeat_env_value} {quoted_heartbeat_script})"
     )
     quality = transport_quality(target)
     plan = {
