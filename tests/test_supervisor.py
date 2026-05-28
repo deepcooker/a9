@@ -1461,6 +1461,21 @@ Do the work.
         self.assertEqual(oversized_read["kind"], "outside_bounded_read_scope")
         self.assertEqual(allowed_check, {})
 
+    def test_live_worker_accepts_bounded_read_colon_prompt_form(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="bounded-read-colon",
+            prompt="bounded read: docs/mistakes.md",
+            checks=[],
+        )
+
+        allowed_read = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 60 docs/mistakes.md'")
+        disallowed_path = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 60 docs/other.md'")
+
+        self.assertEqual(allowed_read, {})
+        self.assertEqual(disallowed_path["kind"], "outside_bounded_read_scope")
+
     def test_live_worker_blocks_session_context_reads_outside_session_tasks(self):
         mod = load_supervisor()
         task = mod.Task(

@@ -2133,7 +2133,7 @@ def prompt_requires_targeted_rg(prompt: str) -> bool:
 def bounded_read_paths_from_prompt(prompt: str) -> list[str]:
     paths: list[str] = []
     for match in re.finditer(
-        r"bounded read of\s+([A-Za-z0-9_./-]+)",
+        r"bounded read(?:\s+of|\s*:)\s*([A-Za-z0-9_./-]+)",
         str(prompt or ""),
         flags=re.IGNORECASE,
     ):
