@@ -996,3 +996,5 @@
 
 - 监控者写 worker prompt 时，所有建议读取窗口也必须小于等于 bounded read 上限。
 - `monitor-blocked` 属于硬治理失败，应和 retryable budget 一样短路 checks，先修边界或 prompt。
+- bounded scope 不能过严到禁止 worker 在允许文件内做 `rg -n` 定位；允许窄路径 locator，
+  继续禁止 runtime 广根搜索、管道和无路径搜索。

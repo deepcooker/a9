@@ -1171,6 +1171,12 @@ Do the work.
                         json.dumps(
                             {
                                 "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'rg -n \"strict envelope\" docs/mistakes.md'",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
                                 "command": "/bin/bash -lc 'tail -n 120 docs/mistakes.md'",
                             }
                         ),
@@ -1450,6 +1456,7 @@ Do the work.
             "/bin/bash -lc 'python3 scripts/a9_service.py ps && tail -n 60 docs/mistakes.md'",
         )
         allowed_read = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 60 docs/mistakes.md'")
+        allowed_locator = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n \"strict envelope\" docs/mistakes.md'")
         oversized_read = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 120 docs/mistakes.md'")
         allowed_check = mod.live_worker_command_violation(
             task,
@@ -1458,6 +1465,7 @@ Do the work.
 
         self.assertEqual(extra_probe["kind"], "outside_bounded_read_scope")
         self.assertEqual(allowed_read, {})
+        self.assertEqual(allowed_locator, {})
         self.assertEqual(oversized_read["kind"], "outside_bounded_read_scope")
         self.assertEqual(allowed_check, {})
 

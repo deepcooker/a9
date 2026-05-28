@@ -2161,6 +2161,26 @@ def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> b
         start = int(sed_match.group(1))
         end = int(sed_match.group(2))
         return end >= start and (end - start + 1) <= DEFAULT_BOUNDED_READ_LINE_LIMIT
+    try:
+        parts = shlex.split(inner)
+    except ValueError:
+        return False
+    if parts and parts[0] == "rg":
+        allowed_flags = {"-n", "--line-number", "-F", "--fixed-strings"}
+        saw_line_flag = False
+        index = 1
+        while index < len(parts) and parts[index].startswith("-"):
+            if parts[index] not in allowed_flags:
+                return False
+            saw_line_flag = saw_line_flag or parts[index] in {"-n", "--line-number"}
+            index += 1
+        if not saw_line_flag or index >= len(parts):
+            return False
+        pattern = parts[index]
+        rg_paths = parts[index + 1 :]
+        if not pattern or not rg_paths:
+            return False
+        return all(path in paths for path in rg_paths)
     return False
 
 
