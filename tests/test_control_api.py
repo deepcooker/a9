@@ -2115,6 +2115,94 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["reconnect_backoff_seconds"], 8)
         self.assertEqual(node["reconnect_lifecycle"]["event"], "reconnecting")
 
+    def test_probe_node_timeout_is_retry_with_gateway_budget_and_reconnect_state(self):
+        mod = load_control_api()
+
+        class FakeRemote:
+            @staticmethod
+            def ssh_base(target, *, connect_timeout=10, identity_file=""):
+                return ["ssh", "root@node1", "probe"]
+
+            @staticmethod
+            def remote_probe_script():
+                return "ignored"
+
+            @staticmethod
+            def connect_error_action(error_kind):
+                return "reconnect" if error_kind == "ssh_connect_timeout" else "connected"
+
+            @staticmethod
+            def capped_reconnect_backoff_seconds(attempt, *, base_seconds=1, cap_seconds=30):
+                return min(cap_seconds, base_seconds * (2**attempt))
+
+            @staticmethod
+            def gateway_reconnect_decision(
+                *,
+                phase,
+                error_class="",
+                attempt=0,
+                node_id="",
+                origin="gateway",
+                policy_budget_remaining=0,
+                attempt_cap=8,
+                at="",
+            ):
+                if policy_budget_remaining <= 0:
+                    return {"action": "terminate", "delay_ms": 0}
+                return {
+                    "phase": phase,
+                    "action": "reconnect",
+                    "error_class": error_class,
+                    "attempt": attempt + 1,
+                    "delay_ms": 4000,
+                    "policy_budget_remaining": policy_budget_remaining,
+                    "node_id": node_id,
+                    "origin": origin,
+                    "ts": at,
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_remote = mod.remote
+            original_run = mod.subprocess.run
+            try:
+                mod.remote = lambda: FakeRemote
+
+                def fake_run(cmd, **kwargs):
+                    raise mod.subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout", 0))
+
+                mod.subprocess.run = fake_run
+                result = mod.probe_node(
+                    {"ssh_target": "root@node1", "node_id": "node-1", "reconnect_attempt": 2, "timeout_seconds": 1},
+                    root=root,
+                )
+                status = mod.node_status(root)
+            finally:
+                mod.remote = original_remote
+                mod.subprocess.run = original_run
+
+        node = status["nodes"][0]
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["return_code"], 124)
+        self.assertTrue(result["timed_out"])
+        self.assertEqual(result["probe_action"], "retry")
+        self.assertEqual(result["probe_action_reason"], "ssh_connect_timeout")
+        self.assertEqual(result["supervisor_followup"]["action"], "retry")
+        self.assertEqual(result["supervisor_followup"]["status"], "retryable-remote-probe")
+        self.assertEqual(result["supervisor_followup"]["phase"], "repair")
+        self.assertEqual(result["supervisor_followup"]["reason"], "ssh_connect_timeout")
+        self.assertEqual(result["missing_required_tools"], [])
+        self.assertEqual(result["missing_optional_tools"], [])
+        self.assertIn("probe timeout after 1s", result["raw"])
+        self.assertEqual(node["node_id"], "node-1")
+        self.assertEqual(node["ssh_target"], "root@node1")
+        self.assertEqual(node["host"], "node1")
+        self.assertEqual(node["reconnect_action"], "reconnect")
+        self.assertEqual(node["reconnect_reason"], "ssh_connect_timeout")
+        self.assertEqual(node["reconnect_attempt"], 2)
+        self.assertEqual(node["reconnect_backoff_seconds"], 4)
+        self.assertEqual(node["reconnect_lifecycle"]["event"], "reconnecting")
+
     def test_probe_node_sets_reconnect_backoff_and_terminal_action_fields(self):
         mod = load_control_api()
 

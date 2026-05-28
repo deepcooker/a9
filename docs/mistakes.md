@@ -781,3 +781,22 @@
   role boundary、test verifiability、quality、exception governance、
   NFR/security、execution governance。
 - 合议不能平均分，必须有 hard gate、tradeoff gate、execution gate、progress gate。
+
+## 2026-05-28：通过测试的 worker patch 仍可能漏掉 helper 默认值陷阱
+
+现象：
+
+- `implement-probe-node-timeout-governance-20260528` worker 正确识别了
+  `probe_node()` 需要把 SSH probe timeout 变成 retry/reconnect 状态。
+- 但它调用 `gateway_reconnect_decision()` 时没有传
+  `policy_budget_remaining`，而该 helper 默认 budget 为 0，会把真实
+  timeout 覆盖成 `terminate`。
+- worker 的测试 FakeRemote 没有实现真实 `gateway_reconnect_decision()`，
+  所以测试通过但没有覆盖关键默认参数。
+
+规则：
+
+- 复用治理 helper 时必须检查默认参数是否代表“禁止执行/无预算/保守拒绝”。
+- 测试 fake 不能只覆盖 happy path；至少要模拟会导致真实默认行为变化的字段。
+- monitor 不能只看 pass/fail 和 scope guard；要人工读 patch 中所有决策 helper
+  的入参，尤其是 budget、cap、approval、policy 这类默认值。

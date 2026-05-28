@@ -1578,16 +1578,42 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     identity_file = str(payload.get("identity_file") or default_identity_file())
     mod = remote()
     cmd = mod.ssh_base(target, connect_timeout=connect_timeout, identity_file=identity_file)
-    proc = subprocess.run(
-        [*cmd, mod.remote_probe_script()],
-        cwd=ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-    parsed = mod.parse_probe(proc.stdout)
-    classification = mod.classify_probe_result(proc.returncode, parsed)
+    default_probe_timeout = max(connect_timeout * 2, 10)
+    try:
+        probe_timeout = int(payload.get("timeout_seconds") or default_probe_timeout)
+    except (TypeError, ValueError):
+        probe_timeout = default_probe_timeout
+    if probe_timeout <= 0:
+        probe_timeout = default_probe_timeout
+
+    timed_out = False
+    return_code = 0
+    raw_output = ""
+    parsed: dict[str, str] = {}
+    try:
+        proc = subprocess.run(
+            [*cmd, mod.remote_probe_script()],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=probe_timeout,
+        )
+        return_code = proc.returncode
+        raw_output = proc.stdout
+        parsed = mod.parse_probe(raw_output)
+        classification = mod.classify_probe_result(return_code, parsed)
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        return_code = 124
+        raw_output = f"probe timeout after {probe_timeout}s: {exc}"
+        classification = {
+            "probe_action": "retry",
+            "probe_action_reason": "ssh_connect_timeout",
+            "required_missing": [],
+            "optional_missing": [],
+        }
     checked_at = utc_now()
     reconnect_reason = str(classification.get("probe_action_reason") or "probe_ok")
     connect_error_action = getattr(mod, "connect_error_action", None)
@@ -1597,6 +1623,30 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     reconnect_attempt = int(payload.get("reconnect_attempt") or 0)
     backoff_seconds = getattr(mod, "capped_reconnect_backoff_seconds", lambda attempt: min(30, 2 ** max(0, int(attempt))))
     reconnect_backoff_seconds = backoff_seconds(reconnect_attempt) if reconnect_action == "reconnect" else 0
+    gateway_decision = getattr(mod, "gateway_reconnect_decision", None)
+    if callable(gateway_decision):
+        try:
+            policy_budget_remaining = int(
+                payload.get("policy_budget_remaining") or payload.get("reconnect_budget_remaining") or 1
+            )
+        except (TypeError, ValueError):
+            policy_budget_remaining = 1
+        decision = gateway_decision(
+            phase="connect",
+            error_class=reconnect_reason,
+            attempt=reconnect_attempt,
+            node_id=str(payload.get("node_id") or target),
+            origin="probe_node",
+            policy_budget_remaining=max(0, policy_budget_remaining),
+            at=checked_at,
+        )
+        if isinstance(decision, dict):
+            decision_action = str(decision.get("action") or "")
+            if decision_action in {"connected", "reconnect", "terminate"}:
+                reconnect_action = decision_action
+                reconnect_backoff_seconds = (
+                    int(decision.get("delay_ms") or 0) // 1000 if reconnect_action == "reconnect" else 0
+                )
     lifecycle_event = "reconnecting" if reconnect_action == "reconnect" else "connected"
     lifecycle_update = getattr(
         mod,
@@ -1625,7 +1675,7 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         classification.get("probe_action"),
         classification.get("probe_action_reason"),
     )
-    host = str(payload.get("host") or parsed.get("host") or target.split("@")[-1].split(":")[0])
+    host = str(payload.get("host") or parsed.get("host") or ssh_target_host(target))
     registered = register_node(
         {
             "node_id": payload.get("node_id") or target,
@@ -1655,17 +1705,18 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         root=root,
     )
     return {
-        "status": "ok" if proc.returncode == 0 else "failed",
+        "status": "ok" if return_code == 0 else "failed",
         "checked_at": checked_at,
         "ssh_target": target,
-        "return_code": proc.returncode,
+        "return_code": return_code,
+        "timed_out": timed_out,
         "probe_action": classification["probe_action"],
         "probe_action_reason": classification["probe_action_reason"],
         "supervisor_followup": followup,
         "missing_required_tools": classification["required_missing"],
         "missing_optional_tools": classification["optional_missing"],
         "probe": parsed,
-        "raw": compact_text(proc.stdout, 4000),
+        "raw": compact_text(raw_output, 4000),
         "node": registered["node"],
     }
 
