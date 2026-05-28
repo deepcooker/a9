@@ -818,3 +818,22 @@
 - 证据文件名已经带时间戳时，排序必须把末尾时间戳纳入稳定 tie-breaker，不要让
   kind 前缀影响“最新”语义。
 - worker 通过后，主控合并到 main 后仍必须重跑声明测试；worktree pass 不是最终验收。
+
+## 2026-05-28：远端 bootstrap heredoc 必须防提前展开
+
+现象：
+
+- `remote-bootstrap-heartbeat-loop-script-20260528` worker 生成了
+  `.a9/remote-node/heartbeat.sh`，方向正确，但 bootstrap 用未引用
+  `<<EOF` 写脚本。
+- 未引用 heredoc 会在 bootstrap 执行时提前展开 heartbeat 脚本里的
+  `$NODE_ID`、`$(hostname)`、`$(cat /proc/loadavg ...)` 等内容，导致远端
+  安装出来的脚本不再是原始模板。
+- 同时 heartbeat 脚本通过 Python `os.environ` 生成 JSON，但 shell 变量
+  `NODE_ID/STATUS/...` 未 export，子进程读不到真实值。
+
+规则：
+
+- 生成脚本的脚本必须使用 quoted heredoc：`<<'EOF'`。
+- shell 变量要传给 Python/子进程时必须显式 `export`。
+- bootstrap 类任务不能只断言字符串存在，还要断言 heredoc quoting 和 env 传递。

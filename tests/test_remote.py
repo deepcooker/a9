@@ -38,6 +38,7 @@ class RemoteBootstrapTests(unittest.TestCase):
         self.assertIn("WORKER_NAME=node-a", script)
         self.assertIn("git clone", script)
         self.assertIn(".a9/remote-node/heartbeat.sh", script)
+        self.assertIn("cat > .a9/remote-node/heartbeat.sh <<'EOF'", script)
         self.assertIn("chmod +x .a9/remote-node/heartbeat.sh", script)
         self.assertIn("api/nodes/heartbeat", script)
         self.assertIn("A9_HEARTBEAT_ONCE", script)
@@ -60,6 +61,7 @@ class RemoteBootstrapTests(unittest.TestCase):
         self.assertIn('"current_task"', heartbeat_script)
         self.assertIn('"message"', heartbeat_script)
         self.assertIn('"load"', heartbeat_script)
+        self.assertIn("export NODE_ID STATUS CURRENT_TASK MESSAGE LOAD CAPABILITIES", heartbeat_script)
 
     def test_ssh_base_uses_batch_mode_and_identity(self):
         mod = load_module()
