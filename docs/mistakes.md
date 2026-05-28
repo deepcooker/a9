@@ -998,3 +998,16 @@
 - `monitor-blocked` 属于硬治理失败，应和 retryable budget 一样短路 checks，先修边界或 prompt。
 - bounded scope 不能过严到禁止 worker 在允许文件内做 `rg -n` 定位；允许窄路径 locator，
   继续禁止 runtime 广根搜索、管道和无路径搜索。
+
+## 2026-05-29：patch_source 首次 bootstrap 的 patch_apply 摘要会滞后一轮
+
+现象：
+
+- 首次 worker run 新增 `patch_source` 时，`patch_apply` 发生在该字段存在前，
+  所以当轮 `patch_apply` summary 里看不到 `patch_source`。
+
+规则：
+
+- 这属于 bootstrap 时序现象，不是补丁丢失。
+- 后续 run 应在 worker strict envelope 的
+  `output.search_replace_blocks` 中查看并确认补丁载体。
