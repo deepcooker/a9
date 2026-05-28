@@ -1561,6 +1561,45 @@ Do the work.
         self.assertIn("raw session logs", prompt)
         self.assertIn("Use `rg -n` first", prompt)
 
+    def test_next_task_prompt_includes_communication_acceptance_hints_when_gateway_evidence_required(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="gateway-communication-hints",
+            prompt="Continue communication governance for gateway runtime evidence.",
+            phase="test",
+        )
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "test reconnect event stream envelope"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "record")
+
+        self.assertIn("Communication acceptance hints:", prompt)
+        self.assertIn("Data model:", prompt)
+        self.assertIn("node table shape", prompt)
+        self.assertIn("Performance bounds:", prompt)
+        self.assertIn("latency/timeout targets", prompt)
+        self.assertIn("Failure taxonomy -> recovery mapping:", prompt)
+        self.assertIn("timeout/auth/network/protocol/rate_limit", prompt)
+
+    def test_next_task_prompt_omits_communication_acceptance_hints_for_non_communication_task(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="docs-record", prompt="Update docs.", phase="record")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "record copied mechanisms"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "record")
+
+        self.assertNotIn("Communication acceptance hints:", prompt)
+
     def test_retryable_worker_failure_short_circuits_checks(self):
         mod = load_supervisor()
 

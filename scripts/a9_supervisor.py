@@ -3715,6 +3715,7 @@ Managed flow:
 Deterministic record:
 - record_path: {summary['deterministic_record_path']}
 """
+    communication_acceptance_lines = communication_acceptance_hints(task, summary)
     return f"""strict_worker_envelope: true
 
 Continue A9 24-hour automation.
@@ -3730,6 +3731,7 @@ Phase: {phase}
 {flow_lines}
 {record_lines}
 {phase_lines}
+{communication_acceptance_lines}
 
 Core rule:
 - Continue copying mature open-source mechanisms before inventing.
@@ -3931,6 +3933,17 @@ def communication_task_requires_gateway_runtime_evidence(task: Task, summary: di
         ]
     ).lower()
     return any(hint in haystack for hint in COMMUNICATION_GATE_HINTS)
+
+
+def communication_acceptance_hints(task: Task, summary: dict[str, Any]) -> str:
+    if not communication_task_requires_gateway_runtime_evidence(task, summary):
+        return ""
+    return """
+Communication acceptance hints:
+- Data model: prove node table shape, heartbeat/event stream fields, tmux evidence state transitions, and command status schema.
+- Performance bounds: define latency/timeout targets, retry budget, reconnect stability expectations, and per-run event budget.
+- Failure taxonomy -> recovery mapping: timeout/auth/network/protocol/rate_limit must map to retry/repair/quarantine/terminate actions.
+"""
 
 
 def gateway_runtime_gate() -> dict[str, Any]:

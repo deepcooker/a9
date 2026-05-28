@@ -1,5 +1,27 @@
 # A9 错题本
 
+## 2026-05-28：worker envelope 自评不能覆盖 supervisor 检查事实
+
+现象：
+
+- `communication-next-task-template-acceptance-20260528` 的 worker final
+  把声明检查判断成 timeout，并返回 `ok:false`。
+- supervisor artifact 里实际记录 `python3 -m unittest tests/test_supervisor.py`
+  return_code=0，103 tests OK，耗时约 130 秒；`git diff --check` 也通过。
+- 因为 strict envelope 是 fail，git governance 按规则回滚了有效 patch。
+
+修正：
+
+- 监控者接管后以 run artifact 为事实源，重新应用 patch，再在主仓跑检查。
+- 后续 worker 不能只凭主观观察声明 timeout；必须引用 supervisor checks
+  artifact 的 return_code、duration 和 output。
+
+产品判断：
+
+- 这证明 A9 的“执行机器 + 监控者”模式是必要的：worker 会误判，监控者
+  要用证据纠偏。
+- 冲突优先级：supervisor checks artifact > worker final 自评。
+
 ## 2026-05-28：固定 120 行 sed gate 过于机械
 
 现象：
