@@ -318,6 +318,61 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn("data_structure_acceptance_missing", kinds)
         self.assertNotIn("data_model_not_explicit", kinds)
 
+    def test_communication_control_api_requires_explicit_event_state_schema(self):
+        mod = load_monitor()
+        cases = [
+            {
+                "name": "missing_schema_state_fails_hard_gate",
+                "task_text": (
+                    "Goal: implement communication gateway node-status control API task handling.\n"
+                    "Why: operators need reliable remote control across reconnect and failure scenarios.\n"
+                    "System behavior: input control request, output node status response, enforce bounded error action.\n"
+                    "Tradeoff: keep implementation narrow and reject broad feature expansion.\n"
+                    "Hard bounds: monitor/worker role boundary, allowed paths, retry budget.\n"
+                    "Performance: keep gateway latency stable and preserve reconnect stability under load.\n"
+                ),
+                "expects_data_model_missing": True,
+            },
+            {
+                "name": "explicit_schema_state_passes_data_model_gate",
+                "task_text": (
+                    "Goal: implement communication gateway node-status control API task handling.\n"
+                    "Why: operators need reliable remote control across reconnect and failure scenarios.\n"
+                    "System behavior: input control request, output node status response, enforce bounded error action.\n"
+                    "Data model: node table stores node_id/last_seen/connection_state; heartbeat event stream records reconnect events; "
+                    "tmux evidence state records session attach status; command status schema includes request_id/status/error_code/updated_at.\n"
+                    "Tradeoff: keep implementation narrow and reject broad feature expansion.\n"
+                    "Hard bounds: monitor/worker role boundary, allowed paths, retry budget.\n"
+                    "Performance: keep gateway latency stable and preserve reconnect stability under load.\n"
+                ),
+                "expects_data_model_missing": False,
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                with tempfile.TemporaryDirectory() as tmp:
+                    run_dir = self.write_run(
+                        Path(tmp),
+                        {
+                            "status": "pass",
+                            "phase": "implement",
+                            "worker": {},
+                            "worker_envelope": {"status": "pass"},
+                            "checks": [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+                        },
+                        [],
+                        task_text=case["task_text"],
+                    )
+                    score = mod.score_run(run_dir)
+
+                kinds = {item["kind"] for item in score["findings"]}
+                if case["expects_data_model_missing"]:
+                    self.assertIn("data_model_not_explicit", kinds)
+                    self.assertIn("data_model_expert", score["gates"]["hard_gate"]["failed_experts"])
+                else:
+                    self.assertNotIn("data_model_not_explicit", kinds)
+
 
 if __name__ == "__main__":
     unittest.main()
