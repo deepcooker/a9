@@ -67,6 +67,10 @@ class ControlApiTests(unittest.TestCase):
             },
             "context_pressure": {"budget_ratio": 0.25},
         }
+        summary["context_pressure"]["context_router"] = {
+            "strategy": "hermes_context_router_v1",
+            "blocked_sections": 2,
+        }
 
         compact = mod.compact_summary(summary)
 
@@ -83,6 +87,28 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(compact["actual_token_usage"]["input_tokens"], 10)
         self.assertEqual(compact["context_path"], "/tmp/run/context.md")
         self.assertEqual(compact["evidence_path"], "/tmp/run/evidence.jsonl")
+        self.assertEqual(compact["context_router"]["strategy"], "hermes_context_router_v1")
+        self.assertEqual(compact["context_router"]["blocked_sections"], 2)
+
+    def test_compact_summary_falls_back_to_worker_context_router(self):
+        mod = load_control_api()
+        compact = mod.compact_summary(
+            {
+                "task_id": "task-2",
+                "worker": {
+                    "context_router": {
+                        "strategy": "hermes_context_router_v1",
+                        "blocked_sections": 1,
+                        "sections": [{"name": "Previous Task Context Tail"}],
+                    }
+                },
+                "context_pressure": {},
+            }
+        )
+
+        self.assertEqual(compact["context_router"]["strategy"], "hermes_context_router_v1")
+        self.assertEqual(compact["context_router"]["blocked_sections"], 1)
+        self.assertEqual(compact["context_router"]["section_count"], 1)
 
     def test_operator_tail_reads_latest_codex_session_under_allowed_root(self):
         mod = load_control_api()

@@ -306,6 +306,12 @@ def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
         return None
     worker = summary.get("worker", {})
     context_pressure = summary.get("context_pressure", {})
+    router = context_pressure.get("context_router")
+    if not isinstance(router, dict) or not router:
+        fallback_router = worker.get("context_router", {})
+        router = fallback_router if isinstance(fallback_router, dict) else {}
+    router_sections = router.get("sections", [])
+    section_count = len(router_sections) if isinstance(router_sections, list) else 0
     monitor_score = summary.get("monitor_score", {})
     return {
         "task_id": summary.get("task_id"),
@@ -337,6 +343,11 @@ def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
             "findings": monitor_score.get("findings", []),
         },
         "context_pressure": context_pressure,
+        "context_router": {
+            "strategy": router.get("strategy"),
+            "blocked_sections": router.get("blocked_sections", 0),
+            "section_count": section_count,
+        },
         "actual_token_usage": context_pressure.get("actual_token_usage") or worker.get("actual_token_usage", {}),
     }
 
