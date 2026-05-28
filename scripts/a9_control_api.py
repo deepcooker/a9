@@ -1822,7 +1822,8 @@ def bootstrap_plan_node(payload: dict[str, Any]) -> dict[str, Any]:
             "ensure git/python3/curl are present",
             "clone or update A9 repo on remote host",
             "write remote-node config with controller URL",
-            "later install worker daemon and Redis Streams consumer",
+            "install heartbeat loop script at .a9/remote-node/heartbeat.sh",
+            "later start worker daemon and Redis Streams consumer",
             "later register heartbeat back to controller",
         ],
     }
@@ -1877,6 +1878,60 @@ def tmux_plan_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, A
         "execution_enabled": False,
     }
     evidence_path = write_node_evidence("tmux-plan", node_id, plan, root=root)
+    return {**plan, "evidence_path": str(evidence_path)}
+
+
+def heartbeat_tmux_plan_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    target = str(payload.get("ssh_target") or payload.get("target") or "").strip()
+    if not target:
+        raise ValueError("ssh_target is required")
+    node_id = safe_node_id(str(payload.get("node_id") or target))
+    session = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(payload.get("session") or "a9-heartbeat").strip())[:64] or "a9-heartbeat"
+    remote_dir = str(payload.get("remote_dir") or "~/a9-worker")
+    controller_url = str(payload.get("controller_url") or "").strip() or None
+    connect_timeout = int(payload.get("connect_timeout") or 5)
+    identity_file = str(payload.get("identity_file") or default_identity_file())
+    heartbeat_interval = int(payload.get("heartbeat_interval") or 30)
+    smoke = bool(payload.get("smoke_test") or payload.get("smoke"))
+    heartbeat_script = f"{remote_dir.rstrip('/')}/.a9/remote-node/heartbeat.sh"
+    heartbeat_env = [f"A9_HEARTBEAT_INTERVAL={heartbeat_interval}"]
+    if smoke:
+        heartbeat_env.append("A9_HEARTBEAT_ONCE=1")
+    heartbeat_env_value = " ".join(heartbeat_env)
+    ensure_command = (
+        f'mkdir -p {remote_dir} && (tmux has-session -t {session} 2>/dev/null || '
+        f'tmux new-session -d -s {session} -c {remote_dir} "{heartbeat_env_value} {heartbeat_script}")'
+    )
+    quality = transport_quality(target)
+    plan = {
+        "status": "planned",
+        "transport": "tailscale+ssh+tmux",
+        "transport_quality": quality,
+        "node_id": node_id,
+        "target": target,
+        "session": session,
+        "remote_dir": remote_dir,
+        "heartbeat_script": heartbeat_script,
+        "heartbeat_interval": heartbeat_interval,
+        "planned_at": utc_now(),
+        "execution_enabled": False,
+        "steps": [
+            "create/confirm remote tmux session dedicated for heartbeat loop",
+            "run .a9/remote-node/heartbeat.sh inside tmux session with heartbeat interval",
+            "avoid systemd/daemon by keeping execution inside tmux session command",
+        ],
+        "command_preview": [
+            ssh_remote_command(
+                target,
+                ensure_command,
+                connect_timeout=connect_timeout,
+                identity_file=identity_file,
+            ),
+        ],
+    }
+    if controller_url is not None:
+        plan["controller_url"] = controller_url
+    evidence_path = write_node_evidence("heartbeat-tmux-plan", node_id, plan, root=root)
     return {**plan, "evidence_path": str(evidence_path)}
 
 

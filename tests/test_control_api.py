@@ -2557,6 +2557,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "planned")
         self.assertEqual(result["target"], "root@node1")
         self.assertIn("ssh probe remote host", result["steps"])
+        self.assertIn("install heartbeat loop script at .a9/remote-node/heartbeat.sh", result["steps"])
         self.assertIn("git@example.com:a9.git", result["repo"])
         self.assertIn("git clone", result["dry_run_script"])
         self.assertIn("CONTROLLER_URL=http://controller:8787", result["dry_run_script"])
@@ -2594,6 +2595,52 @@ class ControlApiTests(unittest.TestCase):
             self.assertIn(".a9/nodes/evidence/root-100.64.0.1", str(evidence_path))
             evidence = mod.read_evidence_file(str(evidence_path), root=root)
             self.assertIn("tailscale+ssh+tmux", evidence["content"])
+
+    def test_heartbeat_tmux_plan_node_is_non_executing_plan(self):
+        mod = load_control_api()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = mod.heartbeat_tmux_plan_node(
+                {"ssh_target": "root@100.64.0.1", "session": "a9/heartbeat", "remote_dir": "~/a9-worker"},
+                root=root,
+            )
+
+            self.assertEqual(result["status"], "planned")
+            self.assertEqual(result["transport"], "tailscale+ssh+tmux")
+            self.assertEqual(result["transport_quality"]["quality"], "tailscale")
+            self.assertEqual(result["node_id"], "root-100.64.0.1")
+            self.assertEqual(result["session"], "a9-heartbeat")
+            self.assertFalse(result["execution_enabled"])
+            self.assertIn("heartbeat loop", str(result["steps"]))
+            self.assertIn("~/a9-worker/.a9/remote-node/heartbeat.sh", result["heartbeat_script"])
+            self.assertNotIn("A9_HEARTBEAT_ONCE=1", result["command_preview"][0][-1])
+            self.assertIn("tmux new-session", result["command_preview"][0][-1])
+            self.assertIn(".a9/remote-node/heartbeat.sh", result["command_preview"][0][-1])
+            evidence_path = Path(result["evidence_path"])
+            self.assertTrue(evidence_path.exists())
+            self.assertIn(".a9/nodes/evidence/root-100.64.0.1", str(evidence_path))
+            evidence = mod.read_evidence_file(str(evidence_path), root=root)
+            evidence_payload = json.loads(evidence["content"])
+            self.assertEqual(evidence_payload["transport"], "tailscale+ssh+tmux")
+            self.assertFalse(evidence_payload["execution_enabled"])
+
+    def test_heartbeat_tmux_plan_node_smoke_test_uses_once_flag(self):
+        mod = load_control_api()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            default_plan = mod.heartbeat_tmux_plan_node(
+                {"ssh_target": "root@100.64.0.1", "remote_dir": "~/a9-worker"},
+                root=root,
+            )
+            smoke_plan = mod.heartbeat_tmux_plan_node(
+                {"ssh_target": "root@100.64.0.1", "remote_dir": "~/a9-worker", "smoke_test": True},
+                root=root,
+            )
+
+            self.assertNotIn("A9_HEARTBEAT_ONCE=1", default_plan["command_preview"][0][-1])
+            self.assertIn("A9_HEARTBEAT_ONCE=1", smoke_plan["command_preview"][0][-1])
 
     def test_phone_control_requires_admin_and_expires_to_disarmed(self):
         mod = load_control_api()
