@@ -2233,6 +2233,7 @@ Do the work.
 
         self.assertTrue(mod.worker_failure_short_circuits_checks({"status": "retryable-worker-budget"}))
         self.assertTrue(mod.worker_failure_short_circuits_checks({"status": "retryable-worker-network"}))
+        self.assertTrue(mod.worker_failure_short_circuits_checks({"status": "monitor-blocked"}))
         self.assertFalse(mod.worker_failure_short_circuits_checks({"status": ""}))
         self.assertFalse(mod.worker_failure_short_circuits_checks({"status": "needs-repair"}))
 

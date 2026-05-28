@@ -4394,7 +4394,10 @@ def auto_loop_failure_kind(summary: dict[str, Any]) -> str:
 
 
 def worker_failure_short_circuits_checks(worker_failure: dict[str, Any]) -> bool:
-    return str(worker_failure.get("status") or "").startswith("retryable-")
+    status = str(worker_failure.get("status") or "")
+    if status.startswith("retryable-"):
+        return True
+    return status == "monitor-blocked"
 
 
 def update_auto_loop_guard(summary: dict[str, Any]) -> dict[str, Any]:

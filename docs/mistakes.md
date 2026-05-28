@@ -982,3 +982,17 @@
 
 - strict worker 产出文件改动时，优先把补丁放进 `output.search_replace_blocks`。
 - block 必须可直接 deterministic apply，且 path 明确、范围最小。
+
+## 2026-05-29：bounded read 建议本身也必须遵守窗口上限
+
+现象：
+
+- `patch-source-evidence-smoke-20260529` 的 prompt 要求 bounded read，但给出的
+  `sed -n '1580,1668p' scripts/a9_supervisor.py` 建议窗口有 89 行，超过 80 行上限。
+- live/process governance 正确判定为 `monitor-blocked`，但旧逻辑仍继续跑 declared checks，
+  造成“worker 已被拦截但检查通过”的混乱证据。
+
+规则：
+
+- 监控者写 worker prompt 时，所有建议读取窗口也必须小于等于 bounded read 上限。
+- `monitor-blocked` 属于硬治理失败，应和 retryable budget 一样短路 checks，先修边界或 prompt。
