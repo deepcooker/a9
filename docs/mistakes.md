@@ -35,6 +35,34 @@
   `python3 -m unittest tests/test_remote.py` 是同一测试目标，不能因为表现形式
   不同就回滚有效 patch。已把 unittest module/file 形式做等价归一。
 
+## 2026-05-28：重复 fake Redis 夹具会放大 worker 机械修补
+
+现象：
+
+- `test-node-status-followup-integration-20260528` 要补
+  `node_status(root).communication_followup` 集成测试。
+- worker 正确发现 helper-only 测试不够，也正确发现 fake Redis 缺 `JSON.SET`、
+  `XADD`、`TS.ADD` 分支。
+- 但测试文件里存在多段相似 `fake_redis`，worker 多次补错位置，最后用
+  `perl -0pi` 做机械替换，插入重复分支，导致 trace 变大并触发
+  `retryable-worker-budget`。supervisor 回滚该 worker patch。
+
+修正：
+
+- 监控者接管后只保留有效思想：`communication_followup_intent` 聚合同优先级
+  node evidence，并用直接写 node registry JSON 的方式测试 `node_status(root)`。
+- 集成测试不再通过 `register_node/heartbeat_node` 制造离线状态，因为
+  `heartbeat_node` 当前会覆盖 `last_heartbeat_at=now`，不能表达历史离线心跳。
+- 主线提交 `295e5c0` 已通过 `python3 -m unittest tests/test_control_api.py`、
+  `python3 -m unittest tests/test_node.py` 和 `git diff --check`。
+
+后续规则：
+
+- 对 control API 测试应抽一个小的 fake Redis helper，避免每个测试复制一段
+  `fake_redis`。
+- worker prompt 里遇到重复测试夹具时，应优先新增/复用 helper，而不是批量文本替换。
+- 如果 worker 使用机械 rewrite 命令修测试，应当视为质量风险，由监控者复核后再合入。
+
 ## 2026-05-28：targeted rg 不能只写在 prompt 里
 
 现象：
