@@ -373,6 +373,62 @@ class MonitorTests(unittest.TestCase):
                 else:
                     self.assertNotIn("data_model_not_explicit", kinds)
 
+    def test_communication_task_requires_explicit_performance_depth_bounds(self):
+        mod = load_monitor()
+        cases = [
+            {
+                "name": "missing_performance_bounds_requires_tradeoff",
+                "task_text": (
+                    "Goal: implement communication gateway SSH/tmux/Redis control API task orchestration.\n"
+                    "Why: operators must keep remote execution governable during reconnect and failure recovery.\n"
+                    "System behavior: input control request, emit event/state transition, return bounded error action.\n"
+                    "Data model: request state table, gateway event stream, node heartbeat state, command status schema.\n"
+                    "Tradeoff: keep scope narrow and reject broad platform feature expansion.\n"
+                    "Hard bounds: monitor/worker boundary and allowed paths are explicit.\n"
+                ),
+                "expects_performance_missing": True,
+            },
+            {
+                "name": "explicit_performance_bounds_passes_performance_depth_gate",
+                "task_text": (
+                    "Goal: implement communication gateway SSH/tmux/Redis control API task orchestration.\n"
+                    "Why: operators must keep remote execution governable during reconnect and failure recovery.\n"
+                    "System behavior: input control request, emit event/state transition, return bounded error action.\n"
+                    "Data model: request state table, gateway event stream, node heartbeat state, command status schema.\n"
+                    "Tradeoff: keep scope narrow and reject broad platform feature expansion.\n"
+                    "Hard bounds: monitor/worker boundary and allowed paths are explicit.\n"
+                    "Performance bounds: p95 latency <= 250ms; per-request timeout 5s; reconnect retry budget <= 3 per minute; "
+                    "SSH/tmux session stability target >= 99.9%; Redis event budget <= 500 events per task.\n"
+                ),
+                "expects_performance_missing": False,
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                with tempfile.TemporaryDirectory() as tmp:
+                    run_dir = self.write_run(
+                        Path(tmp),
+                        {
+                            "status": "pass",
+                            "phase": "implement",
+                            "worker": {},
+                            "worker_envelope": {"status": "pass"},
+                            "checks": [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+                        },
+                        [],
+                        task_text=case["task_text"],
+                    )
+                    score = mod.score_run(run_dir)
+
+                kinds = {item["kind"] for item in score["findings"]}
+                performance_expert = next(item for item in score["experts"] if item["name"] == "performance_depth_expert")
+                if case["expects_performance_missing"]:
+                    self.assertIn("performance_depth_not_explicit", kinds)
+                    self.assertNotEqual(performance_expert["recommended_action"], "continue")
+                else:
+                    self.assertNotIn("performance_depth_not_explicit", kinds)
+
 
 if __name__ == "__main__":
     unittest.main()
