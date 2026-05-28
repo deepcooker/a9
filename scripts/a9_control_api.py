@@ -1108,6 +1108,7 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
                 record = enrich_node_connection(read_json(path))
                 record = enrich_node_tmux_action(record, root=root)
                 record = enrich_node_probe_evidence(record, root=root)
+                record = enrich_node_heartbeat_start_evidence(record, root=root)
                 nodes.append(record)
             except json.JSONDecodeError:
                 nodes.append({"node_id": path.stem, "status": "invalid", "connection_state": "invalid"})
@@ -1291,6 +1292,35 @@ def latest_probe_evidence_for_node(node_id: str, *, root: Path = ROOT) -> dict[s
     return None
 
 
+def latest_heartbeat_start_evidence_for_node(node_id: str, *, root: Path = ROOT) -> dict[str, Any] | None:
+    evidence_dir = node_evidence_dir(node_id, root)
+    if not evidence_dir.exists():
+        return None
+    candidates = sorted(
+        evidence_dir.glob("heartbeat-tmux-start*.json"),
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            payload = read_json(path)
+        except (json.JSONDecodeError, OSError):
+            continue
+        action = payload.get("heartbeat_action")
+        if not action:
+            continue
+        return {
+            "heartbeat_start_status": str(payload.get("status") or ""),
+            "heartbeat_start_action": str(action),
+            "heartbeat_start_action_reason": str(payload.get("heartbeat_action_reason") or ""),
+            "heartbeat_start_return_code": payload.get("return_code"),
+            "heartbeat_start_timed_out": bool(payload.get("timed_out")),
+            "heartbeat_start_executed_at": str(payload.get("executed_at") or ""),
+            "heartbeat_start_evidence_path": str(path),
+        }
+    return None
+
+
 def enrich_node_tmux_action(record: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     node_id = str(record.get("node_id") or "")
     if not node_id:
@@ -1309,6 +1339,16 @@ def enrich_node_probe_evidence(record: dict[str, Any], *, root: Path = ROOT) -> 
     if not probe:
         return record
     return {**record, **probe}
+
+
+def enrich_node_heartbeat_start_evidence(record: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    node_id = str(record.get("node_id") or "")
+    if not node_id:
+        return record
+    heartbeat_start = latest_heartbeat_start_evidence_for_node(node_id, root=root)
+    if not heartbeat_start:
+        return record
+    return {**record, **heartbeat_start}
 
 
 def redis_node_hot_status() -> dict[str, Any]:

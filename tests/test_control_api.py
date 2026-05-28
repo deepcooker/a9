@@ -956,6 +956,38 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["probe_checked_at"], "2026-05-28T00:00:00Z")
         self.assertEqual(node["probe_evidence_path"], str(latest_evidence_path))
 
+    def test_node_status_aggregates_latest_heartbeat_start_evidence(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@node-a"}, root=root)
+            mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+
+            latest_evidence_path = mod.write_node_evidence(
+                "heartbeat-tmux-start",
+                "node/a",
+                {
+                    "status": "ok",
+                    "return_code": 0,
+                    "timed_out": False,
+                    "heartbeat_action": "continue",
+                    "heartbeat_action_reason": "heartbeat_tmux_started",
+                    "executed_at": "2026-05-28T00:00:00Z",
+                },
+                root=root,
+            )
+
+            status = mod.node_status(root)
+
+        node = status["nodes"][0]
+        self.assertEqual(node["heartbeat_start_status"], "ok")
+        self.assertEqual(node["heartbeat_start_action"], "continue")
+        self.assertEqual(node["heartbeat_start_action_reason"], "heartbeat_tmux_started")
+        self.assertEqual(node["heartbeat_start_return_code"], 0)
+        self.assertFalse(node["heartbeat_start_timed_out"])
+        self.assertEqual(node["heartbeat_start_executed_at"], "2026-05-28T00:00:00Z")
+        self.assertEqual(node["heartbeat_start_evidence_path"], str(latest_evidence_path))
+
     def test_node_status_ignores_newer_malformed_probe_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1002,6 +1034,53 @@ class ControlApiTests(unittest.TestCase):
         self.assertFalse(node["probe_timed_out"])
         self.assertEqual(node["probe_checked_at"], "2026-05-28T00:00:00Z")
         self.assertEqual(node["probe_evidence_path"], str(valid_evidence_path))
+
+    def test_node_status_ignores_newer_malformed_heartbeat_start_evidence(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@node-a"}, root=root)
+            mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+
+            invalid_evidence_path = mod.write_node_evidence(
+                "heartbeat-tmux-start",
+                "node/a",
+                {
+                    "status": "failed",
+                    "return_code": 1,
+                    "timed_out": True,
+                    "executed_at": "2026-05-28T00:00:10Z",
+                },
+                root=root,
+            )
+            valid_evidence_path = mod.write_node_evidence(
+                "heartbeat-tmux-start",
+                "node/a",
+                {
+                    "status": "ok",
+                    "return_code": 0,
+                    "timed_out": False,
+                    "heartbeat_action": "continue",
+                    "heartbeat_action_reason": "heartbeat_tmux_started",
+                    "executed_at": "2026-05-28T00:00:00Z",
+                },
+                root=root,
+            )
+
+            base_ts = datetime(2026, 5, 28, 0, 0, 0, tzinfo=timezone.utc).timestamp()
+            os.utime(str(invalid_evidence_path), (base_ts + 10.0, base_ts + 10.0))
+            os.utime(str(valid_evidence_path), (base_ts, base_ts))
+
+            status = mod.node_status(root)
+
+        node = status["nodes"][0]
+        self.assertEqual(node["heartbeat_start_status"], "ok")
+        self.assertEqual(node["heartbeat_start_action"], "continue")
+        self.assertEqual(node["heartbeat_start_action_reason"], "heartbeat_tmux_started")
+        self.assertEqual(node["heartbeat_start_return_code"], 0)
+        self.assertFalse(node["heartbeat_start_timed_out"])
+        self.assertEqual(node["heartbeat_start_executed_at"], "2026-05-28T00:00:00Z")
+        self.assertEqual(node["heartbeat_start_evidence_path"], str(valid_evidence_path))
 
     def test_node_status_includes_tasks_stream_pending_lag_probe(self):
         mod = load_control_api()
