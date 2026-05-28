@@ -2725,10 +2725,105 @@ class ControlApiTests(unittest.TestCase):
             allowed = mod.command_gate("nodes.bootstrap.execute", root=root)
             self.assertTrue(allowed["allowed"])
             self.assertEqual(allowed["status"], "allowed")
+            allowed_heartbeat = mod.command_gate("nodes.heartbeat.tmux.start", root=root)
+            self.assertTrue(allowed_heartbeat["allowed"])
+            self.assertEqual(allowed_heartbeat["status"], "allowed")
 
             unknown = mod.command_gate("not.real", root=root)
             self.assertFalse(unknown["allowed"])
             self.assertEqual(unknown["reason"], "unknown_command")
+
+    def test_heartbeat_tmux_start_requires_arm_and_uses_persisted_plan(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "heartbeat tmux starting\n"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = mod.heartbeat_tmux_plan_node({"ssh_target": "root@100.64.0.1", "session": "a9/heartbeat"}, root=root)
+
+            blocked = mod.heartbeat_tmux_start_node(
+                {
+                    "evidence_path": plan["evidence_path"],
+                    "operator_scopes": ["operator.admin"],
+                },
+                root=root,
+            )
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+            self.assertEqual(blocked["heartbeat_action"], "wait_for_approval")
+            self.assertEqual(blocked["heartbeat_action_reason"], "phone_control_disarmed")
+
+            mod.phone_control_arm(
+                {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.heartbeat_tmux_start_node(
+                    {
+                        "evidence_path": plan["evidence_path"],
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["return_code"], 0)
+            self.assertEqual(result["heartbeat_action"], "continue")
+            self.assertEqual(result["heartbeat_action_reason"], "heartbeat_tmux_start_ok")
+            self.assertEqual(result["reason"], "heartbeat_tmux_start_ok")
+            self.assertIn("heartbeat tmux starting", result["output"])
+            self.assertEqual(calls[0][0][0], "ssh")
+            self.assertIn("ConnectTimeout=5", calls[0][0])
+            self.assertIn("tmux new-session", calls[0][0][-1])
+            self.assertIn(".a9/remote-node/heartbeat.sh", calls[0][0][-1])
+            self.assertTrue(Path(result["evidence_path"]).exists())
+
+    def test_heartbeat_tmux_start_records_timeout_as_retry(self):
+        mod = load_control_api()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = mod.heartbeat_tmux_plan_node({"ssh_target": "root@100.64.0.1", "session": "a9/heartbeat"}, root=root)
+            mod.phone_control_arm(
+                {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            try:
+                def fake_run(cmd, **kwargs):
+                    raise mod.subprocess.TimeoutExpired(cmd=cmd, timeout=1)
+
+                mod.subprocess.run = fake_run
+                result = mod.heartbeat_tmux_start_node(
+                    {
+                        "evidence_path": plan["evidence_path"],
+                        "operator_scopes": ["operator.admin"],
+                        "timeout_seconds": 1,
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+
+            self.assertEqual(result["status"], "timeout")
+            self.assertEqual(result["return_code"], 124)
+            self.assertTrue(result["timed_out"])
+            self.assertEqual(result["heartbeat_action"], "retry")
+            self.assertEqual(result["heartbeat_action_reason"], "heartbeat_tmux_start_timeout")
+            self.assertEqual(result["reason"], "heartbeat_tmux_start_timeout")
+            self.assertTrue(Path(result["evidence_path"]).exists())
 
     def test_tmux_ensure_requires_arm_and_uses_persisted_plan(self):
         mod = load_control_api()

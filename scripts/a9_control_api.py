@@ -38,7 +38,13 @@ NODE_STALE_TTL_SECONDS = 300
 PHONE_ADMIN_SCOPE = "operator.admin"
 PHONE_CONTROL_GROUPS = {
     "runtime": ["submit.run", "session.refresh.trial", "flow.resume", "approval.approve", "approval.reject"],
-    "remote": ["nodes.bootstrap.execute", "nodes.remote.install", "nodes.remote.repair", "nodes.tmux.ensure"],
+    "remote": [
+        "nodes.bootstrap.execute",
+        "nodes.remote.install",
+        "nodes.remote.repair",
+        "nodes.tmux.ensure",
+        "nodes.heartbeat.tmux.start",
+    ],
 }
 KNOWN_CONTROL_COMMANDS = sorted({cmd for commands in PHONE_CONTROL_GROUPS.values() for cmd in commands})
 EVENTS_STREAM_KEY = "a9:events"
@@ -1968,6 +1974,23 @@ def read_tmux_plan_evidence(path_value: str, *, root: Path = ROOT) -> dict[str, 
     return {**plan, "evidence_path": str(resolved)}
 
 
+def read_heartbeat_tmux_plan_evidence(path_value: str, *, root: Path = ROOT) -> dict[str, Any]:
+    plan = read_tmux_plan_evidence(path_value, root=root)
+    evidence_path = Path(str(plan.get("evidence_path") or ""))
+    if not evidence_path.name.startswith("heartbeat-tmux-plan-"):
+        raise ValueError("evidence is not a heartbeat tmux plan")
+    command = plan.get("command_preview")
+    if not isinstance(command, list) or not command:
+        raise ValueError("heartbeat tmux plan evidence is missing command_preview")
+    ensure = command[0]
+    if not isinstance(ensure, list) or len(ensure) < 3 or ensure[0] != "ssh":
+        raise ValueError("heartbeat tmux ensure command must be an ssh argv")
+    command_text = str(ensure[-1] or "")
+    if ".a9/remote-node/heartbeat.sh" not in command_text:
+        raise ValueError("heartbeat tmux plan command is missing heartbeat script")
+    return plan
+
+
 def tmux_ensure_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("nodes.tmux.ensure", root=root)
@@ -2068,6 +2091,72 @@ def tmux_status_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str,
         "command_preview": command,
     }
     evidence_path = write_node_evidence("tmux-status", str(plan.get("node_id") or target or "node"), result, root=root)
+    return {**result, "evidence_path": str(evidence_path)}
+
+
+def heartbeat_tmux_start_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("nodes.heartbeat.tmux.start", root=root)
+    if not gate.get("allowed"):
+        return {
+            "status": "blocked",
+            "execution_enabled": False,
+            "heartbeat_action": "wait_for_approval",
+            "heartbeat_action_reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "gate": gate,
+        }
+    plan = read_heartbeat_tmux_plan_evidence(str(payload.get("evidence_path") or ""), root=root)
+    command = plan["command_preview"][0]
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            [str(item) for item in command],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=int(payload.get("timeout_seconds") or 20),
+        )
+        return_code = proc.returncode
+        output = proc.stdout
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        return_code = 124
+        output = str(exc)
+    status = "timeout" if timed_out else "ok" if return_code == 0 else "failed"
+    heartbeat_action = "retry" if status == "timeout" else "continue" if status == "ok" else "repair"
+    heartbeat_reason = (
+        "heartbeat_tmux_start_timeout"
+        if status == "timeout"
+        else "heartbeat_tmux_start_ok"
+        if status == "ok"
+        else "heartbeat_tmux_start_failed"
+    )
+    result = {
+        "status": status,
+        "transport": "tailscale+ssh+tmux",
+        "transport_quality": plan.get("transport_quality") or transport_quality(str(plan.get("target") or "")),
+        "node_id": plan.get("node_id"),
+        "target": plan.get("target"),
+        "session": plan.get("session"),
+        "executed_at": utc_now(),
+        "return_code": return_code,
+        "timed_out": timed_out,
+        "output": compact_text(output, 4000),
+        "plan_evidence_path": plan.get("evidence_path"),
+        "heartbeat_action": heartbeat_action,
+        "heartbeat_action_reason": heartbeat_reason,
+        "reason": heartbeat_reason,
+        "gate": gate,
+    }
+    evidence_path = write_node_evidence(
+        "heartbeat-tmux-start",
+        str(plan.get("node_id") or plan.get("target") or "node"),
+        result,
+        root=root,
+    )
     return {**result, "evidence_path": str(evidence_path)}
 
 
@@ -2412,6 +2501,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, tmux_ensure_node(payload))
             elif self.path == "/api/nodes/tmux-status":
                 self.write_json(200, tmux_status_node(payload))
+            elif self.path == "/api/nodes/heartbeat-tmux-start":
+                self.write_json(200, heartbeat_tmux_start_node(payload))
             elif self.path == "/api/nodes/heartbeat":
                 self.write_json(200, heartbeat_node(payload))
             elif self.path == "/api/phone-control/arm":
