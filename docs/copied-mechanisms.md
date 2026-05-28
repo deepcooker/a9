@@ -79,6 +79,55 @@ Correction:
 - Aider remains the edit/repo-map reference.
 - OpenClaw/Lobster is the lobster reference line.
 
+### Hermes / Context Router
+
+Local reference:
+
+- `reference-projects/hermes-agent/`
+
+License status:
+
+- `reference-projects/hermes-agent` is MIT licensed at local commit `a1eaad2`.
+- Evidence paths: `README.md`, `LICENSE`,
+  `agent/prompt_builder.py`, `agent/context_compressor.py`,
+  `agent/memory_manager.py`, and `tools/delegate_tool.py`.
+
+Mechanisms to adapt:
+
+- Prompt assembly is a router, not a transcript dump:
+  `agent/prompt_builder.py` builds identity, platform hints, skills index,
+  context files, memory, and ephemeral prompt parts separately.
+- Context files are scanned for prompt-injection patterns before they enter the
+  system prompt. A9 should copy this as a pre-prompt context gate for
+  `AGENTS.md`, project doctrine, memory snippets, and reference extracts.
+- Compaction uses a summary prefix that marks older turns as reference-only,
+  not active instructions. It protects recent tail context, scales summary
+  budget, prunes old tool output, accounts for image token pressure, and keeps
+  unresolved work explicit.
+- Memory context is fenced with `<memory-context>` and scrubbed from streaming
+  output. A9 should copy the boundary: recalled memory may inform decisions but
+  must not masquerade as new user input or leak into UI streams.
+- Delegation creates isolated child agents with restricted toolsets and a
+  parent-visible summary only. Children cannot recursively delegate or write
+  shared memory by default.
+
+How it combines with Codex and Aider:
+
+- Codex stays primary for raw ordered history, `history_version`, compaction
+  task lifecycle, and function call/output invariants.
+- Aider stays primary for repo map and token-aware edit context.
+- Hermes adds the missing routing layer: prompt-part assembly, context
+  injection scanning, memory fencing, and isolated subagent summaries.
+
+Failure modes to preserve:
+
+- A context file can be promptware; scanning must happen before prompt assembly.
+- A compaction summary can become false active instruction unless explicitly
+  labeled as reference-only.
+- Memory snippets can leak into user-visible output without streaming scrubbers.
+- Subagents can pollute parent context or shared memory unless toolsets and
+  result channels are isolated.
+
 ### Barter-rs
 
 Local reference:

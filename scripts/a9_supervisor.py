@@ -1143,6 +1143,12 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
             "reason": "worker started rg against a broad root despite targeted rg bounds",
             "command": normalized,
         }
+    if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(normalized):
+        return {
+            "kind": "uncapped_rg_command",
+            "reason": "worker started rg without an output cap in a read-heavy task",
+            "command": normalized,
+        }
     session_read_finding = forbidden_session_context_read(task, normalized)
     if session_read_finding:
         return {
@@ -1944,6 +1950,19 @@ def command_runs_broad_rg(command: str) -> bool:
     return bool(re.search(r"(?:^|\s)(?:\.|docs\s+\.)(?:\s|['\"]|$)", normalized))
 
 
+def command_runs_uncapped_rg(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    if not re.search(r"(?:^|[\s'\"])rg\s", normalized):
+        return False
+    if re.search(r"(?:^|\s)(?:-m|--max-count)(?:=|\s*)\d+", normalized):
+        return False
+    if re.search(r"\|\s*(?:head|tail)(?:\s|$)", normalized):
+        return False
+    if re.search(r">\s*[^|&;]+", normalized):
+        return False
+    return True
+
+
 def sed_windows_from_command(command: str) -> list[tuple[int, int]]:
     windows: list[tuple[int, int]] = []
     for match in re.finditer(r"sed\s+-n\s+['\"]?(\d+)\s*,\s*(\d+)p", command):
@@ -2023,6 +2042,15 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "level": "error",
                     "kind": "broad_rg_command",
                     "message": "worker ran rg against a broad root despite targeted rg bounds",
+                    "command": command,
+                }
+            )
+        if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(command):
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "uncapped_rg_command",
+                    "message": "worker ran rg without an output cap in a read-heavy task",
                     "command": command,
                 }
             )
@@ -3788,7 +3816,7 @@ Phase-specific bounds:
 expected_file_changes: false
 - Do not modify files in this phase.
 - Do not `cat` full context, record, session, or reference files.
-- Read only bounded snippets with `sed -n '1,120p'` or targeted `rg -n`.
+- Read only bounded snippets with `sed -n '1,120p'` or targeted capped `rg -n -m <N>`.
 - Pick one concrete next mechanism and put it in `output.next_slice`.
 """
     elif phase in {"mechanism_extract", "vendor_import"}:
@@ -3796,7 +3824,7 @@ expected_file_changes: false
 Phase-specific bounds:
 - Do not broaden into implementation unless the phase is `implement`.
 - Do not `cat` full context, record, session, or reference files.
-- Use targeted `rg -n` and bounded `sed` snippets only.
+- Use targeted capped `rg -n -m <N>` and bounded `sed` snippets only.
 """
     repair_hint = ""
     patch_apply = summary.get("patch_apply", {})

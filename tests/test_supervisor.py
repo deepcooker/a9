@@ -1097,6 +1097,60 @@ Do the work.
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["findings"], [])
 
+    def test_process_governance_blocks_uncapped_rg_in_read_heavy_tasks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'rg -n \"context|memory\" reference-projects/hermes-agent/agent reference-projects/aider/aider/history.py'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="reference-rg-cap",
+                phase="mechanism_extract",
+                prompt="Use targeted rg -n only.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["findings"][0]["kind"], "uncapped_rg_command")
+
+    def test_process_governance_allows_capped_rg_in_read_heavy_tasks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'rg -n -m 40 \"context|memory\" reference-projects/hermes-agent/agent'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="reference-rg-cap-ok",
+                phase="mechanism_extract",
+                prompt="Use targeted rg -n only.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"], [])
+
     def test_process_governance_warns_on_batched_sed_read_without_rationale(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1184,6 +1238,28 @@ Do the work.
 
         self.assertEqual(violation["kind"], "forbidden_session_context_read")
         self.assertEqual(violation["path"], "docs/session-causal-memory.md")
+
+    def test_live_worker_blocks_uncapped_rg_in_read_heavy_tasks(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="live-rg-cap",
+            phase="reference_scan",
+            prompt="Inspect reference slices.",
+            checks=[],
+        )
+
+        blocked = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'rg -n \"context\" reference-projects/hermes-agent/agent'",
+        )
+        allowed = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'rg -n -m 20 \"context\" reference-projects/hermes-agent/agent'",
+        )
+
+        self.assertEqual(blocked["kind"], "uncapped_rg_command")
+        self.assertEqual(allowed, {})
 
     def test_declared_unittest_file_and_module_forms_are_equivalent(self):
         mod = load_supervisor()
