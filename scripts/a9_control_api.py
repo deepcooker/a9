@@ -2462,6 +2462,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, tailscale_status())
             elif parsed.path == "/api/nodes":
                 self.write_json(200, node_status())
+            elif parsed.path == "/api/nodes/status":
+                self.write_json(200, node_status())
             elif parsed.path == "/api/gateway/transport-contract":
                 emit_event = str(query.get("emit_event", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))

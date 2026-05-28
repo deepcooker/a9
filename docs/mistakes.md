@@ -856,3 +856,22 @@
 - 测试不能只检查危险路径被 quote，还要检查 tmux shell-command 内部嵌套 quote
   是否存在。
 - 计划类 patch 在变成执行入口前必须先做 shell 语义审查。
+
+## 2026-05-28：模型容量失败后的半成品不能只交给自动重试
+
+现象：
+
+- `test-api-nodes-status-heartbeat-start-absence-20260528` 使用
+  `gpt-5.3-codex-spark` 跑到中途时返回 `Selected model is at capacity`。
+- worker 已经产出了合理 patch：补 `/api/nodes/status` alias，并新增 API
+  contract 测试；但由于没有 final envelope，supervisor 标记
+  `retryable-worker-failed` 并回滚提交。
+- run-loop 一度留下 queued/running 双状态，需要主控监控者介入判断 patch
+  是否值得接管，而不是盲目让下一轮模型重复烧 token。
+
+规则：
+
+- `retryable-worker-failed` 不等于 patch 无价值；先读 `patch.diff`、
+  `events.jsonl` 和失败原因。
+- 如果 patch 范围小、方向对、测试可由监控者补跑，就由监控者接管并记录。
+- 如果留下 queued/running 双状态，必须先清理 runtime 状态再继续无人值守。

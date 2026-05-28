@@ -771,6 +771,51 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["stream_reason"], "decode_error")
         self.assertEqual(node["reconnect_lifecycle"], {"event": "reconnecting", "phase": "backoff"})
 
+    def test_api_nodes_status_omits_heartbeat_start_fields_without_heartbeat_start_evidence(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "node/a",
+                    "ssh_target": "root@worker-a",
+                    "capabilities": {"python3": "/usr/bin/python3"},
+                },
+                root=root,
+            )
+            mod.heartbeat_node({"node_id": "node/a", "status": "online", "message": "ready"}, root=root)
+
+            captured = {"status": None, "payload": None}
+
+            class DummyNodesStatusGetHandler:
+                path = "/api/nodes/status"
+                headers = {}
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["payload"] = payload
+
+                def write_sse(self, status, payload):
+                    raise AssertionError("write_sse should not be used for /api/nodes/status")
+
+            original_node_status = mod.node_status
+            mod.node_status = lambda: original_node_status(root)
+            try:
+                mod.ControlHandler.do_GET(DummyNodesStatusGetHandler())
+            finally:
+                mod.node_status = original_node_status
+
+        self.assertEqual(captured["status"], 200)
+        node = captured["payload"]["nodes"][0]
+        self.assertEqual(node["node_id"], "node-a")
+        self.assertNotIn("heartbeat_start_status", node)
+        self.assertNotIn("heartbeat_start_action", node)
+        self.assertNotIn("heartbeat_start_action_reason", node)
+        self.assertNotIn("heartbeat_start_return_code", node)
+        self.assertNotIn("heartbeat_start_timed_out", node)
+        self.assertNotIn("heartbeat_start_executed_at", node)
+        self.assertNotIn("heartbeat_start_evidence_path", node)
+
     def test_gateway_transport_contract_get_endpoint_emits_event(self):
         mod = load_control_api()
 
