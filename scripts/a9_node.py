@@ -62,7 +62,17 @@ def classify_node_connection_state(
 
     state = base_state
     reason = base_reason
-    action = "continue"
+    if base_state == "offline":
+        action = "escalate"
+    elif base_state in {"stale", "degraded"}:
+        action = "observe"
+    else:
+        action = "continue"
+
+    if age_seconds >= safe_offline:
+        state = "offline"
+        reason = "heartbeat_timeout"
+        action = "escalate"
 
     if reconnect_action == "reconnect":
         state = "reconnecting"

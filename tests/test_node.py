@@ -47,6 +47,7 @@ class NodeHelperTests(unittest.TestCase):
             offline_after_seconds=90,
         )
         self.assertEqual(result["state"], "stale")
+        self.assertEqual(result["action"], "observe")
         self.assertEqual(result["reason"], "heartbeat_stale")
 
     def test_classify_connection_state_offline(self):
@@ -58,7 +59,19 @@ class NodeHelperTests(unittest.TestCase):
             offline_after_seconds=90,
         )
         self.assertEqual(result["state"], "offline")
-        self.assertEqual(result["action"], "continue")
+        self.assertEqual(result["action"], "escalate")
+        self.assertEqual(result["reason"], "heartbeat_timeout")
+
+    def test_classify_connection_state_offline_overrides_degraded_report(self):
+        mod = load_module()
+        result = mod.classify_node_connection_state(
+            heartbeat_age_seconds=200,
+            heartbeat_status="degraded",
+            stale_after_seconds=30,
+            offline_after_seconds=90,
+        )
+        self.assertEqual(result["state"], "offline")
+        self.assertEqual(result["action"], "escalate")
         self.assertEqual(result["reason"], "heartbeat_timeout")
 
     def test_classify_connection_state_reconnecting_from_decision(self):

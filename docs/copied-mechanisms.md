@@ -125,6 +125,14 @@ A9 adaptation target:
   Boundary note: A9 controller record governance uses `quarantine` (not
   immediate terminate) for offline nodes so operator/supervisor can decide
   resume/repair policy with evidence.
+- Node-side connection state classifier (`scripts/a9_node.py`):
+  `classify_node_connection_state` keeps the same typed-action discipline for
+  local helper and future mobile/control status. Heartbeat freshness maps to
+  `online -> continue`, `stale/degraded -> observe`, `offline -> escalate`;
+  reconnect evidence can override with `reconnecting -> retry` or terminal
+  reconnect failure -> `quarantine/escalate`. Offline heartbeat age wins over a
+  self-reported degraded status so stale local reports cannot hide a real
+  disconnect.
 - SSE replay slice exposes Redis Stream `a9:events` through `/api/events` as
   JSON or `text/event-stream`, copying the mature stream-ID/last-event replay
   pattern while keeping WebSocket for later.
