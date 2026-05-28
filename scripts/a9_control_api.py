@@ -1152,20 +1152,22 @@ def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dic
         priority = action_priority[action]
         if priority < best["priority"]:
             continue
+        node_evidence = {
+            "node_id": str(node.get("node_id") or ""),
+            "connection_state": str(node.get("connection_state") or ""),
+            "action": action,
+            "reason": str(node.get("connection_action_reason") or ""),
+        }
+        if priority == best["priority"] and best["reason"].startswith("node:") and best["action"] == action:
+            best["evidence"]["nodes"].append(node_evidence)
+            continue
         best = {
             "priority": priority,
             "action": action,
             "reason": f"node:{node.get('connection_action_reason') or 'unknown'}",
             "status": status_by_action[action],
             "evidence": {
-                "nodes": [
-                    {
-                        "node_id": str(node.get("node_id") or ""),
-                        "connection_state": str(node.get("connection_state") or ""),
-                        "action": action,
-                        "reason": str(node.get("connection_action_reason") or ""),
-                    }
-                ],
+                "nodes": [node_evidence],
                 "tasks_stream": {
                     "action": str(tasks_stream.get("stream_action") or "continue"),
                     "reason": str(tasks_stream.get("stream_action_reason") or "none"),

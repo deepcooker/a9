@@ -1550,6 +1550,176 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(stream_intervene["status"], "needs_attention")
         self.assertEqual(stream_intervene["evidence"]["tasks_stream"]["reason"], "lag_critical")
 
+    def test_node_status_communication_followup_continue_when_nodes_and_stream_healthy(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("2\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\na9-worker\nconsumers\n1\nentries-read\n9\nlag\n1\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("0\n1740000001-0\n1740000010-0\n\n0\n")
+            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
+                return FakeProc("name\nworker-a\npending\n0\nidle\n12\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        original_now = mod.utc_now_dt
+        mod.redis_cli = fake_redis
+        mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                nodes_dir = root / ".a9" / "nodes"
+                nodes_dir.mkdir(parents=True)
+                for node_id in ("node-a", "node-b"):
+                    (nodes_dir / f"{node_id}.json").write_text(
+                        json.dumps(
+                            {
+                                "node_id": node_id,
+                                "status": "online",
+                                "last_heartbeat_at": "2026-05-26T11:59:30+00:00",
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                status = mod.node_status(root)
+        finally:
+            mod.utc_now_dt = original_now
+            mod.redis_cli = original_redis
+
+        followup = status["communication_followup"]
+        self.assertEqual(followup["action"], "continue")
+        self.assertEqual(followup["status"], "ok")
+        self.assertEqual(followup["reason"], "tasks_stream:none")
+        self.assertEqual(followup["evidence"]["nodes"], [])
+        self.assertEqual(followup["evidence"]["tasks_stream"]["action"], "continue")
+
+    def test_node_status_communication_followup_quarantine_for_offline_node(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("1\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\na9-worker\nconsumers\n1\nentries-read\n9\nlag\n1\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("0\n1740000001-0\n1740000010-0\n\n0\n")
+            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
+                return FakeProc("name\nworker-a\npending\n0\nidle\n12\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        original_now = mod.utc_now_dt
+        mod.redis_cli = fake_redis
+        mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                nodes_dir = root / ".a9" / "nodes"
+                nodes_dir.mkdir(parents=True)
+                (nodes_dir / "node-offline.json").write_text(
+                    json.dumps(
+                        {
+                            "node_id": "node-offline",
+                            "status": "online",
+                            "last_heartbeat_at": "2026-05-26T11:50:00+00:00",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                status = mod.node_status(root)
+        finally:
+            mod.utc_now_dt = original_now
+            mod.redis_cli = original_redis
+
+        followup = status["communication_followup"]
+        self.assertEqual(followup["action"], "quarantine")
+        self.assertEqual(followup["status"], "needs_attention")
+        self.assertEqual(followup["reason"], "node:heartbeat_offline")
+        self.assertEqual(followup["evidence"]["nodes"][0]["node_id"], "node-offline")
+        self.assertEqual(followup["evidence"]["nodes"][0]["action"], "quarantine")
+        self.assertEqual(followup["evidence"]["tasks_stream"]["action"], "continue")
+
+    def test_node_status_communication_followup_keeps_multiple_reconnect_node_evidence(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("2\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\na9-worker\nconsumers\n1\nentries-read\n9\nlag\n1\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("0\n1740000001-0\n1740000010-0\n\n0\n")
+            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
+                return FakeProc("name\nworker-a\npending\n0\nidle\n12\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        original_now = mod.utc_now_dt
+        mod.redis_cli = fake_redis
+        mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                nodes_dir = root / ".a9" / "nodes"
+                nodes_dir.mkdir(parents=True)
+                records = [
+                    {
+                        "node_id": "node-degraded",
+                        "status": "degraded",
+                        "last_heartbeat_at": "2026-05-26T11:59:30+00:00",
+                    },
+                    {
+                        "node_id": "node-stale",
+                        "status": "online",
+                        "last_heartbeat_at": "2026-05-26T11:57:00+00:00",
+                    },
+                ]
+                for record in records:
+                    (nodes_dir / f"{record['node_id']}.json").write_text(json.dumps(record), encoding="utf-8")
+                status = mod.node_status(root)
+        finally:
+            mod.utc_now_dt = original_now
+            mod.redis_cli = original_redis
+
+        followup = status["communication_followup"]
+        self.assertEqual(followup["action"], "reconnect")
+        self.assertEqual(followup["status"], "degraded")
+        self.assertEqual(len(followup["evidence"]["nodes"]), 2)
+        self.assertEqual(
+            {item["node_id"] for item in followup["evidence"]["nodes"]},
+            {"node-degraded", "node-stale"},
+        )
+
     def test_enrich_node_connection_marks_stale_and_offline(self):
         mod = load_control_api()
         original_now = mod.utc_now_dt
