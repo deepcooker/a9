@@ -425,18 +425,18 @@ def gateway_transport_contract(root: Path = ROOT, *, emit_event: bool = False) -
 
 def gateway_reconnect_diagnostic(root: Path = ROOT, *, success: bool = False) -> dict[str, Any]:
     binary = root / GATEWAY_BIN_REL_PATH
+    if not success:
+        return {
+            "status": "needs_approval",
+            "kind": "gateway_reconnect_diagnostic",
+            "reason": "diagnostic_success_flag_required",
+        }
     if not binary.exists():
         return {
             "status": "missing",
             "kind": "gateway_reconnect_diagnostic",
             "binary": str(binary),
             "reason": "gateway_binary_missing",
-        }
-    if not success:
-        return {
-            "status": "needs_approval",
-            "kind": "gateway_reconnect_diagnostic",
-            "reason": "diagnostic_success_flag_required",
         }
     try:
         proc = subprocess.run(
@@ -1116,6 +1116,8 @@ def node_connection_action(connection_state: str) -> tuple[str, str]:
         return ("continue", "heartbeat_fresh")
     if connection_state == "stale":
         return ("reconnect", "heartbeat_stale")
+    if connection_state == "degraded":
+        return ("reconnect", "heartbeat_reported_degraded")
     if connection_state == "offline":
         return ("quarantine", "heartbeat_offline")
     return ("reconnect", "heartbeat_unknown")
@@ -1127,6 +1129,8 @@ def probe_action_to_followup(probe_action: Any, probe_action_reason: Any = "") -
 
 def enrich_node_connection(record: dict[str, Any]) -> dict[str, Any]:
     heartbeat_at = parse_iso_datetime(str(record.get("last_heartbeat_at") or record.get("updated_at") or ""))
+    reported_status = str(record.get("status") or "").strip().lower()
+    reported_degraded = reported_status in {"degraded", "error", "failed"}
     if not heartbeat_at:
         action, reason = node_connection_action("unknown")
         return {
@@ -1143,6 +1147,8 @@ def enrich_node_connection(record: dict[str, Any]) -> dict[str, Any]:
         state = "stale"
     else:
         state = "offline"
+    if reported_degraded and state != "offline":
+        state = "degraded"
     action, reason = node_connection_action(state)
     return {
         **record,

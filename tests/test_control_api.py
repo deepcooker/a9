@@ -1396,6 +1396,48 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(offline["connection_action"], "quarantine")
         self.assertEqual(offline["connection_action_reason"], "heartbeat_offline")
 
+    def test_enrich_node_connection_respects_self_reported_degraded_status(self):
+        mod = load_control_api()
+        original_now = mod.utc_now_dt
+        mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            fresh = mod.enrich_node_connection(
+                {"last_heartbeat_at": "2026-05-26T11:59:50+00:00", "status": "degraded"}
+            )
+            stale = mod.enrich_node_connection(
+                {"last_heartbeat_at": "2026-05-26T11:57:00+00:00", "status": "error"}
+            )
+            failed = mod.enrich_node_connection(
+                {"last_heartbeat_at": "2026-05-26T11:57:00+00:00", "status": "failed"}
+            )
+        finally:
+            mod.utc_now_dt = original_now
+
+        self.assertEqual(fresh["connection_state"], "degraded")
+        self.assertEqual(fresh["connection_action"], "reconnect")
+        self.assertEqual(fresh["connection_action_reason"], "heartbeat_reported_degraded")
+        self.assertEqual(stale["connection_state"], "degraded")
+        self.assertEqual(stale["connection_action"], "reconnect")
+        self.assertEqual(stale["connection_action_reason"], "heartbeat_reported_degraded")
+        self.assertEqual(failed["connection_state"], "degraded")
+        self.assertEqual(failed["connection_action"], "reconnect")
+        self.assertEqual(failed["connection_action_reason"], "heartbeat_reported_degraded")
+
+    def test_enrich_node_connection_offline_age_overrides_self_reported_degraded(self):
+        mod = load_control_api()
+        original_now = mod.utc_now_dt
+        mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            offline = mod.enrich_node_connection(
+                {"last_heartbeat_at": "2026-05-26T11:50:00+00:00", "status": "degraded"}
+            )
+        finally:
+            mod.utc_now_dt = original_now
+
+        self.assertEqual(offline["connection_state"], "offline")
+        self.assertEqual(offline["connection_action"], "quarantine")
+        self.assertEqual(offline["connection_action_reason"], "heartbeat_offline")
+
     def test_publish_node_heartbeat_redis_writes_json_stream_and_timeseries(self):
         mod = load_control_api()
         calls = []
