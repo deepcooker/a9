@@ -751,6 +751,101 @@ Do the work.
             "needs-repair",
         )
 
+    def test_worker_envelope_declared_check_timeout_conflict_reconciles_to_pass_and_committable(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
+        diff_stub = {"diff_bytes": 120}
+        checks = [{"command": "python3 -m unittest tests/test_supervisor.py", "return_code": 0}]
+        worker_envelope = {
+            "status": "fail",
+            "envelope": {
+                "protocolVersion": 1,
+                "ok": False,
+                "status": "error",
+                "error": {"code": "declared_check_timeout", "message": "declared_check_timeout from stale self-report"},
+            },
+        }
+        initial_status = mod.decide_status(worker, diff_stub, checks, worker_envelope=worker_envelope)
+        conflict = mod.reconcile_worker_envelope_check_conflict(
+            worker_envelope,
+            checks,
+            patch_apply={"status": "skip"},
+            patch_guard={"status": "pass"},
+            scope_guard={"status": "pass"},
+            process_governance={"status": "pass"},
+        )
+        reconciled_status = "pass" if (initial_status == "needs-repair" and conflict) else initial_status
+
+        self.assertEqual(initial_status, "needs-repair")
+        self.assertIsNotNone(conflict)
+        assert conflict is not None
+        self.assertEqual(conflict["status"], "reconciled-pass")
+        self.assertEqual(reconciled_status, "pass")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            repo.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (repo / "demo.txt").write_text("base\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=repo, check=True, stdout=subprocess.PIPE)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "user.name=Test",
+                    "commit",
+                    "-m",
+                    "base",
+                ],
+                cwd=repo,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            (repo / "demo.txt").write_text("base\nchanged\n", encoding="utf-8")
+            captured_diff = mod.capture_diff(repo, run_dir)
+            governance = mod.apply_git_governance(
+                repo,
+                run_dir,
+                mod.Task(path=Path("task.md"), task_id="git-reconcile-pass", prompt="demo"),
+                reconciled_status,
+                captured_diff,
+            )
+
+        self.assertEqual(governance["status"], "committed")
+        self.assertFalse(governance["rolled_back"])
+
+    def test_worker_envelope_genuine_failure_with_failing_check_stays_needs_repair(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
+        diff = {"diff_bytes": 120}
+        checks = [{"command": "python3 -m unittest tests/test_supervisor.py", "return_code": 1}]
+        worker_envelope = {
+            "status": "fail",
+            "envelope": {
+                "protocolVersion": 1,
+                "ok": False,
+                "status": "error",
+                "error": {"code": "declared_checks_failed", "message": "declared checks failed"},
+            },
+        }
+
+        status = mod.decide_status(worker, diff, checks, worker_envelope=worker_envelope)
+        conflict = mod.reconcile_worker_envelope_check_conflict(
+            worker_envelope,
+            checks,
+            patch_apply={"status": "skip"},
+            patch_guard={"status": "pass"},
+            scope_guard={"status": "pass"},
+            process_governance={"status": "pass"},
+        )
+
+        self.assertEqual(status, "needs-repair")
+        self.assertIsNone(conflict)
+
     def test_process_governance_flags_undeclared_worker_test_commands(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

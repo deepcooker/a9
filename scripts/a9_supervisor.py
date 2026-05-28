@@ -1993,6 +1993,48 @@ def decide_status(
     return "pass"
 
 
+def reconcile_worker_envelope_check_conflict(
+    worker_envelope: dict[str, Any] | None,
+    checks: list[dict[str, Any]],
+    patch_apply: dict[str, Any] | None = None,
+    patch_guard: dict[str, Any] | None = None,
+    scope_guard: dict[str, Any] | None = None,
+    process_governance: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(worker_envelope, dict) or worker_envelope.get("status") != "fail":
+        return None
+    envelope = worker_envelope.get("envelope")
+    if not isinstance(envelope, dict) or envelope.get("ok") is not False:
+        return None
+    error = envelope.get("error")
+    if not isinstance(error, dict):
+        return None
+    error_code = str(error.get("code") or "").strip().lower()
+    error_message = str(error.get("message") or "").strip().lower()
+    stale_self_report = error_code in {"declared_check_timeout", "declared_checks_failed", "declared_check_failed"} or (
+        "declared_check" in error_message and ("timeout" in error_message or "fail" in error_message)
+    )
+    if not stale_self_report:
+        return None
+    if not checks or any(item.get("return_code") != 0 for item in checks):
+        return None
+    if patch_apply and patch_apply.get("status") == "fail":
+        return None
+    if patch_guard and patch_guard.get("status") == "fail":
+        return None
+    if scope_guard and scope_guard.get("status") == "fail":
+        return None
+    if process_governance and process_governance.get("status") == "fail":
+        return None
+    return {
+        "status": "reconciled-pass",
+        "reason": "worker self-reported declared check failure/timeout but supervisor checks passed",
+        "error_code": error_code,
+        "error_message": error_message,
+        "checks_count": len(checks),
+    }
+
+
 def task_allows_no_diff(task: Task) -> bool:
     fields = parse_key_value_prompt(task.prompt)
     if parse_bool_field(fields, "allow_no_diff", False):
@@ -4935,6 +4977,16 @@ def run_one(*, auto_next: bool = False) -> int:
                 process_governance,
                 allow_no_diff=task_allows_no_diff(task),
             )
+        worker_envelope_check_conflict = reconcile_worker_envelope_check_conflict(
+            worker_envelope,
+            checks,
+            patch_apply=patch_apply,
+            patch_guard=patch_guard,
+            scope_guard=scope_guard,
+            process_governance=process_governance,
+        )
+        if status == "needs-repair" and worker_envelope_check_conflict:
+            status = "pass"
         git_governance = apply_git_governance(worktree, run_dir, task, status, diff)
         summary = {
             **lease,
@@ -4950,6 +5002,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "patch_guard": patch_guard,
             "scope_guard": scope_guard,
             "process_governance": process_governance,
+            "worker_envelope_check_conflict": worker_envelope_check_conflict,
             "git_governance": git_governance,
             "checks": checks,
         }
