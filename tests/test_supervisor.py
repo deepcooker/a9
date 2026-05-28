@@ -1320,6 +1320,19 @@ Do the work.
         self.assertEqual(undeclared["kind"], "undeclared_check")
         self.assertEqual(declared, {})
 
+    def test_live_worker_blocks_runtime_evidence_root_searches(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="runtime-root-read", prompt="Do bounded source work.")
+
+        broad = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 token .a9/tasks/done'")
+        specific = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'sed -n \"1,80p\" .a9/runs/run-1/event_summaries.jsonl'",
+        )
+
+        self.assertEqual(broad["kind"], "runtime_evidence_root_read")
+        self.assertEqual(specific, {})
+
     def test_live_worker_blocks_session_context_reads_outside_session_tasks(self):
         mod = load_supervisor()
         task = mod.Task(

@@ -89,6 +89,14 @@ FORBIDDEN_SESSION_CONTEXT_PATHS = (
     "/root/.codex/sessions",
     ".a9/external_sessions",
 )
+RUNTIME_EVIDENCE_ROOTS = (
+    ".a9",
+    ".a9/",
+    ".a9/tasks",
+    ".a9/tasks/done",
+    ".a9/worktrees",
+    ".a9/runs",
+)
 FLOW_KEY_PREFIX = "a9:flow:"
 PHASE_ORDER = [
     "reference_scan",
@@ -902,6 +910,7 @@ Hard rules:
 - The project core is copying mature mechanisms, then adapting them with license awareness.
 - Prefer Codex session/compaction/context governance before weaker alternatives.
 - Do not inline huge raw logs or whole reference repositories.
+- Do not search `.a9/tasks/done`, `.a9/worktrees`, or `.a9/runs` as broad roots; read only explicit evidence paths.
 - Cite local source paths when borrowing ideas from reference projects.
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
 - Final answer must include files changed, reference ideas used, commands run, test result, and next recommended task.
@@ -1305,6 +1314,17 @@ def blocked_worker_command(command: str) -> str:
     return ""
 
 
+def command_reads_runtime_evidence_root(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    if not re.search(r"\b(?:rg|grep|find|ls)\b", normalized):
+        return False
+    for root in RUNTIME_EVIDENCE_ROOTS:
+        escaped = re.escape(root.rstrip("/"))
+        if re.search(rf"(?:^|[\s'\"=])(?:\./)?{escaped}/?(?:$|[\s'\"|&;])", normalized):
+            return True
+    return False
+
+
 def live_worker_command_violation(task: Task, command: str, *, rationale: str = "") -> dict[str, Any]:
     normalized = normalize_shell_command(command)
     if command_looks_like_test(normalized) and task.checks and not command_matches_declared_check(normalized, task.checks):
@@ -1335,6 +1355,12 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         return {
             "kind": "uncapped_rg_command",
             "reason": "worker started rg without an output cap in a read-heavy task",
+            "command": normalized,
+        }
+    if command_reads_runtime_evidence_root(normalized):
+        return {
+            "kind": "runtime_evidence_root_read",
+            "reason": "worker searched a runtime evidence root instead of a specific evidence path",
             "command": normalized,
         }
     session_read_finding = forbidden_session_context_read(task, normalized)
@@ -2265,6 +2291,15 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "level": "error",
                     "kind": "uncapped_rg_command",
                     "message": "worker ran rg without an output cap in a read-heavy task",
+                    "command": command,
+                }
+            )
+        if command_reads_runtime_evidence_root(command):
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "runtime_evidence_root_read",
+                    "message": "worker searched a runtime evidence root instead of a specific evidence path",
                     "command": command,
                 }
             )
