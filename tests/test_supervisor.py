@@ -1042,6 +1042,61 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "batched_read_with_rationale")
         self.assertEqual(result["findings"][0]["level"], "info")
 
+    def test_process_governance_blocks_session_context_reads_outside_session_tasks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="reference-scan-no-session-memory",
+                phase="reference_scan",
+                prompt="Read Hermes, Codex, and Aider reference slices only.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["findings"][0]["kind"], "forbidden_session_context_read")
+        self.assertEqual(result["findings"][0]["path"], "docs/session-raw-summary.md")
+
+    def test_process_governance_allows_session_context_reads_for_session_tasks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'sed -n \"1,80p\" docs/session-causal-memory.md'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="session-close-reading",
+                phase=mod.SESSION_CLOSE_READING_PHASE,
+                prompt="Update session close-reading memory.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"], [])
+
     def test_process_governance_warns_on_batched_sed_read_without_rationale(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1111,6 +1166,24 @@ Do the work.
         self.assertEqual(sed_over["lines"], 241)
         self.assertEqual(undeclared["kind"], "undeclared_check")
         self.assertEqual(declared, {})
+
+    def test_live_worker_blocks_session_context_reads_outside_session_tasks(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="live-no-session-memory",
+            phase="mechanism_extract",
+            prompt="Inspect only reference slices.",
+            checks=[],
+        )
+
+        violation = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'sed -n \"1,80p\" docs/session-causal-memory.md'",
+        )
+
+        self.assertEqual(violation["kind"], "forbidden_session_context_read")
+        self.assertEqual(violation["path"], "docs/session-causal-memory.md")
 
     def test_declared_unittest_file_and_module_forms_are_equivalent(self):
         mod = load_supervisor()

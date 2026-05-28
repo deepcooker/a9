@@ -81,6 +81,14 @@ REFERENCE_SCAN_CHECKS = [
 TEST_COMMAND_HINTS = ("pytest", "unittest", "cargo test", "npm test", "pnpm test", "yarn test")
 SESSION_REFRESH_PHASE = "session_refresh"
 SESSION_CLOSE_READING_PHASE = "session_close_reading"
+SESSION_CONTEXT_READ_PHASES = {SESSION_REFRESH_PHASE, SESSION_CLOSE_READING_PHASE}
+FORBIDDEN_SESSION_CONTEXT_PATHS = (
+    "docs/session-raw-summary.md",
+    "docs/session-raw-close-reading.md",
+    "docs/session-causal-memory.md",
+    "/root/.codex/sessions",
+    ".a9/external_sessions",
+)
 FLOW_KEY_PREFIX = "a9:flow:"
 PHASE_ORDER = [
     "reference_scan",
@@ -1135,6 +1143,14 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
             "reason": "worker started rg against a broad root despite targeted rg bounds",
             "command": normalized,
         }
+    session_read_finding = forbidden_session_context_read(task, normalized)
+    if session_read_finding:
+        return {
+            "kind": session_read_finding["kind"],
+            "reason": session_read_finding["message"],
+            "command": normalized,
+            "path": session_read_finding["path"],
+        }
     for finding in sed_window_governance(task, normalized, rationale=rationale):
         if finding.get("level") == "error":
             return {
@@ -1780,6 +1796,30 @@ def prompt_requires_targeted_rg(prompt: str) -> bool:
     return "targeted rg" in str(prompt or "").lower()
 
 
+def task_allows_session_context_reads(task: Task) -> bool:
+    if task.phase in SESSION_CONTEXT_READ_PHASES:
+        return True
+    prompt = str(task.prompt or "").lower()
+    return any(path.lower() in prompt for path in FORBIDDEN_SESSION_CONTEXT_PATHS)
+
+
+def forbidden_session_context_read(task: Task, command: str) -> dict[str, Any] | None:
+    if task_allows_session_context_reads(task):
+        return None
+    normalized = normalize_shell_command(command)
+    lowered = normalized.lower()
+    for path in FORBIDDEN_SESSION_CONTEXT_PATHS:
+        if path.lower() in lowered:
+            return {
+                "level": "error",
+                "kind": "forbidden_session_context_read",
+                "message": "worker read session memory/raw context outside a session_refresh/session_close_reading task",
+                "command": normalized,
+                "path": path,
+            }
+    return None
+
+
 def prompt_sed_window_limit(prompt: str) -> int | None:
     match = re.search(
         r"sed windows?\s*(?:must\s+be\s*)?<=\s*(\d+)\s*lines?",
@@ -1986,6 +2026,9 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "command": command,
                 }
             )
+        session_read_finding = forbidden_session_context_read(task, command)
+        if session_read_finding:
+            findings.append(session_read_finding)
         findings.extend(sed_window_governance(task, command, rationale=last_agent_rationale))
     error_findings = [finding for finding in findings if finding.get("level") == "error"]
     result = {
