@@ -877,3 +877,20 @@
   `events.jsonl` 和失败原因。
 - 如果 patch 范围小、方向对、测试可由监控者补跑，就由监控者接管并记录。
 - 如果留下 queued/running 双状态，必须先清理 runtime 状态再继续无人值守。
+
+## 2026-05-28：端到端测试任务不能用大窗口读全量测试文件
+
+现象：
+
+- `multimachine-fake-ssh-lifecycle-contract-20260528` 目标是新增一条 fake-SSH
+  lifecycle contract 测试。
+- worker 一开始连续读取 `tests/test_control_api.py` 大窗口和大量函数片段，触发
+  `worker event bytes exceeded 120000`，没有产生 patch。
+- 这种任务应该先用 `rg -n` 找锚点，再只读 20-80 行局部窗口；端到端不等于读完整
+  测试文件。
+
+规则：
+
+- 大测试文件必须按锚点读取：先 `rg -n "def test_xxx"`，再 `sed -n '<start>,<end>p'`。
+- worker prompt 要明确禁止 `sed -n '1,260p'` 这类大窗口。
+- 触发 budget 后不要自动重跑同一 prompt，先缩小上下文和目标。
