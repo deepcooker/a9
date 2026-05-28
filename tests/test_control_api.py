@@ -2660,6 +2660,8 @@ class ControlApiTests(unittest.TestCase):
             self.assertIn("mkdir -p '/tmp/a9;bad'", command)
             self.assertIn("'/tmp/a9;bad/.a9/remote-node/heartbeat.sh'", command)
             self.assertNotIn("mkdir -p /tmp/a9;bad", command)
+            self.assertIn("tmux new-session", command)
+            self.assertIn("\"'\"'/tmp/a9;bad/.a9/remote-node/heartbeat.sh'\"'\"'", command)
 
     def test_phone_control_requires_admin_and_expires_to_disarmed(self):
         mod = load_control_api()

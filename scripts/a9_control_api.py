@@ -1904,9 +1904,10 @@ def heartbeat_tmux_plan_node(payload: dict[str, Any], *, root: Path = ROOT) -> d
             *( [f"A9_HEARTBEAT_ONCE={shlex.quote('1')}"] if smoke else []),
         ]
     )
+    heartbeat_run_command = shlex.quote(f"{heartbeat_env_value} {quoted_heartbeat_script}")
     ensure_command = (
         f"mkdir -p {quoted_remote_dir} && (tmux has-session -t {quoted_session} 2>/dev/null || "
-        f"tmux new-session -d -s {quoted_session} -c {quoted_remote_dir} {heartbeat_env_value} {quoted_heartbeat_script})"
+        f"tmux new-session -d -s {quoted_session} -c {quoted_remote_dir} {heartbeat_run_command})"
     )
     quality = transport_quality(target)
     plan = {

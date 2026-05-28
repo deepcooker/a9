@@ -837,3 +837,22 @@
 - 生成脚本的脚本必须使用 quoted heredoc：`<<'EOF'`。
 - shell 变量要传给 Python/子进程时必须显式 `export`。
 - bootstrap 类任务不能只断言字符串存在，还要断言 heredoc quoting 和 env 传递。
+
+## 2026-05-28：tmux new-session 的 shell-command 必须是单个安全参数
+
+现象：
+
+- `harden-heartbeat-tmux-plan-quoting-20260528` worker 正确使用了 `shlex.quote`
+  引用 `remote_dir` 和 heartbeat 脚本路径。
+- 但它把 `A9_HEARTBEAT_INTERVAL=... heartbeat.sh` 拆成多个 shell 片段直接拼到
+  `tmux new-session` 后面。
+- `tmux new-session` 的 shell-command 应作为一个命令参数传入；否则真实执行时
+  可能出现参数解释不一致，尤其是路径包含空格或分号时。
+
+规则：
+
+- 对嵌套 shell 命令要分两层处理：先 quote 内部路径/env，再把整条 run command
+  作为一个 shell-command 再 quote 一次。
+- 测试不能只检查危险路径被 quote，还要检查 tmux shell-command 内部嵌套 quote
+  是否存在。
+- 计划类 patch 在变成执行入口前必须先做 shell 语义审查。
