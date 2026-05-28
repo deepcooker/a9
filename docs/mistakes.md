@@ -933,3 +933,18 @@
 - envelope 失败时先读 `patch.diff`、checks、scope/patch guard；如果 patch 合格，
   可以监控者接管、复测、提交。
 - worker prompt 要继续明确：`protocolVersion` 必须是数字 `1`。
+
+## 2026-05-28：runtime 证据检索必须限根，context 必须分阶段预算
+
+现象：
+
+- worker 在 repair/refscan 任务里习惯性对 runtime 目录做广根搜索，
+  把 `.a9/runs`、`.a9/worktrees`、`.a9/tasks/done` 的无关证据混进 prompt，
+  很快触发 token/event budget，且稀释当前任务事实。
+
+规则：
+
+- runtime 证据只能按明确路径读取，不做广根扫描。
+- context 按 phase 分预算：`reference_scan/mechanism_extract` 给参考片段预算，
+  `implement/test/repair` 只保留最小代码与失败证据预算。
+- summary 只做索引；事实回溯必须落到具体 evidence path。
