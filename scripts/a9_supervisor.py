@@ -9,6 +9,7 @@ the interactive UI.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import importlib.util
 import json
@@ -616,16 +617,40 @@ def score_repo_file(rel_path: str, symbols: list[str], terms: set[str]) -> int:
     return score
 
 
-def build_repo_map(task_prompt: str, budget: int) -> tuple[str, dict[str, Any]]:
+def path_matches_allowed_paths(rel_path: str, allowed_paths: list[str]) -> bool:
+    if not allowed_paths:
+        return True
+    normalized = rel_path.strip("/")
+    for pattern in allowed_paths:
+        item = str(pattern).strip().strip("/")
+        if not item:
+            continue
+        if any(ch in item for ch in "*?[]"):
+            if fnmatch.fnmatch(normalized, item):
+                return True
+            continue
+        if normalized == item or normalized.startswith(item.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def build_repo_map(task_prompt: str, budget: int, allowed_paths: list[str] | None = None) -> tuple[str, dict[str, Any]]:
     terms = prompt_terms(task_prompt)
+    allowed_paths = [str(item) for item in (allowed_paths or [])]
     candidates: list[tuple[int, str, list[str]]] = []
     scanned = 0
     for rel_path in git_tracked_files():
         if not repo_map_allowed_file(rel_path):
             continue
         scanned += 1
+        in_allowed_scope = path_matches_allowed_paths(rel_path, allowed_paths)
+        if allowed_paths and not in_allowed_scope:
+            continue
         symbols = extract_repo_symbols(rel_path)
         score = score_repo_file(rel_path, symbols, terms)
+        if in_allowed_scope:
+            # Scope guard is the hard task boundary; keep task-local files dominant.
+            score += 100
         if score <= 0 and not symbols:
             continue
         candidates.append((score, rel_path, symbols))
@@ -650,6 +675,7 @@ def build_repo_map(task_prompt: str, budget: int) -> tuple[str, dict[str, Any]]:
     return repo_map, {
         "strategy": "aider_ranked_symbol_repo_map",
         "terms": sorted(terms)[:50],
+        "allowed_paths": allowed_paths,
         "scanned_files": scanned,
         "candidate_files": len(candidates),
         "included_files": included,
@@ -703,7 +729,11 @@ def build_context_packet(task: Task) -> dict[str, Any]:
             section_budgets["previous_context"],
         )
 
-    repo_map, repo_map_meta = build_repo_map(task.prompt, section_budgets["repo_map"])
+    repo_map, repo_map_meta = build_repo_map(
+        task.prompt,
+        section_budgets["repo_map"],
+        allowed_paths=task.allowed_paths,
+    )
 
     reference_mechanisms = truncate_to_token_budget(
         """Codex is the first source-level reference for session governance:

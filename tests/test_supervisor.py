@@ -235,6 +235,23 @@ Do the work.
         self.assertGreater(meta["included_files"], 0)
         self.assertEqual(meta["strategy"], "aider_ranked_symbol_repo_map")
 
+    def test_repo_map_prefers_allowed_paths_and_excludes_session_governance_noise(self):
+        mod = load_supervisor()
+        allowed = ["scripts/a9_supervisor.py", "tests/test_supervisor.py"]
+        repo_map, meta = mod.build_repo_map(
+            "focus on supervisor repo map behavior",
+            900,
+            allowed_paths=allowed,
+        )
+
+        self.assertIn("scripts/a9_supervisor.py", repo_map)
+        self.assertIn("tests/test_supervisor.py", repo_map)
+        self.assertNotIn("session-governance.md", repo_map)
+        self.assertNotIn("docs/session-raw-summary.md", repo_map)
+        self.assertNotIn("docs/session-raw-close-reading.md", repo_map)
+        self.assertEqual(meta["allowed_paths"], allowed)
+        self.assertGreater(meta["included_files"], 0)
+
     def test_hydrate_worker_reference_slices_copies_bounded_references(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
