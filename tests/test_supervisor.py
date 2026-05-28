@@ -1226,6 +1226,33 @@ Do the work.
             any("normalized protocolVersion alias" in finding.get("message", "") for finding in envelope.get("findings", []))
         )
 
+    def test_worker_envelope_protocol_version_alias_openclaw_v1_normalizes_to_1(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                'done\n{"protocolVersion":"openclaw/v1","ok":true,"status":"completed","output":{"changed_files":[]}}\n',
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-openclaw-v1",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+            status = mod.decide_status(worker, {"diff_bytes": 120}, [], worker_envelope=envelope)
+
+        self.assertEqual(envelope["status"], "pass")
+        self.assertEqual(envelope["envelope"]["protocolVersion"], 1)
+        self.assertEqual(envelope["envelope"]["status"], "ok")
+        self.assertEqual(status, "pass")
+        self.assertTrue(
+            any("normalized protocolVersion alias" in finding.get("message", "") for finding in envelope.get("findings", []))
+        )
+
     def test_worker_envelope_protocol_version_alias_openclaw_lobster_normalizes_to_1(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2191,7 +2218,9 @@ index 0000000..3e75765
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             old_records = mod.RECORDS_DIR
+            old_gateway_runtime_blocks_next = mod.gateway_runtime_blocks_next
             mod.RECORDS_DIR = Path(tmp) / "records"
+            mod.gateway_runtime_blocks_next = lambda task, summary: False
             task = mod.Task(
                 path=mod.DONE_DIR / "auto-test.md",
                 task_id="auto-test",
@@ -2224,6 +2253,7 @@ index 0000000..3e75765
                 "scope_guard": {"status": "pass"},
                 "git_governance": {"status": "committed", "commit": "abc123", "rolled_back": False},
                 "checks": [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+                "auto_loop_guard": {"status": "ok"},
             }
             try:
                 next_path = mod.schedule_next_task(task, summary)
@@ -2245,6 +2275,7 @@ index 0000000..3e75765
                 self.assertEqual(record["git"]["commit"], "abc123")
             finally:
                 mod.RECORDS_DIR = old_records
+                mod.gateway_runtime_blocks_next = old_gateway_runtime_blocks_next
                 if "next_path" in locals() and next_path is not None:
                     next_path.unlink(missing_ok=True)
 

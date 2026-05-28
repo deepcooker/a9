@@ -1379,6 +1379,7 @@ def normalize_worker_envelope_protocol_version(protocol_version: Any, ok: Any) -
         "1": 1,
         "1.0": 1,
         "openclaw/1": 1,
+        "openclaw/v1": 1,
         "openclaw-lobster-v1": 1,
         "openclaw-lobster-worker-envelope/1.0": 1,
         "a9.strict_worker_envelope.v1": 1,
