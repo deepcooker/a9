@@ -1425,6 +1425,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "previous_context_path": context_packet["previous_context_path"],
         "previous_context_compression": context_packet["previous_context_compression"],
         "repo_map": context_packet["repo_map"],
+        "context_router": context_packet.get("context_router", {}),
     }
 
 
@@ -2340,6 +2341,7 @@ def compact_context_pressure(summary: dict[str, Any]) -> dict[str, Any]:
         "previous_context_path": worker.get("previous_context_path", ""),
         "previous_context_compression": worker.get("previous_context_compression", {}),
         "repo_map": worker.get("repo_map", {}),
+        "context_router": worker.get("context_router", {}),
     }
 
 

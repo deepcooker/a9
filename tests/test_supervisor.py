@@ -629,6 +629,11 @@ Do the work.
                     "approx_tokens": 220,
                     "budget_tokens": 250,
                 },
+                "context_router": {
+                    "strategy": "hermes_context_router_v1",
+                    "blocked_sections": 1,
+                    "sections": [{"name": "Previous Task Context Tail", "blocked": True}],
+                },
                 "prompt": "must not be copied",
             }
         }
@@ -641,6 +646,7 @@ Do the work.
         self.assertEqual(pressure["remaining_tokens"], 100)
         self.assertFalse(pressure["over_budget"])
         self.assertEqual(pressure["repo_map"]["approx_tokens"], 220)
+        self.assertEqual(pressure["context_router"]["blocked_sections"], 1)
         self.assertNotIn("prompt", pressure)
 
     def test_supervisor_fake_worker_end_to_end(self):
