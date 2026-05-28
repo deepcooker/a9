@@ -25,6 +25,72 @@ ROOT = Path(__file__).resolve().parents[1]
 NODE_CONFIG = ROOT / ".a9" / "node.json"
 
 
+def classify_node_connection_state(
+    *,
+    heartbeat_age_seconds: float | int | None,
+    heartbeat_status: str = "",
+    reconnect_decision: dict[str, Any] | None = None,
+    stale_after_seconds: int = 30,
+    offline_after_seconds: int = 90,
+) -> dict[str, Any]:
+    decision = reconnect_decision or {}
+    normalized_status = str(heartbeat_status or "").strip().lower() or "unknown"
+    safe_stale = max(1, int(stale_after_seconds))
+    safe_offline = max(safe_stale + 1, int(offline_after_seconds))
+    if heartbeat_age_seconds is None:
+        age_seconds = float("inf")
+    else:
+        age_seconds = max(0.0, float(heartbeat_age_seconds))
+
+    reconnect_action = str(decision.get("action") or "").strip().lower()
+    reconnect_phase = str(decision.get("phase") or "").strip().lower()
+    reconnect_error = str(decision.get("error_class") or "").strip().lower()
+    policy_budget_remaining = max(0, int(decision.get("policy_budget_remaining") or 0))
+
+    base_state = "online"
+    base_reason = "heartbeat_fresh"
+    if age_seconds >= safe_offline:
+        base_state = "offline"
+        base_reason = "heartbeat_timeout"
+    elif age_seconds >= safe_stale:
+        base_state = "stale"
+        base_reason = "heartbeat_stale"
+
+    if normalized_status in {"degraded", "error", "failed"}:
+        base_state = "degraded"
+        base_reason = "heartbeat_reported_degraded"
+
+    state = base_state
+    reason = base_reason
+    action = "continue"
+
+    if reconnect_action == "reconnect":
+        state = "reconnecting"
+        reason = "reconnect_requested"
+        action = "retry"
+    elif reconnect_action == "terminate":
+        state = "degraded" if base_state != "offline" else "offline"
+        reason = "reconnect_terminated" if policy_budget_remaining <= 0 else "reconnect_not_allowed"
+        action = "quarantine" if state == "degraded" else "escalate"
+    elif reconnect_action == "continue" and reconnect_phase == "stream":
+        if base_state in {"online", "stale"}:
+            state = "degraded"
+            reason = "stream_error_continue"
+            action = "observe"
+
+    evidence = {
+        "heartbeat_age_seconds": None if age_seconds == float("inf") else round(age_seconds, 3),
+        "heartbeat_status": normalized_status,
+        "stale_after_seconds": safe_stale,
+        "offline_after_seconds": safe_offline,
+        "reconnect_phase": reconnect_phase or "none",
+        "reconnect_action": reconnect_action or "none",
+        "reconnect_error_class": reconnect_error or "none",
+        "policy_budget_remaining": policy_budget_remaining,
+    }
+    return {"state": state, "action": action, "reason": reason, "evidence": evidence}
+
+
 def command_path(name: str) -> str:
     proc = subprocess.run(["sh", "-lc", f"command -v {name} || true"], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     return proc.stdout.strip()
