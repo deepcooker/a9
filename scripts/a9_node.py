@@ -26,6 +26,78 @@ ROOT = Path(__file__).resolve().parents[1]
 NODE_CONFIG = ROOT / ".a9" / "node.json"
 
 
+def redis_cli(args: list[str], *, timeout: int = 2) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["docker", "exec", "a9-redis", "redis-cli", *args],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+        timeout=timeout,
+    )
+
+
+def _compact_output(value: str, limit: int = 500) -> str:
+    normalized = " ".join((value or "").strip().split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(0, limit - 3)] + "..."
+
+
+def _looks_like_stream_id(value: str) -> bool:
+    return bool(re.fullmatch(r"\d+-\d+", str(value)))
+
+
+def parse_xreadgroup_output(output: str) -> list[dict[str, Any]]:
+    text = (output or "").strip()
+    if not text or text == "(nil)":
+        return []
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if payload is not None:
+        if not isinstance(payload, list):
+            return []
+        events: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                continue
+            stream_id = str(item[0])
+            fields_raw = item[1]
+            fields: dict[str, Any] = {}
+            if isinstance(fields_raw, dict):
+                fields = {str(key): value for key, value in fields_raw.items()}
+            elif isinstance(fields_raw, list):
+                for index in range(0, len(fields_raw), 2):
+                    if index + 1 >= len(fields_raw):
+                        break
+                    fields[str(fields_raw[index])] = fields_raw[index + 1]
+            events.append({"id": stream_id, "fields": fields})
+        return events
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    events: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(lines):
+        raw_id = lines[idx]
+        if not _looks_like_stream_id(raw_id):
+            idx += 1
+            continue
+        idx += 1
+        fields: dict[str, Any] = {}
+        while idx + 1 < len(lines):
+            key = lines[idx]
+            if _looks_like_stream_id(key):
+                break
+            fields[str(key)] = lines[idx + 1]
+            idx += 2
+        events.append({"id": raw_id, "fields": fields})
+    return events
+
+
 def _safe_node_id(value: str) -> str:
     node_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip())[:80].strip(".-")
     if not node_id:
@@ -257,6 +329,229 @@ def node_command_ack_plan(
     }
 
 
+def node_command_claim_once(
+    node_id: str,
+    count: int = 1,
+    block_ms: int = 1000,
+    group: str = "a9-worker",
+    stream: str = "a9:tasks",
+    ack: bool = False,
+    timeout: int = 3,
+) -> dict[str, Any]:
+    try:
+        safe_node_id = _safe_node_id(node_id)
+        safe_count = int(count)
+        safe_block_ms = int(block_ms)
+        safe_timeout = max(1, int(timeout))
+        safe_stream = stream.strip()
+        safe_group = group.strip()
+        safe_ack = bool(ack)
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "claim_once",
+            "node_id": str(node_id or ""),
+            "stream": str(stream or ""),
+            "group": str(group or ""),
+            "consumer": "",
+            "events": [],
+            "command_count": 0,
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "count_block_ms_timeout_must_be_ints",
+        }
+
+    if safe_count < 1:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "claim_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": safe_group,
+            "consumer": "",
+            "events": [],
+            "command_count": 0,
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "count_must_be_positive",
+        }
+
+    if safe_block_ms < 0:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "claim_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": safe_group,
+            "consumer": "",
+            "events": [],
+            "command_count": 0,
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "block_ms_must_be_non_negative",
+        }
+
+    if not safe_group:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "claim_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": "",
+            "consumer": "",
+            "events": [],
+            "command_count": 0,
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "group_required",
+        }
+
+    if not safe_stream:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "claim_once",
+            "node_id": safe_node_id,
+            "stream": "",
+            "group": safe_group,
+            "consumer": "",
+            "events": [],
+            "command_count": 0,
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "stream_required",
+        }
+
+    consumer = node_command_consumer_name(safe_node_id)
+    command_count = 0
+    acked_ids: list[str] = []
+    raw_output: dict[str, str] = {}
+
+    read_args = [
+        "XREADGROUP",
+        "GROUP",
+        safe_group,
+        consumer,
+        "COUNT",
+        str(safe_count),
+        "BLOCK",
+        str(safe_block_ms),
+        "STREAMS",
+        safe_stream,
+        ">",
+    ]
+
+    try:
+        create_args = ["XGROUP", "CREATE", safe_stream, safe_group, "0-0", "MKSTREAM"]
+        create_proc = redis_cli(create_args, timeout=min(2, safe_timeout))
+        raw_output["xgroup_create"] = _compact_output(create_proc.stdout, 500)
+        if create_proc.returncode != 0 and "BUSYGROUP" not in (create_proc.stdout or "").upper():
+            return {
+                "status": "degraded",
+                "error_code": "redis_command_error",
+                "action": "claim_once",
+                "node_id": safe_node_id,
+                "stream": safe_stream,
+                "group": safe_group,
+                "consumer": consumer,
+                "events": [],
+                "command_count": 0,
+                "acked_ids": [],
+                "raw_output": raw_output,
+                "reason": create_proc.stdout.strip() or "xgroup_create_failed",
+            }
+
+        read_proc = redis_cli(["--raw", *read_args], timeout=safe_timeout)
+        raw_output["xreadgroup"] = _compact_output(read_proc.stdout, 500)
+        if read_proc.returncode != 0:
+            return {
+                "status": "degraded",
+                "error_code": "redis_command_error",
+                "action": "claim_once",
+                "node_id": safe_node_id,
+                "stream": safe_stream,
+                "group": safe_group,
+                "consumer": consumer,
+                "events": [],
+                "command_count": 0,
+                "acked_ids": [],
+                "raw_output": raw_output,
+                "reason": read_proc.stdout.strip() or "xreadgroup_failed",
+            }
+
+        events = parse_xreadgroup_output(read_proc.stdout)
+        command_count = len(events)
+        if command_count == 0:
+            return {
+                "status": "noop",
+                "error_code": "no_events",
+                "action": "claim_once",
+                "node_id": safe_node_id,
+                "stream": safe_stream,
+                "group": safe_group,
+                "consumer": consumer,
+                "events": [],
+                "command_count": 0,
+                "acked_ids": [],
+                "raw_output": raw_output,
+            }
+
+        if safe_ack:
+            ack_ids = [str(event["id"]) for event in events]
+            ack_proc = redis_cli(["XACK", safe_stream, safe_group, *ack_ids], timeout=safe_timeout)
+            raw_output["xack"] = _compact_output(ack_proc.stdout, 500)
+            if ack_proc.returncode != 0:
+                return {
+                    "status": "degraded",
+                    "error_code": "redis_command_error",
+                    "action": "claim_once",
+                    "node_id": safe_node_id,
+                    "stream": safe_stream,
+                    "group": safe_group,
+                    "consumer": consumer,
+                    "events": events,
+                    "command_count": command_count,
+                    "acked_ids": [],
+                    "raw_output": raw_output,
+                    "reason": ack_proc.stdout.strip() or "xack_failed",
+                }
+            acked_ids = ack_ids
+
+        return {
+            "status": "ok",
+            "error_code": "ok",
+            "action": "claim_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": safe_group,
+            "consumer": consumer,
+            "events": events,
+            "command_count": command_count,
+            "acked_ids": acked_ids,
+            "raw_output": raw_output,
+        }
+
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "degraded",
+            "error_code": "redis_unavailable",
+            "action": "claim_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": safe_group,
+            "consumer": consumer,
+            "events": [],
+            "command_count": 0,
+            "acked_ids": [],
+            "raw_output": raw_output,
+            "reason": str(exc),
+        }
+
+
 def http_json(method: str, url: str, payload: dict[str, Any] | None = None, timeout: int = 10) -> dict[str, Any]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, method=method, headers={"Content-Type": "application/json"})
@@ -331,6 +626,21 @@ def command_ack_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_claim_once(args: argparse.Namespace) -> int:
+    node_id = args.node_id or default_node_id()
+    payload = node_command_claim_once(
+        node_id=node_id,
+        count=args.count,
+        block_ms=args.block_ms,
+        group=args.group,
+        stream=args.stream,
+        ack=args.ack,
+        timeout=args.timeout_cmd_claim,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 local node discovery/register helper")
     parser.add_argument("--controller-url", default=os.environ.get("A9_CONTROLLER_URL", "http://127.0.0.1:8787"))
@@ -350,6 +660,14 @@ def main(argv: list[str]) -> int:
     claim_plan_parser.add_argument("--group", default="a9-worker")
     claim_plan_parser.add_argument("--stream", default="a9:tasks")
 
+    claim_once_parser = sub.add_parser("command-claim-once")
+    claim_once_parser.add_argument("--count", type=int, default=1)
+    claim_once_parser.add_argument("--block-ms", type=int, default=1000)
+    claim_once_parser.add_argument("--group", default="a9-worker")
+    claim_once_parser.add_argument("--stream", default="a9:tasks")
+    claim_once_parser.add_argument("--ack", action="store_true")
+    claim_once_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_claim")
+
     ack_plan_parser = sub.add_parser("command-ack-plan")
     ack_plan_parser.add_argument("command_stream_id")
     ack_plan_parser.add_argument("--group", default="a9-worker")
@@ -364,6 +682,8 @@ def main(argv: list[str]) -> int:
         return heartbeat(args)
     if args.command == "command-claim-plan":
         return command_claim_plan(args)
+    if args.command == "command-claim-once":
+        return command_claim_once(args)
     if args.command == "command-ack-plan":
         return command_ack_plan(args)
     raise AssertionError(args.command)
