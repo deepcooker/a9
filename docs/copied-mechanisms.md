@@ -572,6 +572,12 @@ Mechanisms to adapt:
   execution: gate status, command, endpoint, result status, action evidence,
   and audit evidence are explicit machine-readable facts instead of implicit
   log text.
+- `scripts/a9_control_api.py`: `/api/nodes/connection-summary` aggregates
+  node connection state, recovery actions, tmux actions, risk nodes, and latest
+  evidence paths from the canonical `node_status()` view. This copies the
+  same typed-state/read-model split used in the gateway and Barter-rs-inspired
+  reconnect evidence: the phone/control plane reads a bounded decision view,
+  while raw node/evidence files remain the source of truth.
 
 ## Client Skeleton Reference Notes
 

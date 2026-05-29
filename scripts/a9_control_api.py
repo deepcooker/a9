@@ -1193,6 +1193,63 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
     }
 
 
+def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
+    status = node_status(root)
+    nodes = status.get("nodes", [])
+    connection_states: dict[str, int] = {}
+    recovery_actions: dict[str, int] = {}
+    tmux_actions: dict[str, int] = {}
+    risk_nodes: list[dict[str, Any]] = []
+    evidence_paths: list[str] = []
+
+    for node in nodes:
+        state = str(node.get("connection_state") or "unknown")
+        connection_states[state] = connection_states.get(state, 0) + 1
+
+        plan = node.get("recovery_plan") if isinstance(node.get("recovery_plan"), dict) else {}
+        recovery_action = str(plan.get("action") or "unknown")
+        recovery_actions[recovery_action] = recovery_actions.get(recovery_action, 0) + 1
+
+        tmux_action = str(node.get("tmux_action") or "unknown")
+        tmux_actions[tmux_action] = tmux_actions.get(tmux_action, 0) + 1
+
+        for key in (
+            "tmux_evidence_path",
+            "probe_evidence_path",
+            "heartbeat_start_evidence_path",
+            "last_probe_evidence_path",
+        ):
+            value = str(node.get(key) or "")
+            if value and value not in evidence_paths:
+                evidence_paths.append(value)
+
+        if state in {"stale", "offline", "degraded", "unknown"} or recovery_action not in {"observe"}:
+            risk_nodes.append(
+                {
+                    "node_id": node.get("node_id"),
+                    "ssh_target": node.get("ssh_target"),
+                    "connection_state": state,
+                    "connection_action": node.get("connection_action"),
+                    "recovery_action": recovery_action,
+                    "requires_operator": bool(plan.get("requires_operator")) if plan else False,
+                    "route": plan.get("route") if plan else None,
+                }
+            )
+
+    return {
+        "status": "ok",
+        "generated_at": utc_now(),
+        "count": status.get("count", len(nodes)),
+        "connection_states": connection_states,
+        "recovery_actions": recovery_actions,
+        "tmux_actions": tmux_actions,
+        "risk_count": len(risk_nodes),
+        "risk_nodes": risk_nodes,
+        "latest_evidence_paths": evidence_paths[-20:],
+        "communication_followup": status.get("communication_followup"),
+    }
+
+
 def node_connection_action(connection_state: str) -> tuple[str, str]:
     if connection_state == "online":
         return ("continue", "heartbeat_fresh")
@@ -2656,6 +2713,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, node_status())
             elif parsed.path == "/api/nodes/status":
                 self.write_json(200, node_status())
+            elif parsed.path == "/api/nodes/connection-summary":
+                self.write_json(200, node_connection_summary())
             elif parsed.path == "/api/gateway/transport-contract":
                 emit_event = str(query.get("emit_event", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))

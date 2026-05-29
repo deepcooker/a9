@@ -632,6 +632,70 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["connection_action"], "continue")
         self.assertEqual(node["connection_action_reason"], "heartbeat_fresh")
 
+    def test_node_connection_summary_aggregates_risk_and_action_buckets(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@worker-a"}, root=root)
+            mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+            mod.register_node({"node_id": "node/b", "ssh_target": "root@worker-b"}, root=root)
+            node_b_path = mod.node_path("node/b", root)
+            node_b = mod.read_json(node_b_path)
+            stale_at = (mod.utc_now_dt() - mod.timedelta(seconds=120)).isoformat(timespec="seconds")
+            node_b["updated_at"] = stale_at
+            node_b["last_heartbeat_at"] = stale_at
+            node_b_path.write_text(json.dumps(node_b, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            tmux_path = mod.write_node_evidence(
+                "tmux-status",
+                "node/b",
+                {
+                    "status": "missing",
+                    "tmux_action": "repair",
+                    "tmux_action_reason": "tmux_session_missing",
+                },
+                root=root,
+            )
+
+            summary = mod.node_connection_summary(root)
+
+        self.assertEqual(summary["status"], "ok")
+        self.assertEqual(summary["count"], 2)
+        self.assertEqual(summary["connection_states"]["online"], 1)
+        self.assertEqual(summary["connection_states"]["stale"], 1)
+        self.assertEqual(summary["recovery_actions"]["observe"], 1)
+        self.assertEqual(summary["recovery_actions"]["tmux"], 1)
+        self.assertEqual(summary["tmux_actions"]["repair"], 1)
+        self.assertEqual(summary["risk_count"], 1)
+        self.assertEqual(summary["risk_nodes"][0]["node_id"], "node-b")
+        self.assertEqual(summary["risk_nodes"][0]["route"]["endpoint"], "/api/nodes/tmux-ensure")
+        self.assertIn(str(tmux_path), summary["latest_evidence_paths"])
+
+    def test_api_nodes_connection_summary_endpoint_uses_summary_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+
+        class DummyNodesConnectionSummaryHandler:
+            path = "/api/nodes/connection-summary"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for /api/nodes/connection-summary")
+
+        original_summary = mod.node_connection_summary
+        try:
+            mod.node_connection_summary = lambda: {"status": "ok", "count": 0, "risk_count": 0}
+            mod.ControlHandler.do_GET(DummyNodesConnectionSummaryHandler())
+        finally:
+            mod.node_connection_summary = original_summary
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["status"], "ok")
+        self.assertEqual(captured["payload"]["risk_count"], 0)
+
     def test_heartbeat_degraded_status_propagates_to_node_status_and_api_nodes(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
