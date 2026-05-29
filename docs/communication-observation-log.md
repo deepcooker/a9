@@ -1130,3 +1130,36 @@ Next monitoring target:
      monitoring should observe the execution chain directly. This keeps phone
      control useful for intervention while raw evidence files remain available
      for deeper audit and repair.
+
+60. Multi-machine reconnect governance still needs a unified action transcript.
+   - Trigger:
+     this round focused on multi-machine access and link-recovery governance
+     (`SSH + tmux + Tailscale + Redis`) as a bounded reference scan only.
+     Current docs already define typed reconnect and flow-wait/resume behavior,
+     but operator-side evidence is still split across node probe/tmux actions,
+     gateway reconnect decisions, and Redis stream health snapshots.
+   - Mechanism copied:
+     keep typed action boundaries and replayable lifecycle evidence instead of
+     free-form logs. Reference anchors checked in this slice:
+     `reference-projects/barter-rs/barter-integration/src/socket/on_connect_err.rs`
+     (`Reconnect|Terminate`), 
+     `reference-projects/barter-rs/barter-integration/src/socket/on_stream_err.rs`
+     (`Continue|Reconnect`),
+     `reference-projects/barter-rs/barter-data/src/streams/consumer.rs`
+     (reconnect stream + backoff reset semantics), and
+     `reference-projects/codex/codex-rs/core/src/compact.rs`
+     (explicit compact task/hook lifecycle as governance pattern).
+   - Observation interval + reason + repair:
+     in short disconnect windows, A9 can recover individual steps, but monitor
+     diagnosis still requires stitching multiple evidence surfaces manually.
+     Root reason is not missing APIs; it is missing one compact cross-surface
+     transcript keyed by node/flow that preserves ordered
+     `probe -> reconnecting -> stream-health -> resume/observe` transitions.
+     Repair candidate for next slice: add a bounded observation endpoint/doc
+     view that joins existing evidence IDs (without changing current execution
+     routing), so phone/control can determine whether recovery is converging or
+     bouncing without opening raw files one by one.
+   - Governance lesson:
+     for communication governance, first improve observability composition, then tune
+     retry policy. Typed actions already exist; the current gap is transcript
+     assembly across machines and transports.
