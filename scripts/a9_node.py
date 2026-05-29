@@ -306,6 +306,31 @@ def heartbeat(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_claim_plan(args: argparse.Namespace) -> int:
+    node_id = args.node_id or default_node_id()
+    payload = node_command_claim_plan(
+        node_id=node_id,
+        count=args.count,
+        block_ms=args.block_ms,
+        group=args.group,
+        stream=args.stream,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def command_ack_plan(args: argparse.Namespace) -> int:
+    node_id = args.node_id or default_node_id()
+    payload = node_command_ack_plan(
+        node_id=node_id,
+        command_stream_id=args.command_stream_id,
+        group=args.group,
+        stream=args.stream,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 local node discovery/register helper")
     parser.add_argument("--controller-url", default=os.environ.get("A9_CONTROLLER_URL", "http://127.0.0.1:8787"))
@@ -318,6 +343,18 @@ def main(argv: list[str]) -> int:
     heartbeat_parser = sub.add_parser("heartbeat")
     heartbeat_parser.add_argument("--status", default="online")
     heartbeat_parser.add_argument("--message", default="")
+
+    claim_plan_parser = sub.add_parser("command-claim-plan")
+    claim_plan_parser.add_argument("--count", type=int, default=1)
+    claim_plan_parser.add_argument("--block-ms", type=int, default=5000)
+    claim_plan_parser.add_argument("--group", default="a9-worker")
+    claim_plan_parser.add_argument("--stream", default="a9:tasks")
+
+    ack_plan_parser = sub.add_parser("command-ack-plan")
+    ack_plan_parser.add_argument("command_stream_id")
+    ack_plan_parser.add_argument("--group", default="a9-worker")
+    ack_plan_parser.add_argument("--stream", default="a9:tasks")
+
     args = parser.parse_args(argv)
     if args.command == "discover":
         return discover(args)
@@ -325,6 +362,10 @@ def main(argv: list[str]) -> int:
         return register(args)
     if args.command == "heartbeat":
         return heartbeat(args)
+    if args.command == "command-claim-plan":
+        return command_claim_plan(args)
+    if args.command == "command-ack-plan":
+        return command_ack_plan(args)
     raise AssertionError(args.command)
 
 

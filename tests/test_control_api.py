@@ -5,6 +5,7 @@ import importlib.util
 import io
 import os
 import json
+import contextlib
 import sys
 import tempfile
 import unittest
@@ -3783,6 +3784,66 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(plan["error_code"], "invalid_payload")
         self.assertEqual(plan["action"], "ack")
         self.assertEqual(plan["reason"], "node_id is required")
+
+    def test_command_claim_plan_cli_prints_deterministic_plan(self):
+        mod = load_node()
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            status = mod.main(
+                [
+                    "--node-id",
+                    "node-cli-01",
+                    "command-claim-plan",
+                    "--count",
+                    "2",
+                    "--block-ms",
+                    "250",
+                    "--group",
+                    "workers",
+                    "--stream",
+                    "a9:test-tasks",
+                ]
+            )
+        self.assertEqual(status, 0)
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["action"], "claim")
+        self.assertEqual(payload["node_id"], "node-cli-01")
+        self.assertEqual(payload["stream"], "a9:test-tasks")
+        self.assertEqual(payload["group"], "workers")
+        self.assertEqual(
+            payload["commands"][1],
+            [
+                "XREADGROUP",
+                "GROUP",
+                "workers",
+                "node-cli-01-consumer",
+                "COUNT",
+                "2",
+                "BLOCK",
+                "250",
+                "STREAMS",
+                "a9:test-tasks",
+                ">",
+            ],
+        )
+
+    def test_command_ack_plan_cli_returns_degraded_payload_for_invalid_node(self):
+        mod = load_node()
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            status = mod.main(["--node-id", "   ", "command-ack-plan", "1740000200-0"])
+        self.assertEqual(status, 0)
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["action"], "ack")
+        self.assertEqual(payload["reason"], "node_id is required")
+
+    def test_command_claim_plan_cli_argparse_failure_returns_nonzero(self):
+        mod = load_node()
+        with self.assertRaises(SystemExit) as captured:
+            mod.main(["command-claim-plan", "--count", "bad"])
+        self.assertEqual(captured.exception.code, 2)
 
     def test_bootstrap_plan_node_is_non_executing_plan(self):
         mod = load_control_api()
