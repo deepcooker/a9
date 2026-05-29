@@ -979,6 +979,74 @@ class ControlApiTests(unittest.TestCase):
             captured["emit_event"] = emit_event
             return {"status": "ok", "kind": "gateway_transport_contract"}
 
+    def test_api_status_endpoint_reads_supervisor_status_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / ".a9"
+            (state_dir / "tasks" / "queue").mkdir(parents=True)
+            (state_dir / "tasks" / "running").mkdir(parents=True)
+            (state_dir / "tasks" / "done").mkdir(parents=True)
+            (state_dir / "runs" / "run-1").mkdir(parents=True)
+            (state_dir / "nodes").mkdir(parents=True)
+
+            (state_dir / "tasks" / "queue" / "task-a.md").write_text("task-a", encoding="utf-8")
+            (state_dir / "tasks" / "queue" / "task-b.md").write_text("task-b", encoding="utf-8")
+            (state_dir / "tasks" / "running" / "task-c.json").write_text(
+                json.dumps({"task_id": "task-c", "status": "running"}) + "\n",
+                encoding="utf-8",
+            )
+            (state_dir / "tasks" / "done" / "task-d.json").write_text(
+                json.dumps({"task_id": "task-d", "status": "pass"}) + "\n",
+                encoding="utf-8",
+            )
+            (state_dir / "runs" / "run-1" / "summary.json").write_text(
+                json.dumps({"task_id": "run-1", "status": "pass", "run_dir": str(state_dir / "runs" / "run-1"}),
+                             ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            (state_dir / "progress.json").write_text('{"progress_percent": 42}', encoding="utf-8")
+            (state_dir / "daemon_heartbeat.json").write_text('{"status": "ok"}', encoding="utf-8")
+            (state_dir / "nodes" / "node-a.json").write_text(
+                json.dumps({"node_id": "node-a", "ssh_target": "root@worker-a", "status": "online"}) + "\n",
+                encoding="utf-8",
+            )
+
+            class DummyStatusHandler:
+                path = "/api/status"
+                headers = {}
+
+                def write_json(self, status_code, payload):
+                    captured["status"] = status_code
+                    captured["payload"] = payload
+
+                def write_sse(self, status_code, payload):
+                    raise AssertionError("write_sse should not be used for /api/status")
+
+            old_root = mod.ROOT
+            mod.ROOT = root
+            try:
+                mod.ControlHandler.do_GET(DummyStatusHandler())
+            finally:
+                mod.ROOT = old_root
+
+        self.assertEqual(captured["status"], 200)
+        status = captured["payload"]
+        self.assertEqual(status["queued"], 2)
+        self.assertEqual(status["running"], 1)
+        self.assertEqual(status["done"], 1)
+        self.assertEqual(len(status["queue"]), 2)
+        self.assertTrue(status["queue"][0].endswith("task-a.md"))
+        self.assertTrue(status["queue"][1].endswith("task-b.md"))
+        self.assertEqual(status["running_tasks"][0]["task_id"], "task-c")
+        self.assertEqual(status["latest_run"]["task_id"], "run-1")
+        self.assertEqual(status["latest_run"]["status"], "pass")
+        self.assertEqual(status["progress"]["progress_percent"], 42)
+        self.assertEqual(status["daemon_heartbeat"]["status"], "ok")
+        self.assertEqual(status["nodes"]["count"], 1)
+        self.assertEqual(status["nodes"]["nodes"][0]["node_id"], "node-a")
+
         try:
             mod.gateway_transport_contract = fake_gateway_transport_contract
             mod.ControlHandler.do_GET(DummyTransportContractGetHandler())
