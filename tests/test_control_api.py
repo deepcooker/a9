@@ -1109,7 +1109,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["schema"], "a9.gateway_reconnect_governance.v1")
         self.assertEqual(captured["payload"]["state"]["contract_status"], "ok")
         self.assertEqual(captured["payload"]["state"]["reconnect_event_status"], "ok")
-        self.assertEqual(captured["payload"]["runtime"]["governance_decision"]["runtime_action"], "continue")
+        self.assertEqual(captured["payload"]["state"]["runtime_action"], "continue")
+        self.assertEqual(captured["payload"]["runtime"]["governance_decision"]["action"], "continue")
 
     def test_gateway_reconnect_governance_function_maps_failures_to_block(self):
         mod = load_control_api()
