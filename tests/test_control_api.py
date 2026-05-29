@@ -442,6 +442,60 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(event["origin"], "connect_success")
         self.assertTrue(event["reset_on_success"])
 
+    def test_latest_gateway_reconnect_decision_event_preserves_reconnect_state_fields(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "\n".join(
+                [
+                    "1779893553472-0",
+                    "type",
+                    "gateway_reconnect_decision",
+                    "kind",
+                    "gateway_reconnect_decision",
+                    "phase",
+                    "stream",
+                    "action",
+                    "reconnect",
+                    "error_class",
+                    "timeout",
+                    "attempt",
+                    "3",
+                    "delay_ms",
+                    "128",
+                    "policy_budget_remaining",
+                    "1",
+                    "origin",
+                    "connect_error",
+                    "flow_id",
+                    "flow-a9-main",
+                    "flow_revision",
+                    "7",
+                    "node_id",
+                    "node-a",
+                    "reset_on_success",
+                    "false",
+                    "ts",
+                    "1779893553000",
+                ]
+            )
+
+        original_redis = mod.redis_cli
+        try:
+            mod.redis_cli = lambda *args, **kwargs: FakeProc()
+            event = mod.latest_gateway_reconnect_decision_event()
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(event["status"], "ok")
+        self.assertEqual(event["flow_id"], "flow-a9-main")
+        self.assertEqual(event["flow_revision"], 7)
+        self.assertEqual(event["node_id"], "node-a")
+        self.assertEqual(event["phase"], "stream")
+        self.assertEqual(event["action"], "reconnect")
+        self.assertEqual(event["error_class"], "timeout")
+
     def test_gateway_runtime_evidence_decision_requires_fresh_event(self):
         mod = load_control_api()
         local = {"status": "ok"}
@@ -1010,6 +1064,52 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "gateway_reconnect_governance")
         self.assertEqual(captured["payload"]["status"], "ok")
+
+    def test_gateway_reconnect_governance_get_endpoint_includes_schema_and_state(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None}
+
+        class DummyGatewayReconnectGovernanceHandler:
+            path = "/api/gateway/reconnect-governance"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        governance_payload = {
+            "kind": "gateway_reconnect_governance",
+            "schema": "a9.gateway_reconnect_governance.v1",
+            "status": "ok",
+            "state": {
+                "contract_status": "ok",
+                "reconnect_event_status": "ok",
+                "runtime_action": "continue",
+            },
+            "runtime": {
+                "governance_decision": {
+                    "status": "ok",
+                    "action": "continue",
+                    "contract_action": "continue",
+                    "reconnect_action": "continue",
+                    "reason": None,
+                }
+            },
+        }
+
+        original_governance = mod.gateway_reconnect_governance
+        try:
+            mod.gateway_reconnect_governance = lambda: governance_payload
+            mod.ControlHandler.do_GET(DummyGatewayReconnectGovernanceHandler())
+        finally:
+            mod.gateway_reconnect_governance = original_governance
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["schema"], "a9.gateway_reconnect_governance.v1")
+        self.assertEqual(captured["payload"]["state"]["contract_status"], "ok")
+        self.assertEqual(captured["payload"]["state"]["reconnect_event_status"], "ok")
+        self.assertEqual(captured["payload"]["runtime"]["governance_decision"]["runtime_action"], "continue")
 
     def test_gateway_reconnect_governance_function_maps_failures_to_block(self):
         mod = load_control_api()

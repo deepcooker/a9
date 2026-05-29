@@ -671,7 +671,13 @@ def gateway_reconnect_governance(root: Path = ROOT) -> dict[str, Any]:
 
     return {
         "kind": "gateway_reconnect_governance",
+        "schema": "a9.gateway_reconnect_governance.v1",
         "status": status,
+        "state": {
+            "contract_status": contract.get("status", ""),
+            "reconnect_event_status": reconnect_event.get("status", ""),
+            "runtime_action": recommendation.get("action", ""),
+        },
         "contract": contract,
         "reconnect": {
             "latest_event": reconnect_event,
@@ -767,6 +773,9 @@ def latest_gateway_reconnect_decision_event(limit: int = 50) -> dict[str, Any]:
             "attempt": parse_int(fields.get("attempt"), default=0),
             "delay_ms": parse_int(fields.get("delay_ms"), default=0),
             "policy_budget_remaining": parse_int(fields.get("policy_budget_remaining"), default=0),
+            "flow_id": str(fields.get("flow_id") or ""),
+            "flow_revision": parse_int(fields.get("flow_revision"), default=0),
+            "node_id": str(fields.get("node_id") or ""),
             "origin": str(fields.get("origin") or ""),
             "reset_on_success": bool_field(fields.get("reset_on_success")),
             "ts": fields.get("ts", ""),
@@ -775,6 +784,9 @@ def latest_gateway_reconnect_decision_event(limit: int = 50) -> dict[str, Any]:
     return {
         "status": "missing",
         "kind": "gateway_reconnect_decision",
+        "flow_id": "",
+        "flow_revision": 0,
+        "node_id": "",
         "reason": "no_gateway_reconnect_decision_event",
     }
 
