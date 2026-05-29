@@ -759,3 +759,15 @@ Next monitoring target:
    - Governance lesson:
      flow continuity beats cheap-model optimization. Cost tuning belongs after
      the worker can reliably start, execute, test, and report.
+
+47. Real worker smoke confirmed default-model path after restore.
+   - Scope:
+     bounded smoke after restoring `DEFAULT_WORKER_MODEL` to
+     `gpt-5.3-codex`; verification limited to observation-log tail and
+     `scripts/a9_supervisor.py` default-model references.
+   - Observation:
+     this run used the default worker model path (`A9_SUPERVISOR_MODEL` unset,
+     resolved via `DEFAULT_WORKER_MODEL`), and the worker outcome was positive:
+     could start, edit within scope, and run a lightweight check.
+   - Lightweight check:
+     `python3 -m py_compile scripts/a9_supervisor.py` passed.
