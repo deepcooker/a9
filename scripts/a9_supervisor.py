@@ -39,6 +39,8 @@ WORKER_TMP_DIR = STATE_DIR / "tmp"
 EXTERNAL_SESSIONS_DIR = STATE_DIR / "external_sessions"
 RECORDS_DIR = STATE_DIR / "records"
 GOALS_DIR = STATE_DIR / "goals"
+EVAL_STORE_DIR = STATE_DIR / "eval_store"
+EVAL_STORE_RUNS_DIR = EVAL_STORE_DIR / "runs"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
@@ -323,6 +325,8 @@ def ensure_dirs() -> None:
         EXTERNAL_SESSIONS_DIR,
         RECORDS_DIR,
         GOALS_DIR,
+        EVAL_STORE_DIR,
+        EVAL_STORE_RUNS_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -3121,6 +3125,138 @@ def write_memory_commit_artifact(task: Task, run_dir: Path, summary: dict[str, A
     return output_path
 
 
+def failed_experts_from_monitor_score(monitor_score: dict[str, Any]) -> list[str]:
+    gates = monitor_score.get("gates") if isinstance(monitor_score.get("gates"), dict) else {}
+    failed: list[str] = []
+    for gate in gates.values():
+        if not isinstance(gate, dict):
+            continue
+        for name in gate.get("failed_experts", []) or []:
+            if isinstance(name, str) and name not in failed:
+                failed.append(name)
+    return failed
+
+
+def build_eval_store_record(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    run_id = Path(str(summary.get("run_dir") or run_dir)).name
+    monitor_score = summary.get("monitor_score") if isinstance(summary.get("monitor_score"), dict) else {}
+    eval_contract_path = Path(str(monitor_score.get("eval_contract_path") or run_dir / "moe_eval_contract.json"))
+    eval_contract = read_json_file(eval_contract_path)
+    layers = monitor_score.get("layers") if isinstance(monitor_score.get("layers"), dict) else {}
+    failed_experts = failed_experts_from_monitor_score(monitor_score)
+    findings = monitor_score.get("findings", []) if isinstance(monitor_score.get("findings"), list) else []
+    samples: list[dict[str, Any]] = []
+    for expert in failed_experts:
+        expert_findings = [item for item in findings if isinstance(item, dict) and item.get("expert") == expert]
+        samples.append(
+            {
+                "kind": "failed_expert_eval_sample",
+                "expert": expert,
+                "status": "fail",
+                "recommended_action": monitor_score.get("recommended_action", ""),
+                "findings": expert_findings[:8],
+                "evidence_refs": {
+                    "monitor_score_path": monitor_score.get("output_path", str(run_dir / "monitor_score.json")),
+                    "eval_contract_path": str(eval_contract_path),
+                    "run_dir": str(run_dir),
+                },
+            }
+        )
+    record = {
+        "schema": "a9.eval_store_record.v1",
+        "record_id": f"eval-{run_id}",
+        "run_id": run_id,
+        "task_id": task.task_id,
+        "phase": summary.get("phase") or task.phase,
+        "status": summary.get("status", ""),
+        "created_at": utc_now(),
+        "source": "supervisor_moe_eval_store",
+        "rule_monitor": {
+            "decision_model": monitor_score.get("decision_model", ""),
+            "score": monitor_score.get("score", 0),
+            "recommended_action": monitor_score.get("recommended_action", ""),
+            "gates": monitor_score.get("gates", {}),
+            "failed_experts": failed_experts,
+        },
+        "llm_evaluator": layers.get("llm_evaluator", {"status": "not_configured"}),
+        "manual_override": None,
+        "eval_contract": {
+            "path": str(eval_contract_path),
+            "schema": eval_contract.get("schema", "a9.moe_eval_contract.v1") if isinstance(eval_contract, dict) else "",
+            "sha256": sha256_file(eval_contract_path) if eval_contract_path.exists() else "",
+        },
+        "monitor_score_path": monitor_score.get("output_path", str(run_dir / "monitor_score.json")),
+        "evidence_paths": {
+            "summary_path": str(run_dir / "summary.json"),
+            "state_path": str(summary.get("state_path") or run_dir / "state.json"),
+            "evidence_path": str(summary.get("evidence_path") or run_dir / "evidence.jsonl"),
+            "execution_chain_path": str(summary.get("execution_chain_path") or run_dir / "execution_chain.json"),
+            "memory_commit_path": str(summary.get("memory_commit_path") or run_dir / "memory_commit.json"),
+        },
+        "eval_samples": samples,
+        "stats": {
+            "failed_expert_count": len(failed_experts),
+            "eval_sample_count": len(samples),
+            "finding_count": len(findings),
+        },
+    }
+    record["record_hash"] = sha256_text(stable_json({key: value for key, value in record.items() if key != "record_hash"}))
+    return record
+
+
+def append_eval_store_index(record: dict[str, Any]) -> None:
+    ensure_dirs()
+    index_path = EVAL_STORE_DIR / "index.jsonl"
+    record_id = str(record.get("record_id") or "")
+    existing_ids: set[str] = set()
+    if index_path.exists():
+        for line in index_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not line.strip():
+                continue
+            try:
+                item = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict) and item.get("record_id"):
+                existing_ids.add(str(item["record_id"]))
+    if record_id in existing_ids:
+        return
+    index_row = {
+        "record_id": record.get("record_id"),
+        "run_id": record.get("run_id"),
+        "task_id": record.get("task_id"),
+        "status": record.get("status"),
+        "recommended_action": record.get("rule_monitor", {}).get("recommended_action", ""),
+        "failed_experts": record.get("rule_monitor", {}).get("failed_experts", []),
+        "record_path": str(EVAL_STORE_RUNS_DIR / f"{compact_task_ref(str(record.get('run_id') or 'run'))}.json"),
+        "record_hash": record.get("record_hash"),
+        "created_at": record.get("created_at"),
+    }
+    with index_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(index_row, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def write_eval_store_record(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    ensure_dirs()
+    record = build_eval_store_record(task, run_dir, summary)
+    output_path = run_dir / "eval_store_record.json"
+    global_path = EVAL_STORE_RUNS_DIR / f"{compact_task_ref(str(record.get('run_id') or 'run'))}.json"
+    write_json(output_path, record)
+    write_json(global_path, record)
+    append_eval_store_index(record)
+    result = {
+        "status": "written",
+        "output_path": str(output_path),
+        "global_path": str(global_path),
+        "index_path": str(EVAL_STORE_DIR / "index.jsonl"),
+        "record_id": record.get("record_id"),
+        "record_hash": record.get("record_hash"),
+        "stats": record.get("stats", {}),
+    }
+    summary["eval_store_record"] = result
+    return result
+
+
 def patch_apply_block_line(item: dict[str, Any]) -> str:
     path = item.get("effective_path") or item.get("path") or "unknown"
     mode = item.get("mode", "unknown")
@@ -3755,6 +3891,15 @@ def write_evidence_and_state(
                 .get("status", ""),
             },
         ),
+        (
+            "eval_store_record",
+            Path(summary.get("eval_store_record", {}).get("output_path") or run_dir / "eval_store_record.missing"),
+            {
+                "schema": "a9.eval_store_record.v1",
+                "record_id": summary.get("eval_store_record", {}).get("record_id", ""),
+                "record_hash": summary.get("eval_store_record", {}).get("record_hash", ""),
+            },
+        ),
         ("execution_chain", execution_chain_path, {"schema": "a9.execution_chain.v1"}),
         ("memory_commit", memory_commit_path, summary.get("memory_commit_stats", {})),
         ("context", context_path, {"status": summary["status"]}),
@@ -3835,6 +3980,7 @@ def write_evidence_and_state(
             "policy_attestations": by_kind.get("policy_attestation", []),
             "monitor_scores": by_kind.get("monitor_score", []),
             "moe_eval_contracts": by_kind.get("moe_eval_contract", []),
+            "eval_store_records": by_kind.get("eval_store_record", []),
             "execution_chains": by_kind.get("execution_chain", []),
             "memory_commits": by_kind.get("memory_commit", []),
             "checks": by_kind.get("check_log", []),
@@ -3856,6 +4002,7 @@ def write_evidence_and_state(
             "policy_attestations",
             "monitor_scores",
             "moe_eval_contracts",
+            "eval_store_records",
             "execution_chains",
             "memory_commits",
             "checks",
@@ -4076,6 +4223,7 @@ def redis_session_payload(
         "memory_commit_path": summary.get("memory_commit_path"),
         "memory_commit_stats": summary.get("memory_commit_stats", {}),
         "goal_state": summary.get("goal_state", {}),
+        "eval_store_record": summary.get("eval_store_record", {}),
         "guard_summary": summary.get("guard_summary", compact_guard_summary(summary)),
         "context_pressure": summary.get("context_pressure", compact_context_pressure(summary)),
         "git_governance": summary.get("git_governance", {}),
@@ -5761,6 +5909,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "external_session_close_reading_route": True,
         "persistent_goal_runtime": True,
         "idle_goal_continuation": True,
+        "eval_store_records": True,
     }
     capability_groups = {
         "runtime": [
@@ -5781,6 +5930,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
             "external_session_refresh_route",
             "external_session_close_reading_route",
             "persistent_goal_runtime",
+            "eval_store_records",
         ],
         "automation": [
             "auto_next_scheduler",
@@ -6527,6 +6677,7 @@ def run_one(*, auto_next: bool = False) -> int:
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
         summary["goal_state"] = update_goal_from_summary(task, run_dir, summary)
+        summary["eval_store_record"] = write_eval_store_record(task, run_dir, summary)
         evidence_path, state_path, deep_marks_path, evidence, state, deep_marks = write_evidence_and_state(
             task, run_dir, summary, context_path
         )

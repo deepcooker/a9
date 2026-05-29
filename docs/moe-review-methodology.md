@@ -421,6 +421,9 @@ session 精读必须服务于需求变迁：
    evaluator 的稳定输入输出契约。
 5. `monitor_score` 和 `moe_eval_contract` 已进入 `evidence.jsonl` 和
    `state.channels`，后续可以进入 eval store / memory commit / 训练数据。
+6. 每轮普通 worker run 已生成 `eval_store_record.json`，并同步写入
+   `.a9/eval_store/runs/<run_id>.json` 和 `.a9/eval_store/index.jsonl`。
+   failed expert 会展开为可回放 `eval_samples`。
 
 当前仍是规则型 MoE + evaluator contract。LLM evaluator 尚未启用，状态为
 `not_configured`。这是刻意的：硬门禁先保持确定性、便宜、可测；LLM 评审只作为
@@ -428,11 +431,11 @@ session 精读必须服务于需求变迁：
 
 ## Immediate Next Step
 
-下一刀应把 `moe_eval_contract.json` 接入 eval store：
+下一刀应把 eval store 接到人工 override / LLM evaluator：
 
-1. 按 run 持久化 rule monitor result、future evaluator result、人工 override。
-2. 为每个 failed expert 生成可回放 eval sample。
-3. 后续再接 LLM evaluator，只允许消费 contract，不允许读取无限上下文。
+1. 增加人工 override 记录，保留 override 人、原因、证据和原始 gate。
+2. 接一个可选 LLM evaluator，只允许消费 `moe_eval_contract.json`。
+3. 对比 rule monitor、LLM evaluator、人工 override，沉淀训练/评审样本。
 
 ## References
 

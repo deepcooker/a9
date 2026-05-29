@@ -743,6 +743,9 @@ Do the work.
         self.assertTrue(Path(data["monitor_score"]["output_path"]).exists())
         self.assertTrue(Path(data["monitor_score"]["eval_contract_path"]).exists())
         self.assertEqual(data["monitor_score"]["layers"]["llm_evaluator"]["status"], "not_configured")
+        self.assertEqual(data["eval_store_record"]["status"], "written")
+        self.assertTrue(Path(data["eval_store_record"]["output_path"]).exists())
+        self.assertTrue(Path(data["eval_store_record"]["global_path"]).exists())
         evidence_path = Path(data["evidence_path"])
         state_path = Path(data["state_path"])
         deep_marks_path = Path(data["deep_marks_path"])
@@ -768,6 +771,7 @@ Do the work.
         self.assertIn("policy_attestation", kinds)
         self.assertIn("monitor_score", kinds)
         self.assertIn("moe_eval_contract", kinds)
+        self.assertIn("eval_store_record", kinds)
         self.assertIn("check_log", kinds)
         self.assertIn("context", kinds)
         self.assertTrue(all(item["sha256"] for item in evidence))
@@ -783,6 +787,7 @@ Do the work.
         self.assertTrue(state["channels"]["policy_attestations"])
         self.assertTrue(state["channels"]["monitor_scores"])
         self.assertTrue(state["channels"]["moe_eval_contracts"])
+        self.assertTrue(state["channels"]["eval_store_records"])
         self.assertTrue(state["channels"]["checks"])
         self.assertTrue(state["channels"]["deep_marks"])
         self.assertGreater(state["deep_mark_count"], 0)
@@ -1051,6 +1056,82 @@ Do the work.
         self.assertEqual(commit["eval_samples"][0]["status"], "fail")
         self.assertEqual(commit["next_tasks"][0]["text"], "build deterministic memory commit writer")
         self.assertEqual(commit["evidence_paths"]["execution_chain_path"], str(execution_chain))
+
+    def test_eval_store_record_persists_failed_expert_samples_and_index(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_eval_store = mod.EVAL_STORE_DIR
+            old_eval_runs = mod.EVAL_STORE_RUNS_DIR
+            mod.EVAL_STORE_DIR = tmp_path / "eval_store"
+            mod.EVAL_STORE_RUNS_DIR = mod.EVAL_STORE_DIR / "runs"
+            try:
+                run_dir = tmp_path / "run-1"
+                run_dir.mkdir()
+                contract_path = run_dir / "moe_eval_contract.json"
+                contract_path.write_text(json.dumps({"schema": "a9.moe_eval_contract.v1"}), encoding="utf-8")
+                task = mod.Task(
+                    path=run_dir / "task.md",
+                    task_id="eval-store-task",
+                    phase="test",
+                    prompt="Goal: verify eval store.",
+                )
+                summary = {
+                    "task_id": "eval-store-task",
+                    "run_dir": str(run_dir),
+                    "status": "monitor-blocked",
+                    "phase": "test",
+                    "monitor_score": {
+                        "output_path": str(run_dir / "monitor_score.json"),
+                        "eval_contract_path": str(contract_path),
+                        "decision_model": "requirements_review_council_v1",
+                        "score": 0.8,
+                        "recommended_action": "block_and_rewrite_task",
+                        "layers": {"llm_evaluator": {"status": "not_configured"}},
+                        "gates": {
+                            "hard_gate": {
+                                "status": "fail",
+                                "failed_experts": ["data_model_expert", "test_verifiability_expert"],
+                            }
+                        },
+                        "findings": [
+                            {
+                                "expert": "data_model_expert",
+                                "level": "error",
+                                "kind": "data_model_not_explicit",
+                                "message": "data model missing",
+                            },
+                            {
+                                "expert": "test_verifiability_expert",
+                                "level": "error",
+                                "kind": "data_structure_acceptance_missing",
+                                "message": "data tests missing",
+                            },
+                        ],
+                    },
+                }
+
+                result = mod.write_eval_store_record(task, run_dir, summary)
+                mod.write_eval_store_record(task, run_dir, summary)
+                record = json.loads(Path(result["output_path"]).read_text(encoding="utf-8"))
+                global_record = json.loads(Path(result["global_path"]).read_text(encoding="utf-8"))
+                index_lines = [
+                    json.loads(line)
+                    for line in Path(result["index_path"]).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            finally:
+                mod.EVAL_STORE_DIR = old_eval_store
+                mod.EVAL_STORE_RUNS_DIR = old_eval_runs
+
+        self.assertEqual(result["status"], "written")
+        self.assertEqual(record["schema"], "a9.eval_store_record.v1")
+        self.assertEqual(record["rule_monitor"]["failed_experts"], ["data_model_expert", "test_verifiability_expert"])
+        self.assertEqual(record["stats"]["eval_sample_count"], 2)
+        self.assertEqual(record["eval_samples"][0]["expert"], "data_model_expert")
+        self.assertEqual(global_record["record_hash"], record["record_hash"])
+        self.assertEqual(len(index_lines), 1)
+        self.assertEqual(index_lines[0]["record_id"], record["record_id"])
 
     def test_reference_gate_blocks_missing_prompt_declared_reference_before_worker_launch(self):
         mod = load_supervisor()
