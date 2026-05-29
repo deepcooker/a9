@@ -639,6 +639,50 @@ def gateway_health_refresh(root: Path = ROOT) -> dict[str, Any]:
     }
 
 
+def gateway_reconnect_governance(root: Path = ROOT) -> dict[str, Any]:
+    contract = gateway_transport_contract(root, emit_event=True)
+    reconnect_event = latest_gateway_reconnect_decision_event()
+    reconnect_evidence = gateway_reconnect_evidence_decision(reconnect_event)
+
+    status = "ok"
+    if contract.get("status") != "ok" or contract.get("runtime_evidence", {}).get("action") == "block":
+        status = "fail"
+    elif reconnect_evidence.get("status") == "fail":
+        status = "fail"
+    elif reconnect_evidence.get("status") == "degraded":
+        status = "degraded"
+
+    recommendation = {
+        "status": status,
+        "contract_action": contract.get("runtime_evidence", {}).get("action", "observe"),
+        "reconnect_action": reconnect_evidence.get("action", "observe"),
+        "reason": None,
+    }
+    recommendation["action"] = "continue" if status == "ok" else "observe"
+    if status == "fail":
+        recommendation["action"] = "block"
+    elif status == "degraded":
+        recommendation["action"] = "observe"
+
+    if status == "fail" and not recommendation["reason"]:
+        recommendation["reason"] = "gateway_reconnect_governance_failure"
+    elif status == "degraded" and not recommendation["reason"]:
+        recommendation["reason"] = "gateway_reconnect_governance_degraded"
+
+    return {
+        "kind": "gateway_reconnect_governance",
+        "status": status,
+        "contract": contract,
+        "reconnect": {
+            "latest_event": reconnect_event,
+            "runtime_evidence": reconnect_evidence,
+        },
+        "runtime": {
+            "governance_decision": recommendation,
+        },
+    }
+
+
 def bool_field(value: Any) -> bool | None:
     text = str(value).strip().lower()
     if text == "true":
@@ -942,6 +986,7 @@ def controller_discovery() -> dict[str, Any]:
             "gateway_transport_contract": "/api/gateway/transport-contract",
             "gateway_reconnect_decision": "/api/gateway/reconnect-decision",
             "gateway_reconnect_diagnostic": "/api/gateway/reconnect-diagnostic",
+            "gateway_reconnect_governance": "/api/gateway/reconnect-governance",
             "gateway_health_refresh": "/api/gateway/health-refresh",
             "events": "/api/events",
         },
@@ -949,6 +994,7 @@ def controller_discovery() -> dict[str, Any]:
             "ssh_bootstrap": True,
             "redis_streams_target": True,
             "gateway_transport_contract": True,
+            "gateway_reconnect_governance": True,
             "worker_claim_ready": False,
         },
         "events": {
@@ -2752,6 +2798,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/gateway/reconnect-diagnostic":
                 success = str(query.get("success", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
                 self.write_json(200, gateway_reconnect_diagnostic(success=success))
+            elif parsed.path == "/api/gateway/reconnect-governance":
+                self.write_json(200, gateway_reconnect_governance())
             elif parsed.path == "/api/gateway/health-refresh":
                 self.write_json(200, gateway_health_refresh())
             elif parsed.path == "/api/nodes/evidence":

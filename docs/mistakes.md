@@ -1,5 +1,33 @@
 # A9 错题本
 
+## 2026-05-29：事件预算硬杀会打断有效 worker，envelope JSON 失败不能掩盖 patch 价值
+
+现象：
+
+- `goal-continuation-...103327Z` 在通信治理主线中读参考、定位
+  `/api/events` handler，但 31 个事件、约 125KB stdout 就触发
+  `retryable-worker-budget`，没有来得及产出 patch。
+- 监控者把 worker event budget 从默认硬杀改成默认观测后，
+  `goal-continuation-...104754Z` 成功产出并提交 `/api/events` 测试切片。
+- 下一轮 `goal-continuation-...105048Z` 方向正确，补了
+  `/api/gateway/reconnect-governance` 聚合端点，但 final envelope 里嵌入未转义
+  `"/api/..."`，导致 `worker_envelope` 解析失败，supervisor 回滚有效 patch。
+
+修正：
+
+- `A9_WORKER_EVENT_BUDGET_MODE` 默认改为 `observe`。事件数和事件字节超限先记录
+  `budget_observations`，只有显式设置 `enforce/hard/kill` 才硬杀 worker。
+- 监控者从 run artifact 的 `patch.diff` 恢复第二轮 patch，修正测试 stub 签名，
+  跑 `tests.test_control_api` 全量 118 条通过后再提交。
+
+产品判断：
+
+- 固定数字预算不能成为业务通路门禁；它是成本和质量观测信号。
+- worker envelope 是交接协议，不是事实源。真正事实源是 patch、scope、checks、
+  run artifact 和监控者复核。
+- 24h worker 的主要缺陷不是“不会做”，而是会漏跑测试、输出非法 JSON、
+  读得过宽。解决方式是流程拆分和监控救回，不是继续加死门禁。
+
 ## 2026-05-28：worker envelope 自评不能覆盖 supervisor 检查事实
 
 现象：

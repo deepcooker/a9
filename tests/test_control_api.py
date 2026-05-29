@@ -987,6 +987,53 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "gateway_health_refresh")
 
+    def test_gateway_reconnect_governance_get_endpoint_returns_status(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None}
+
+        class DummyGatewayReconnectGovernanceHandler:
+            path = "/api/gateway/reconnect-governance"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_governance = mod.gateway_reconnect_governance
+        try:
+            mod.gateway_reconnect_governance = lambda: {"status": "ok", "kind": "gateway_reconnect_governance"}
+            mod.ControlHandler.do_GET(DummyGatewayReconnectGovernanceHandler())
+        finally:
+            mod.gateway_reconnect_governance = original_governance
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "gateway_reconnect_governance")
+        self.assertEqual(captured["payload"]["status"], "ok")
+
+    def test_gateway_reconnect_governance_function_maps_failures_to_block(self):
+        mod = load_control_api()
+        calls = []
+
+        original_contract = mod.gateway_transport_contract
+        original_reconnect_event = mod.latest_gateway_reconnect_decision_event
+
+        try:
+            def fake_contract(root=None, *, emit_event: bool = False):
+                calls.append(emit_event)
+                return {"status": "fail", "kind": "gateway_transport_contract", "runtime_evidence": {"action": "block"}}
+
+            mod.gateway_transport_contract = fake_contract
+            mod.latest_gateway_reconnect_decision_event = lambda: {"status": "ok", "kind": "gateway_reconnect_decision", "action": "continue"}
+            result = mod.gateway_reconnect_governance()
+        finally:
+            mod.gateway_transport_contract = original_contract
+            mod.latest_gateway_reconnect_decision_event = original_reconnect_event
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["runtime"]["governance_decision"]["action"], "block")
+        self.assertTrue(calls)
+
     def test_gateway_reconnect_diagnostic_get_endpoint_requires_success_flag(self):
         mod = load_control_api()
 
@@ -4077,10 +4124,12 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["gateway_transport_contract"], "/api/gateway/transport-contract")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_diagnostic"], "/api/gateway/reconnect-diagnostic")
+        self.assertEqual(discovery["endpoints"]["gateway_reconnect_governance"], "/api/gateway/reconnect-governance")
         self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
+        self.assertTrue(discovery["runtime"]["gateway_reconnect_governance"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)
         self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])
 
