@@ -1056,3 +1056,4 @@
 - 测试夹具也必须模拟真实 worker：final 里输出
   `{"protocolVersion":1,"ok":true,"status":"ok","output":{...}}`，不能继续用
   普通文本假装 worker 完成。
+- 本 smoke 任务验证：新建 worker 任务会默认收到 strict envelope 要求。
