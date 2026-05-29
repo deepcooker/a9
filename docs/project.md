@@ -185,6 +185,12 @@ agent 稳定后的垂直化训练和数据项目。
 
 MVP 完成不代表生产级完成，也不代表最终产品完成。下一步只保留高优先级：
 
+- `docs/runtime-governance-review-2026-05-29.md` 已确认一次主线偏差：
+  最近执行通路修得较快，但 reference review、Codex goal runtime、Hermes context
+  engine/trajectory、执行链观测和 token/cost 架构治理没有进入硬流程。下一步先补
+  reference-review gate、A9 goal 最小数据模型、execution chain summary 和 monitor
+  专家，再继续通讯五大块。
+
 - 错误模式 gate 已开始落地：worker budget stop、网络重连/连接重置、app-server
   初始化失败、Broken pipe 会从普通 worker failure 拆成机器可读状态，并写入
   run summary 的 `worker_failure`。
