@@ -3070,6 +3070,34 @@ class ControlApiTests(unittest.TestCase):
             },
         )
 
+    def test_node_recovery_plan_probes_offline_remote_candidate_before_manual_quarantine(self):
+        mod = load_control_api()
+        plan = mod.node_recovery_plan(
+            {
+                "connection_state": "offline",
+                "connection_action": "quarantine",
+                "connection_action_reason": "heartbeat_offline",
+                "ssh_target": "root@100.74.166.86:2200",
+                "labels": ["mobile-added"],
+                "hygiene": {
+                    "category": "remote_candidate",
+                    "risk_scope": "operational",
+                },
+            }
+        )
+        self.assertEqual(plan["action"], "probe")
+        self.assertEqual(plan["reason"], "remote_candidate_heartbeat_offline")
+        self.assertFalse(plan["requires_operator"])
+        self.assertEqual(
+            plan["route"],
+            {
+                "method": "POST",
+                "endpoint": "/api/nodes/probe",
+                "command": "nodes.probe.execute",
+                "requires_arm": True,
+            },
+        )
+
     def test_publish_node_heartbeat_redis_writes_json_stream_and_timeseries(self):
         mod = load_control_api()
         calls = []

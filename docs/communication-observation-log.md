@@ -1028,3 +1028,33 @@ Next monitoring target:
      24h automation must act on real resources, not registry aliases. Raw
      events remain visible, but reconciliation decides what the executor should
      touch by default.
+
+57. Offline remote candidates now route to gated SSH probe first.
+   - Trigger:
+     after node hygiene and target dedupe, the remaining primary Tailscale node
+     still produced a generic manual quarantine step. That was too coarse for a
+     24h recovery loop: the next useful action is to diagnose SSH reachability,
+     then decide whether to repair tmux/heartbeat or require operator network
+     intervention.
+   - Mechanism copied:
+     mature remote recovery pipelines split `observe -> probe -> repair`:
+     offline inventory is not immediately treated as irrecoverable, but the
+     first mutating/remote command stays behind the existing phone-control gate.
+   - Change:
+     `node_recovery_plan()` now maps offline `remote_candidate` nodes to a
+     `probe` recovery action with route `POST /api/nodes/probe` and command
+     `nodes.probe.execute`. Local smoke/noise and unclassified offline nodes
+     still use manual quarantine. Default recovery remains planning-only unless
+     explicitly executed through the gated path.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py
+     scripts/a9_recovery_loop.py` passed. `python3 -m unittest
+     tests.test_control_api tests.test_recovery_loop tests.test_service
+     tests.test_remote tests.test_node` passed with `231` tests. Real API
+     smoke after stack restart showed `risk_count=1`, default recovery
+     `step_count=1`, `skipped_duplicate_count=1`, and the single step planned
+     `/api/nodes/probe` for `root-100.74.166.86-2200` without executing SSH.
+   - Governance lesson:
+     recovery should narrow uncertainty before escalating to humans. The loop
+     now has a deterministic next diagnostic step, while execution remains
+     controlled by phone-control.

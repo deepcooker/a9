@@ -1735,6 +1735,7 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
     probe_action = str(record.get("probe_action") or "")
     tmux_action = str(record.get("tmux_action") or "")
     heartbeat_start_action = str(record.get("heartbeat_start_action") or "")
+    hygiene = record.get("hygiene") if isinstance(record.get("hygiene"), dict) else node_hygiene(record)
 
     if connection_action in {"continue", "watch"} or connection_state == "online":
         return {
@@ -1751,6 +1752,19 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
         }
 
     if connection_action == "quarantine" or connection_state == "offline":
+        if hygiene.get("category") == "remote_candidate":
+            return {
+                "action": "probe",
+                "reason": "remote_candidate_heartbeat_offline",
+                "steps": ["run_node_communication_probe", "refresh_node_status"],
+                "requires_operator": False,
+                "route": {
+                    "method": "POST",
+                    "endpoint": "/api/nodes/probe",
+                    "command": "nodes.probe.execute",
+                    "requires_arm": True,
+                },
+            }
         return {
             "action": "quarantine",
             "reason": connection_reason or "heartbeat_offline",
