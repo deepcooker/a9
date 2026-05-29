@@ -1000,6 +1000,8 @@ def controller_discovery() -> dict[str, Any]:
             "gateway_reconnect_diagnostic": "/api/gateway/reconnect-diagnostic",
             "gateway_reconnect_governance": "/api/gateway/reconnect-governance",
             "gateway_health_refresh": "/api/gateway/health-refresh",
+            "node_command_submit": "/api/nodes/command-submit",
+            "node_command": "/api/nodes/command",
             "events": "/api/events",
         },
         "runtime": {
@@ -1942,6 +1944,143 @@ def publish_node_heartbeat_redis(record: dict[str, Any]) -> dict[str, Any]:
         "stream_id": stream.stdout.strip() if stream.returncode == 0 else "",
         "timeseries": "ok" if ts.returncode == 0 else "skipped",
         "output": compact_text("\n".join([json_set.stdout, stream.stdout, ts.stdout]), 1000),
+    }
+
+
+def validate_node_command_payload(payload: dict[str, Any], *, now_fn=utc_now) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be a json object")
+    command_id = str(payload.get("command_id") or "").strip()
+    if not command_id:
+        raise ValueError("command_id is required")
+    node_id = str(payload.get("node_id") or "").strip()
+    if not node_id:
+        raise ValueError("node_id is required")
+    action = str(payload.get("action") or "").strip()
+    if not action:
+        raise ValueError("action is required")
+    action_reason = str(payload.get("action_reason") or "").strip()
+    if not action_reason:
+        raise ValueError("action_reason is required")
+    target = str(payload.get("target") or "").strip()
+    if not target:
+        raise ValueError("target is required")
+
+    try:
+        expected_revision = int(payload.get("expected_revision"))
+    except (TypeError, ValueError):
+        raise ValueError("expected_revision must be integer")
+    if expected_revision < 0:
+        raise ValueError("expected_revision must be non-negative")
+
+    try:
+        ttl_seconds = int(payload.get("ttl_seconds"))
+    except (TypeError, ValueError):
+        raise ValueError("ttl_seconds must be integer")
+    if ttl_seconds <= 0:
+        raise ValueError("ttl_seconds must be positive")
+
+    provided_created_at = str(payload.get("created_at") or "").strip()
+    created_at = provided_created_at or now_fn()
+    if parse_iso_datetime(created_at) is None:
+        raise ValueError("created_at must be ISO-8601")
+
+    command_status = str(payload.get("status") or "queued").strip() or "queued"
+    return {
+        "command_id": command_id,
+        "node_id": node_id,
+        "action": action,
+        "action_reason": action_reason,
+        "target": target,
+        "expected_revision": expected_revision,
+        "ttl_seconds": ttl_seconds,
+        "created_at": created_at,
+        "status": command_status,
+        "stream": TASKS_STREAM_KEY,
+        "stream_id": "",
+        "error_code": str(payload.get("error_code") or ""),
+    }
+
+
+def enqueue_node_command(payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        command = validate_node_command_payload(payload)
+    except ValueError as exc:
+        return {
+            "status": "degraded",
+            "kind": "node_command_enqueue",
+            "error_code": "invalid_payload",
+            "error": str(exc),
+        }
+
+    if not redis_available():
+        command["status"] = "degraded"
+        if not command["error_code"]:
+            command["error_code"] = "redis_unavailable"
+        return {
+            "status": "degraded",
+            "kind": "node_command_enqueue",
+            "error_code": command["error_code"],
+            "command": command,
+        }
+
+    fields = [
+        "command_id",
+        command["command_id"],
+        "node_id",
+        command["node_id"],
+        "action",
+        command["action"],
+        "action_reason",
+        command["action_reason"],
+        "target",
+        command["target"],
+        "expected_revision",
+        str(command["expected_revision"]),
+        "ttl_seconds",
+        str(command["ttl_seconds"]),
+        "created_at",
+        command["created_at"],
+        "status",
+        command["status"],
+        "stream",
+        command["stream"],
+        "stream_id",
+        command["stream_id"],
+        "error_code",
+        command["error_code"] or "none",
+    ]
+    try:
+        proc = redis_cli(["XADD", TASKS_STREAM_KEY, "*", *fields])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        command["status"] = "degraded"
+        command["error_code"] = "redis_unavailable"
+        return {
+            "status": "degraded",
+            "kind": "node_command_enqueue",
+            "error_code": command["error_code"],
+            "command": command,
+            "error": str(exc),
+        }
+    if proc.returncode != 0:
+        command["status"] = "degraded"
+        command["error_code"] = "xadd_failed"
+        return {
+            "status": "degraded",
+            "kind": "node_command_enqueue",
+            "error_code": command["error_code"],
+            "command": command,
+            "error": proc.stdout.strip(),
+            "return_code": proc.returncode,
+        }
+
+    stream_id = proc.stdout.strip()
+    command["stream_id"] = stream_id
+    command["error_code"] = "none"
+    return {
+        "status": "ok",
+        "kind": "node_command_enqueue",
+        "command": command,
     }
 
 
@@ -2944,6 +3083,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, heartbeat_tmux_start_node(payload))
             elif self.path == "/api/nodes/heartbeat":
                 self.write_json(200, heartbeat_node(payload))
+            elif self.path in ["/api/nodes/command", "/api/nodes/command-submit"]:
+                self.write_json(200, enqueue_node_command(payload))
             elif self.path == "/api/phone-control/arm":
                 self.write_json(200, phone_control_arm(payload))
             elif self.path == "/api/phone-control/disarm":

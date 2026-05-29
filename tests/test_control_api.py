@@ -2668,6 +2668,176 @@ class ControlApiTests(unittest.TestCase):
         self.assertIn("heartbeat_fresh", xadd_call)
         self.assertTrue(any(call[:2] == ["TS.ADD", "a9:ts:heartbeat"] for call in calls))
 
+    def test_enqueue_node_command_validates_and_appends_to_tasks_stream(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "OK\n", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args[:2] == ["XADD", "a9:tasks"]:
+                return FakeProc("1740000000-0\n")
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.enqueue_node_command(
+                {
+                    "command_id": "cmd-001",
+                    "node_id": "node-a",
+                    "action": "restart",
+                    "action_reason": "manual",
+                    "target": "node-a",
+                    "expected_revision": 12,
+                    "ttl_seconds": 120,
+                    "created_at": "2026-05-29T12:00:00+00:00",
+                    "status": "queued",
+                }
+            )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["kind"], "node_command_enqueue")
+        command = result["command"]
+        self.assertEqual(command["stream"], "a9:tasks")
+        self.assertEqual(command["stream_id"], "1740000000-0")
+        self.assertEqual(command["command_id"], "cmd-001")
+        self.assertEqual(command["error_code"], "none")
+        xadd_call = next(call for call in calls if call[:2] == ["XADD", "a9:tasks"])
+        index = xadd_call.index("command_id")
+        self.assertEqual(xadd_call[index + 1], "cmd-001")
+        self.assertIn("ttl_seconds", xadd_call)
+        self.assertIn("120", xadd_call)
+        self.assertIn("node_id", xadd_call)
+        self.assertIn("node-a", xadd_call)
+
+    def test_enqueue_node_command_returns_degraded_when_redis_unavailable(self):
+        mod = load_control_api()
+
+        def fake_redis(args, *, timeout=2):
+            raise OSError("redis socket unavailable")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.enqueue_node_command(
+                {
+                    "command_id": "cmd-002",
+                    "node_id": "node-b",
+                    "action": "rollback",
+                    "action_reason": "operator",
+                    "target": "node-b",
+                    "expected_revision": 1,
+                    "ttl_seconds": 60,
+                }
+            )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "redis_unavailable")
+        self.assertEqual(result["command"]["status"], "degraded")
+
+    def test_enqueue_node_command_xadd_failure_returns_machine_readable_degrade(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "ERR", returncode: int = 1):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            if args == ["PING"]:
+                return FakeProc("PONG\n", 0)
+            if args[:2] == ["XADD", "a9:tasks"]:
+                return FakeProc("ERR", 1)
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.enqueue_node_command(
+                {
+                    "command_id": "cmd-003",
+                    "node_id": "node-c",
+                    "action": "scale",
+                    "action_reason": "overload",
+                    "target": "node-c",
+                    "expected_revision": 2,
+                    "ttl_seconds": 45,
+                }
+            )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "xadd_failed")
+        self.assertEqual(result["error"], "ERR")
+        self.assertEqual(calls[0], ["PING"])
+        self.assertEqual(calls[1][:2], ["XADD", "a9:tasks"])
+
+    def test_api_nodes_command_submit_writes_to_tasks_stream(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "1740000100-0\n", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            if args == ["PING"]:
+                return FakeProc("PONG\n", 0)
+            if args[:2] == ["XADD", "a9:tasks"]:
+                return FakeProc("1740000100-0\n", 0)
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            payload = {
+                "command_id": "cmd-004",
+                "node_id": "node-submit",
+                "action": "restart",
+                "action_reason": "operator_action",
+                "target": "node-submit",
+                "expected_revision": 3,
+                "ttl_seconds": 30,
+            }
+            post_body = json.dumps(payload).encode("utf-8")
+            captured = {"status": None, "payload": None}
+
+            class DummyNodeCommandPostHandler:
+                path = "/api/nodes/command-submit"
+                headers = {"Content-Length": str(len(post_body))}
+                rfile = io.BytesIO(post_body)
+
+                def write_json(self, status, response_payload):
+                    captured["status"] = status
+                    captured["payload"] = response_payload
+
+            mod.ControlHandler.do_POST(DummyNodeCommandPostHandler())
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["status"], "ok")
+        self.assertEqual(captured["payload"]["command"]["command_id"], "cmd-004")
+        self.assertEqual(captured["payload"]["command"]["status"], "queued")
+        self.assertEqual(captured["payload"]["command"]["stream"], "a9:tasks")
+        self.assertTrue(any(call[:2] == ["XADD", "a9:tasks"] for call in calls))
+
     def test_parse_xrange_events_accepts_raw_and_json_shapes(self):
         mod = load_control_api()
         raw = "1740000000-0\ntype\ntask_started\ntask_id\nt1\n1740000001-0\ntype\ntask_done\n"
@@ -3503,6 +3673,58 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["audit_receipt"]["endpoint"], "/api/nodes/tmux-status")
         self.assertFalse(captured["payload"]["audit_receipt"]["allowed"])
         self.assertEqual(calls, [])
+
+    def test_api_nodes_command_endpoint_accepts_command_payload(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "1740000200-0\n", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args[:2] == ["XADD", "a9:tasks"]:
+                return FakeProc("1740000200-0\n")
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            payload = {
+                "command_id": "cmd-005",
+                "node_id": "node-command",
+                "action": "restart",
+                "action_reason": "admin",
+                "target": "node-command",
+                "expected_revision": 5,
+                "ttl_seconds": 10,
+            }
+            post_body = json.dumps(payload).encode("utf-8")
+            captured = {"status": None, "payload": None}
+
+            class DummyNodeCommandPostHandler:
+                path = "/api/nodes/command"
+                headers = {"Content-Length": str(len(post_body))}
+                rfile = io.BytesIO(post_body)
+
+                def write_json(self, status, response_payload):
+                    captured["status"] = status
+                    captured["payload"] = response_payload
+
+            mod.ControlHandler.do_POST(DummyNodeCommandPostHandler())
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["command"]["command_id"], "cmd-005")
+        self.assertEqual(captured["payload"]["command"]["status"], "queued")
+        self.assertEqual(captured["payload"]["command"]["stream"], "a9:tasks")
+        self.assertEqual(captured["payload"]["status"], "ok")
+        self.assertTrue(any(call[:2] == ["XADD", "a9:tasks"] for call in calls))
 
     def test_bootstrap_plan_node_is_non_executing_plan(self):
         mod = load_control_api()
