@@ -989,6 +989,33 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["kind"], "node_recovery_cycle")
         self.assertEqual(captured["input"], {"execute": False, "x": 1})
 
+    def test_api_nodes_recovery_cycle_get_endpoint_uses_query_budget(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None, "input": None}
+
+        class DummyRecoveryCycleGetHandler:
+            path = "/api/nodes/recovery-cycle?max_actions=2&node_id=node-a"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_cycle = mod.node_recovery_cycle
+        try:
+            def fake_cycle(payload):
+                captured["input"] = payload
+                return {"status": "ok", "kind": "node_recovery_cycle"}
+
+            mod.node_recovery_cycle = fake_cycle
+            mod.ControlHandler.do_GET(DummyRecoveryCycleGetHandler())
+        finally:
+            mod.node_recovery_cycle = original_cycle
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "node_recovery_cycle")
+        self.assertEqual(captured["input"], {"max_actions": "2", "node_id": "node-a"})
+
     def test_heartbeat_degraded_status_propagates_to_node_status_and_api_nodes(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

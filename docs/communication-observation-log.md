@@ -931,3 +931,39 @@ Next monitoring target:
      one-click recovery needs a coarse-grained gate before route-specific
      gates. This gives the operator a stable mental model: plan is safe by
      default; execute requires an armed remote control window.
+
+54. Recovery-loop daemon added for planning-only automation.
+   - Trigger:
+     the recovery-cycle API and mobile controls were usable, but A9 still only
+     checked node recovery when an operator clicked. That was not yet a 24h
+     service shape. The next safe automation step was continuous observation,
+     not automatic repair.
+   - Mechanism copied:
+     control-plane reconcile loops: poll current state, produce a bounded
+     plan, persist latest state for other surfaces, emit machine-readable
+     observations, and keep mutation behind a separate explicit execution
+     path.
+   - Change:
+     `scripts/a9_recovery_loop.py` runs a bounded or continuous planning-only
+     loop against `GET /api/nodes/recovery-cycle`, writes
+     `.a9/services/recovery-loop-latest.json`, and emits JSONL observations.
+     `infra/systemd/a9-recovery-loop.service`, `scripts/a9_stack.sh`, and
+     `scripts/a9_service.py` now manage it beside `control-api`,
+     `node-worker`, and `mobile-web`.
+   - Verification:
+     `python3 -m py_compile scripts/a9_recovery_loop.py
+     scripts/a9_service.py scripts/a9_control_api.py` passed. `bash -n
+     scripts/a9_stack.sh` passed. `python3 -m unittest
+     tests.test_recovery_loop tests.test_service tests.test_control_api
+     tests.test_remote tests.test_node` passed with `224` tests.
+     `bash scripts/a9_stack.sh status` showed `control-api`, `node-worker`,
+     `recovery-loop`, and `mobile-web` running. A real one-shot loop produced
+     `status=ok`, `cycle_status=needs_attention`, `step_count=2`,
+     `risk_count=3`, and `execute=false`. Phone control remained disarmed and
+     `XPENDING a9:tasks a9-worker` stayed `0`. A real GET smoke confirmed
+     `max_actions=2` is honored by `/api/nodes/recovery-cycle`.
+   - Governance lesson:
+     the first automation layer should make drift visible before it changes
+     machines. Auto-execution should wait until stale smoke nodes, real remote
+     nodes, archive policy, and false-positive recovery risk are separated by
+     evidence.

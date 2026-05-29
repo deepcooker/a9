@@ -3307,7 +3307,15 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/nodes/connection-summary":
                 self.write_json(200, node_connection_summary())
             elif parsed.path == "/api/nodes/recovery-cycle":
-                self.write_json(200, node_recovery_cycle({}))
+                self.write_json(
+                    200,
+                    node_recovery_cycle(
+                        {
+                            "max_actions": query.get("max_actions", [""])[0],
+                            "node_id": query.get("node_id", [""])[0],
+                        }
+                    ),
+                )
             elif parsed.path == "/api/gateway/transport-contract":
                 emit_event = str(query.get("emit_event", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))

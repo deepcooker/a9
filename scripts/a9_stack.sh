@@ -75,6 +75,13 @@ start_node_worker() {
   echo $! >"$(pid_file node-worker)"
 }
 
+start_recovery_loop() {
+  stop_one recovery-loop
+  setsid bash -lc "cd '$ROOT' && exec python3 scripts/a9_recovery_loop.py --controller-url 'http://127.0.0.1:${API_PORT}' --interval-seconds 60 --timeout 10 --max-actions 3" \
+    >"${LOG_DIR}/recovery-loop.log" 2>&1 < /dev/null &
+  echo $! >"$(pid_file recovery-loop)"
+}
+
 status_one() {
   local name="$1"
   local port="$2"
@@ -99,10 +106,12 @@ case "${1:-status}" in
   start)
     start_api
     start_node_worker
+    start_recovery_loop
     start_mobile
     ;;
   stop)
     stop_one mobile-web
+    stop_one recovery-loop
     stop_one node-worker
     stop_one control-api
     stop_port "$WEB_PORT"
@@ -115,10 +124,11 @@ case "${1:-status}" in
   status)
     status_one control-api "$API_PORT"
     status_one node-worker 0
+    status_one recovery-loop 0
     status_one mobile-web "$WEB_PORT"
     ;;
   logs)
-    tail -n "${2:-80}" "${LOG_DIR}/control-api.log" "${LOG_DIR}/node-worker.log" "${LOG_DIR}/mobile-web.log"
+    tail -n "${2:-80}" "${LOG_DIR}/control-api.log" "${LOG_DIR}/node-worker.log" "${LOG_DIR}/recovery-loop.log" "${LOG_DIR}/mobile-web.log"
     ;;
   *)
     echo "usage: $0 {start|stop|restart|status|logs}" >&2

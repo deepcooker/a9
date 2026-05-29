@@ -14,6 +14,7 @@ SERVICE_PATH = ROOT / "scripts" / "a9_service.py"
 SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
 UNIT_PATH = ROOT / "infra" / "systemd" / "a9-supervisor.service"
 NODE_WORKER_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-node-worker.service"
+RECOVERY_LOOP_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-recovery-loop.service"
 
 
 def load_service():
@@ -48,6 +49,14 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("Restart=always", unit)
         self.assertIn("After=network-online.target docker.service a9-control-api.service", unit)
 
+    def test_recovery_loop_systemd_unit_runs_planning_loop(self):
+        unit = RECOVERY_LOOP_UNIT_PATH.read_text(encoding="utf-8")
+        self.assertIn("ExecStart=/root/a9/scripts/a9_recovery_loop.py", unit)
+        self.assertIn("--interval-seconds 60", unit)
+        self.assertIn("--max-actions 3", unit)
+        self.assertIn("Restart=always", unit)
+        self.assertIn("After=network-online.target a9-control-api.service", unit)
+
     def test_service_unit_command_prints_unit(self):
         result = subprocess.run(
             [str(SERVICE_PATH), "unit"],
@@ -60,20 +69,22 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("[Unit]", result.stdout)
         self.assertIn("a9_supervisor.py run-loop --auto-next", result.stdout)
         self.assertIn("a9_node.py command-work-loop", result.stdout)
+        self.assertIn("a9_recovery_loop.py", result.stdout)
 
     def test_parse_process_table_finds_supervisor_node_worker_and_worker(self):
         mod = load_service()
         processes = mod.parse_process_table(
             """123 1 00:01:02 python3 scripts/a9_supervisor.py run-loop --auto-next
 321 1 00:00:30 python3 scripts/a9_node.py command-work-loop --block-ms 5000
+654 1 00:00:10 python3 scripts/a9_recovery_loop.py --interval-seconds 60
 456 123 00:00:20 node /usr/local/bin/codex exec --json -C /tmp/work prompt
 789 1 00:00:01 rg 'a9_supervisor.py run-loop|codex exec --json'
 """
         )
 
-        self.assertEqual([item["kind"] for item in processes], ["supervisor", "node-worker", "worker"])
+        self.assertEqual([item["kind"] for item in processes], ["supervisor", "node-worker", "recovery-loop", "worker"])
         self.assertEqual(processes[0]["pid"], 123)
-        self.assertEqual(processes[2]["ppid"], 123)
+        self.assertEqual(processes[3]["ppid"], 123)
 
     def test_service_ps_command_returns_json(self):
         result = subprocess.run(

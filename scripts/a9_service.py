@@ -25,10 +25,12 @@ HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 SUPERVISOR_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-supervisor.service"
 CONTROL_API_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-control-api.service"
 NODE_WORKER_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-node-worker.service"
+RECOVERY_LOOP_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-recovery-loop.service"
 PROCESS_MARKERS = {
     "supervisor": "a9_supervisor.py run-loop",
     "control-api": "a9_control_api.py serve",
     "node-worker": "a9_node.py command-work-loop",
+    "recovery-loop": "a9_recovery_loop.py",
     "worker": "codex exec --json",
 }
 
@@ -96,6 +98,7 @@ def unit_text() -> str:
             SUPERVISOR_UNIT_PATH.read_text(encoding="utf-8"),
             CONTROL_API_UNIT_PATH.read_text(encoding="utf-8"),
             NODE_WORKER_UNIT_PATH.read_text(encoding="utf-8"),
+            RECOVERY_LOOP_UNIT_PATH.read_text(encoding="utf-8"),
         ]
     )
 
@@ -112,6 +115,7 @@ def status(_: argparse.Namespace) -> int:
             "supervisor": str(SUPERVISOR_UNIT_PATH),
             "control_api": str(CONTROL_API_UNIT_PATH),
             "node_worker": str(NODE_WORKER_UNIT_PATH),
+            "recovery_loop": str(RECOVERY_LOOP_UNIT_PATH),
         },
         "progress": progress,
         "heartbeat": heartbeat,
@@ -239,16 +243,20 @@ def install_hint(_: argparse.Namespace) -> int:
                 "sudo cp infra/systemd/a9-supervisor.service /etc/systemd/system/a9-supervisor.service",
                 "sudo cp infra/systemd/a9-control-api.service /etc/systemd/system/a9-control-api.service",
                 "sudo cp infra/systemd/a9-node-worker.service /etc/systemd/system/a9-node-worker.service",
+                "sudo cp infra/systemd/a9-recovery-loop.service /etc/systemd/system/a9-recovery-loop.service",
                 "sudo systemctl daemon-reload",
                 "sudo systemctl enable --now a9-supervisor",
                 "sudo systemctl enable --now a9-control-api",
                 "sudo systemctl enable --now a9-node-worker",
+                "sudo systemctl enable --now a9-recovery-loop",
                 "sudo systemctl status a9-supervisor",
                 "sudo systemctl status a9-control-api",
                 "sudo systemctl status a9-node-worker",
+                "sudo systemctl status a9-recovery-loop",
                 "journalctl -u a9-supervisor -f",
                 "journalctl -u a9-control-api -f",
                 "journalctl -u a9-node-worker -f",
+                "journalctl -u a9-recovery-loop -f",
             ]
         )
     )
