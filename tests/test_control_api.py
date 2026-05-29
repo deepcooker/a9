@@ -1112,6 +1112,71 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["state"]["runtime_action"], "continue")
         self.assertEqual(captured["payload"]["runtime"]["governance_decision"]["action"], "continue")
 
+    def test_gateway_reconnect_governance_get_endpoint_contract_shape(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None}
+
+        class DummyGatewayReconnectGovernanceHandler:
+            path = "/api/gateway/reconnect-governance"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        governance_payload = {
+            "kind": "gateway_reconnect_governance",
+            "schema": "a9.gateway_reconnect_governance.v1",
+            "status": "fail",
+            "state": {
+                "contract_status": "fail",
+                "reconnect_event_status": "missing",
+                "runtime_action": "block",
+            },
+            "contract": {
+                "kind": "gateway_transport_contract",
+                "status": "fail",
+                "reason": "gateway_contract_failed",
+                "runtime_evidence": {"status": "fail", "action": "block", "reason": "gateway_contract_failed"},
+            },
+            "reconnect": {
+                "latest_event": {
+                    "kind": "gateway_reconnect_decision",
+                    "status": "missing",
+                    "reason": "no_gateway_reconnect_decision_event",
+                },
+            },
+            "runtime": {
+                "governance_decision": {
+                    "status": "fail",
+                    "action": "block",
+                    "contract_action": "block",
+                    "reconnect_action": "observe",
+                    "reason": "gateway_reconnect_governance_failure",
+                }
+            },
+        }
+
+        original_governance = mod.gateway_reconnect_governance
+        try:
+            mod.gateway_reconnect_governance = lambda: governance_payload
+            mod.ControlHandler.do_GET(DummyGatewayReconnectGovernanceHandler())
+        finally:
+            mod.gateway_reconnect_governance = original_governance
+
+        payload = captured["payload"]
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(payload["kind"], "gateway_reconnect_governance")
+        self.assertEqual(payload["schema"], "a9.gateway_reconnect_governance.v1")
+        self.assertEqual(payload["status"], "fail")
+        self.assertEqual(payload["state"], governance_payload["state"])
+        self.assertEqual(payload["runtime"]["governance_decision"]["action"], "block")
+        self.assertEqual(payload["runtime"]["governance_decision"]["status"], "fail")
+        self.assertEqual(payload["runtime"]["governance_decision"]["reason"], "gateway_reconnect_governance_failure")
+        self.assertIn("contract_action", payload["runtime"]["governance_decision"])
+        self.assertIn("reconnect_action", payload["runtime"]["governance_decision"])
+
     def test_gateway_reconnect_governance_function_maps_failures_to_block(self):
         mod = load_control_api()
         calls = []
