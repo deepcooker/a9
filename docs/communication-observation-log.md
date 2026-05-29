@@ -905,3 +905,29 @@ Next monitoring target:
      recovery routing belongs in A9 backend, while mobile is the takeover
      console. This keeps UX simple and prevents endpoint-selection logic from
      drifting between phone and controller.
+
+53. Recovery-cycle execution now has a top-level phone-control gate.
+   - Trigger:
+     real `execute=true` observation showed subactions were gated, but the
+     recovery cycle itself did not first check `nodes.recovery.cycle`. That
+     made the API contract weaker than the mobile button implied.
+   - Change:
+     `node_recovery_cycle()` now checks `command_gate("nodes.recovery.cycle")`
+     before any executable branch. When disarmed, it returns `status=blocked`,
+     `step_count=0`, the gate payload, summary evidence, and does not call
+     probe/tmux/heartbeat subactions. Planning mode remains ungated.
+   - Verification:
+     `python3 -m unittest tests.test_control_api tests.test_remote
+     tests.test_node tests.test_service` passed with `220` tests. Real API
+     smoke after stack restart: disarmed `POST /api/nodes/recovery-cycle`
+     returned `status=blocked`, `gate.reason=phone_control_disarmed`, and
+     `step_count=0`; armed remote execution returned `status=needs_attention`
+     with one `manual_required` quarantine step. Phone control was disarmed
+     after the smoke and `XPENDING a9:tasks a9-worker` remained `0`.
+     Mobile type/display was also updated to surface the top-level recovery
+     gate; `npx tsc --noEmit` and `npm run smoke:mobile` passed in
+     `/mnt/d/root/a9_mobile_agent_lab`.
+   - Governance lesson:
+     one-click recovery needs a coarse-grained gate before route-specific
+     gates. This gives the operator a stable mental model: plan is safe by
+     default; execute requires an armed remote control window.

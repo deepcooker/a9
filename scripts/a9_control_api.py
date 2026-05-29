@@ -1359,6 +1359,27 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
     status = node_status(root)
     nodes = status.get("nodes") if isinstance(status.get("nodes"), list) else []
     steps: list[dict[str, Any]] = []
+    recovery_gate = command_gate("nodes.recovery.cycle", root=root) if execute else {
+        "status": "not_required",
+        "allowed": True,
+        "command": "nodes.recovery.cycle",
+        "reason": "planning_only",
+    }
+    if execute and not recovery_gate.get("allowed"):
+        result = {
+            "status": "blocked",
+            "kind": "node_recovery_cycle",
+            "generated_at": utc_now(),
+            "execute": execute,
+            "max_actions": max_actions,
+            "node_id": requested_node_id,
+            "step_count": 0,
+            "steps": [],
+            "gate": recovery_gate,
+            "summary": node_connection_summary(root),
+        }
+        evidence_path = write_node_evidence("recovery-cycle", requested_node_id or "all", result, root=root)
+        return {**result, "evidence_path": str(evidence_path)}
 
     for node in nodes:
         if requested_node_id and str(node.get("node_id") or "") != requested_node_id:
@@ -1481,6 +1502,7 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
         "node_id": requested_node_id,
         "step_count": len(steps),
         "steps": steps,
+        "gate": recovery_gate,
         "summary": node_connection_summary(root),
     }
     evidence_path = write_node_evidence("recovery-cycle", requested_node_id or "all", result, root=root)

@@ -870,18 +870,73 @@ class ControlApiTests(unittest.TestCase):
                 },
                 root=root,
             )
+            original_gate = mod.command_gate
+            try:
+                def fake_gate(command, *, root=mod.ROOT):
+                    if command == "nodes.recovery.cycle":
+                        return {"status": "allowed", "allowed": True, "command": command, "reason": "test_recovery_gate_allowed"}
+                    return {"status": "blocked", "allowed": False, "command": command, "reason": "phone_control_disarmed"}
 
-            result = mod.node_recovery_cycle(
-                {"execute": True, "max_actions": 1, "operator_scopes": ["operator.admin"]},
-                root=root,
-            )
-            cycle_path_exists = Path(result["evidence_path"]).exists()
+                mod.command_gate = fake_gate
+                result = mod.node_recovery_cycle(
+                    {"execute": True, "max_actions": 1, "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                cycle_path_exists = Path(result["evidence_path"]).exists()
+            finally:
+                mod.command_gate = original_gate
 
         self.assertEqual(result["status"], "blocked")
         self.assertTrue(result["execute"])
         self.assertEqual(result["steps"][0]["recovery_action"], "probe")
         self.assertEqual(result["steps"][0]["status"], "blocked")
         self.assertEqual(result["steps"][0]["result"]["gate"]["reason"], "phone_control_disarmed")
+        self.assertTrue(cycle_path_exists)
+
+    def test_node_recovery_cycle_execute_requires_recovery_cycle_gate_before_subactions(self):
+        mod = load_control_api()
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@worker-a"}, root=root)
+            node_path = mod.node_path("node/a", root)
+            node = mod.read_json(node_path)
+            stale_at = (mod.utc_now_dt() - mod.timedelta(seconds=120)).isoformat(timespec="seconds")
+            node["updated_at"] = stale_at
+            node["last_heartbeat_at"] = stale_at
+            node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            mod.write_node_evidence(
+                "probe",
+                "node/a",
+                {
+                    "status": "failed",
+                    "return_code": 255,
+                    "timed_out": False,
+                    "probe_action": "retry",
+                    "probe_action_reason": "ssh_exec_error",
+                    "checked_at": "2026-05-30T00:00:00Z",
+                    "connection_summary": {
+                        "connection_state": "disconnected",
+                        "action": "reconnect",
+                        "action_reason": "ssh_exec_error",
+                        "retry_delay_ms": 1000,
+                    },
+                },
+                root=root,
+            )
+            original_probe = mod.probe_node
+            mod.probe_node = lambda payload, *, root=mod.ROOT: calls.append(payload) or {"status": "ok"}
+            try:
+                result = mod.node_recovery_cycle({"execute": True, "max_actions": 1}, root=root)
+                cycle_path_exists = Path(result["evidence_path"]).exists()
+            finally:
+                mod.probe_node = original_probe
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["step_count"], 0)
+        self.assertEqual(result["gate"]["command"], "nodes.recovery.cycle")
+        self.assertEqual(result["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(calls, [])
         self.assertTrue(cycle_path_exists)
 
     def test_node_recovery_cycle_marks_offline_nodes_manual_required(self):
