@@ -771,3 +771,26 @@ Next monitoring target:
      could start, edit within scope, and run a lightweight check.
    - Lightweight check:
      `python3 -m py_compile scripts/a9_supervisor.py` passed.
+
+48. Mobile control now exposes node-command submit and result polling.
+   - Scope:
+     external mobile workspace `/mnt/d/root/a9_mobile_agent_lab`; this is outside
+     the supervisor worktree, so monitor implemented directly instead of routing
+     through the 24h worker.
+   - Change:
+     mobile Remote control can submit a bounded node `status` command through
+     `/api/nodes/command-submit`, then poll
+     `/api/node-command-results/by-command/{command_id}` and show queued/noop/ok
+     state in the Agent chat.
+   - Verification:
+     `npx tsc --noEmit` passed in the mobile workspace. `npm run smoke:mobile`
+     passed after restarting the Expo web server. A Playwright mobile smoke
+     clicked `Node status command` and saw the submit/result card. Real Redis
+     smoke consumed `mobile-node-status-1780068352032` with
+     `python3 scripts/a9_node.py command-work-once --block-ms 1000`; by-command
+     lookup returned result event `1780068403702-0` and `status_ok`.
+   - Governance lesson:
+     supervisor task results and Redis node-command results are different
+     channels. The UI must not pretend a normal `/api/submit` task can be read
+     via node-command result lookup; use the by-command result API only for
+     commands written to `a9:tasks`.
