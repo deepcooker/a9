@@ -881,3 +881,27 @@ Next monitoring target:
      multi-machine repair should be a controller reconciliation loop, not UI
      branching logic. The phone can call one route, while A9 keeps endpoint
      selection, gate status, evidence, and next action in the backend.
+
+52. Mobile Agent UI now surfaces node recovery cycle.
+   - Trigger:
+     after `/api/nodes/recovery-cycle` existed, the phone still had to inspect
+     separate node/tmux/probe state. That violated the mobile-control goal:
+     phone users should see the controller decision, not rebuild backend logic.
+   - Change:
+     external mobile workspace `/mnt/d/root/a9_mobile_agent_lab` now reads
+     `GET /api/nodes/recovery-cycle` during normal refresh, stores
+     `lastNodeRecoveryCycle`, shows a recovery summary in the mobile Remote
+     card, and renders an assistant recovery card with step status, manual
+     required nodes, evidence link, refresh, arm remote, and execute actions.
+     `POST /api/nodes/recovery-cycle` is wired for explicit execution with
+     operator scope; execution remains backend-gated.
+   - Verification:
+     `npx tsc --noEmit` passed in `/mnt/d/root/a9_mobile_agent_lab`.
+     `npm run smoke:mobile` passed after adding recovery summary/card/button
+     checks to `scripts/mobile-ui-smoke.js`. Stack remains running with
+     `control-api`, `node-worker`, and `mobile-web`; `XPENDING a9:tasks
+     a9-worker` remained `0`.
+   - Governance lesson:
+     recovery routing belongs in A9 backend, while mobile is the takeover
+     console. This keeps UX simple and prevents endpoint-selection logic from
+     drifting between phone and controller.
