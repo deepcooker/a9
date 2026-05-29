@@ -653,3 +653,38 @@ Next monitoring target:
      Spark can complete bounded implementation after self-repair, but monitor
      must keep policing reference scope and event growth. Future prompts should
      explicitly forbid broad `rg` roots and ask for line-window reads only.
+
+43. Result-event reader passed but needed monitor field repair.
+   - Task:
+     `node-command-result-reader-20260529T1406`.
+   - Run:
+     `.a9/runs/node-command-result-reader-20260529T1406-20260529T144227Z-a1`.
+   - Status:
+     `pass`.
+   - Worker outcome:
+     added `parse_node_command_result_event()`,
+     `node_command_result_read_once()`, and CLI `command-result-read-once`.
+     The reader uses bounded `XRANGE event_stream id id` and normalizes
+     `node_command_result` fields into a stable JSON contract.
+   - Monitor repair:
+     after supervisor pass, review found a duplicate `error_code` key in
+     `parse_node_command_result_event()` that caused missing `error_code` input
+     to return an empty string instead of `ok`. Monitor removed the duplicate
+     key and added a focused regression test.
+   - Verification:
+     `python3 -m py_compile scripts/a9_node.py` passed.
+     `python3 -m unittest tests.test_node tests.test_control_api
+     tests.test_remote` passed with `192` tests. Real Redis smoke enqueued
+     `smoke-result-read-20260529T1455`, ran `command-work-once`, then
+     `command-result-read-once 1780066510627-0`; output returned
+     `status=ok`, `error_code=ok`, and the expected command id.
+   - Quality findings:
+     worker read `scripts/a9_control_api.py` despite the task explicitly
+     forbidding control API changes/reads, had multiple apply-patch context
+     failures, and exceeded observation budgets (`event_count=108`,
+     `event_bytes=243613`). Implementation was useful, but context discipline
+     degraded again.
+   - Governance lesson:
+     reference-scope enforcement should become more explicit for worker file
+     reads. Until then, monitor must inspect event logs, not just scope_guard,
+     because scope_guard only covers changed files.

@@ -186,7 +186,6 @@ def parse_node_command_result_event(event_id: str, fields: Any) -> dict[str, Any
         "command_id": str(normalized_fields.get("command_id") or ""),
         "command_action": str(normalized_fields.get("command_action") or ""),
         "result_status": result_status,
-        "error_code": error_code,
         "result": parsed_result,
         "raw_fields": normalized_fields,
     }

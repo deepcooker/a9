@@ -180,7 +180,17 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(parsed["kind"], "node_command_result")
         self.assertEqual(parsed["node_id"], "node-01")
         self.assertEqual(parsed["command_id"], "cmd-status-01")
+        self.assertEqual(parsed["error_code"], "ok")
         self.assertEqual(parsed["result"]["status"], "ok")
+
+    def test_parse_node_command_result_event_defaults_error_code_to_ok(self):
+        mod = load_module()
+        parsed = mod.parse_node_command_result_event(
+            "1740000300-0",
+            {"kind": "node_command_result", "result": "{}"},
+        )
+        self.assertEqual(parsed["status"], "ok")
+        self.assertEqual(parsed["error_code"], "ok")
 
     def test_parse_node_command_result_event_parses_list_fields(self):
         mod = load_module()
