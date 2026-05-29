@@ -2701,6 +2701,62 @@ Do the work.
             self.assertTrue(result["commit"])
             self.assertTrue(Path(result["output_path"]).exists())
             self.assertEqual(subprocess.run(["git", "status", "--short"], cwd=repo, text=True, stdout=subprocess.PIPE).stdout, "")
+            self.assertEqual(result["main_integration"]["status"], "skipped")
+            self.assertEqual(result["main_integration"]["reason"], "non_supervisor_worktree")
+
+    def test_git_governance_integrates_supervisor_worktree_commit_to_main(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "root"
+            worktrees = root / ".a9" / "worktrees"
+            worktree = worktrees / "task-attempt-1"
+            run_dir = root / ".a9" / "runs" / "task-run"
+            root.mkdir()
+            worktrees.mkdir(parents=True)
+            run_dir.mkdir(parents=True)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            (root / "demo.txt").write_text("base\n", encoding="utf-8")
+            (root / ".gitignore").write_text(".a9/\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True, stdout=subprocess.PIPE)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "-c",
+                    "user.name=Test",
+                    "commit",
+                    "-m",
+                    "base",
+                ],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            subprocess.run(["git", "worktree", "add", "-q", str(worktree), "HEAD"], cwd=root, check=True)
+            (worktree / "demo.txt").write_text("base\nchanged\n", encoding="utf-8")
+
+            original_root = mod.ROOT
+            original_worktrees = mod.WORKTREES_DIR
+            try:
+                mod.ROOT = root
+                mod.WORKTREES_DIR = worktrees
+                diff = mod.capture_diff(worktree, run_dir)
+                result = mod.apply_git_governance(
+                    worktree,
+                    run_dir,
+                    mod.Task(path=Path("task.md"), task_id="git-integrate", prompt="demo"),
+                    "pass",
+                    diff,
+                )
+            finally:
+                mod.ROOT = original_root
+                mod.WORKTREES_DIR = original_worktrees
+
+            self.assertEqual(result["status"], "committed")
+            self.assertEqual(result["main_integration"]["status"], "integrated")
+            self.assertTrue(result["main_integration"]["main_commit"])
+            self.assertEqual((root / "demo.txt").read_text(encoding="utf-8"), "base\nchanged\n")
 
     def test_git_governance_rolls_back_failed_worker_diff(self):
         mod = load_supervisor()

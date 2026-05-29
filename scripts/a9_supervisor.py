@@ -399,7 +399,7 @@ def next_task() -> Task | None:
 
 
 def git_head() -> str:
-    return run_cmd(["git", "rev-parse", "HEAD"]).stdout.strip()
+    return run_cmd(["git", "rev-parse", "HEAD"], cwd=ROOT).stdout.strip()
 
 
 def approx_token_count(text: str) -> int:
@@ -2014,6 +2014,7 @@ def apply_git_governance(worktree: Path, run_dir: Path, task: Task, status: str,
         if proc.returncode == 0:
             result["status"] = "committed"
             result["commit"] = run_cmd_no_raise(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
+            result["main_integration"] = integrate_worker_commit_to_main(worktree, result["commit"], base_head)
         else:
             result["status"] = "commit-failed"
             result["findings"].append(
@@ -2045,6 +2046,78 @@ def apply_git_governance(worktree: Path, run_dir: Path, task: Task, status: str,
     result["rolled_back"] = not result["findings"]
     result["status"] = "rolled-back" if result["rolled_back"] else "rollback-failed"
     write_json(output_path, result)
+    return result
+
+
+def path_is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def integrate_worker_commit_to_main(worktree: Path, commit: str, base_head: str) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "status": "skipped",
+        "policy": "clean_root_fast_forward_cherry_pick",
+        "commit": commit,
+        "base_head": base_head,
+        "root_head_before": "",
+        "main_commit": "",
+        "commands": [],
+        "findings": [],
+    }
+    if not commit:
+        result["reason"] = "missing_commit"
+        return result
+    if not path_is_relative_to(worktree, WORKTREES_DIR):
+        result["reason"] = "non_supervisor_worktree"
+        return result
+    root_head = git_head()
+    result["root_head_before"] = root_head
+    if root_head != base_head:
+        result["reason"] = "root_head_mismatch"
+        result["findings"].append(
+            {
+                "level": "warning",
+                "message": "worker commit was accepted but root HEAD moved before integration",
+                "root_head": root_head,
+                "base_head": base_head,
+            }
+        )
+        return result
+    dirty = run_cmd_no_raise(["git", "status", "--porcelain"], cwd=ROOT).stdout.strip()
+    if dirty:
+        result["reason"] = "dirty_root"
+        result["findings"].append(
+            {
+                "level": "warning",
+                "message": "worker commit was accepted but root worktree is dirty",
+                "status_preview": dirty[:2000],
+            }
+        )
+        return result
+
+    command = ["git", "cherry-pick", commit]
+    proc = run_cmd_no_raise(command, cwd=ROOT)
+    result["commands"].append({"command": " ".join(command), "return_code": proc.returncode})
+    if proc.returncode == 0:
+        result["status"] = "integrated"
+        result["main_commit"] = git_head()
+        return result
+
+    abort = run_cmd_no_raise(["git", "cherry-pick", "--abort"], cwd=ROOT)
+    result["commands"].append({"command": "git cherry-pick --abort", "return_code": abort.returncode})
+    result["status"] = "failed"
+    result["reason"] = "cherry_pick_failed"
+    result["findings"].append(
+        {
+            "level": "error",
+            "message": "failed to integrate accepted worker commit into root",
+            "output_preview": (proc.stdout or "")[-2000:],
+        }
+    )
     return result
 
 

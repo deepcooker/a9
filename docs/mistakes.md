@@ -1057,3 +1057,19 @@
   `{"protocolVersion":1,"ok":true,"status":"ok","output":{...}}`，不能继续用
   普通文本假装 worker 完成。
 - 本 smoke 任务验证：新建 worker 任务会默认收到 strict envelope 要求。
+
+## 2026-05-29：worker pass 后必须治理主线集成
+
+现象：
+
+- `worker-strict-envelope-smoke-20260529` 已经 `worker_envelope=pass`、
+  `patch_apply=pass`，但 commit 只在 `.a9/worktrees` 的 worker 分支里。
+- 主控需要手动 cherry-pick 才能让主分支包含产物。
+
+规则：
+
+- worker worktree pass 只是“候选产物通过”，不是主线完成。
+- 只有 supervisor 创建的 `.a9/worktrees`、主工作区干净、主 HEAD 仍等于
+  worker base HEAD 时，才允许自动 cherry-pick 到主线。
+- 如果主 HEAD 已移动或主工作区 dirty，必须记录 `main_integration` 跳过原因，
+  由监控者决定是否合并，不能悄悄覆盖用户改动。
