@@ -2729,6 +2729,10 @@ class ControlApiTests(unittest.TestCase):
         self.assertIn("120", xadd_call)
         self.assertIn("node_id", xadd_call)
         self.assertIn("node-a", xadd_call)
+        stream_id_index = xadd_call.index("stream_id")
+        self.assertEqual(xadd_call[stream_id_index + 1], "pending")
+        error_code_index = xadd_call.index("error_code")
+        self.assertEqual(xadd_call[error_code_index + 1], "none")
 
     def test_enqueue_node_command_returns_degraded_when_redis_unavailable(self):
         mod = load_control_api()

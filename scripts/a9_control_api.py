@@ -1997,7 +1997,7 @@ def validate_node_command_payload(payload: dict[str, Any], *, now_fn=utc_now) ->
         "created_at": created_at,
         "status": command_status,
         "stream": TASKS_STREAM_KEY,
-        "stream_id": "",
+        "stream_id": str(payload.get("stream_id") or "pending"),
         "error_code": str(payload.get("error_code") or ""),
     }
 
