@@ -37,6 +37,7 @@ DEFAULT_SSH_IDENTITY_FILE = "/root/id_ed25519"
 NODE_ONLINE_TTL_SECONDS = 90
 NODE_STALE_TTL_SECONDS = 300
 PHONE_ADMIN_SCOPE = "operator.admin"
+RECOVERY_LOOP_LATEST_REL_PATH = Path(".a9") / "services" / "recovery-loop-latest.json"
 PHONE_CONTROL_GROUPS = {
     "runtime": [
         "submit.run",
@@ -1080,20 +1081,81 @@ def list_node_evidence(node_id: str | None = None, *, root: Path = ROOT, limit: 
                 payload = {}
             stat = path.stat()
             kind = path.name.rsplit("-", 1)[0]
+            action = (
+                payload.get("recovery_action")
+                or payload.get("probe_action")
+                or payload.get("repair_action")
+                or payload.get("heartbeat_action")
+                or payload.get("tmux_action")
+                or payload.get("bootstrap_action")
+            )
+            reason = (
+                payload.get("reason")
+                or payload.get("probe_action_reason")
+                or payload.get("repair_action_reason")
+                or payload.get("heartbeat_action_reason")
+                or payload.get("tmux_action_reason")
+                or payload.get("bootstrap_action_reason")
+            )
             items.append(
                 {
                     "node_id": directory.name,
                     "kind": kind,
                     "status": payload.get("status"),
+                    "action": action,
+                    "reason": reason,
                     "target": payload.get("target"),
                     "session": payload.get("session"),
+                    "return_code": payload.get("return_code"),
+                    "timed_out": payload.get("timed_out"),
+                    "step_count": payload.get("step_count"),
                     "path": str(path),
                     "bytes": stat.st_size,
                     "mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds"),
                 }
             )
     items.sort(key=lambda item: str(item["mtime"]), reverse=True)
-    return {"status": "ok", "count": len(items), "items": items[: max(1, limit)]}
+    safe_limit = max(1, min(int(limit), 200))
+    return {"status": "ok", "count": len(items), "limit": safe_limit, "items": items[:safe_limit]}
+
+
+def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
+    path = root / RECOVERY_LOOP_LATEST_REL_PATH
+    if not path.exists():
+        return {
+            "status": "missing",
+            "kind": "recovery_loop_latest",
+            "path": str(path),
+            "reason": "recovery_loop_latest_not_found",
+        }
+    try:
+        payload = read_json(path)
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "status": "degraded",
+            "kind": "recovery_loop_latest",
+            "path": str(path),
+            "reason": "recovery_loop_latest_unreadable",
+            "error": str(exc),
+        }
+    stat = path.stat()
+    cycle = payload.get("cycle") if isinstance(payload.get("cycle"), dict) else {}
+    return {
+        "status": "ok",
+        "kind": "recovery_loop_latest",
+        "path": str(path),
+        "mtime": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(timespec="seconds"),
+        "checked_at": payload.get("checked_at"),
+        "controller_url": payload.get("controller_url"),
+        "cycle_status": payload.get("cycle_status"),
+        "step_count": payload.get("step_count"),
+        "risk_count": payload.get("risk_count"),
+        "execute": payload.get("execute"),
+        "summary": cycle.get("summary") if isinstance(cycle, dict) else None,
+        "steps": cycle.get("steps", [])[:8] if isinstance(cycle, dict) else [],
+        "raw_status": payload.get("status"),
+        "error": payload.get("error"),
+    }
 
 
 def controller_discovery() -> dict[str, Any]:
@@ -1118,6 +1180,7 @@ def controller_discovery() -> dict[str, Any]:
             "gateway_reconnect_diagnostic": "/api/gateway/reconnect-diagnostic",
             "gateway_reconnect_governance": "/api/gateway/reconnect-governance",
             "gateway_health_refresh": "/api/gateway/health-refresh",
+            "node_recovery_loop_latest": "/api/nodes/recovery-loop/latest",
             "node_command_submit": "/api/nodes/command-submit",
             "node_command": "/api/nodes/command",
             "node_command_result": "/api/node-command-results/{result_event_id}",
@@ -3878,6 +3941,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                         }
                     ),
                 )
+            elif parsed.path == "/api/nodes/recovery-loop/latest":
+                self.write_json(200, recovery_loop_latest())
             elif parsed.path == "/api/gateway/transport-contract":
                 emit_event = str(query.get("emit_event", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))

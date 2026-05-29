@@ -1096,3 +1096,37 @@ Next monitoring target:
      missed: a too-heavy bootstrap path and a generated shell syntax bug.
      Keeping every step gated but runnable let the controller converge without
      guessing or hiding the failed intermediate evidence.
+
+59. Recovery observability now exposes loop latest and compact evidence chain.
+   - Trigger:
+     the phone/control surface could refresh a recovery cycle, but it could not
+     see the real probe/repair/tmux chain without opening raw evidence files
+     one by one. That weakens monitoring quality because the operator cannot
+     quickly verify whether the automation converged through the expected
+     sequence.
+   - Mechanism copied:
+     mature control planes keep raw evidence on disk and expose bounded
+     summaries for dashboards: the UI reads a compact timeline while detailed
+     files remain the source of truth.
+   - Change:
+     `scripts/a9_control_api.py` now exposes
+     `/api/nodes/recovery-loop/latest` and enriches `/api/nodes/evidence` with
+     compact `action`, `reason`, `return_code`, `timed_out`, and `step_count`
+     fields without returning large raw output. The mobile control UI reads the
+     new latest endpoint and renders a recovery evidence timeline beside the
+     recovery card.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py
+     scripts/a9_recovery_loop.py scripts/a9_remote.py` passed.
+     `python3 -m unittest tests.test_control_api tests.test_recovery_loop
+     tests.test_service tests.test_remote tests.test_node` passed with `246`
+     tests. Real stack smoke showed all four services running and
+     `/api/nodes/recovery-loop/latest` returning `cycle_status=ok`,
+     `risk_count=0`, while `/api/nodes/evidence?node_id=root-100.74.166.86-2200`
+     showed `tmux-status missing -> heartbeat-repair ok ->
+     heartbeat-tmux-start ok`. Mobile `npx tsc --noEmit` and
+     `npm run smoke:mobile` passed.
+   - Governance lesson:
+     monitoring should observe the execution chain directly. This keeps phone
+     control useful for intervention while raw evidence files remain available
+     for deeper audit and repair.

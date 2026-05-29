@@ -5957,6 +5957,96 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(all_items["items"][0]["path"], plan["evidence_path"])
             self.assertEqual(node_items["items"][0]["session"], "a9-main")
 
+    def test_list_node_evidence_exposes_compact_action_timeline(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = mod.write_node_evidence(
+                "heartbeat-repair",
+                "root@100.64.0.1",
+                {
+                    "status": "ok",
+                    "target": "root@100.64.0.1",
+                    "repair_action": "continue",
+                    "repair_action_reason": "heartbeat_script_repaired",
+                    "return_code": 0,
+                    "timed_out": False,
+                    "output": "large raw output should stay in evidence file",
+                },
+                root=root,
+            )
+
+            result = mod.list_node_evidence("root@100.64.0.1", root=root, limit=20)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["limit"], 20)
+            self.assertEqual(result["items"][0]["kind"], "heartbeat-repair")
+            self.assertEqual(result["items"][0]["action"], "continue")
+            self.assertEqual(result["items"][0]["reason"], "heartbeat_script_repaired")
+            self.assertEqual(result["items"][0]["return_code"], 0)
+            self.assertFalse(result["items"][0]["timed_out"])
+            self.assertEqual(result["items"][0]["path"], str(path))
+            self.assertNotIn("output", result["items"][0])
+
+    def test_recovery_loop_latest_reports_missing_and_compact_latest(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            missing = mod.recovery_loop_latest(root=root)
+            self.assertEqual(missing["status"], "missing")
+            latest = root / ".a9" / "services" / "recovery-loop-latest.json"
+            latest.parent.mkdir(parents=True)
+            latest.write_text(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "checked_at": "2026-05-29T19:02:55+00:00",
+                        "controller_url": "http://127.0.0.1:8787",
+                        "cycle_status": "ok",
+                        "step_count": 1,
+                        "risk_count": 0,
+                        "execute": False,
+                        "cycle": {
+                            "summary": {"risk_count": 0},
+                            "steps": [{"node_id": "node-a", "status": "planned"}],
+                            "large_raw_field": "not needed by phone",
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = mod.recovery_loop_latest(root=root)
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["cycle_status"], "ok")
+            self.assertEqual(result["step_count"], 1)
+            self.assertEqual(result["steps"][0]["node_id"], "node-a")
+            self.assertNotIn("cycle", result)
+
+    def test_api_recovery_loop_latest_endpoint(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+
+        class DummyRecoveryLoopLatestGetHandler:
+            path = "/api/nodes/recovery-loop/latest"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_latest = mod.recovery_loop_latest
+        try:
+            mod.recovery_loop_latest = lambda: {"status": "ok", "kind": "recovery_loop_latest"}
+            mod.ControlHandler.do_GET(DummyRecoveryLoopLatestGetHandler())
+        finally:
+            mod.recovery_loop_latest = original_latest
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "recovery_loop_latest")
+
     def test_read_evidence_file_allows_only_a9_evidence_roots(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -5980,6 +6070,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_diagnostic"], "/api/gateway/reconnect-diagnostic")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_governance"], "/api/gateway/reconnect-governance")
         self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
+        self.assertEqual(discovery["endpoints"]["node_recovery_loop_latest"], "/api/nodes/recovery-loop/latest")
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
