@@ -967,3 +967,34 @@ Next monitoring target:
      machines. Auto-execution should wait until stale smoke nodes, real remote
      nodes, archive policy, and false-positive recovery risk are separated by
      evidence.
+
+55. Node hygiene separates smoke noise from real remote risk.
+   - Trigger:
+     the recovery-loop was stable, but real observations showed a stale
+     `local-service-smoke` registry entry mixed with two Tailscale remote
+     candidates. That polluted the recovery signal and could mislead the
+     monitor into chasing test residue.
+   - Mechanism copied:
+     mature controller hygiene: classify inventory records before acting on
+     them, keep noisy records visible as evidence, and filter operational
+     decisions by risk scope instead of deleting data.
+   - Change:
+     `scripts/a9_control_api.py` now adds `node_hygiene()` classification to
+     node status. `node_connection_summary()` reports `hygiene_categories`,
+     `skipped_noise_count`, and `skipped_noise_nodes`; default
+     `/api/nodes/recovery-cycle` skips smoke/noise nodes while
+     `include_noise=true` or a direct `node_id` can still inspect them.
+     `communication_followup` now ignores smoke noise, so the main monitor
+     follows real remote risk first.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py
+     scripts/a9_recovery_loop.py` passed. `python3 -m unittest
+     tests.test_control_api tests.test_recovery_loop tests.test_service
+     tests.test_remote tests.test_node` passed with `227` tests. Real API
+     smoke after stack restart showed `hygiene_categories={test_smoke: 1,
+     remote_candidate: 2}`, `risk_count=2`, `skipped_noise_count=1`, default
+     recovery `step_count=2`, and `include_noise=true` recovery `step_count=3`.
+   - Governance lesson:
+     data quality comes before automation. Keeping smoke nodes as evidence but
+     excluding them from default recovery makes the 24h monitor less noisy
+     without hiding facts or inventing a hard gate.

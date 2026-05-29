@@ -736,6 +736,43 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(summary["risk_nodes"][0]["route"]["endpoint"], "/api/nodes/tmux-ensure")
         self.assertIn(str(tmux_path), summary["latest_evidence_paths"])
 
+    def test_node_connection_summary_separates_smoke_noise_from_remote_risk(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "local-service-smoke",
+                    "ssh_target": "root@127.0.0.1",
+                    "message": "service-smoke",
+                },
+                root=root,
+            )
+            mod.register_node(
+                {
+                    "node_id": "remote/a",
+                    "ssh_target": "root@100.74.166.86:2200",
+                    "labels": ["mobile-added"],
+                },
+                root=root,
+            )
+            old_at = (mod.utc_now_dt() - mod.timedelta(seconds=600)).isoformat(timespec="seconds")
+            for node_id in ["local-service-smoke", "remote/a"]:
+                node_path = mod.node_path(node_id, root)
+                node = mod.read_json(node_path)
+                node["updated_at"] = old_at
+                node["last_heartbeat_at"] = old_at
+                node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            summary = mod.node_connection_summary(root)
+
+        self.assertEqual(summary["hygiene_categories"]["test_smoke"], 1)
+        self.assertEqual(summary["hygiene_categories"]["remote_candidate"], 1)
+        self.assertEqual(summary["risk_count"], 1)
+        self.assertEqual(summary["risk_nodes"][0]["node_id"], "remote-a")
+        self.assertEqual(summary["skipped_noise_count"], 1)
+        self.assertEqual(summary["skipped_noise_nodes"][0]["node_id"], "local-service-smoke")
+
     def test_node_connection_summary_uses_probe_connection_fields(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -959,6 +996,41 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(result["steps"][0]["result"]["requires_operator"])
         self.assertIn("verify_ssh_target_reachable", result["steps"][0]["result"]["steps"])
 
+    def test_node_recovery_cycle_skips_smoke_noise_by_default(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "local-service-smoke",
+                    "ssh_target": "root@127.0.0.1",
+                    "message": "service-smoke",
+                },
+                root=root,
+            )
+            mod.register_node(
+                {
+                    "node_id": "remote/a",
+                    "ssh_target": "root@100.74.166.86:2200",
+                    "labels": ["mobile-added"],
+                },
+                root=root,
+            )
+            old_at = (mod.utc_now_dt() - mod.timedelta(seconds=600)).isoformat(timespec="seconds")
+            for node_id in ["local-service-smoke", "remote/a"]:
+                node_path = mod.node_path(node_id, root)
+                node = mod.read_json(node_path)
+                node["updated_at"] = old_at
+                node["last_heartbeat_at"] = old_at
+                node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            default_cycle = mod.node_recovery_cycle({"max_actions": 3}, root=root)
+            noise_cycle = mod.node_recovery_cycle({"include_noise": True, "max_actions": 3}, root=root)
+
+        self.assertEqual([step["node_id"] for step in default_cycle["steps"]], ["remote-a"])
+        self.assertEqual(default_cycle["summary"]["skipped_noise_count"], 1)
+        self.assertEqual([step["node_id"] for step in noise_cycle["steps"]], ["local-service-smoke", "remote-a"])
+
     def test_api_nodes_recovery_cycle_post_endpoint_uses_payload(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None, "input": None}
@@ -994,7 +1066,7 @@ class ControlApiTests(unittest.TestCase):
         captured = {"status": None, "payload": None, "input": None}
 
         class DummyRecoveryCycleGetHandler:
-            path = "/api/nodes/recovery-cycle?max_actions=2&node_id=node-a"
+            path = "/api/nodes/recovery-cycle?max_actions=2&node_id=node-a&include_noise=true"
             headers = {}
 
             def write_json(self, status, payload):
@@ -1014,7 +1086,7 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "node_recovery_cycle")
-        self.assertEqual(captured["input"], {"max_actions": "2", "node_id": "node-a"})
+        self.assertEqual(captured["input"], {"max_actions": "2", "node_id": "node-a", "include_noise": "true"})
 
     def test_heartbeat_degraded_status_propagates_to_node_status_and_api_nodes(self):
         mod = load_control_api()
@@ -2689,6 +2761,42 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(followup["evidence"]["nodes"][0]["recovery_plan"]["action"], "quarantine")
         self.assertTrue(followup["evidence"]["nodes"][0]["recovery_plan"]["requires_operator"])
         self.assertEqual(followup["evidence"]["tasks_stream"]["action"], "continue")
+
+    def test_node_status_communication_followup_ignores_smoke_noise(self):
+        mod = load_control_api()
+        original_redis = self._fake_redis_for_healthy_tasks_stream(mod, heartbeat_len="2")
+        original_now = mod.utc_now_dt
+        mod.utc_now_dt = lambda: datetime(2026, 5, 26, 12, 0, 0, tzinfo=timezone.utc)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                nodes_dir = root / ".a9" / "nodes"
+                nodes_dir.mkdir(parents=True)
+                for node_id, payload in {
+                    "local-service-smoke": {
+                        "node_id": "local-service-smoke",
+                        "status": "online",
+                        "ssh_target": "root@127.0.0.1",
+                        "message": "service-smoke",
+                        "last_heartbeat_at": "2026-05-26T11:50:00+00:00",
+                    },
+                    "remote-a": {
+                        "node_id": "remote-a",
+                        "status": "online",
+                        "ssh_target": "root@100.74.166.86:2200",
+                        "labels": ["mobile-added"],
+                        "last_heartbeat_at": "2026-05-26T11:50:00+00:00",
+                    },
+                }.items():
+                    (nodes_dir / f"{node_id}.json").write_text(json.dumps(payload), encoding="utf-8")
+                status = mod.node_status(root)
+        finally:
+            mod.utc_now_dt = original_now
+            mod.redis_cli = original_redis
+
+        followup = status["communication_followup"]
+        self.assertEqual(followup["action"], "quarantine")
+        self.assertEqual([node["node_id"] for node in followup["evidence"]["nodes"]], ["remote-a"])
 
     def test_node_status_includes_recovery_plan_with_probe_priority(self):
         mod = load_control_api()

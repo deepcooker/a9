@@ -851,6 +851,54 @@ def transport_quality(target: str) -> dict[str, Any]:
     }
 
 
+def parse_truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def node_hygiene(record: dict[str, Any]) -> dict[str, Any]:
+    node_id = str(record.get("node_id") or "").strip().lower()
+    labels = [str(item).strip().lower() for item in record.get("labels") or []]
+    message = str(record.get("message") or "").strip().lower()
+    ssh_target = str(record.get("ssh_target") or "")
+    transport = transport_quality(ssh_target) if ssh_target else {
+        "quality": "unknown",
+        "reason": "missing_ssh_target",
+        "host": "",
+    }
+
+    if "smoke" in node_id or "smoke" in message or any("smoke" in item for item in labels):
+        return {
+            "category": "test_smoke",
+            "risk_scope": "noise",
+            "reason": "smoke_marker",
+            "recommended_action": "archive_if_stale",
+            "transport_quality": transport.get("quality"),
+        }
+    if any(item in {"mobile-added", "mobile-probed"} for item in labels) or transport.get("quality") == "tailscale":
+        return {
+            "category": "remote_candidate",
+            "risk_scope": "operational",
+            "reason": "mobile_or_tailscale_marker",
+            "recommended_action": "repair_or_reconnect",
+            "transport_quality": transport.get("quality"),
+        }
+    if transport.get("quality") == "degraded-loopback":
+        return {
+            "category": "local_loopback",
+            "risk_scope": "local",
+            "reason": "loopback_target",
+            "recommended_action": "observe_or_replace_with_tailscale",
+            "transport_quality": transport.get("quality"),
+        }
+    return {
+        "category": "unknown",
+        "risk_scope": "operational",
+        "reason": "unclassified_node",
+        "recommended_action": "observe",
+        "transport_quality": transport.get("quality"),
+    }
+
+
 def tailscale_status() -> dict[str, Any]:
     binary = shutil.which("tailscale")
     if not binary:
@@ -1255,6 +1303,7 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
                 record = enrich_node_tmux_action(record, root=root)
                 record = enrich_node_probe_evidence(record, root=root)
                 record = enrich_node_heartbeat_start_evidence(record, root=root)
+                record["hygiene"] = node_hygiene(record)
                 record = enrich_node_recovery_plan(record)
                 nodes.append(record)
             except json.JSONDecodeError:
@@ -1276,7 +1325,9 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
     recovery_actions: dict[str, int] = {}
     connection_actions: dict[str, int] = {}
     tmux_actions: dict[str, int] = {}
+    hygiene_categories: dict[str, int] = {}
     risk_nodes: list[dict[str, Any]] = []
+    skipped_noise_nodes: list[dict[str, Any]] = []
     evidence_paths: list[str] = []
 
     for node in nodes:
@@ -1291,6 +1342,9 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
 
         tmux_action = str(node.get("tmux_action") or "unknown")
         tmux_actions[tmux_action] = tmux_actions.get(tmux_action, 0) + 1
+        hygiene = node.get("hygiene") if isinstance(node.get("hygiene"), dict) else node_hygiene(node)
+        hygiene_category = str(hygiene.get("category") or "unknown")
+        hygiene_categories[hygiene_category] = hygiene_categories.get(hygiene_category, 0) + 1
 
         for key in (
             "tmux_evidence_path",
@@ -1301,6 +1355,18 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
             value = str(node.get(key) or "")
             if value and value not in evidence_paths:
                 evidence_paths.append(value)
+
+        if hygiene.get("risk_scope") == "noise" and recovery_action in {"quarantine", "probe", "tmux", "heartbeat"}:
+            skipped_noise_nodes.append(
+                {
+                    "node_id": node.get("node_id"),
+                    "ssh_target": node.get("ssh_target"),
+                    "connection_state": state,
+                    "recovery_action": recovery_action,
+                    "hygiene": hygiene,
+                }
+            )
+            continue
 
         if state in {"stale", "offline", "degraded", "disconnected", "needs_repair", "unknown"} or recovery_action not in {"observe"}:
             risk_nodes.append(
@@ -1315,6 +1381,7 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
                     "recovery_action": recovery_action,
                     "requires_operator": bool(plan.get("requires_operator")) if plan else False,
                     "route": plan.get("route") if plan else None,
+                    "hygiene": hygiene,
                 }
             )
 
@@ -1326,8 +1393,11 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
         "connection_actions": connection_actions,
         "recovery_actions": recovery_actions,
         "tmux_actions": tmux_actions,
+        "hygiene_categories": hygiene_categories,
         "risk_count": len(risk_nodes),
         "risk_nodes": risk_nodes,
+        "skipped_noise_count": len(skipped_noise_nodes),
+        "skipped_noise_nodes": skipped_noise_nodes,
         "latest_evidence_paths": evidence_paths[-20:],
         "communication_followup": status.get("communication_followup"),
     }
@@ -1351,6 +1421,7 @@ def _node_recovery_action_payload(node: dict[str, Any], payload: dict[str, Any])
 def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
     payload = payload or {}
     execute = bool(payload.get("execute") or payload.get("apply"))
+    include_noise = parse_truthy(payload.get("include_noise"))
     try:
         max_actions = max(1, int(payload.get("max_actions") or payload.get("max_nodes") or 3))
     except (TypeError, ValueError):
@@ -1371,6 +1442,7 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
             "kind": "node_recovery_cycle",
             "generated_at": utc_now(),
             "execute": execute,
+            "include_noise": include_noise,
             "max_actions": max_actions,
             "node_id": requested_node_id,
             "step_count": 0,
@@ -1384,10 +1456,13 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
     for node in nodes:
         if requested_node_id and str(node.get("node_id") or "") != requested_node_id:
             continue
+        hygiene = node.get("hygiene") if isinstance(node.get("hygiene"), dict) else node_hygiene(node)
         plan = node.get("recovery_plan") if isinstance(node.get("recovery_plan"), dict) else node_recovery_plan(node)
         recovery_action = str(plan.get("action") or "")
         route = plan.get("route") if isinstance(plan.get("route"), dict) else {}
         if recovery_action in {"observe", "none"}:
+            continue
+        if not include_noise and not requested_node_id and hygiene.get("risk_scope") == "noise":
             continue
         if len(steps) >= max_actions:
             break
@@ -1404,6 +1479,7 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
             "status": "planned",
             "result": None,
             "evidence_path": "",
+            "hygiene": hygiene,
         }
 
         try:
@@ -1498,6 +1574,7 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
         "kind": "node_recovery_cycle",
         "generated_at": utc_now(),
         "execute": execute,
+        "include_noise": include_noise,
         "max_actions": max_actions,
         "node_id": requested_node_id,
         "step_count": len(steps),
@@ -1658,6 +1735,9 @@ def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dic
         "evidence": {"nodes": [], "tasks_stream": {"action": "continue", "reason": "none"}},
     }
     for node in nodes:
+        hygiene = node.get("hygiene") if isinstance(node.get("hygiene"), dict) else node_hygiene(node)
+        if hygiene.get("risk_scope") == "noise":
+            continue
         action = str(node.get("connection_action") or "continue")
         if action not in action_priority:
             continue
@@ -1670,6 +1750,7 @@ def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dic
             "action": action,
             "reason": str(node.get("connection_action_reason") or ""),
             "recovery_plan": node.get("recovery_plan") or node_recovery_plan(node),
+            "hygiene": hygiene,
         }
         if priority == best["priority"] and best["reason"].startswith("node:") and best["action"] == action:
             best["evidence"]["nodes"].append(node_evidence)
@@ -3313,6 +3394,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                         {
                             "max_actions": query.get("max_actions", [""])[0],
                             "node_id": query.get("node_id", [""])[0],
+                            "include_noise": query.get("include_noise", [""])[0],
                         }
                     ),
                 )
