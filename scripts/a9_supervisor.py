@@ -46,9 +46,10 @@ PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
-DEFAULT_WORKER_MODEL = "gpt-5.3-codex"
+DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
 DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
+DEFAULT_WORKER_EVENT_BUDGET_MODE = "observe"
 DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
 COMMUNICATION_GATE_HINTS = (
     "gateway",
@@ -1372,6 +1373,13 @@ def worker_budget_limit(name: str, default: int) -> int:
         return default
 
 
+def worker_event_budget_mode() -> str:
+    raw = (os.getenv("A9_WORKER_EVENT_BUDGET_MODE") or DEFAULT_WORKER_EVENT_BUDGET_MODE).strip().lower()
+    if raw in {"enforce", "hard", "kill"}:
+        return "enforce"
+    return "observe"
+
+
 def blocked_worker_command(command: str) -> str:
     normalized = " ".join(command.split())
     for pattern in BLOCKED_WORKER_COMMAND_PATTERNS:
@@ -1484,7 +1492,9 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
             "event_budget": {
                 "max_events": worker_budget_limit("A9_WORKER_MAX_EVENTS", DEFAULT_MAX_WORKER_EVENTS),
                 "max_event_bytes": worker_budget_limit("A9_WORKER_MAX_EVENT_BYTES", DEFAULT_MAX_WORKER_EVENT_BYTES),
+                "mode": worker_event_budget_mode(),
             },
+            "budget_observations": [],
             "event_counts": {"reference_gate.failed": 1},
             "event_summary_count": 1,
             "events_path": str(events_path),
@@ -1525,6 +1535,10 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     event_bytes = 0
     max_events = worker_budget_limit("A9_WORKER_MAX_EVENTS", DEFAULT_MAX_WORKER_EVENTS)
     max_event_bytes = worker_budget_limit("A9_WORKER_MAX_EVENT_BYTES", DEFAULT_MAX_WORKER_EVENT_BYTES)
+    event_budget_mode = worker_event_budget_mode()
+    budget_observations: list[dict[str, Any]] = []
+    observed_event_count_budget = False
+    observed_event_bytes_budget = False
 
     with events_path.open("w", encoding="utf-8") as events, stderr_path.open(
         "w", encoding="utf-8"
@@ -1595,17 +1609,43 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                                 proc.kill()
                                 break
                     if event_count > max_events:
-                        budget_stopped = True
-                        budget_stop_kind = "event_count"
-                        budget_reason = f"worker event count exceeded {max_events}"
-                        proc.kill()
-                        break
+                        reason = f"worker event count exceeded {max_events}"
+                        if event_budget_mode == "enforce":
+                            budget_stopped = True
+                            budget_stop_kind = "event_count"
+                            budget_reason = reason
+                            proc.kill()
+                            break
+                        if not observed_event_count_budget:
+                            observed_event_count_budget = True
+                            budget_observations.append(
+                                {
+                                    "kind": "event_count",
+                                    "reason": reason,
+                                    "event_count": event_count,
+                                    "max_events": max_events,
+                                    "action": "observe",
+                                }
+                            )
                     if event_bytes > max_event_bytes:
-                        budget_stopped = True
-                        budget_stop_kind = "event_bytes"
-                        budget_reason = f"worker event bytes exceeded {max_event_bytes}"
-                        proc.kill()
-                        break
+                        reason = f"worker event bytes exceeded {max_event_bytes}"
+                        if event_budget_mode == "enforce":
+                            budget_stopped = True
+                            budget_stop_kind = "event_bytes"
+                            budget_reason = reason
+                            proc.kill()
+                            break
+                        if not observed_event_bytes_budget:
+                            observed_event_bytes_budget = True
+                            budget_observations.append(
+                                {
+                                    "kind": "event_bytes",
+                                    "reason": reason,
+                                    "event_bytes": event_bytes,
+                                    "max_event_bytes": max_event_bytes,
+                                    "action": "observe",
+                                }
+                            )
                 elif proc.poll() is not None:
                     break
             elif proc.poll() is not None:
@@ -1629,7 +1669,12 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "budget_reason": budget_reason,
         "event_count": event_count,
         "event_bytes": event_bytes,
-        "event_budget": {"max_events": max_events, "max_event_bytes": max_event_bytes},
+        "event_budget": {
+            "max_events": max_events,
+            "max_event_bytes": max_event_bytes,
+            "mode": event_budget_mode,
+        },
+        "budget_observations": budget_observations,
         "event_counts": event_counts,
         "event_summary_count": len(event_summaries),
         "events_path": str(events_path),

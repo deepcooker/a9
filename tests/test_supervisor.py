@@ -1227,6 +1227,48 @@ Do the work.
         self.assertEqual(failure["status"], "monitor-blocked")
         self.assertEqual(failure["category"], "reference_gate")
 
+    def test_worker_event_budget_defaults_to_observation_not_kill(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="event-budget-observe",
+                prompt="Do one bounded observation.",
+            )
+            old_cmd = os.environ.get("A9_SUPERVISOR_WORKER_CMD")
+            old_bytes = os.environ.get("A9_WORKER_MAX_EVENT_BYTES")
+            old_mode = os.environ.get("A9_WORKER_EVENT_BUDGET_MODE")
+            os.environ["A9_SUPERVISOR_WORKER_CMD"] = (
+                "python3 -c 'import json; "
+                "print(json.dumps({\"type\":\"thread.started\",\"payload\":\"xxxxxxxx\"}))'"
+            )
+            os.environ["A9_WORKER_MAX_EVENT_BYTES"] = "1"
+            os.environ.pop("A9_WORKER_EVENT_BUDGET_MODE", None)
+            try:
+                worker = mod.run_worker(task, worktree, run_dir)
+            finally:
+                if old_cmd is None:
+                    os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+                else:
+                    os.environ["A9_SUPERVISOR_WORKER_CMD"] = old_cmd
+                if old_bytes is None:
+                    os.environ.pop("A9_WORKER_MAX_EVENT_BYTES", None)
+                else:
+                    os.environ["A9_WORKER_MAX_EVENT_BYTES"] = old_bytes
+                if old_mode is None:
+                    os.environ.pop("A9_WORKER_EVENT_BUDGET_MODE", None)
+                else:
+                    os.environ["A9_WORKER_EVENT_BUDGET_MODE"] = old_mode
+
+        self.assertEqual(worker["return_code"], 0)
+        self.assertFalse(worker["budget_stopped"])
+        self.assertEqual(worker["event_budget"]["mode"], "observe")
+        self.assertEqual(worker["budget_observations"][0]["kind"], "event_bytes")
+
     def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2287,7 +2329,7 @@ Do the work.
             )
         )
 
-    def test_live_worker_allows_read_heavy_batched_sed_with_rationale(self):
+    def test_live_worker_observes_read_heavy_batched_sed_without_blocking(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -2301,15 +2343,14 @@ Do the work.
             "/bin/bash -lc \"sed -n '1,220p' reference-projects/codex/mod.rs\"",
             rationale="为了理解状态机机制，需要分批读取这个 bounded window。",
         )
-        blocked = mod.live_worker_command_violation(
+        oversized = mod.live_worker_command_violation(
             task,
             "/bin/bash -lc \"sed -n '1,361p' reference-projects/codex/mod.rs\"",
             rationale="为了理解状态机机制，需要分批读取这个 bounded window。",
         )
 
         self.assertEqual(allowed, {})
-        self.assertEqual(blocked["kind"], "command_window_exceeded")
-        self.assertEqual(blocked["limit"], 360)
+        self.assertEqual(oversized, {})
 
     def test_worker_envelope_required_missing_requires_repair(self):
         mod = load_supervisor()
