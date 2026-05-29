@@ -49,6 +49,7 @@ PHONE_CONTROL_GROUPS = {
     "remote": [
         "nodes.bootstrap.execute",
         "nodes.probe.execute",
+        "nodes.recovery.cycle",
         "nodes.remote.install",
         "nodes.remote.repair",
         "nodes.tmux.ensure",
@@ -1330,6 +1331,160 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
         "latest_evidence_paths": evidence_paths[-20:],
         "communication_followup": status.get("communication_followup"),
     }
+
+
+def _node_recovery_action_payload(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    result = {
+        "node_id": str(node.get("node_id") or ""),
+        "ssh_target": str(node.get("ssh_target") or ""),
+        "target": str(node.get("ssh_target") or ""),
+        "connect_timeout": int(payload.get("connect_timeout") or 5),
+        "timeout_seconds": int(payload.get("timeout_seconds") or 20),
+        "operator_scopes": payload.get("operator_scopes") or payload.get("scopes") or [],
+        "request_id": str(payload.get("request_id") or ""),
+    }
+    if payload.get("identity_file"):
+        result["identity_file"] = str(payload.get("identity_file"))
+    return result
+
+
+def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
+    payload = payload or {}
+    execute = bool(payload.get("execute") or payload.get("apply"))
+    try:
+        max_actions = max(1, int(payload.get("max_actions") or payload.get("max_nodes") or 3))
+    except (TypeError, ValueError):
+        max_actions = 3
+    requested_node_id = safe_node_id(str(payload.get("node_id") or "")) if payload.get("node_id") else ""
+    status = node_status(root)
+    nodes = status.get("nodes") if isinstance(status.get("nodes"), list) else []
+    steps: list[dict[str, Any]] = []
+
+    for node in nodes:
+        if requested_node_id and str(node.get("node_id") or "") != requested_node_id:
+            continue
+        plan = node.get("recovery_plan") if isinstance(node.get("recovery_plan"), dict) else node_recovery_plan(node)
+        recovery_action = str(plan.get("action") or "")
+        route = plan.get("route") if isinstance(plan.get("route"), dict) else {}
+        if recovery_action in {"observe", "none"}:
+            continue
+        if len(steps) >= max_actions:
+            break
+
+        node_id = str(node.get("node_id") or "")
+        action_payload = _node_recovery_action_payload(node, payload)
+        step: dict[str, Any] = {
+            "node_id": node_id,
+            "ssh_target": str(node.get("ssh_target") or ""),
+            "recovery_action": recovery_action,
+            "reason": str(plan.get("reason") or ""),
+            "route": route,
+            "execute": execute,
+            "status": "planned",
+            "result": None,
+            "evidence_path": "",
+        }
+
+        try:
+            if recovery_action == "probe":
+                if execute:
+                    status_code, result = guarded_remote_post(
+                        "nodes.probe.execute",
+                        action_payload,
+                        lambda item: probe_node(item, root=root),
+                        endpoint="/api/nodes/probe",
+                        root=root,
+                    )
+                    step.update({"status": "executed" if status_code == 200 else "blocked", "result": result})
+                else:
+                    step["result"] = {"status": "planned", "endpoint": "/api/nodes/probe", "payload": action_payload}
+
+            elif recovery_action == "tmux":
+                evidence_path = str(node.get("tmux_evidence_path") or "")
+                if not evidence_path or "tmux-plan-" not in Path(evidence_path).name:
+                    plan_payload = {
+                        **action_payload,
+                        "session": payload.get("session") or "a9",
+                        "remote_dir": payload.get("remote_dir") or "~/a9-worker",
+                    }
+                    tmux_plan = tmux_plan_node(plan_payload, root=root)
+                    evidence_path = str(tmux_plan.get("evidence_path") or "")
+                    step["prepared_plan"] = tmux_plan
+                action_payload["evidence_path"] = evidence_path
+                endpoint = str(route.get("endpoint") or "/api/nodes/tmux-ensure")
+                if execute:
+                    if endpoint == "/api/nodes/tmux-status":
+                        status_code, result = guarded_remote_post(
+                            "nodes.tmux.status",
+                            action_payload,
+                            lambda item: tmux_status_node(item, root=root),
+                            endpoint="/api/nodes/tmux-status",
+                            root=root,
+                        )
+                        step.update({"status": "executed" if status_code == 200 else "blocked", "result": result})
+                    else:
+                        result = tmux_ensure_node(action_payload, root=root)
+                        step.update({"status": "executed" if result.get("status") != "blocked" else "blocked", "result": result})
+                else:
+                    step["result"] = {"status": "planned", "endpoint": endpoint, "payload": action_payload}
+
+            elif recovery_action == "heartbeat_start":
+                plan_payload = {
+                    **action_payload,
+                    "session": payload.get("heartbeat_session") or "a9-heartbeat",
+                    "remote_dir": payload.get("remote_dir") or "~/a9-worker",
+                    "controller_url": payload.get("controller_url") or "",
+                    "heartbeat_interval": payload.get("heartbeat_interval") or 30,
+                }
+                heartbeat_plan = heartbeat_tmux_plan_node(plan_payload, root=root)
+                action_payload["evidence_path"] = str(heartbeat_plan.get("evidence_path") or "")
+                step["prepared_plan"] = heartbeat_plan
+                if execute:
+                    result = heartbeat_tmux_start_node(action_payload, root=root)
+                    step.update({"status": "executed" if result.get("status") != "blocked" else "blocked", "result": result})
+                else:
+                    step["result"] = {"status": "planned", "endpoint": "/api/nodes/heartbeat-tmux-start", "payload": action_payload}
+
+            elif recovery_action == "quarantine":
+                step["status"] = "manual_required"
+                step["result"] = {
+                    "status": "manual_required",
+                    "reason": str(plan.get("reason") or "quarantine_required"),
+                    "steps": plan.get("steps") if isinstance(plan.get("steps"), list) else [],
+                    "requires_operator": True,
+                }
+
+            else:
+                step["status"] = "noop"
+                step["result"] = {"status": "noop", "reason": "unsupported_recovery_action"}
+
+        except Exception as exc:
+            step.update({"status": "failed", "result": {"status": "failed", "error": str(exc)}})
+
+        if isinstance(step.get("result"), dict):
+            step["evidence_path"] = str(step["result"].get("evidence_path") or "")
+        steps.append(step)
+
+    overall_status = "ok"
+    if any(step.get("status") == "failed" for step in steps):
+        overall_status = "degraded"
+    elif any(step.get("status") == "blocked" for step in steps):
+        overall_status = "blocked"
+    elif any(step.get("status") == "manual_required" for step in steps):
+        overall_status = "needs_attention"
+    result = {
+        "status": overall_status,
+        "kind": "node_recovery_cycle",
+        "generated_at": utc_now(),
+        "execute": execute,
+        "max_actions": max_actions,
+        "node_id": requested_node_id,
+        "step_count": len(steps),
+        "steps": steps,
+        "summary": node_connection_summary(root),
+    }
+    evidence_path = write_node_evidence("recovery-cycle", requested_node_id or "all", result, root=root)
+    return {**result, "evidence_path": str(evidence_path)}
 
 
 def node_connection_action(connection_state: str) -> tuple[str, str]:
@@ -3129,6 +3284,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, node_status())
             elif parsed.path == "/api/nodes/connection-summary":
                 self.write_json(200, node_connection_summary())
+            elif parsed.path == "/api/nodes/recovery-cycle":
+                self.write_json(200, node_recovery_cycle({}))
             elif parsed.path == "/api/gateway/transport-contract":
                 emit_event = str(query.get("emit_event", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))
@@ -3258,6 +3415,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                     endpoint="/api/nodes/tmux-status",
                 )
                 self.write_json(status, body)
+            elif self.path == "/api/nodes/recovery-cycle":
+                self.write_json(200, node_recovery_cycle(payload))
             elif self.path == "/api/nodes/heartbeat-tmux-start":
                 self.write_json(200, heartbeat_tmux_start_node(payload))
             elif self.path == "/api/nodes/heartbeat":

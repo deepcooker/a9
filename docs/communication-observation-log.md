@@ -850,3 +850,34 @@ Next monitoring target:
      stable communication needs recovery semantics, not only fast transport.
      Pending recovery is an observation-backed mechanism and should stay
      evidence-driven rather than becoming a hard gate.
+
+51. Node recovery cycle API added for multi-machine SSH/Tailscale/tmux repair.
+   - Trigger:
+     after command/result and pending recovery were stable, the next missing
+     operational link was a single controller route that can inspect node
+     connection summary and propose the next repair step without making the
+     phone or UI guess which endpoint to call.
+   - Mechanism copied:
+     mature control-plane pattern: reconcile current state into an action plan,
+     keep dry-run/planning as the default, execute only through existing gated
+     actions, and record evidence for every cycle.
+   - Change:
+     `scripts/a9_control_api.py` now exposes
+     `GET/POST /api/nodes/recovery-cycle`. It reads `node_status()` plus each
+     node `recovery_plan`, emits bounded steps, prepares tmux/heartbeat plan
+     evidence when needed, and only executes when `execute=true`. Execution
+     still goes through existing phone-control/gated remote paths. Offline
+     nodes now surface as `manual_required` quarantine steps rather than a fake
+     successful noop.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py` passed.
+     `python3 -m unittest tests.test_control_api tests.test_remote
+     tests.test_node tests.test_service` passed with `219` tests. After stack
+     restart, real `GET /api/nodes/recovery-cycle` returned
+     `status=needs_attention`, `step_count=3`, and marked the three currently
+     registered offline nodes as `manual_required` with SSH/Tailscale/tmux
+     verification steps. `XPENDING a9:tasks a9-worker` remained `0`.
+   - Governance lesson:
+     multi-machine repair should be a controller reconciliation loop, not UI
+     branching logic. The phone can call one route, while A9 keeps endpoint
+     selection, gate status, evidence, and next action in the backend.

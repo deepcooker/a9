@@ -798,6 +798,142 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["status"], "ok")
         self.assertEqual(captured["payload"]["risk_count"], 0)
 
+    def test_node_recovery_cycle_plans_tmux_repair_and_writes_evidence(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@worker-a"}, root=root)
+            heartbeat = mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+            node_path = mod.node_path("node/a", root)
+            node = mod.read_json(node_path)
+            stale_at = (mod.utc_now_dt() - mod.timedelta(seconds=120)).isoformat(timespec="seconds")
+            node["updated_at"] = stale_at
+            node["last_heartbeat_at"] = stale_at
+            node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            self.assertEqual(heartbeat["status"], "ok")
+            mod.write_node_evidence(
+                "tmux-status",
+                "node/a",
+                {
+                    "status": "missing",
+                    "target": "root@worker-a",
+                    "session": "a9",
+                    "tmux_action": "repair",
+                    "tmux_action_reason": "tmux_session_missing",
+                },
+                root=root,
+            )
+
+            result = mod.node_recovery_cycle({"max_actions": 1}, root=root)
+            prepared_path_exists = Path(result["steps"][0]["prepared_plan"]["evidence_path"]).exists()
+            cycle_path_exists = Path(result["evidence_path"]).exists()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertFalse(result["execute"])
+        self.assertEqual(result["step_count"], 1)
+        step = result["steps"][0]
+        self.assertEqual(step["node_id"], "node-a")
+        self.assertEqual(step["recovery_action"], "tmux")
+        self.assertEqual(step["status"], "planned")
+        self.assertEqual(step["result"]["endpoint"], "/api/nodes/tmux-ensure")
+        self.assertIn("prepared_plan", step)
+        self.assertTrue(prepared_path_exists)
+        self.assertTrue(cycle_path_exists)
+
+    def test_node_recovery_cycle_execute_probe_is_blocked_when_phone_disarmed(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@worker-a"}, root=root)
+            node_path = mod.node_path("node/a", root)
+            node = mod.read_json(node_path)
+            stale_at = (mod.utc_now_dt() - mod.timedelta(seconds=120)).isoformat(timespec="seconds")
+            node["updated_at"] = stale_at
+            node["last_heartbeat_at"] = stale_at
+            node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            mod.write_node_evidence(
+                "probe",
+                "node/a",
+                {
+                    "status": "failed",
+                    "return_code": 255,
+                    "timed_out": False,
+                    "probe_action": "retry",
+                    "probe_action_reason": "ssh_exec_error",
+                    "checked_at": "2026-05-30T00:00:00Z",
+                    "connection_summary": {
+                        "connection_state": "disconnected",
+                        "action": "reconnect",
+                        "action_reason": "ssh_exec_error",
+                        "retry_delay_ms": 1000,
+                    },
+                },
+                root=root,
+            )
+
+            result = mod.node_recovery_cycle(
+                {"execute": True, "max_actions": 1, "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            cycle_path_exists = Path(result["evidence_path"]).exists()
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertTrue(result["execute"])
+        self.assertEqual(result["steps"][0]["recovery_action"], "probe")
+        self.assertEqual(result["steps"][0]["status"], "blocked")
+        self.assertEqual(result["steps"][0]["result"]["gate"]["reason"], "phone_control_disarmed")
+        self.assertTrue(cycle_path_exists)
+
+    def test_node_recovery_cycle_marks_offline_nodes_manual_required(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/offline", "ssh_target": "root@offline"}, root=root)
+            node_path = mod.node_path("node/offline", root)
+            node = mod.read_json(node_path)
+            offline_at = (mod.utc_now_dt() - mod.timedelta(seconds=600)).isoformat(timespec="seconds")
+            node["updated_at"] = offline_at
+            node["last_heartbeat_at"] = offline_at
+            node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+            result = mod.node_recovery_cycle({"max_actions": 1}, root=root)
+
+        self.assertEqual(result["status"], "needs_attention")
+        self.assertEqual(result["steps"][0]["recovery_action"], "quarantine")
+        self.assertEqual(result["steps"][0]["status"], "manual_required")
+        self.assertTrue(result["steps"][0]["result"]["requires_operator"])
+        self.assertIn("verify_ssh_target_reachable", result["steps"][0]["result"]["steps"])
+
+    def test_api_nodes_recovery_cycle_post_endpoint_uses_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None, "input": None}
+
+        class DummyRecoveryCyclePostHandler:
+            path = "/api/nodes/recovery-cycle"
+            headers = {"Content-Length": "23"}
+
+            def __init__(self):
+                self.rfile = io.BytesIO(b'{"execute":false,"x":1}')
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_cycle = mod.node_recovery_cycle
+        try:
+            def fake_cycle(payload):
+                captured["input"] = payload
+                return {"status": "ok", "kind": "node_recovery_cycle"}
+
+            mod.node_recovery_cycle = fake_cycle
+            mod.ControlHandler.do_POST(DummyRecoveryCyclePostHandler())
+        finally:
+            mod.node_recovery_cycle = original_cycle
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "node_recovery_cycle")
+        self.assertEqual(captured["input"], {"execute": False, "x": 1})
+
     def test_heartbeat_degraded_status_propagates_to_node_status_and_api_nodes(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
