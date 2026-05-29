@@ -1264,6 +1264,7 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
     nodes = status.get("nodes", [])
     connection_states: dict[str, int] = {}
     recovery_actions: dict[str, int] = {}
+    connection_actions: dict[str, int] = {}
     tmux_actions: dict[str, int] = {}
     risk_nodes: list[dict[str, Any]] = []
     evidence_paths: list[str] = []
@@ -1271,6 +1272,8 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
     for node in nodes:
         state = str(node.get("connection_state") or "unknown")
         connection_states[state] = connection_states.get(state, 0) + 1
+        summary_action = str(node.get("action") or "unknown")
+        connection_actions[summary_action] = connection_actions.get(summary_action, 0) + 1
 
         plan = node.get("recovery_plan") if isinstance(node.get("recovery_plan"), dict) else {}
         recovery_action = str(plan.get("action") or "unknown")
@@ -1289,13 +1292,16 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
             if value and value not in evidence_paths:
                 evidence_paths.append(value)
 
-        if state in {"stale", "offline", "degraded", "unknown"} or recovery_action not in {"observe"}:
+        if state in {"stale", "offline", "degraded", "disconnected", "needs_repair", "unknown"} or recovery_action not in {"observe"}:
             risk_nodes.append(
                 {
                     "node_id": node.get("node_id"),
                     "ssh_target": node.get("ssh_target"),
                     "connection_state": state,
                     "connection_action": node.get("connection_action"),
+                    "action": str(node.get("action") or ""),
+                    "retry_delay_ms": node.get("retry_delay_ms"),
+                    "connection_evidence_path": str(node.get("probe_evidence_path") or ""),
                     "recovery_action": recovery_action,
                     "requires_operator": bool(plan.get("requires_operator")) if plan else False,
                     "route": plan.get("route") if plan else None,
@@ -1307,6 +1313,7 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
         "generated_at": utc_now(),
         "count": status.get("count", len(nodes)),
         "connection_states": connection_states,
+        "connection_actions": connection_actions,
         "recovery_actions": recovery_actions,
         "tmux_actions": tmux_actions,
         "risk_count": len(risk_nodes),
@@ -1595,7 +1602,7 @@ def latest_probe_evidence_for_node(node_id: str, *, root: Path = ROOT) -> dict[s
         action = payload.get("probe_action")
         if not action:
             continue
-        return {
+        result = {
             "probe_status": str(payload.get("status") or ""),
             "probe_action": str(action),
             "probe_action_reason": str(payload.get("probe_action_reason") or ""),
@@ -1604,6 +1611,21 @@ def latest_probe_evidence_for_node(node_id: str, *, root: Path = ROOT) -> dict[s
             "probe_checked_at": str(payload.get("checked_at") or ""),
             "probe_evidence_path": str(path),
         }
+        connection_summary = payload.get("connection_summary") if isinstance(payload, dict) else None
+        if isinstance(connection_summary, dict):
+            try:
+                retry_delay_ms = int(connection_summary.get("retry_delay_ms") or 0)
+            except (TypeError, ValueError):
+                retry_delay_ms = 0
+            result.update(
+                {
+                    "connection_state": str(connection_summary.get("connection_state") or ""),
+                    "action": str(connection_summary.get("action") or ""),
+                    "action_reason": str(connection_summary.get("action_reason") or ""),
+                    "retry_delay_ms": retry_delay_ms,
+                }
+            )
+        return result
     return None
 
 
@@ -1987,6 +2009,12 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         probe_timeout = default_probe_timeout
     if probe_timeout <= 0:
         probe_timeout = default_probe_timeout
+    try:
+        policy_budget_remaining = int(
+            payload.get("policy_budget_remaining") or payload.get("reconnect_budget_remaining") or 1
+        )
+    except (TypeError, ValueError):
+        policy_budget_remaining = 1
 
     timed_out = False
     return_code = 0
@@ -2027,12 +2055,6 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     reconnect_backoff_seconds = backoff_seconds(reconnect_attempt) if reconnect_action == "reconnect" else 0
     gateway_decision = getattr(mod, "gateway_reconnect_decision", None)
     if callable(gateway_decision):
-        try:
-            policy_budget_remaining = int(
-                payload.get("policy_budget_remaining") or payload.get("reconnect_budget_remaining") or 1
-            )
-        except (TypeError, ValueError):
-            policy_budget_remaining = 1
         decision = gateway_decision(
             phase="connect",
             error_class=reconnect_reason,
@@ -2070,6 +2092,26 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
             "backoff_seconds": reconnect_backoff_seconds,
         },
     )
+    connection_summary = None
+    summarize_node_connection_state = getattr(mod, "summarize_node_connection_state", None)
+    if callable(summarize_node_connection_state):
+        try:
+            connection_summary = summarize_node_connection_state(
+                node_id=str(payload.get("node_id") or target),
+                return_code=return_code,
+                output=parsed,
+                attempt=reconnect_attempt,
+                policy_budget_remaining=max(0, policy_budget_remaining),
+            )
+        except Exception:
+            connection_summary = None
+        if timed_out and isinstance(connection_summary, dict):
+            connection_summary["action_reason"] = reconnect_reason
+            connection_summary["action"] = reconnect_action
+            if reconnect_action == "reconnect":
+                connection_summary["retry_delay_ms"] = int(reconnect_backoff_seconds) * 1000
+            else:
+                connection_summary["retry_delay_ms"] = 0
     stream_reason = str(payload.get("stream_reason") or "")
     stream_error_action = getattr(mod, "stream_error_action", lambda reason: "reconnect")
     stream_action = stream_error_action(stream_reason) if stream_reason else ""
@@ -2124,6 +2166,7 @@ def probe_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
         "reconnect_attempt": reconnect_attempt,
         "reconnect_backoff_seconds": reconnect_backoff_seconds,
         "reconnect_lifecycle": lifecycle,
+        "connection_summary": connection_summary,
         "raw": compact_text(raw_output, 4000),
         "transport_quality": transport_quality(target),
     }

@@ -719,10 +719,47 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(summary["recovery_actions"]["observe"], 1)
         self.assertEqual(summary["recovery_actions"]["tmux"], 1)
         self.assertEqual(summary["tmux_actions"]["repair"], 1)
+        self.assertEqual(summary["connection_actions"].get("unknown"), 2)
         self.assertEqual(summary["risk_count"], 1)
         self.assertEqual(summary["risk_nodes"][0]["node_id"], "node-b")
         self.assertEqual(summary["risk_nodes"][0]["route"]["endpoint"], "/api/nodes/tmux-ensure")
         self.assertIn(str(tmux_path), summary["latest_evidence_paths"])
+
+    def test_node_connection_summary_uses_probe_connection_fields(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@worker-a"}, root=root)
+            mod.heartbeat_node({"node_id": "node/a", "status": "online"}, root=root)
+            probe_evidence_path = mod.write_node_evidence(
+                "probe",
+                "node/a",
+                {
+                    "status": "failed",
+                    "return_code": 255,
+                    "timed_out": False,
+                    "probe_action": "retry",
+                    "probe_action_reason": "ssh_exec_error",
+                    "checked_at": "2026-05-28T00:00:00Z",
+                    "connection_summary": {
+                        "connection_state": "disconnected",
+                        "action": "reconnect",
+                        "action_reason": "ssh_exec_error",
+                        "retry_delay_ms": 8000,
+                    },
+                },
+                root=root,
+            )
+
+            summary = mod.node_connection_summary(root)
+
+        self.assertEqual(summary["connection_states"]["disconnected"], 1)
+        self.assertEqual(summary["connection_actions"]["reconnect"], 1)
+        self.assertEqual(summary["risk_count"], 1)
+        self.assertEqual(summary["risk_nodes"][0]["connection_state"], "disconnected")
+        self.assertEqual(summary["risk_nodes"][0]["action"], "reconnect")
+        self.assertEqual(summary["risk_nodes"][0]["retry_delay_ms"], 8000)
+        self.assertEqual(summary["risk_nodes"][0]["connection_evidence_path"], str(probe_evidence_path))
 
     def test_api_nodes_connection_summary_endpoint_uses_summary_payload(self):
         mod = load_control_api()
@@ -1487,6 +1524,12 @@ class ControlApiTests(unittest.TestCase):
                     "probe_action": "continue",
                     "probe_action_reason": "probe_ok",
                     "checked_at": "2026-05-28T00:00:00Z",
+                    "connection_summary": {
+                        "connection_state": "needs_repair",
+                        "action": "repair",
+                        "action_reason": "missing_required_tools",
+                        "retry_delay_ms": 0,
+                    },
                 },
                 root=root,
             )
@@ -1501,6 +1544,45 @@ class ControlApiTests(unittest.TestCase):
         self.assertFalse(node["probe_timed_out"])
         self.assertEqual(node["probe_checked_at"], "2026-05-28T00:00:00Z")
         self.assertEqual(node["probe_evidence_path"], str(latest_evidence_path))
+        self.assertEqual(node["connection_state"], "needs_repair")
+        self.assertEqual(node["action"], "repair")
+        self.assertEqual(node["action_reason"], "missing_required_tools")
+        self.assertEqual(node["retry_delay_ms"], 0)
+
+    def test_latest_probe_evidence_for_node_includes_connection_summary_fields(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node({"node_id": "node/a", "ssh_target": "root@node-a"}, root=root)
+
+            latest_evidence_path = mod.write_node_evidence(
+                "probe",
+                "node/a",
+                {
+                    "status": "ok",
+                    "return_code": 0,
+                    "timed_out": False,
+                    "probe_action": "continue",
+                    "probe_action_reason": "probe_ok",
+                    "checked_at": "2026-05-28T00:00:00Z",
+                    "connection_summary": {
+                        "connection_state": "needs_repair",
+                        "action": "repair",
+                        "action_reason": "missing_required_tools",
+                        "retry_delay_ms": 0,
+                    },
+                },
+                root=root,
+            )
+            latest_probe = mod.latest_probe_evidence_for_node("node/a", root=root)
+
+        self.assertEqual(latest_probe["probe_status"], "ok")
+        self.assertEqual(latest_probe["probe_action"], "continue")
+        self.assertEqual(latest_probe["connection_state"], "needs_repair")
+        self.assertEqual(latest_probe["action"], "repair")
+        self.assertEqual(latest_probe["action_reason"], "missing_required_tools")
+        self.assertEqual(latest_probe["retry_delay_ms"], 0)
+        self.assertEqual(latest_probe["probe_evidence_path"], str(latest_evidence_path))
 
     def test_node_status_aggregates_latest_heartbeat_start_evidence(self):
         mod = load_control_api()
@@ -2918,6 +3000,78 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(node["reconnect_attempt"], 3)
         self.assertEqual(node["reconnect_backoff_seconds"], 8)
         self.assertEqual(node["reconnect_lifecycle"]["event"], "reconnecting")
+
+    def test_probe_node_stores_connection_summary_in_probe_evidence(self):
+        mod = load_control_api()
+
+        class FakeRemote:
+            @staticmethod
+            def ssh_base(target, *, connect_timeout=10, identity_file=""):
+                return ["echo", "host=node1\nuser=root\npython3=/usr/bin/python3\ngit=/usr/bin/git\ncurl=/usr/bin/curl\n"]
+
+            @staticmethod
+            def remote_probe_script():
+                return "ignored"
+
+            @staticmethod
+            def parse_probe(text):
+                return {
+                    line.split("=", 1)[0]: line.split("=", 1)[1]
+                    for line in text.splitlines()
+                    if "=" in line
+                }
+
+            @staticmethod
+            def classify_probe_result(return_code, output):
+                return {
+                    "probe_action": "continue",
+                    "probe_action_reason": "probe_ok",
+                    "required_missing": [],
+                    "optional_missing": [],
+                }
+
+            @staticmethod
+            def summarize_node_connection_state(
+                *,
+                node_id,
+                return_code,
+                output,
+                attempt=0,
+                policy_budget_remaining=3,
+            ):
+                return {
+                    "node_id": node_id,
+                    "ssh_status": "connected",
+                    "tailscale_status": "missing",
+                    "tmux_status": "missing",
+                    "connection_state": "degraded",
+                    "action": "continue",
+                    "action_reason": "optional_tools_missing",
+                    "retry_delay_ms": 0,
+                    "required_missing": [],
+                    "optional_missing": [],
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_remote = mod.remote
+            try:
+                mod.remote = lambda: FakeRemote
+                result = mod.probe_node({"ssh_target": "root@node1", "reconnect_attempt": 2}, root=root)
+                status = mod.node_status(root)
+                evidence = json.loads(mod.read_evidence_file(result["evidence_path"], root=root)["content"])
+            finally:
+                mod.remote = original_remote
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["probe_action"], "continue")
+        self.assertEqual(status["nodes"][0]["connection_state"], "degraded")
+        self.assertEqual(status["nodes"][0]["action"], "continue")
+        self.assertEqual(status["nodes"][0]["action_reason"], "optional_tools_missing")
+        self.assertEqual(status["nodes"][0]["retry_delay_ms"], 0)
+        self.assertEqual(evidence["connection_summary"]["connection_state"], "degraded")
+        self.assertEqual(evidence["connection_summary"]["action"], "continue")
+        self.assertEqual(evidence["connection_summary"]["retry_delay_ms"], 0)
 
     def test_probe_node_timeout_is_retry_with_gateway_budget_and_reconnect_state(self):
         mod = load_control_api()
