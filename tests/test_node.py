@@ -150,6 +150,77 @@ class NodeHelperTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_node_command_result_event_parses_dict_with_json_result(self):
+        mod = load_module()
+        parsed = mod.parse_node_command_result_event(
+            "1740000300-0",
+            {
+                "kind": "node_command_result",
+                "node_id": "node-01",
+                "claimed_id": "1740000200-0",
+                "command_id": "cmd-status-01",
+                "command_action": "status",
+                "result_status": "ok",
+                "error_code": "ok",
+                "event_stream": "a9:events",
+                "result": json.dumps(
+                    {
+                        "status": "ok",
+                        "command_id": "cmd-status-01",
+                        "command_action": "status",
+                        "node_id": "node-01",
+                    }
+                ),
+            },
+        )
+        self.assertEqual(parsed["status"], "ok")
+        self.assertEqual(parsed["action"], "parse_result_event")
+        self.assertEqual(parsed["event_id"], "1740000300-0")
+        self.assertEqual(parsed["event_stream"], "a9:events")
+        self.assertEqual(parsed["kind"], "node_command_result")
+        self.assertEqual(parsed["node_id"], "node-01")
+        self.assertEqual(parsed["command_id"], "cmd-status-01")
+        self.assertEqual(parsed["result"]["status"], "ok")
+
+    def test_parse_node_command_result_event_parses_list_fields(self):
+        mod = load_module()
+        parsed = mod.parse_node_command_result_event(
+            "1740000301-0",
+            [
+                "kind",
+                "node_command_result",
+                "node_id",
+                "node-01",
+                "claimed_id",
+                "1740000201-0",
+                "command_id",
+                "cmd-unsupported",
+                "command_action",
+                "reboot",
+                "result_status",
+                "unsupported",
+                "error_code",
+                "unsupported_command",
+                "event_stream",
+                "a9:events",
+                "result",
+                json.dumps({"status": "unsupported"}),
+            ],
+        )
+        self.assertEqual(parsed["status"], "ok")
+        self.assertEqual(parsed["action"], "parse_result_event")
+        self.assertEqual(parsed["command_action"], "reboot")
+        self.assertEqual(parsed["result_status"], "unsupported")
+        self.assertEqual(parsed["error_code"], "unsupported_command")
+        self.assertEqual(parsed["result"]["status"], "unsupported")
+
+    def test_parse_node_command_result_event_degraded_on_invalid_result_json(self):
+        mod = load_module()
+        parsed = mod.parse_node_command_result_event("1740000302-0", {"kind": "node_command_result", "result": "{invalid-json"})
+        self.assertEqual(parsed["status"], "degraded")
+        self.assertEqual(parsed["action"], "parse_result_event")
+        self.assertEqual(parsed["reason"], "result_json_decode_error")
+
     def test_node_command_claim_once_returns_noop_when_empty(self):
         mod = load_module()
         calls: list[list[str]] = []
@@ -476,6 +547,121 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(payload["node_id"], "node-cli-01")
         self.assertEqual(payload["command_stream_id"], "1740000200-0")
 
+    def test_node_command_result_read_once_rejects_invalid_event_id(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+        original_redis = mod.redis_cli
+        mod.redis_cli = lambda args, *, timeout=2: calls.append(args)
+        try:
+            result = mod.node_command_result_read_once("bad-event-id")
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "invalid_payload")
+        self.assertEqual(result["action"], "result_read_once")
+        self.assertEqual(result["reason"], "result_event_id_must_be_redis_stream_id")
+        self.assertEqual(calls, [])
+
+    def test_node_command_result_read_once_returns_noop_when_event_missing(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:5] == ["--raw", "XRANGE", "a9:events", "1740000300-0", "1740000300-0"]:
+                return FakeProc("(nil)")
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_result_read_once("1740000300-0")
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "noop")
+        self.assertEqual(result["error_code"], "no_events")
+        self.assertEqual(result["action"], "result_read_once")
+        self.assertEqual(result["event_id"], "1740000300-0")
+        self.assertEqual(result["event_stream"], "a9:events")
+        self.assertEqual(calls, [["--raw", "XRANGE", "a9:events", "1740000300-0", "1740000300-0"]])
+
+    def test_node_command_result_read_once_reads_and_parses_event(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:5] == ["--raw", "XRANGE", "a9:events", "1740000300-0", "1740000300-0"]:
+                return FakeProc(
+                    "\n".join(
+                        [
+                            "1740000300-0",
+                            "kind",
+                            "node_command_result",
+                            "node_id",
+                            "node-01",
+                            "claimed_id",
+                            "1740000200-0",
+                            "command_id",
+                            "cmd-status-01",
+                            "command_action",
+                            "status",
+                            "result_status",
+                            "ok",
+                            "error_code",
+                            "ok",
+                            "event_stream",
+                            "a9:events",
+                            "result",
+                            json.dumps({"status": "ok", "command_id": "cmd-status-01"}),
+                        ]
+                    )
+                )
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_result_read_once("1740000300-0")
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["error_code"], "ok")
+        self.assertEqual(result["action"], "result_read_once")
+        self.assertEqual(result["command_id"], "cmd-status-01")
+        self.assertEqual(result["result_status"], "ok")
+        self.assertEqual(result["raw_fields"]["kind"], "node_command_result")
+        self.assertEqual(result["event_stream"], "a9:events")
+        self.assertEqual(result["event_id"], "1740000300-0")
+        self.assertEqual(result["result"]["command_id"], "cmd-status-01")
+        self.assertEqual(calls, [["--raw", "XRANGE", "a9:events", "1740000300-0", "1740000300-0"]])
+
+    def test_node_command_result_read_once_degraded_on_redis_unavailable(self):
+        mod = load_module()
+        original_redis = mod.redis_cli
+        mod.redis_cli = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("redis unavailable"))
+        try:
+            result = mod.node_command_result_read_once("1740000300-0")
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "redis_unavailable")
+        self.assertIn("redis unavailable", result["reason"])
+
     def test_node_command_work_once_supported_status_executes_and_acks(self):
         mod = load_module()
         calls: list[list[str]] = []
@@ -523,7 +709,34 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(result["acked_ids"], ["1740000200-0"])
         self.assertEqual(calls[0], ["XGROUP", "CREATE", "a9:tasks", "a9-worker", "0-0", "MKSTREAM"])
         self.assertEqual(calls[1], ["--raw", "XREADGROUP", "GROUP", "a9-worker", "node-01-consumer", "COUNT", "1", "BLOCK", "100", "STREAMS", "a9:tasks", ">"])
-        self.assertEqual(calls[2], ["XADD", "a9:events", "*", "kind", "node_command_result", "action", "work_once", "node_id", "node-01", "claimed_id", "1740000200-0", "command_id", "cmd-status-01", "command_action", "status", "result_status", "ok", "error_code", "ok", "result", '{"status":"ok","command_id":"cmd-status-01","command_action":"status","node_id":"node-01","result":"status_ok"}'])
+        self.assertEqual(
+            calls[2],
+            [
+                "XADD",
+                "a9:events",
+                "*",
+                "kind",
+                "node_command_result",
+                "action",
+                "work_once",
+                "node_id",
+                "node-01",
+                "claimed_id",
+                "1740000200-0",
+                "command_id",
+                "cmd-status-01",
+                "command_action",
+                "status",
+                "result_status",
+                "ok",
+                "error_code",
+                "ok",
+                "event_stream",
+                "a9:events",
+                "result",
+                '{"status":"ok","command_id":"cmd-status-01","command_action":"status","node_id":"node-01","result":"status_ok"}',
+            ],
+        )
         self.assertEqual(calls[3], ["XACK", "a9:tasks", "a9-worker", "1740000200-0"])
 
     def test_node_command_work_once_unsupported_action_writes_result_and_acks(self):
@@ -699,6 +912,71 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(payload["event_stream"], "a9:test-events")
         self.assertEqual(payload["node_id"], "node-cli-02")
         self.assertEqual(payload["error_code"], "no_events")
+
+    def test_node_command_result_read_once_cli_prints_payload(self):
+        mod = load_module()
+        captured = io.StringIO()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            if args[:5] == ["--raw", "XRANGE", "a9:test-events", "1740000300-0", "1740000300-0"]:
+                return FakeProc(
+                    "\n".join(
+                        [
+                            "1740000300-0",
+                            "kind",
+                            "node_command_result",
+                            "node_id",
+                            "node-cli-02",
+                            "claimed_id",
+                            "1740000200-0",
+                            "command_id",
+                            "cmd-status-01",
+                            "command_action",
+                            "status",
+                            "result_status",
+                            "ok",
+                            "error_code",
+                            "ok",
+                            "event_stream",
+                            "a9:test-events",
+                            "result",
+                            json.dumps({"status": "ok", "command_id": "cmd-status-01"}),
+                        ]
+                    )
+                )
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            with contextlib.redirect_stdout(captured):
+                status = mod.main(
+                    [
+                        "--node-id",
+                        "node-cli-02",
+                        "command-result-read-once",
+                        "1740000300-0",
+                        "--event-stream",
+                        "a9:test-events",
+                    ]
+                )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status, 0)
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["action"], "result_read_once")
+        self.assertEqual(payload["event_id"], "1740000300-0")
+        self.assertEqual(payload["event_stream"], "a9:test-events")
+        self.assertEqual(payload["command_id"], "cmd-status-01")
+        self.assertEqual(payload["result_status"], "ok")
+        self.assertEqual(payload["result"]["command_id"], "cmd-status-01")
 
 
 if __name__ == "__main__":

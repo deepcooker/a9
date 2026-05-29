@@ -98,6 +98,100 @@ def parse_xreadgroup_output(output: str) -> list[dict[str, Any]]:
     return events
 
 
+def parse_node_command_result_event(event_id: str, fields: Any) -> dict[str, Any]:
+    safe_event_id = str(event_id or "")
+    if not _looks_like_stream_id(safe_event_id):
+        return {
+            "status": "degraded",
+            "action": "parse_result_event",
+            "event_id": safe_event_id,
+            "event_stream": "",
+            "kind": "",
+            "node_id": "",
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_status": "",
+            "error_code": "invalid_payload",
+            "result": None,
+            "raw_fields": {},
+            "reason": "event_id_must_be_redis_stream_id",
+        }
+
+    normalized_fields: dict[str, Any] = {}
+    if isinstance(fields, dict):
+        normalized_fields = {str(key): value for key, value in fields.items()}
+    elif isinstance(fields, list):
+        for index in range(0, len(fields), 2):
+            if index + 1 >= len(fields):
+                break
+            normalized_fields[str(fields[index])] = fields[index + 1]
+    else:
+        return {
+            "status": "degraded",
+            "action": "parse_result_event",
+            "event_id": safe_event_id,
+            "event_stream": "",
+            "kind": "",
+            "node_id": "",
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_status": "",
+            "error_code": "invalid_payload",
+            "result": None,
+            "raw_fields": {},
+            "reason": "fields_must_be_dict_or_list",
+        }
+
+    raw_result = normalized_fields.get("result")
+    parsed_result: Any = raw_result
+    result_status = str(normalized_fields.get("result_status") or "")
+    error_code = str(normalized_fields.get("error_code") or "")
+
+    if isinstance(raw_result, str):
+        try:
+            parsed_result = json.loads(raw_result) if raw_result is not None else None
+        except json.JSONDecodeError:
+            return {
+                "status": "degraded",
+                "error_code": "invalid_payload",
+                "action": "parse_result_event",
+                "event_id": safe_event_id,
+                "event_stream": str(normalized_fields.get("event_stream") or ""),
+                "kind": str(normalized_fields.get("kind") or ""),
+                "node_id": str(normalized_fields.get("node_id") or ""),
+                "claimed_id": str(normalized_fields.get("claimed_id") or ""),
+                "command_id": str(normalized_fields.get("command_id") or ""),
+                "command_action": str(normalized_fields.get("command_action") or ""),
+                "result_status": result_status,
+                "error_code": error_code or "invalid_payload",
+                "result": raw_result,
+                "raw_fields": normalized_fields,
+                "reason": "result_json_decode_error",
+            }
+
+    if not isinstance(parsed_result, (dict, list, str, int, float, bool)) and parsed_result is not None:
+        parsed_result = str(parsed_result)
+
+    return {
+        "status": "ok",
+        "error_code": error_code or "ok",
+        "action": "parse_result_event",
+        "event_id": safe_event_id,
+        "event_stream": str(normalized_fields.get("event_stream") or ""),
+        "kind": str(normalized_fields.get("kind") or ""),
+        "node_id": str(normalized_fields.get("node_id") or ""),
+        "claimed_id": str(normalized_fields.get("claimed_id") or ""),
+        "command_id": str(normalized_fields.get("command_id") or ""),
+        "command_action": str(normalized_fields.get("command_action") or ""),
+        "result_status": result_status,
+        "error_code": error_code,
+        "result": parsed_result,
+        "raw_fields": normalized_fields,
+    }
+
+
 def _safe_node_id(value: str) -> str:
     node_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip())[:80].strip(".-")
     if not node_id:
@@ -858,6 +952,8 @@ def node_command_work_once(
             result_payload.get("status", "unknown"),
             "error_code",
             result_error_code,
+            "event_stream",
+            safe_event_stream,
             "result",
             json.dumps(result_payload, ensure_ascii=False, separators=(",", ":")),
         ]
@@ -899,6 +995,137 @@ def node_command_work_once(
             "claimed_id": claimed_id,
             "result_event_id": base_result.get("result_event_id", ""),
         }
+
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            **base_result,
+            "status": "degraded",
+            "error_code": "redis_unavailable",
+            "reason": str(exc),
+        }
+
+
+def node_command_result_read_once(
+    result_event_id: str,
+    event_stream: str = "a9:events",
+    timeout: int = 3,
+) -> dict[str, Any]:
+    try:
+        safe_result_event_id = str(result_event_id or "")
+        safe_event_stream = event_stream.strip()
+        safe_timeout = max(1, int(timeout))
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "result_read_once",
+            "event_id": str(result_event_id or ""),
+            "event_stream": str(event_stream or ""),
+            "kind": "",
+            "node_id": "",
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_status": "",
+            "error_code": "invalid_payload",
+            "result": None,
+            "raw_fields": {},
+            "reason": "parameters_must_be_valid_types",
+        }
+
+    if not safe_event_stream:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "result_read_once",
+            "event_id": safe_result_event_id,
+            "event_stream": "",
+            "kind": "",
+            "node_id": "",
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_status": "",
+            "error_code": "invalid_payload",
+            "result": None,
+            "raw_fields": {},
+            "reason": "event_stream_required",
+        }
+
+    if not _looks_like_stream_id(safe_result_event_id):
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "result_read_once",
+            "event_id": safe_result_event_id,
+            "event_stream": safe_event_stream,
+            "kind": "",
+            "node_id": "",
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_status": "",
+            "error_code": "invalid_payload",
+            "result": None,
+            "raw_fields": {},
+            "reason": "result_event_id_must_be_redis_stream_id",
+        }
+
+    base_result: dict[str, Any] = {
+        "status": "noop",
+        "action": "result_read_once",
+        "event_id": safe_result_event_id,
+        "event_stream": safe_event_stream,
+        "kind": "",
+        "node_id": "",
+        "claimed_id": "",
+        "command_id": "",
+        "command_action": "",
+        "result_status": "",
+        "error_code": "no_events",
+        "result": None,
+        "raw_fields": {},
+        "reason": "result_event_not_found",
+    }
+
+    try:
+        proc = redis_cli(
+            ["--raw", "XRANGE", safe_event_stream, safe_result_event_id, safe_result_event_id],
+            timeout=safe_timeout,
+        )
+        if proc.returncode != 0:
+            return {
+                **base_result,
+                "status": "degraded",
+                "error_code": "redis_command_error",
+                "reason": proc.stdout.strip() or "xrange_failed",
+            }
+
+        events = parse_xreadgroup_output(proc.stdout)
+        if len(events) == 0:
+            return base_result
+        if len(events) != 1:
+            return {
+                **base_result,
+                "status": "degraded",
+                "error_code": "invalid_payload",
+                "reason": "multiple_events_returned_for_single_id",
+            }
+
+        parsed = parse_node_command_result_event(safe_result_event_id, events[0].get("fields") or {})
+        parsed["event_stream"] = safe_event_stream
+        parsed["action"] = "result_read_once"
+        if parsed.get("status") != "ok":
+            return {
+                **base_result,
+                "status": parsed.get("status", "degraded"),
+                "error_code": str(parsed.get("error_code") or "parse_failed"),
+                "reason": str(parsed.get("reason") or "parse_failed"),
+                "raw_fields": parsed.get("raw_fields", {}),
+            }
+
+        parsed["status"] = "ok"
+        return parsed
 
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
@@ -1025,6 +1252,16 @@ def command_work_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_result_read_once(args: argparse.Namespace) -> int:
+    payload = node_command_result_read_once(
+        result_event_id=args.result_event_id,
+        event_stream=args.event_stream,
+        timeout=args.timeout_cmd_result_read,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 local node discovery/register helper")
     parser.add_argument("--controller-url", default=os.environ.get("A9_CONTROLLER_URL", "http://127.0.0.1:8787"))
@@ -1070,6 +1307,11 @@ def main(argv: list[str]) -> int:
     work_once_parser.add_argument("--block-ms", type=int, default=1000)
     work_once_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_work")
 
+    result_read_once_parser = sub.add_parser("command-result-read-once")
+    result_read_once_parser.add_argument("result_event_id")
+    result_read_once_parser.add_argument("--event-stream", default="a9:events")
+    result_read_once_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_result_read")
+
     args = parser.parse_args(argv)
     if args.command == "discover":
         return discover(args)
@@ -1087,6 +1329,8 @@ def main(argv: list[str]) -> int:
         return command_ack_once(args)
     if args.command == "command-work-once":
         return command_work_once(args)
+    if args.command == "command-result-read-once":
+        return command_result_read_once(args)
     raise AssertionError(args.command)
 
 
