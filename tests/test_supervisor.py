@@ -672,7 +672,7 @@ Do the work.
             "print(json.dumps({'type':'thread.started','thread_id':'fake-thread'}))\n"
             "print(json.dumps({'type':'item.completed','item':{'id':'cmd-1','type':'command_execution','command':'echo ok','status':'completed','exit_code':0,'aggregated_output':'ok'}}))\n"
             "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text('ok\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_slice':''}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -815,7 +815,7 @@ Do the work.
             "from pathlib import Path\n"
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
-            "Path('{run_dir}/final.md').write_text('README.md\\n<<<<<<< SEARCH\\n# a9\\n=======\\n# a9 deterministic apply\\n>>>>>>> REPLACE\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'search_replace_blocks':[{'path':'README.md','search':'# a9\\n','replace':'# a9 deterministic apply\\n'}],'changed_files':['README.md'],'tests':['grep -q deterministic apply README.md'],'next_slice':''}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1736,6 +1736,63 @@ Do the work.
 
         self.assertEqual(envelope["status"], "fail")
         self.assertEqual(status, "needs-repair")
+
+    def test_worker_envelope_required_by_default_for_ai_worker_phase(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text("plain final answer\n", encoding="utf-8")
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="default-strict-envelope",
+                prompt="Do implementation work.",
+                phase="implement",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertTrue(envelope["required"])
+        self.assertEqual(envelope["status"], "fail")
+
+    def test_worker_envelope_default_can_be_disabled_for_ai_worker_phase(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text("plain final answer\n", encoding="utf-8")
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="default-strict-envelope-off",
+                prompt="strict_worker_envelope: false\nDo implementation work.",
+                phase="implement",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertFalse(envelope["required"])
+        self.assertEqual(envelope["status"], "skip")
+
+    def test_worker_envelope_not_required_for_session_refresh_phase(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text("plain final answer\n", encoding="utf-8")
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="session-refresh-no-strict-envelope",
+                prompt="source_session_path: /tmp/session.jsonl",
+                phase=mod.SESSION_REFRESH_PHASE,
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertFalse(envelope["required"])
+        self.assertEqual(envelope["status"], "skip")
 
     def test_worker_envelope_ok_passes_when_required(self):
         mod = load_supervisor()
@@ -2852,6 +2909,29 @@ index 0000000..3e75765
         self.assertTrue(mod.PROGRESS_PATH.exists())
 
         next_path.unlink(missing_ok=True)
+
+    def test_enqueue_task_file_adds_default_strict_envelope_for_worker_phase(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                queued = mod.enqueue_task_file("default-strict", "Do implementation work.", phase="implement")
+                text = queued.read_text(encoding="utf-8")
+                parsed = mod.parse_task(queued)
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertIn("strict_worker_envelope: true", text)
+        self.assertTrue(parsed.prompt.startswith("strict_worker_envelope: true"))
+
+    def test_build_context_packet_injects_default_strict_envelope_for_worker_phase(self):
+        mod = load_supervisor()
+        packet = mod.build_context_packet(
+            mod.Task(path=Path("task.md"), task_id="default-strict", prompt="Do implementation work.", phase="implement")
+        )
+
+        self.assertIn("# Current Task\n\nstrict_worker_envelope: true\nDo implementation work.", packet["prompt"])
 
     def test_schedule_next_task_blocks_when_monitor_hard_gate_fails(self):
         mod = load_supervisor()

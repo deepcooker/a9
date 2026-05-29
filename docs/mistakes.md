@@ -1037,3 +1037,22 @@
   并要求 strict patch envelope。
 - 监控者可以介入完成最小实现，但必须记录 worker 失败证据，后续修
   worker prompt/router/session 治理，而不是把失败掩盖成完成。
+
+## 2026-05-29：AI-worker 阶段默认必须 strict envelope
+
+现象：
+
+- 即使任务 prompt 明确写了 `strict_worker_envelope: true`，worker 仍可能在
+  预算截断前没有 final message。
+- 开启默认 strict 后，旧 fake-worker 端到端测试因为只写普通 final 文本，
+  被正确判为 `needs-repair`。
+
+规则：
+
+- `reference_scan/mechanism_extract/vendor_import/implement/test/repair/record`
+  这些 AI-worker 阶段默认注入并要求 `strict_worker_envelope: true`。
+- `session_refresh/session_close_reading` 是 supervisor deterministic 路径，
+  不调用 AI worker，不要求 strict envelope。
+- 测试夹具也必须模拟真实 worker：final 里输出
+  `{"protocolVersion":1,"ok":true,"status":"ok","output":{...}}`，不能继续用
+  普通文本假装 worker 完成。

@@ -128,6 +128,15 @@ PHASE_FOCUS = {
     SESSION_REFRESH_PHASE: "Index and extract external Codex/operator sessions without calling an AI worker.",
     SESSION_CLOSE_READING_PHASE: "Append bounded external-session close-reading notes from extracted evidence.",
 }
+AI_WORKER_PHASES = {
+    "reference_scan",
+    "mechanism_extract",
+    "vendor_import",
+    "implement",
+    "test",
+    "repair",
+    "record",
+}
 SECTION_TOKEN_BUDGETS = {
     "doctrine": 5000,
     "task": 4000,
@@ -913,7 +922,7 @@ LangGraph/mem0/OpenHands/Continue complement persistence:
         section_budgets["reference_mechanisms"],
     )
 
-    task_prompt = truncate_to_token_budget(task.prompt, section_budgets["task"], keep="tail")
+    task_prompt = truncate_to_token_budget(worker_prompt_with_default_envelope(task), section_budgets["task"], keep="tail")
     contract = truncate_to_token_budget(
         """Run under the A9 supervisor.
 
@@ -1772,8 +1781,7 @@ def normalize_worker_envelope_protocol_version(protocol_version: Any, ok: Any) -
 def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     output_path = run_dir / "worker_envelope.json"
     final_path = Path(worker["final_path"])
-    fields = parse_key_value_prompt(task.prompt)
-    required = parse_bool_field(fields, "strict_worker_envelope", False)
+    required = strict_worker_envelope_required(task)
     result: dict[str, Any] = {
         "status": "skip",
         "kind": "worker_envelope",
@@ -4122,6 +4130,24 @@ def parse_bool_field(fields: dict[str, str], name: str, default: bool) -> bool:
     return str(fields[name]).strip().lower() not in {"0", "false", "no", "off"}
 
 
+def strict_worker_envelope_required_for_phase(phase: str) -> bool:
+    return phase in AI_WORKER_PHASES
+
+
+def strict_worker_envelope_required(task: Task) -> bool:
+    fields = parse_key_value_prompt(task.prompt)
+    if "strict_worker_envelope" in fields:
+        return parse_bool_field(fields, "strict_worker_envelope", False)
+    return strict_worker_envelope_required_for_phase(task.phase)
+
+
+def worker_prompt_with_default_envelope(task: Task) -> str:
+    fields = parse_key_value_prompt(task.prompt)
+    if "strict_worker_envelope" in fields or not strict_worker_envelope_required_for_phase(task.phase):
+        return task.prompt
+    return f"strict_worker_envelope: true\n{task.prompt}".strip()
+
+
 def parse_optional_int(value: str | None) -> int | None:
     if value is None:
         return None
@@ -4507,6 +4533,8 @@ def enqueue_task_file(
         path = QUEUE_DIR / f"{clean_id}-{suffix}.md"
     checks = checks or []
     allowed_paths = allowed_paths or []
+    if strict_worker_envelope_required_for_phase(phase) and "strict_worker_envelope" not in parse_key_value_prompt(prompt):
+        prompt = f"strict_worker_envelope: true\n{prompt.strip()}"
     checks_text = "\n".join(f'  - "{item}"' for item in checks)
     allowed_paths_text = "\n".join(f'  - "{item}"' for item in allowed_paths)
     frontmatter = [
