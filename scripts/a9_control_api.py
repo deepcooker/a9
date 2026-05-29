@@ -28,6 +28,7 @@ CODEX_SESSIONS_DIR = Path("/root/.codex/sessions")
 SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
 SESSION_REFRESH_PATH = ROOT / "scripts" / "a9_session_refresh.py"
 REMOTE_PATH = ROOT / "scripts" / "a9_remote.py"
+NODE_HELPER_PATH = ROOT / "scripts" / "a9_node.py"
 NODES_DIR = ROOT / ".a9" / "nodes"
 PHONE_CONTROL_REL_PATH = Path(".a9") / "control" / "phone_control.json"
 GATEWAY_BIN_REL_PATH = Path("target") / "debug" / "a9-gateway"
@@ -84,6 +85,10 @@ def session_refresh() -> Any:
 
 def remote() -> Any:
     return load_module("a9_remote_control_api", REMOTE_PATH)
+
+
+def a9_node() -> Any:
+    return load_module("a9_node_control_api", NODE_HELPER_PATH)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -1002,6 +1007,7 @@ def controller_discovery() -> dict[str, Any]:
             "gateway_health_refresh": "/api/gateway/health-refresh",
             "node_command_submit": "/api/nodes/command-submit",
             "node_command": "/api/nodes/command",
+            "node_command_result": "/api/node-command-results/{result_event_id}",
             "events": "/api/events",
         },
         "runtime": {
@@ -2084,6 +2090,67 @@ def enqueue_node_command(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def node_command_result_lookup(
+    result_event_id: str,
+    *,
+    event_stream: str = EVENTS_STREAM_KEY,
+    timeout: int = 3,
+) -> dict[str, Any]:
+    safe_result_event_id = str(result_event_id or "").strip()
+    safe_event_stream = str(event_stream or "").strip()
+    base: dict[str, Any] = {
+        "status": "degraded",
+        "kind": "node_command_result_lookup",
+        "result_event_id": safe_result_event_id,
+        "event_stream": safe_event_stream,
+        "result": {},
+    }
+    if not _looks_like_stream_id(safe_result_event_id):
+        return {
+            **base,
+            "error_code": "invalid_payload",
+            "reason": "result_event_id_must_be_redis_stream_id",
+        }
+    if not safe_event_stream:
+        return {
+            **base,
+            "error_code": "invalid_payload",
+            "reason": "event_stream_required",
+        }
+    try:
+        safe_timeout = max(1, int(timeout))
+    except (TypeError, ValueError):
+        return {
+            **base,
+            "error_code": "invalid_payload",
+            "reason": "timeout_must_be_integer",
+        }
+    try:
+        result = a9_node().node_command_result_read_once(
+            safe_result_event_id,
+            event_stream=safe_event_stream,
+            timeout=safe_timeout,
+        )
+    except (OSError, RuntimeError, AttributeError, subprocess.TimeoutExpired) as exc:
+        return {
+            **base,
+            "error_code": "node_helper_unavailable",
+            "reason": str(exc),
+        }
+
+    status = str(result.get("status") or "degraded")
+    error_code = str(result.get("error_code") or ("ok" if status == "ok" else status))
+    payload: dict[str, Any] = {
+        **base,
+        "status": status,
+        "error_code": error_code,
+        "result": result,
+    }
+    if status != "ok":
+        payload["reason"] = str(result.get("reason") or error_code)
+    return payload
+
+
 def register_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     node_id = safe_node_id(str(payload.get("node_id") or ""))
     now = utc_now()
@@ -3012,6 +3079,29 @@ class ControlHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", ["10"])[0])
                 source = query.get("source_session_path", [None])[0]
                 self.write_json(200, operator_tail(source, limit=limit))
+            elif parsed.path.startswith("/api/node-command-results/"):
+                result_event_id = parsed.path.removeprefix("/api/node-command-results/").strip("/")
+                event_stream = query.get("event_stream", [EVENTS_STREAM_KEY])[0]
+                try:
+                    timeout = int(query.get("timeout", ["3"])[0])
+                except ValueError:
+                    self.write_json(
+                        400,
+                        {
+                            "status": "degraded",
+                            "kind": "node_command_result_lookup",
+                            "error_code": "invalid_payload",
+                            "reason": "timeout_must_be_integer",
+                            "result_event_id": result_event_id,
+                            "event_stream": event_stream,
+                            "result": {},
+                        },
+                    )
+                    return
+                self.write_json(
+                    200,
+                    node_command_result_lookup(result_event_id, event_stream=event_stream, timeout=timeout),
+                )
             elif parsed.path == "/api/events":
                 last_id = _resolve_event_last_id(query.get("last_id", [None])[0], self.headers.get("Last-Event-ID"))
                 try:

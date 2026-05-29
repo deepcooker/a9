@@ -688,3 +688,32 @@ Next monitoring target:
      reference-scope enforcement should become more explicit for worker file
      reads. Until then, monitor must inspect event logs, not just scope_guard,
      because scope_guard only covers changed files.
+
+44. Control API result lookup required monitor takeover after worker capacity failure.
+   - Task:
+     `control-api-node-command-result-20260529T1500`.
+   - Run:
+     `.a9/runs/control-api-node-command-result-20260529T1500-20260529T145648Z-a1`.
+   - Worker status:
+     `retryable-worker-failed`; Codex Spark returned "Selected model is at
+     capacity" before final/envelope/patch. The run stayed bounded by file
+     scope, but event bytes reached `191833`, so this is another observation
+     point for context growth under failures.
+   - Monitor outcome:
+     manually added control API exposure for `node_command_result_read_once()`.
+     `GET /api/node-command-results/{result_event_id}` now validates Redis stream
+     ids, accepts optional `event_stream` and `timeout`, delegates parsing to
+     `scripts/a9_node.py`, and returns stable
+     `node_command_result_lookup` JSON.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py` passed.
+     `python3 -m unittest tests.test_control_api tests.test_node
+     tests.test_remote` passed with `195` tests. Real Redis smoke read
+     `1780066510627-0` through `node_command_result_lookup()` and returned
+     `status=ok`, `error_code=ok`, command
+     `smoke-result-read-20260529T1455`.
+   - Governance lesson:
+     worker capacity failures need a narrower retry or monitor takeover path,
+     not more gates. The useful invariant is flow continuity plus evidence:
+     submit command, worker writes result event, API reads result event, then
+     mobile/remote can close the command loop.

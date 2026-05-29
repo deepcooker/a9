@@ -2853,6 +2853,104 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["command"]["stream"], "a9:tasks")
         self.assertTrue(any(call[:2] == ["XADD", "a9:tasks"] for call in calls))
 
+    def test_node_command_result_lookup_delegates_to_node_reader(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeNode:
+            @staticmethod
+            def node_command_result_read_once(result_event_id, *, event_stream="a9:events", timeout=3):
+                calls.append(
+                    {
+                        "result_event_id": result_event_id,
+                        "event_stream": event_stream,
+                        "timeout": timeout,
+                    }
+                )
+                return {
+                    "status": "ok",
+                    "kind": "node_command_result",
+                    "error_code": "ok",
+                    "result_event_id": result_event_id,
+                    "command_id": "cmd-lookup",
+                    "result": {"status": "ok"},
+                }
+
+        original_a9_node = mod.a9_node
+        mod.a9_node = lambda: FakeNode
+        try:
+            result = mod.node_command_result_lookup("1740000300-0", event_stream="a9:test-events", timeout=5)
+        finally:
+            mod.a9_node = original_a9_node
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["kind"], "node_command_result_lookup")
+        self.assertEqual(result["error_code"], "ok")
+        self.assertEqual(result["result"]["command_id"], "cmd-lookup")
+        self.assertEqual(
+            calls,
+            [{"result_event_id": "1740000300-0", "event_stream": "a9:test-events", "timeout": 5}],
+        )
+
+    def test_node_command_result_lookup_rejects_invalid_event_id_without_reader(self):
+        mod = load_control_api()
+        calls = []
+        original_a9_node = mod.a9_node
+        mod.a9_node = lambda: calls.append("called")
+        try:
+            result = mod.node_command_result_lookup("bad-id")
+        finally:
+            mod.a9_node = original_a9_node
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "invalid_payload")
+        self.assertEqual(result["reason"], "result_event_id_must_be_redis_stream_id")
+        self.assertEqual(calls, [])
+
+    def test_api_node_command_results_endpoint_returns_lookup_payload(self):
+        mod = load_control_api()
+        calls = []
+        captured = {"status": None, "payload": None}
+
+        def fake_lookup(result_event_id, *, event_stream="a9:events", timeout=3):
+            calls.append(
+                {
+                    "result_event_id": result_event_id,
+                    "event_stream": event_stream,
+                    "timeout": timeout,
+                }
+            )
+            return {
+                "status": "ok",
+                "kind": "node_command_result_lookup",
+                "result_event_id": result_event_id,
+                "event_stream": event_stream,
+                "error_code": "ok",
+                "result": {"command_id": "cmd-api"},
+            }
+
+        class DummyNodeCommandResultGetHandler:
+            path = "/api/node-command-results/1740000400-0?event_stream=a9:test-events&timeout=7"
+            headers = {}
+
+            def write_json(self, status, response_payload):
+                captured["status"] = status
+                captured["payload"] = response_payload
+
+        original_lookup = mod.node_command_result_lookup
+        mod.node_command_result_lookup = fake_lookup
+        try:
+            mod.ControlHandler.do_GET(DummyNodeCommandResultGetHandler())
+        finally:
+            mod.node_command_result_lookup = original_lookup
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["result"]["command_id"], "cmd-api")
+        self.assertEqual(
+            calls,
+            [{"result_event_id": "1740000400-0", "event_stream": "a9:test-events", "timeout": 7}],
+        )
+
     def test_parse_xrange_events_accepts_raw_and_json_shapes(self):
         mod = load_control_api()
         raw = "1740000000-0\ntype\ntask_started\ntask_id\nt1\n1740000001-0\ntype\ntask_done\n"
@@ -4863,6 +4961,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_governance"], "/api/gateway/reconnect-governance")
         self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
+        self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertTrue(discovery["runtime"]["gateway_reconnect_governance"])
