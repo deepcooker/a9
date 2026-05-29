@@ -1158,6 +1158,191 @@ def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
     }
 
 
+def _transcript_item(
+    *,
+    source: str,
+    phase: str,
+    action: str,
+    reason: str = "",
+    status: str = "",
+    node_id: str = "",
+    flow_id: str = "",
+    evidence_path: str = "",
+    event_id: str = "",
+    ts: str = "",
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "source": source,
+        "phase": phase,
+        "action": action,
+        "reason": reason,
+        "status": status,
+        "node_id": node_id,
+        "flow_id": flow_id,
+        "evidence_path": evidence_path,
+        "event_id": event_id,
+        "ts": ts,
+        "details": details or {},
+    }
+
+
+def transcript_phase_for_evidence(kind: str) -> str:
+    if kind.startswith("probe"):
+        return "probe"
+    if kind.startswith("tmux") or kind.startswith("heartbeat") or kind.startswith("bootstrap"):
+        return "reconnecting"
+    if kind.startswith("recovery-cycle"):
+        return "observe"
+    return "evidence"
+
+
+def recovery_transcript(
+    node_id: str | None = None,
+    *,
+    root: Path = ROOT,
+    limit: int = 20,
+) -> dict[str, Any]:
+    safe_limit = max(1, min(int(limit), 100))
+    evidence = list_node_evidence(node_id, root=root, limit=safe_limit)
+    items: list[dict[str, Any]] = []
+    for item in reversed(evidence.get("items", [])):
+        kind = str(item.get("kind") or "")
+        items.append(
+            _transcript_item(
+                source="node_evidence",
+                phase=transcript_phase_for_evidence(kind),
+                action=str(item.get("action") or item.get("status") or "observe"),
+                reason=str(item.get("reason") or kind or "node_evidence"),
+                status=str(item.get("status") or ""),
+                node_id=str(item.get("node_id") or ""),
+                evidence_path=str(item.get("path") or ""),
+                ts=str(item.get("mtime") or ""),
+                details={
+                    "kind": kind,
+                    "target": item.get("target"),
+                    "session": item.get("session"),
+                    "return_code": item.get("return_code"),
+                    "timed_out": item.get("timed_out"),
+                },
+            )
+        )
+
+    gateway = latest_gateway_reconnect_decision_event()
+    if gateway.get("status") != "missing":
+        items.append(
+            _transcript_item(
+                source="gateway_reconnect_decision",
+                phase=str(gateway.get("phase") or "stream"),
+                action=str(gateway.get("action") or gateway.get("status") or "observe"),
+                reason=str(gateway.get("error_class") or gateway.get("reason") or "gateway_reconnect_decision"),
+                status=str(gateway.get("status") or ""),
+                node_id=str(gateway.get("node_id") or ""),
+                flow_id=str(gateway.get("flow_id") or ""),
+                event_id=str(gateway.get("event_id") or ""),
+                ts=str(gateway.get("ts") or ""),
+                details={
+                    "origin": gateway.get("origin"),
+                    "attempt": gateway.get("attempt"),
+                    "delay_ms": gateway.get("delay_ms"),
+                    "policy_budget_remaining": gateway.get("policy_budget_remaining"),
+                    "flow_revision": gateway.get("flow_revision"),
+                    "reset_on_success": gateway.get("reset_on_success"),
+                },
+            )
+        )
+
+    status = node_status(root)
+    tasks_stream = status.get("tasks_stream") if isinstance(status.get("tasks_stream"), dict) else {}
+    if tasks_stream:
+        items.append(
+            _transcript_item(
+                source="redis_tasks_stream",
+                phase="stream-health",
+                action=str(tasks_stream.get("stream_action") or "continue"),
+                reason=str(tasks_stream.get("stream_action_reason") or tasks_stream.get("reason") or "none"),
+                status=str(tasks_stream.get("status") or ""),
+                ts=str(tasks_stream.get("sampled_at") or ""),
+                details={
+                    "stream": tasks_stream.get("stream"),
+                    "group": tasks_stream.get("group"),
+                    "lag": tasks_stream.get("lag"),
+                    "pending": tasks_stream.get("pending"),
+                    "thresholds_version": tasks_stream.get("thresholds_version"),
+                    "consumer_probe_status": tasks_stream.get("consumer_probe_status"),
+                    "consumer_probe_reason": tasks_stream.get("consumer_probe_reason"),
+                },
+            )
+        )
+
+    followup = status.get("communication_followup") if isinstance(status.get("communication_followup"), dict) else {}
+    if followup:
+        items.append(
+            _transcript_item(
+                source="communication_followup",
+                phase="resume" if followup.get("action") in {"continue", "watch"} else "reconnecting",
+                action=str(followup.get("action") or "continue"),
+                reason=str(followup.get("reason") or ""),
+                status=str(followup.get("status") or ""),
+                ts=utc_now(),
+                details={"evidence": followup.get("evidence")},
+            )
+        )
+
+    loop = recovery_loop_latest(root=root)
+    if loop.get("status") == "ok":
+        items.append(
+            _transcript_item(
+                source="recovery_loop_latest",
+                phase="observe",
+                action="observe" if int(loop.get("risk_count") or 0) == 0 else "repair",
+                reason=str(loop.get("cycle_status") or loop.get("raw_status") or ""),
+                status=str(loop.get("cycle_status") or loop.get("status") or ""),
+                evidence_path=str(loop.get("path") or ""),
+                ts=str(loop.get("checked_at") or loop.get("mtime") or ""),
+                details={
+                    "risk_count": loop.get("risk_count"),
+                    "step_count": loop.get("step_count"),
+                    "execute": loop.get("execute"),
+                },
+            )
+        )
+
+    def sort_key(item: dict[str, Any]) -> str:
+        return str(item.get("ts") or "")
+
+    items.sort(key=sort_key)
+    actions = [str(item.get("action") or "") for item in items]
+    current_action = str(followup.get("action") or "")
+    if not current_action:
+        current_action = "repair" if int(loop.get("risk_count") or 0) > 0 else "continue"
+    current_reason = str(followup.get("reason") or tasks_stream.get("stream_action_reason") or loop.get("cycle_status") or "")
+    active_attention = current_action in {"repair", "reconnect", "intervene", "quarantine", "terminate"}
+    active_watch = current_action == "watch"
+    bouncing = active_attention and actions.count("repair") + actions.count("reconnect") + actions.count("intervene") >= 2
+    status_value = "needs_attention" if active_attention else "degraded" if active_watch else "ok"
+    conclusion = "bouncing" if bouncing else "repairing" if active_attention else "watching" if active_watch else "converging"
+    return {
+        "status": status_value,
+        "kind": "node_recovery_transcript",
+        "schema": "a9.node_recovery_transcript.v1",
+        "node_id": node_id or "",
+        "generated_at": utc_now(),
+        "limit": safe_limit,
+        "item_count": len(items),
+        "conclusion": conclusion,
+        "current_action": current_action,
+        "current_reason": current_reason,
+        "items": items[-safe_limit:],
+        "sources": {
+            "node_evidence_count": evidence.get("count", 0),
+            "gateway_status": gateway.get("status"),
+            "tasks_stream_status": tasks_stream.get("status"),
+            "recovery_loop_status": loop.get("status"),
+        },
+    }
+
+
 def controller_discovery() -> dict[str, Any]:
     return {
         "service": "a9-controller",
@@ -1181,6 +1366,7 @@ def controller_discovery() -> dict[str, Any]:
             "gateway_reconnect_governance": "/api/gateway/reconnect-governance",
             "gateway_health_refresh": "/api/gateway/health-refresh",
             "node_recovery_loop_latest": "/api/nodes/recovery-loop/latest",
+            "node_recovery_transcript": "/api/nodes/recovery-transcript",
             "node_command_submit": "/api/nodes/command-submit",
             "node_command": "/api/nodes/command",
             "node_command_result": "/api/node-command-results/{result_event_id}",
@@ -3943,6 +4129,14 @@ class ControlHandler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/nodes/recovery-loop/latest":
                 self.write_json(200, recovery_loop_latest())
+            elif parsed.path == "/api/nodes/recovery-transcript":
+                self.write_json(
+                    200,
+                    recovery_transcript(
+                        query.get("node_id", [None])[0],
+                        limit=int(query.get("limit", ["20"])[0]),
+                    ),
+                )
             elif parsed.path == "/api/gateway/transport-contract":
                 emit_event = str(query.get("emit_event", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
                 self.write_json(200, gateway_transport_contract(emit_event=emit_event))

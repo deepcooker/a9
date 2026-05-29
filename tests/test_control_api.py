@@ -6047,6 +6047,154 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "recovery_loop_latest")
 
+    def test_recovery_transcript_joins_node_gateway_stream_and_loop_evidence(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.write_node_evidence(
+                "probe",
+                "node-a",
+                {
+                    "status": "ok",
+                    "target": "root@100.64.0.1",
+                    "probe_action": "continue",
+                    "probe_action_reason": "probe_ok",
+                    "return_code": 0,
+                },
+                root=root,
+            )
+            latest = root / ".a9" / "services" / "recovery-loop-latest.json"
+            latest.parent.mkdir(parents=True)
+            latest.write_text(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "checked_at": "2026-05-29T19:02:55+00:00",
+                        "cycle_status": "ok",
+                        "step_count": 0,
+                        "risk_count": 0,
+                        "execute": False,
+                        "cycle": {"summary": {"risk_count": 0}, "steps": []},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            original_gateway = mod.latest_gateway_reconnect_decision_event
+            original_status = mod.node_status
+            try:
+                mod.latest_gateway_reconnect_decision_event = lambda: {
+                    "status": "ok",
+                    "kind": "gateway_reconnect_decision",
+                    "event_id": "1-0",
+                    "phase": "stream",
+                    "action": "continue",
+                    "error_class": "none",
+                    "attempt": 0,
+                    "delay_ms": 0,
+                    "policy_budget_remaining": 3,
+                    "flow_id": "flow-a",
+                    "flow_revision": 2,
+                    "node_id": "node-a",
+                    "origin": "manual_resume",
+                    "reset_on_success": True,
+                    "ts": "2026-05-29T19:02:56+00:00",
+                }
+                mod.node_status = lambda root=mod.ROOT: {
+                    "tasks_stream": {
+                        "status": "ok",
+                        "stream_action": "continue",
+                        "stream_action_reason": "none",
+                        "stream": "a9:tasks",
+                        "group": "a9-worker",
+                        "lag": 0,
+                        "pending": 0,
+                        "thresholds_version": "redis_streams_v1",
+                    },
+                    "communication_followup": {
+                        "status": "ok",
+                        "action": "continue",
+                        "reason": "tasks_stream:none",
+                        "evidence": {"tasks_stream": {"action": "continue", "reason": "none"}},
+                    },
+                }
+
+                result = mod.recovery_transcript("node-a", root=root, limit=20)
+            finally:
+                mod.latest_gateway_reconnect_decision_event = original_gateway
+                mod.node_status = original_status
+
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["schema"], "a9.node_recovery_transcript.v1")
+            self.assertEqual(result["conclusion"], "converging")
+            phases = [item["phase"] for item in result["items"]]
+            self.assertIn("probe", phases)
+            self.assertIn("stream-health", phases)
+            self.assertIn("observe", phases)
+            sources = [item["source"] for item in result["items"]]
+            self.assertIn("gateway_reconnect_decision", sources)
+            self.assertIn("communication_followup", sources)
+            self.assertTrue(any(item["flow_id"] == "flow-a" for item in result["items"]))
+
+    def test_recovery_transcript_marks_repairing_when_stream_intervenes(self):
+        mod = load_control_api()
+        original_gateway = mod.latest_gateway_reconnect_decision_event
+        original_status = mod.node_status
+        original_latest = mod.recovery_loop_latest
+        try:
+            mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+            mod.node_status = lambda root=mod.ROOT: {
+                "tasks_stream": {
+                    "status": "ok",
+                    "stream_action": "intervene",
+                    "stream_action_reason": "pending_stuck",
+                },
+                "communication_followup": {
+                    "status": "needs_attention",
+                    "action": "intervene",
+                    "reason": "tasks_stream:pending_stuck",
+                    "evidence": {},
+                },
+            }
+            mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "missing"}
+
+            result = mod.recovery_transcript(root=Path(tempfile.mkdtemp()), limit=5)
+        finally:
+            mod.latest_gateway_reconnect_decision_event = original_gateway
+            mod.node_status = original_status
+            mod.recovery_loop_latest = original_latest
+
+        self.assertEqual(result["status"], "needs_attention")
+        self.assertEqual(result["conclusion"], "bouncing")
+        self.assertEqual(result["items"][-1]["action"], "intervene")
+
+    def test_api_recovery_transcript_endpoint_uses_query(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None, "input": None}
+
+        class DummyRecoveryTranscriptGetHandler:
+            path = "/api/nodes/recovery-transcript?node_id=node-a&limit=7"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_transcript = mod.recovery_transcript
+        try:
+            def fake_transcript(node_id, *, limit=20):
+                captured["input"] = {"node_id": node_id, "limit": limit}
+                return {"status": "ok", "kind": "node_recovery_transcript"}
+
+            mod.recovery_transcript = fake_transcript
+            mod.ControlHandler.do_GET(DummyRecoveryTranscriptGetHandler())
+        finally:
+            mod.recovery_transcript = original_transcript
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "node_recovery_transcript")
+        self.assertEqual(captured["input"], {"node_id": "node-a", "limit": 7})
+
     def test_read_evidence_file_allows_only_a9_evidence_roots(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -6071,6 +6219,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_governance"], "/api/gateway/reconnect-governance")
         self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
         self.assertEqual(discovery["endpoints"]["node_recovery_loop_latest"], "/api/nodes/recovery-loop/latest")
+        self.assertEqual(discovery["endpoints"]["node_recovery_transcript"], "/api/nodes/recovery-transcript")
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(

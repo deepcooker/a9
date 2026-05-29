@@ -1202,3 +1202,40 @@ Next monitoring target:
      explicit priority and context policy: human/submitted tasks first, idle
      goal continuation only when queue is empty and within a bounded context
      budget, with the chosen model recorded.
+
+62. Recovery transcript now composes node, gateway, Redis, and loop evidence.
+   - Trigger:
+     entry 60 identified the core observability gap: recovery evidence existed,
+     but monitor/mobile still had to stitch node evidence, gateway reconnect
+     decisions, Redis stream health, and recovery-loop state by hand.
+   - Mechanism copied:
+     Barter-rs keeps reconnect action domains explicit (`connect`, `stream`,
+     `Reconnect`, `Terminate`, `Continue`) and Codex treats compact output as a
+     handoff over raw history, not the fact source. A9 now follows the same
+     pattern: compact transcript rows point back to raw `evidence_path` or
+     Redis `event_id`.
+   - Change:
+     `scripts/a9_control_api.py` adds read-only
+     `/api/nodes/recovery-transcript`. It emits
+     `a9.node_recovery_transcript.v1` rows with unified
+     `source/phase/action/reason/status/node_id/flow_id/evidence_path/event_id`
+     fields. Sources include node evidence, latest gateway reconnect decision,
+     Redis task stream health, communication followup, and recovery-loop latest.
+     Current state is judged from the newest followup/stream/loop signals, so
+     historical repair evidence remains visible without keeping the node
+     permanently in `needs_attention`.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py
+     scripts/a9_supervisor.py scripts/a9_recovery_loop.py scripts/a9_remote.py`
+     passed. `python3 -m unittest tests.test_control_api
+     tests.test_recovery_loop tests.test_service tests.test_remote
+     tests.test_node` passed with `250` tests. Real API smoke after stack
+     restart returned `status=ok`, `conclusion=converging`,
+     `current_action=continue`, and latest rows
+     `heartbeat_repair_ok -> heartbeat_tmux_start_ok -> observe ->
+     tasks_stream:none`. Mobile `npx tsc --noEmit` and
+     `npm run smoke:mobile` passed after wiring the unified timeline.
+   - Governance lesson:
+     this is the first real cross-surface recovery transcript. Next useful
+     slice is not another UI card; it is priority/model governance for the
+     24h worker and then a transcript-backed intervention policy.
