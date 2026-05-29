@@ -1161,6 +1161,63 @@ Do the work.
         self.assertEqual(goal_state["goal"]["status"], "complete")
         self.assertEqual(goal_state["goal"]["completion_audit"][0]["audit"], "tests and evidence prove the requested slice is complete")
 
+    def test_idle_goal_continuation_schedules_reference_first_task(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            try:
+                goal = mod.create_goal_payload("goal-a9-runtime", "Build A9 persistent goal runtime", 1000)
+                goal["tokens_used"] = 125
+                mod.write_goal(goal)
+
+                next_path = mod.schedule_idle_goal_continuation()
+                self.assertIsNotNone(next_path)
+                assert next_path is not None
+                text = next_path.read_text(encoding="utf-8")
+                parsed = mod.parse_task(next_path)
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+
+        self.assertIn('phase: "reference_scan"', text)
+        self.assertIn("goal_id: goal-a9-runtime", text)
+        self.assertIn("Build A9 persistent goal runtime", text)
+        self.assertIn("tokens_remaining: 875", text)
+        self.assertIn("Start with reference_scan discipline", text)
+        self.assertIn("python3 -m py_compile scripts/a9_supervisor.py", text)
+        self.assertEqual(parsed.phase, "reference_scan")
+
+    def test_idle_goal_continuation_budget_limits_instead_of_scheduling(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            try:
+                goal = mod.create_goal_payload("goal-over-budget", "Do not continue past budget", 10)
+                goal["tokens_used"] = 10
+                mod.write_goal(goal)
+
+                self.assertIsNone(mod.schedule_idle_goal_continuation())
+                stored = json.loads(mod.goal_path("goal-over-budget").read_text(encoding="utf-8"))
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+
+        self.assertEqual(stored["status"], "budget_limited")
+
     def test_apply_worker_search_replace_extracts_final_message_blocks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

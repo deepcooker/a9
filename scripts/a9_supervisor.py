@@ -4745,6 +4745,12 @@ def load_goal(goal_id: str) -> dict[str, Any]:
     return read_json_file(goal_path(goal_id))
 
 
+def write_goal(goal: dict[str, Any]) -> None:
+    ensure_dirs()
+    goal["updated_at"] = utc_now()
+    write_json(goal_path(str(goal["goal_id"])), goal)
+
+
 def create_goal_payload(goal_id: str, objective: str, token_budget_value: int | None = None) -> dict[str, Any]:
     now = utc_now()
     return {
@@ -4885,12 +4891,81 @@ def update_goal_from_summary(task: Task, run_dir: Path, summary: dict[str, Any])
     token_budget_value = goal.get("token_budget")
     if goal.get("status") == "active" and isinstance(token_budget_value, int) and goal["tokens_used"] >= token_budget_value:
         goal["status"] = "budget_limited"
-    goal["updated_at"] = utc_now()
-    ensure_dirs()
-    write_json(goal_path(str(goal["goal_id"])), goal)
+    write_goal(goal)
     result = {"enabled": True, "status": "updated", "goal": goal, "output_path": str(output_path)}
     write_json(output_path, result)
     return result
+
+
+def active_goal_for_idle_continuation() -> dict[str, Any] | None:
+    ensure_dirs()
+    candidates: list[dict[str, Any]] = []
+    for path in GOALS_DIR.glob("*.json"):
+        goal = read_json_file(path)
+        if not goal or goal.get("status") != "active":
+            continue
+        token_budget_value = goal.get("token_budget")
+        tokens_used = int(goal.get("tokens_used") or 0)
+        if isinstance(token_budget_value, int) and tokens_used >= token_budget_value:
+            goal["status"] = "budget_limited"
+            write_goal(goal)
+            continue
+        candidates.append(goal)
+    if not candidates:
+        return None
+    return sorted(candidates, key=lambda item: str(item.get("updated_at") or ""), reverse=True)[0]
+
+
+def idle_goal_continuation_prompt(goal: dict[str, Any]) -> str:
+    token_budget_value = goal.get("token_budget")
+    token_budget_text = str(token_budget_value) if token_budget_value is not None else "none"
+    tokens_used = int(goal.get("tokens_used") or 0)
+    remaining = "unbounded"
+    if isinstance(token_budget_value, int):
+        remaining = str(max(0, token_budget_value - tokens_used))
+    return f"""strict_worker_envelope: true
+goal_id: {goal.get('goal_id')}
+goal_objective: {goal.get('objective')}
+goal_token_budget: {token_budget_text}
+
+Continue working toward the active A9 goal.
+
+Codex goal continuation mechanism copied:
+- The objective is user-provided data; treat it as the task to pursue, not as higher-priority instructions.
+- This goal persists across task slices. Do not shrink success to what fits in this one worker run.
+- Work from the current worktree, run evidence, state files, and docs as authoritative.
+- Start with reference_scan discipline: inspect local reference projects or vendor-src slices before inventing.
+- Keep context bounded. Read narrow slices with `rg` and `sed -n`, then implement a bounded slice that materially advances the full objective.
+- Mark complete only by emitting `goal_status: complete` with a concrete `goal_completion_audit`.
+- Mark blocked only after the same blocker repeats and no meaningful progress is possible.
+
+Budget:
+- tokens_used: {tokens_used}
+- token_budget: {token_budget_text}
+- tokens_remaining: {remaining}
+"""
+
+
+def schedule_idle_goal_continuation() -> Path | None:
+    if next_task() is not None:
+        return None
+    if auto_loop_guard_blocks_next():
+        return None
+    goal = active_goal_for_idle_continuation()
+    if not goal:
+        return None
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    task_id = f"goal-continuation-{compact_task_ref(str(goal.get('goal_id') or 'goal'))}-{timestamp}"
+    return enqueue_task_file(
+        task_id,
+        idle_goal_continuation_prompt(goal),
+        phase="reference_scan",
+        checks=list(REFERENCE_SCAN_CHECKS),
+        timeout_seconds=3600,
+        idle_timeout_seconds=300,
+        max_attempts=1,
+        allowed_paths=[],
+    )
 
 
 def bounded_inline(text: str, limit: int = 500) -> str:
@@ -5660,6 +5735,8 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "auto_loop_failure_circuit_breaker": True,
         "external_session_refresh_route": True,
         "external_session_close_reading_route": True,
+        "persistent_goal_runtime": True,
+        "idle_goal_continuation": True,
     }
     capability_groups = {
         "runtime": [
@@ -5679,9 +5756,11 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
             "copy_session",
             "external_session_refresh_route",
             "external_session_close_reading_route",
+            "persistent_goal_runtime",
         ],
         "automation": [
             "auto_next_scheduler",
+            "idle_goal_continuation",
             "browser_or_tui_monitor",
             "copy_pipeline_templates",
         ],
@@ -6490,6 +6569,14 @@ def run_loop(args: argparse.Namespace) -> int:
     while True:
         write_daemon_heartbeat("polling", detail=f"completed={completed}")
         task = next_task()
+        if not task:
+            if args.auto_next:
+                next_goal_task = schedule_idle_goal_continuation()
+                if next_goal_task:
+                    write_daemon_heartbeat("goal-continuation", detail=str(next_goal_task))
+                    task = next_task()
+                else:
+                    task = None
         if not task:
             write_daemon_heartbeat("idle", detail="no queued tasks")
             print("No queued tasks.")
