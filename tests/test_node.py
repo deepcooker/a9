@@ -150,6 +150,43 @@ class NodeHelperTests(unittest.TestCase):
             ],
         )
 
+    def test_parse_xautoclaim_output_supports_json_and_raw(self):
+        mod = load_module()
+        json_payload = json.dumps(
+            [
+                "1740000209-0",
+                [["1740000200-0", ["command_id", "cmd-001", "action", "status"]]],
+                ["1740000199-0"],
+            ]
+        )
+        self.assertEqual(
+            mod.parse_xautoclaim_output(json_payload),
+            {
+                "next_start_id": "1740000209-0",
+                "events": [{"id": "1740000200-0", "fields": {"command_id": "cmd-001", "action": "status"}}],
+                "deleted_ids": ["1740000199-0"],
+            },
+        )
+        self.assertEqual(
+            mod.parse_xautoclaim_output(
+                "\n".join(
+                    [
+                        "1740000210-0",
+                        "1740000201-0",
+                        "command_id",
+                        "cmd-002",
+                        "action",
+                        "status",
+                    ]
+                )
+            ),
+            {
+                "next_start_id": "1740000210-0",
+                "events": [{"id": "1740000201-0", "fields": {"command_id": "cmd-002", "action": "status"}}],
+                "deleted_ids": [],
+            },
+        )
+
     def test_parse_node_command_result_event_parses_dict_with_json_result(self):
         mod = load_module()
         parsed = mod.parse_node_command_result_event(
@@ -386,6 +423,69 @@ class NodeHelperTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "degraded")
         self.assertEqual(result["error_code"], "redis_unavailable")
+
+    def test_node_command_claim_stale_once_uses_xautoclaim(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:2] == ["XGROUP", "CREATE"]:
+                return FakeProc("BUSYGROUP Consumer Group name already exists", 1)
+            if args[:2] == ["--raw", "XAUTOCLAIM"]:
+                return FakeProc(
+                    "\n".join(
+                        [
+                            "1740000209-0",
+                            "1740000200-0",
+                            "command_id",
+                            "cmd-stale-01",
+                            "action",
+                            "status",
+                        ]
+                    )
+                )
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_claim_stale_once(
+                "node-01",
+                count=1,
+                min_idle_ms=2500,
+                group="a9-worker",
+                stream="a9:tasks",
+                timeout=3,
+            )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["action"], "claim_stale_once")
+        self.assertEqual(result["command_count"], 1)
+        self.assertEqual(result["events"][0]["id"], "1740000200-0")
+        self.assertEqual(result["events"][0]["fields"]["command_id"], "cmd-stale-01")
+        self.assertEqual(result["next_start_id"], "1740000209-0")
+        self.assertEqual(
+            calls[1],
+            [
+                "--raw",
+                "XAUTOCLAIM",
+                "a9:tasks",
+                "a9-worker",
+                "node-01-consumer",
+                "2500",
+                "0-0",
+                "COUNT",
+                "1",
+            ],
+        )
 
     def test_command_claim_once_cli_prints_payload(self):
         mod = load_module()
@@ -827,6 +927,65 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(result["result_event_id"], "")
         self.assertEqual(len(calls), 2)
 
+    def test_node_command_work_once_recovers_pending_when_no_new_events(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:2] == ["XGROUP", "CREATE"]:
+                return FakeProc("BUSYGROUP Consumer Group name already exists", 1)
+            if args[:2] == ["--raw", "XREADGROUP"]:
+                return FakeProc("(nil)")
+            if args[:2] == ["--raw", "XAUTOCLAIM"]:
+                return FakeProc(
+                    "\n".join(
+                        [
+                            "1740000209-0",
+                            "1740000200-0",
+                            "command_id",
+                            "cmd-stale-status",
+                            "action",
+                            "status",
+                        ]
+                    )
+                )
+            if args[:1] == ["XADD"]:
+                return FakeProc("1740000300-2")
+            if args[:1] == ["XACK"]:
+                return FakeProc("1")
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_work_once(
+                "node-01",
+                stream="a9:tasks",
+                event_stream="a9:events",
+                block_ms=100,
+                timeout=3,
+                recover_pending=True,
+                min_idle_ms=2500,
+            )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["error_code"], "ok")
+        self.assertEqual(result["claim_source"], "pending")
+        self.assertTrue(result["recovered_pending"])
+        self.assertEqual(result["command_id"], "cmd-stale-status")
+        self.assertEqual(result["acked_ids"], ["1740000200-0"])
+        self.assertEqual(calls[2][:2], ["XGROUP", "CREATE"])
+        self.assertEqual(calls[3][:2], ["--raw", "XAUTOCLAIM"])
+        self.assertEqual(calls[-1], ["XACK", "a9:tasks", "a9-worker", "1740000200-0"])
+
     def test_node_command_work_once_degraded_on_xadd_failure(self):
         mod = load_module()
         calls: list[list[str]] = []
@@ -964,6 +1123,8 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(summary["last_result"]["command_id"], "cmd-1")
         self.assertEqual(calls[0]["stream"], "a9:test-tasks")
         self.assertEqual(calls[0]["event_stream"], "a9:test-events")
+        self.assertTrue(calls[0]["recover_pending"])
+        self.assertEqual(calls[0]["min_idle_ms"], 30000)
         self.assertEqual(emitted[0]["status"], "noop")
         self.assertEqual(emitted[1], {"sleep": 0.5})
         self.assertEqual(emitted[2]["status"], "ok")
@@ -1003,6 +1164,8 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(lines[1]["node_id"], "node-cli-loop")
         self.assertEqual(lines[1]["iterations"], 1)
         self.assertEqual(lines[1]["timeout"], 3)
+        self.assertTrue(lines[1]["recover_pending"])
+        self.assertEqual(lines[1]["min_idle_ms"], 30000)
 
     def test_node_command_work_loop_timeout_covers_block_ms(self):
         mod = load_module()
@@ -1018,7 +1181,31 @@ class NodeHelperTests(unittest.TestCase):
             mod.time.sleep = original_sleep
 
         self.assertEqual(calls[0]["timeout"], 7)
+        self.assertTrue(calls[0]["recover_pending"])
         self.assertEqual(summary["timeout"], 7)
+
+    def test_node_command_work_loop_can_disable_pending_recovery(self):
+        mod = load_module()
+        calls = []
+        original_work_once = mod.node_command_work_once
+        original_sleep = mod.time.sleep
+        mod.node_command_work_once = lambda node_id, **kwargs: calls.append(kwargs) or {"status": "noop", "error_code": "no_events"}
+        mod.time.sleep = lambda seconds: None
+        try:
+            summary = mod.node_command_work_loop(
+                "node-loop",
+                max_iterations=1,
+                recover_pending=False,
+                min_idle_ms=50,
+            )
+        finally:
+            mod.node_command_work_once = original_work_once
+            mod.time.sleep = original_sleep
+
+        self.assertFalse(calls[0]["recover_pending"])
+        self.assertEqual(calls[0]["min_idle_ms"], 50)
+        self.assertFalse(summary["recover_pending"])
+        self.assertEqual(summary["min_idle_ms"], 50)
 
     def test_node_command_result_read_once_cli_prints_payload(self):
         mod = load_module()

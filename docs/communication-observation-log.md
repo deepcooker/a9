@@ -821,3 +821,32 @@ Next monitoring target:
    - Governance lesson:
      daemon settings must be tested under their real blocking behavior. A green
      `work-once` is not enough when the service wrapper changes timing.
+
+50. Node-command worker now recovers stale Redis Stream pending entries.
+   - Trigger:
+     real Redis observation showed `XPENDING a9:tasks a9-worker` had `3`
+     orphaned entries across old consumers, while the daemon only read new
+     messages with `XREADGROUP ... >`. After crash/restart, old claimed work
+     could stay stuck forever.
+   - Mechanism copied:
+     Redis Streams consumer-group recovery via `XAUTOCLAIM`; A9 now reads new
+     commands first, then reclaims pending entries older than `min_idle_ms` when
+     no new event is available.
+   - Change:
+     `scripts/a9_node.py` added `parse_xautoclaim_output()`,
+     `node_command_claim_stale_once()`, and `recover_pending/min_idle_ms`
+     wiring in `node_command_work_once()` and `command-work-loop`. The stack and
+     systemd node-worker command run with `--min-idle-ms 30000`.
+   - Verification:
+     `python3 -m py_compile scripts/a9_node.py scripts/a9_service.py` passed.
+     `bash -n scripts/a9_stack.sh` passed. `python3 -m unittest
+     tests.test_node tests.test_service tests.test_control_api tests.test_remote`
+     passed with `215` tests. Real Redis smoke reclaimed all `3` stale pending
+     entries with `claim_source=pending` and reduced `XPENDING` to `0`. After
+     restarting the stack, command `daemon-status-1780070211` was consumed by
+     the background node-worker, result event `1780070211610-0` returned
+     `status_ok`, and `XPENDING` stayed `0`.
+   - Governance lesson:
+     stable communication needs recovery semantics, not only fast transport.
+     Pending recovery is an observation-backed mechanism and should stay
+     evidence-driven rather than becoming a hard gate.

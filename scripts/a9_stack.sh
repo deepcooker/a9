@@ -70,7 +70,7 @@ start_mobile() {
 
 start_node_worker() {
   stop_one node-worker
-  setsid bash -lc "cd '$ROOT' && exec python3 scripts/a9_node.py command-work-loop --block-ms 5000 --timeout 10 --sleep-seconds 1" \
+  setsid bash -lc "cd '$ROOT' && exec python3 scripts/a9_node.py command-work-loop --block-ms 5000 --timeout 10 --sleep-seconds 1 --min-idle-ms 30000" \
     >"${LOG_DIR}/node-worker.log" 2>&1 < /dev/null &
   echo $! >"$(pid_file node-worker)"
 }

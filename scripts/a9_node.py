@@ -99,6 +99,52 @@ def parse_xreadgroup_output(output: str) -> list[dict[str, Any]]:
     return events
 
 
+def _events_from_field_arrays(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    events: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        stream_id = str(item[0])
+        if not _looks_like_stream_id(stream_id):
+            continue
+        fields_raw = item[1]
+        fields: dict[str, Any] = {}
+        if isinstance(fields_raw, dict):
+            fields = {str(key): value for key, value in fields_raw.items()}
+        elif isinstance(fields_raw, list):
+            for index in range(0, len(fields_raw), 2):
+                if index + 1 >= len(fields_raw):
+                    break
+                fields[str(fields_raw[index])] = fields_raw[index + 1]
+        events.append({"id": stream_id, "fields": fields})
+    return events
+
+
+def parse_xautoclaim_output(output: str) -> dict[str, Any]:
+    text = (output or "").strip()
+    if not text or text == "(nil)":
+        return {"next_start_id": "0-0", "events": [], "deleted_ids": []}
+
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        payload = None
+    if isinstance(payload, list):
+        next_start_id = str(payload[0]) if payload else "0-0"
+        events = _events_from_field_arrays(payload[1] if len(payload) > 1 else [])
+        deleted_ids = [str(item) for item in payload[2]] if len(payload) > 2 and isinstance(payload[2], list) else []
+        return {"next_start_id": next_start_id, "events": events, "deleted_ids": deleted_ids}
+
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return {"next_start_id": "0-0", "events": [], "deleted_ids": []}
+    next_start_id = lines[0] if _looks_like_stream_id(lines[0]) else "0-0"
+    events = parse_xreadgroup_output("\n".join(lines[1:]))
+    return {"next_start_id": next_start_id, "events": events, "deleted_ids": []}
+
+
 def parse_node_command_result_event(event_id: str, fields: Any) -> dict[str, Any]:
     safe_event_id = str(event_id or "")
     if not _looks_like_stream_id(safe_event_id):
@@ -646,6 +692,126 @@ def node_command_claim_once(
         }
 
 
+def node_command_claim_stale_once(
+    node_id: str,
+    count: int = 1,
+    min_idle_ms: int = 30000,
+    group: str = "a9-worker",
+    stream: str = "a9:tasks",
+    timeout: int = 3,
+) -> dict[str, Any]:
+    try:
+        safe_node_id = _safe_node_id(node_id)
+        safe_count = int(count)
+        safe_min_idle_ms = int(min_idle_ms)
+        safe_timeout = max(1, int(timeout))
+        safe_stream = stream.strip()
+        safe_group = group.strip()
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "claim_stale_once",
+            "node_id": str(node_id or ""),
+            "stream": str(stream or ""),
+            "group": str(group or ""),
+            "consumer": "",
+            "events": [],
+            "command_count": 0,
+            "next_start_id": "0-0",
+            "deleted_ids": [],
+            "raw_output": {},
+            "reason": "count_min_idle_timeout_must_be_ints",
+        }
+
+    consumer = node_command_consumer_name(safe_node_id)
+    raw_output: dict[str, str] = {}
+
+    def degraded(reason: str, error_code: str = "invalid_payload") -> dict[str, Any]:
+        return {
+            "status": "degraded",
+            "error_code": error_code,
+            "action": "claim_stale_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": safe_group,
+            "consumer": consumer,
+            "events": [],
+            "command_count": 0,
+            "next_start_id": "0-0",
+            "deleted_ids": [],
+            "raw_output": raw_output,
+            "reason": reason,
+        }
+
+    if safe_count < 1:
+        return degraded("count_must_be_positive")
+    if safe_min_idle_ms < 0:
+        return degraded("min_idle_ms_must_be_non_negative")
+    if not safe_group:
+        return degraded("group_required")
+    if not safe_stream:
+        return degraded("stream_required")
+
+    try:
+        create_proc = redis_cli(["XGROUP", "CREATE", safe_stream, safe_group, "0-0", "MKSTREAM"], timeout=min(2, safe_timeout))
+        raw_output["xgroup_create"] = _compact_output(create_proc.stdout, 500)
+        if create_proc.returncode != 0 and "BUSYGROUP" not in (create_proc.stdout or "").upper():
+            return degraded(create_proc.stdout.strip() or "xgroup_create_failed", "redis_command_error")
+
+        reclaim_args = [
+            "--raw",
+            "XAUTOCLAIM",
+            safe_stream,
+            safe_group,
+            consumer,
+            str(safe_min_idle_ms),
+            "0-0",
+            "COUNT",
+            str(safe_count),
+        ]
+        reclaim_proc = redis_cli(reclaim_args, timeout=safe_timeout)
+        raw_output["xautoclaim"] = _compact_output(reclaim_proc.stdout, 500)
+        if reclaim_proc.returncode != 0:
+            return degraded(reclaim_proc.stdout.strip() or "xautoclaim_failed", "redis_command_error")
+
+        parsed = parse_xautoclaim_output(reclaim_proc.stdout)
+        events = parsed.get("events") or []
+        if not events:
+            return {
+                "status": "noop",
+                "error_code": "no_pending_events",
+                "action": "claim_stale_once",
+                "node_id": safe_node_id,
+                "stream": safe_stream,
+                "group": safe_group,
+                "consumer": consumer,
+                "events": [],
+                "command_count": 0,
+                "next_start_id": str(parsed.get("next_start_id") or "0-0"),
+                "deleted_ids": parsed.get("deleted_ids") or [],
+                "raw_output": raw_output,
+            }
+
+        return {
+            "status": "ok",
+            "error_code": "ok",
+            "action": "claim_stale_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": safe_group,
+            "consumer": consumer,
+            "events": events,
+            "command_count": len(events),
+            "next_start_id": str(parsed.get("next_start_id") or "0-0"),
+            "deleted_ids": parsed.get("deleted_ids") or [],
+            "raw_output": raw_output,
+        }
+
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return degraded(str(exc), "redis_unavailable")
+
+
 def node_command_ack_once(
     node_id: str,
     command_stream_id: str,
@@ -753,6 +919,8 @@ def node_command_work_once(
     event_stream: str = "a9:events",
     block_ms: int = 1000,
     timeout: int = 3,
+    recover_pending: bool = False,
+    min_idle_ms: int = 30000,
 ) -> dict[str, Any]:
     try:
         safe_node_id = _safe_node_id(node_id)
@@ -761,6 +929,8 @@ def node_command_work_once(
         safe_event_stream = event_stream.strip()
         safe_block_ms = int(block_ms)
         safe_timeout = max(1, int(timeout))
+        safe_recover_pending = bool(recover_pending)
+        safe_min_idle_ms = int(min_idle_ms)
     except (TypeError, ValueError):
         return {
             "status": "degraded",
@@ -775,6 +945,8 @@ def node_command_work_once(
             "command_action": "",
             "result_event_id": "",
             "acked_ids": [],
+            "claim_source": "new",
+            "recovered_pending": False,
             "raw_output": {},
             "reason": "parameters_must_be_valid_types",
         }
@@ -793,6 +965,8 @@ def node_command_work_once(
             "command_action": "",
             "result_event_id": "",
             "acked_ids": [],
+            "claim_source": "new",
+            "recovered_pending": False,
             "raw_output": {},
             "reason": "group_required",
         }
@@ -810,6 +984,8 @@ def node_command_work_once(
             "command_action": "",
             "result_event_id": "",
             "acked_ids": [],
+            "claim_source": "new",
+            "recovered_pending": False,
             "raw_output": {},
             "reason": "stream_required",
         }
@@ -827,6 +1003,8 @@ def node_command_work_once(
             "command_action": "",
             "result_event_id": "",
             "acked_ids": [],
+            "claim_source": "new",
+            "recovered_pending": False,
             "raw_output": {},
             "reason": "event_stream_required",
         }
@@ -844,8 +1022,29 @@ def node_command_work_once(
             "command_action": "",
             "result_event_id": "",
             "acked_ids": [],
+            "claim_source": "new",
+            "recovered_pending": False,
             "raw_output": {},
             "reason": "block_ms_must_be_non_negative",
+        }
+    if safe_min_idle_ms < 0:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "work_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "event_stream": safe_event_stream,
+            "group": safe_group,
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_event_id": "",
+            "acked_ids": [],
+            "claim_source": "new",
+            "recovered_pending": False,
+            "raw_output": {},
+            "reason": "min_idle_ms_must_be_non_negative",
         }
 
     base_result = {
@@ -861,6 +1060,8 @@ def node_command_work_once(
         "command_action": "",
         "result_event_id": "",
         "acked_ids": [],
+        "claim_source": "new",
+        "recovered_pending": False,
         "raw_output": {},
     }
 
@@ -875,6 +1076,7 @@ def node_command_work_once(
             timeout=safe_timeout,
         )
         base_result["raw_output"]["claim"] = json.dumps(claim_result.get("raw_output", {}), ensure_ascii=False, separators=(",", ":"))
+        claim_source = "new"
 
         if claim_result.get("status") == "degraded":
             return {
@@ -884,12 +1086,40 @@ def node_command_work_once(
                 "reason": str(claim_result.get("reason") or claim_result.get("error_code") or "claim_failed"),
             }
         if claim_result.get("status") == "noop":
-            return {
-                **base_result,
-                "status": "noop",
-                "error_code": "no_events",
-                "reason": str(claim_result.get("reason") or "no_events"),
-            }
+            if not safe_recover_pending:
+                return {
+                    **base_result,
+                    "status": "noop",
+                    "error_code": "no_events",
+                    "reason": str(claim_result.get("reason") or "no_events"),
+                }
+            stale_claim = node_command_claim_stale_once(
+                safe_node_id,
+                count=1,
+                min_idle_ms=safe_min_idle_ms,
+                group=safe_group,
+                stream=safe_stream,
+                timeout=safe_timeout,
+            )
+            base_result["raw_output"]["claim_stale"] = json.dumps(stale_claim.get("raw_output", {}), ensure_ascii=False, separators=(",", ":"))
+            if stale_claim.get("status") == "degraded":
+                return {
+                    **base_result,
+                    "status": "degraded",
+                    "error_code": str(stale_claim.get("error_code") or "claim_stale_failed"),
+                    "reason": str(stale_claim.get("reason") or stale_claim.get("error_code") or "claim_stale_failed"),
+                }
+            if stale_claim.get("status") == "noop":
+                return {
+                    **base_result,
+                    "status": "noop",
+                    "error_code": "no_events",
+                    "reason": str(stale_claim.get("reason") or "no_new_or_pending_events"),
+                }
+            claim_result = stale_claim
+            claim_source = "pending"
+            base_result["claim_source"] = "pending"
+            base_result["recovered_pending"] = True
         if claim_result.get("status") != "ok":
             return {
                 **base_result,
@@ -915,6 +1145,8 @@ def node_command_work_once(
         base_result["claimed_id"] = claimed_id
         base_result["command_id"] = command_id
         base_result["command_action"] = command_action
+        base_result["claim_source"] = claim_source
+        base_result["recovered_pending"] = claim_source == "pending"
 
         if command_action != "status":
             result_error_code = "unsupported_command"
@@ -994,6 +1226,8 @@ def node_command_work_once(
             "command_id": command_id,
             "claimed_id": claimed_id,
             "result_event_id": base_result.get("result_event_id", ""),
+            "claim_source": claim_source,
+            "recovered_pending": claim_source == "pending",
         }
 
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -1015,12 +1249,15 @@ def node_command_work_loop(
     timeout: int = 3,
     sleep_seconds: float = 1.0,
     max_iterations: int = 0,
+    recover_pending: bool = True,
+    min_idle_ms: int = 30000,
     emit=None,
 ) -> dict[str, Any]:
     safe_node_id = str(node_id or default_node_id()).strip() or default_node_id()
     safe_sleep = max(0.0, float(sleep_seconds))
     safe_max = max(0, int(max_iterations))
     safe_timeout = max(int(timeout), int(block_ms / 1000) + 2)
+    safe_min_idle_ms = max(0, int(min_idle_ms))
     iterations = 0
     processed = 0
     noop = 0
@@ -1035,6 +1272,8 @@ def node_command_work_loop(
             event_stream=event_stream,
             block_ms=block_ms,
             timeout=safe_timeout,
+            recover_pending=recover_pending,
+            min_idle_ms=safe_min_idle_ms,
         )
         last_result = result
         if result.get("status") == "ok":
@@ -1057,6 +1296,8 @@ def node_command_work_loop(
         "event_stream": event_stream,
         "group": group,
         "timeout": safe_timeout,
+        "recover_pending": bool(recover_pending),
+        "min_idle_ms": safe_min_idle_ms,
         "iterations": iterations,
         "processed": processed,
         "noop": noop,
@@ -1307,6 +1548,8 @@ def command_work_once(args: argparse.Namespace) -> int:
         event_stream=args.event_stream,
         block_ms=args.block_ms,
         timeout=args.timeout_cmd_work,
+        recover_pending=args.recover_pending,
+        min_idle_ms=args.min_idle_ms,
     )
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
@@ -1327,6 +1570,8 @@ def command_work_loop(args: argparse.Namespace) -> int:
         timeout=args.timeout_cmd_work_loop,
         sleep_seconds=args.sleep_seconds,
         max_iterations=args.max_iterations,
+        recover_pending=not args.no_recover_pending,
+        min_idle_ms=args.min_idle_ms,
         emit=emit,
     )
     print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")), flush=True)
@@ -1387,6 +1632,8 @@ def main(argv: list[str]) -> int:
     work_once_parser.add_argument("--event-stream", default="a9:events")
     work_once_parser.add_argument("--block-ms", type=int, default=1000)
     work_once_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_work")
+    work_once_parser.add_argument("--recover-pending", action="store_true")
+    work_once_parser.add_argument("--min-idle-ms", type=int, default=30000)
 
     work_loop_parser = sub.add_parser("command-work-loop")
     work_loop_parser.add_argument("--group", default="a9-worker")
@@ -1396,6 +1643,8 @@ def main(argv: list[str]) -> int:
     work_loop_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_work_loop")
     work_loop_parser.add_argument("--sleep-seconds", type=float, default=1.0)
     work_loop_parser.add_argument("--max-iterations", type=int, default=0)
+    work_loop_parser.add_argument("--no-recover-pending", action="store_true")
+    work_loop_parser.add_argument("--min-idle-ms", type=int, default=30000)
 
     result_read_once_parser = sub.add_parser("command-result-read-once")
     result_read_once_parser.add_argument("result_event_id")
