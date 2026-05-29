@@ -476,6 +476,230 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(payload["node_id"], "node-cli-01")
         self.assertEqual(payload["command_stream_id"], "1740000200-0")
 
+    def test_node_command_work_once_supported_status_executes_and_acks(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:2] == ["XGROUP", "CREATE"]:
+                return FakeProc("OK")
+            if args[:2] == ["--raw", "XREADGROUP"]:
+                return FakeProc(
+                    "\n".join(
+                        [
+                            "1740000200-0",
+                            "command_id",
+                            "cmd-status-01",
+                            "action",
+                            "status",
+                        ]
+                    )
+                )
+            if args[:1] == ["XADD"]:
+                return FakeProc("1740000300-0")
+            if args[:1] == ["XACK"]:
+                return FakeProc("1")
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_work_once("node-01", stream="a9:tasks", event_stream="a9:events", block_ms=100, timeout=3)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["error_code"], "ok")
+        self.assertEqual(result["claimed_id"], "1740000200-0")
+        self.assertEqual(result["command_id"], "cmd-status-01")
+        self.assertEqual(result["command_action"], "status")
+        self.assertEqual(result["result_event_id"], "1740000300-0")
+        self.assertEqual(result["acked_ids"], ["1740000200-0"])
+        self.assertEqual(calls[0], ["XGROUP", "CREATE", "a9:tasks", "a9-worker", "0-0", "MKSTREAM"])
+        self.assertEqual(calls[1], ["--raw", "XREADGROUP", "GROUP", "a9-worker", "node-01-consumer", "COUNT", "1", "BLOCK", "100", "STREAMS", "a9:tasks", ">"])
+        self.assertEqual(calls[2], ["XADD", "a9:events", "*", "kind", "node_command_result", "action", "work_once", "node_id", "node-01", "claimed_id", "1740000200-0", "command_id", "cmd-status-01", "command_action", "status", "result_status", "ok", "error_code", "ok", "result", '{"status":"ok","command_id":"cmd-status-01","command_action":"status","node_id":"node-01","result":"status_ok"}'])
+        self.assertEqual(calls[3], ["XACK", "a9:tasks", "a9-worker", "1740000200-0"])
+
+    def test_node_command_work_once_unsupported_action_writes_result_and_acks(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:2] == ["XGROUP", "CREATE"]:
+                return FakeProc("OK")
+            if args[:2] == ["--raw", "XREADGROUP"]:
+                return FakeProc(
+                    "\n".join(
+                        [
+                            "1740000200-0",
+                            "command_id",
+                            "cmd-unsupported",
+                            "action",
+                            "reboot",
+                        ]
+                    )
+                )
+            if args[:1] == ["XADD"]:
+                return FakeProc("1740000300-1")
+            if args[:1] == ["XACK"]:
+                return FakeProc("1")
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_work_once("node-01", stream="a9:tasks", event_stream="a9:events", block_ms=100, timeout=3)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["error_code"], "unsupported_command")
+        self.assertEqual(result["command_action"], "reboot")
+        self.assertEqual(result["command_id"], "cmd-unsupported")
+        self.assertEqual(result["acked_ids"], ["1740000200-0"])
+        self.assertEqual(result["result_event_id"], "1740000300-1")
+        self.assertEqual(result["raw_output"]["xadd"], "1740000300-1")
+        self.assertEqual(calls[2][0], "XADD")
+        self.assertEqual(calls[3], ["XACK", "a9:tasks", "a9-worker", "1740000200-0"])
+
+    def test_node_command_work_once_noop_when_no_events(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:2] == ["XGROUP", "CREATE"]:
+                return FakeProc("OK")
+            if args[:2] == ["--raw", "XREADGROUP"]:
+                return FakeProc("(nil)")
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_work_once("node-01", block_ms=100, timeout=3)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "noop")
+        self.assertEqual(result["error_code"], "no_events")
+        self.assertEqual(result["command_id"], "")
+        self.assertEqual(result["result_event_id"], "")
+        self.assertEqual(len(calls), 2)
+
+    def test_node_command_work_once_degraded_on_xadd_failure(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:2] == ["XGROUP", "CREATE"]:
+                return FakeProc("OK")
+            if args[:2] == ["--raw", "XREADGROUP"]:
+                return FakeProc(
+                    "\n".join(
+                        [
+                            "1740000200-0",
+                            "command_id",
+                            "cmd-status-01",
+                            "action",
+                            "status",
+                        ]
+                    )
+                )
+            if args[:1] == ["XADD"]:
+                return FakeProc("ERR command", 1)
+            if args[:1] == ["XACK"]:
+                return FakeProc("1")
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_work_once("node-01", block_ms=100, timeout=3)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "xadd_failed")
+        self.assertEqual(result["acked_ids"], [])
+        self.assertEqual(result["result_event_id"], "")
+        self.assertEqual(calls[-1][0], "XADD")
+        self.assertEqual(calls[-1][1], "a9:events")
+
+    def test_command_work_once_cli_prints_payload(self):
+        mod = load_module()
+        captured = io.StringIO()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            if args[:2] == ["XGROUP", "CREATE"]:
+                return FakeProc("OK")
+            if args[:2] == ["--raw", "XREADGROUP"]:
+                return FakeProc("(nil)")
+            if args[:1] == ["XADD"]:
+                return FakeProc("1740000300-0")
+            if args[:1] == ["XACK"]:
+                return FakeProc("1")
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            with contextlib.redirect_stdout(captured):
+                status = mod.main(
+                    [
+                        "--node-id",
+                        "node-cli-02",
+                        "command-work-once",
+                        "--group",
+                        "workers",
+                        "--stream",
+                        "a9:test-tasks",
+                        "--event-stream",
+                        "a9:test-events",
+                        "--block-ms",
+                        "200",
+                    ]
+                )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status, 0)
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(payload["status"], "noop")
+        self.assertEqual(payload["action"], "work_once")
+        self.assertEqual(payload["stream"], "a9:test-tasks")
+        self.assertEqual(payload["event_stream"], "a9:test-events")
+        self.assertEqual(payload["node_id"], "node-cli-02")
+        self.assertEqual(payload["error_code"], "no_events")
+
 
 if __name__ == "__main__":
     unittest.main()

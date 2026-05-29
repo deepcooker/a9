@@ -652,6 +652,263 @@ def node_command_ack_once(
         return degraded(str(exc), "redis_unavailable")
 
 
+def node_command_work_once(
+    node_id: str,
+    group: str = "a9-worker",
+    stream: str = "a9:tasks",
+    event_stream: str = "a9:events",
+    block_ms: int = 1000,
+    timeout: int = 3,
+) -> dict[str, Any]:
+    try:
+        safe_node_id = _safe_node_id(node_id)
+        safe_group = group.strip()
+        safe_stream = stream.strip()
+        safe_event_stream = event_stream.strip()
+        safe_block_ms = int(block_ms)
+        safe_timeout = max(1, int(timeout))
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "work_once",
+            "node_id": str(node_id or ""),
+            "stream": str(stream or ""),
+            "event_stream": str(event_stream or ""),
+            "group": str(group or ""),
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_event_id": "",
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "parameters_must_be_valid_types",
+        }
+
+    if not safe_group:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "work_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "event_stream": safe_event_stream,
+            "group": "",
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_event_id": "",
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "group_required",
+        }
+    if not safe_stream:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "work_once",
+            "node_id": safe_node_id,
+            "stream": "",
+            "event_stream": safe_event_stream,
+            "group": safe_group,
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_event_id": "",
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "stream_required",
+        }
+    if not safe_event_stream:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "work_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "event_stream": "",
+            "group": safe_group,
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_event_id": "",
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "event_stream_required",
+        }
+    if safe_block_ms < 0:
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "work_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "event_stream": safe_event_stream,
+            "group": safe_group,
+            "claimed_id": "",
+            "command_id": "",
+            "command_action": "",
+            "result_event_id": "",
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "block_ms_must_be_non_negative",
+        }
+
+    base_result = {
+        "status": "",
+        "error_code": "ok",
+        "action": "work_once",
+        "node_id": safe_node_id,
+        "stream": safe_stream,
+        "event_stream": safe_event_stream,
+        "group": safe_group,
+        "claimed_id": "",
+        "command_id": "",
+        "command_action": "",
+        "result_event_id": "",
+        "acked_ids": [],
+        "raw_output": {},
+    }
+
+    try:
+        claim_result = node_command_claim_once(
+            safe_node_id,
+            count=1,
+            block_ms=safe_block_ms,
+            group=safe_group,
+            stream=safe_stream,
+            ack=False,
+            timeout=safe_timeout,
+        )
+        base_result["raw_output"]["claim"] = json.dumps(claim_result.get("raw_output", {}), ensure_ascii=False, separators=(",", ":"))
+
+        if claim_result.get("status") == "degraded":
+            return {
+                **base_result,
+                "status": "degraded",
+                "error_code": str(claim_result.get("error_code") or "claim_failed"),
+                "reason": str(claim_result.get("reason") or claim_result.get("error_code") or "claim_failed"),
+            }
+        if claim_result.get("status") == "noop":
+            return {
+                **base_result,
+                "status": "noop",
+                "error_code": "no_events",
+                "reason": str(claim_result.get("reason") or "no_events"),
+            }
+        if claim_result.get("status") != "ok":
+            return {
+                **base_result,
+                "status": "degraded",
+                "error_code": str(claim_result.get("error_code") or "claim_failed"),
+                "reason": str(claim_result.get("reason") or "claim_failed"),
+            }
+
+        claimed_events = claim_result.get("events") or []
+        if not claimed_events:
+            return {
+                **base_result,
+                "status": "noop",
+                "error_code": "no_events",
+                "reason": "no_command_events_after_ok_claim",
+            }
+
+        command_event = claimed_events[0]
+        claimed_id = str(command_event.get("id") or "")
+        fields = command_event.get("fields") or {}
+        command_id = str(fields.get("command_id") or "")
+        command_action = str(fields.get("action") or "")
+        base_result["claimed_id"] = claimed_id
+        base_result["command_id"] = command_id
+        base_result["command_action"] = command_action
+
+        if command_action != "status":
+            result_error_code = "unsupported_command"
+            result_payload = {
+                "status": "unsupported",
+                "command_id": command_id,
+                "command_action": command_action,
+                "node_id": safe_node_id,
+                "supported_actions": ["status"],
+            }
+        else:
+            result_error_code = "ok"
+            result_payload = {
+                "status": "ok",
+                "command_id": command_id,
+                "command_action": "status",
+                "node_id": safe_node_id,
+                "result": "status_ok",
+            }
+
+        xadd_fields = [
+            "kind",
+            "node_command_result",
+            "action",
+            "work_once",
+            "node_id",
+            safe_node_id,
+            "claimed_id",
+            claimed_id,
+            "command_id",
+            command_id,
+            "command_action",
+            command_action,
+            "result_status",
+            result_payload.get("status", "unknown"),
+            "error_code",
+            result_error_code,
+            "result",
+            json.dumps(result_payload, ensure_ascii=False, separators=(",", ":")),
+        ]
+        xadd_proc = redis_cli(["XADD", safe_event_stream, "*", *xadd_fields], timeout=safe_timeout)
+        xadd_event_id = (xadd_proc.stdout or "").strip()
+        base_result["raw_output"]["xadd"] = _compact_output(xadd_proc.stdout, 500)
+        if xadd_proc.returncode != 0 or not xadd_event_id:
+            return {
+                **base_result,
+                "status": "degraded",
+                "error_code": "xadd_failed",
+                "reason": (xadd_proc.stdout or "").strip() or "xadd_failed",
+            }
+        base_result["result_event_id"] = xadd_event_id
+
+        ack_result = node_command_ack_once(
+            safe_node_id,
+            command_stream_id=claimed_id,
+            group=safe_group,
+            stream=safe_stream,
+            timeout=safe_timeout,
+        )
+        base_result["raw_output"]["ack"] = json.dumps(ack_result.get("raw_output", {}), ensure_ascii=False, separators=(",", ":"))
+        if ack_result.get("status") != "ok":
+            return {
+                **base_result,
+                "status": "degraded",
+                "error_code": str(ack_result.get("error_code") or "ack_failed"),
+                "reason": str(ack_result.get("reason") or ack_result.get("error_code") or "ack_failed"),
+            }
+
+        return {
+            **base_result,
+            "status": "ok",
+            "error_code": result_error_code,
+            "acked_ids": ack_result.get("acked_ids", []),
+            "command_action": command_action or "unsupported",
+            "command_id": command_id,
+            "claimed_id": claimed_id,
+            "result_event_id": base_result.get("result_event_id", ""),
+        }
+
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            **base_result,
+            "status": "degraded",
+            "error_code": "redis_unavailable",
+            "reason": str(exc),
+        }
+
+
 def http_json(method: str, url: str, payload: dict[str, Any] | None = None, timeout: int = 10) -> dict[str, Any]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, method=method, headers={"Content-Type": "application/json"})
@@ -754,6 +1011,20 @@ def command_ack_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_work_once(args: argparse.Namespace) -> int:
+    node_id = args.node_id or default_node_id()
+    payload = node_command_work_once(
+        node_id=node_id,
+        group=args.group,
+        stream=args.stream,
+        event_stream=args.event_stream,
+        block_ms=args.block_ms,
+        timeout=args.timeout_cmd_work,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 local node discovery/register helper")
     parser.add_argument("--controller-url", default=os.environ.get("A9_CONTROLLER_URL", "http://127.0.0.1:8787"))
@@ -792,6 +1063,13 @@ def main(argv: list[str]) -> int:
     ack_once_parser.add_argument("--stream", default="a9:tasks")
     ack_once_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_ack")
 
+    work_once_parser = sub.add_parser("command-work-once")
+    work_once_parser.add_argument("--group", default="a9-worker")
+    work_once_parser.add_argument("--stream", default="a9:tasks")
+    work_once_parser.add_argument("--event-stream", default="a9:events")
+    work_once_parser.add_argument("--block-ms", type=int, default=1000)
+    work_once_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_work")
+
     args = parser.parse_args(argv)
     if args.command == "discover":
         return discover(args)
@@ -807,6 +1085,8 @@ def main(argv: list[str]) -> int:
         return command_ack_plan(args)
     if args.command == "command-ack-once":
         return command_ack_once(args)
+    if args.command == "command-work-once":
+        return command_work_once(args)
     raise AssertionError(args.command)
 
 
