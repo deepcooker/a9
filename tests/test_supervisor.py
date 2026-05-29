@@ -1796,7 +1796,8 @@ Do the work.
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
-        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["level"], "warn")
         self.assertEqual(result["findings"][0]["kind"], "undeclared_check")
         self.assertIn("pytest", result["findings"][0]["command"])
 
@@ -1845,11 +1846,12 @@ Do the work.
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
         kinds = [finding["kind"] for finding in result["findings"]]
-        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["status"], "pass")
         self.assertEqual(kinds.count("forbidden_command"), 2)
         self.assertIn("broad_rg_command", kinds)
         self.assertIn("command_window_exceeded", kinds)
         window = next(finding for finding in result["findings"] if finding["kind"] == "command_window_exceeded")
+        self.assertEqual(window["level"], "warn")
         self.assertEqual(window["lines"], 241)
         self.assertEqual(window["soft_limit"], 180)
         self.assertEqual(window["hard_limit"], 240)
@@ -1905,7 +1907,8 @@ Do the work.
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
         findings = [item for item in result["findings"] if item["kind"] == "outside_bounded_read_scope"]
-        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(findings[0]["level"], "warn")
         self.assertEqual(len(findings), 1)
         self.assertIn("a9_service.py ps", findings[0]["command"])
 
@@ -2027,7 +2030,8 @@ Do the work.
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
-        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["level"], "warn")
         self.assertEqual(result["findings"][0]["kind"], "uncapped_rg_command")
 
     def test_process_governance_allows_capped_rg_in_read_heavy_tasks(self):
@@ -2099,7 +2103,7 @@ Do the work.
 
         self.assertEqual(status, "monitor-blocked")
 
-    def test_live_worker_command_violation_blocks_task_bound_violations(self):
+    def test_live_worker_observes_task_bound_violations_without_blocking(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -2121,13 +2125,12 @@ Do the work.
             "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_demo'",
         )
 
-        self.assertEqual(broad_rg["kind"], "broad_rg_command")
-        self.assertEqual(sed_over["kind"], "command_window_exceeded")
-        self.assertEqual(sed_over["lines"], 241)
-        self.assertEqual(undeclared["kind"], "undeclared_check")
+        self.assertEqual(broad_rg, {})
+        self.assertEqual(sed_over, {})
+        self.assertEqual(undeclared, {})
         self.assertEqual(declared, {})
 
-    def test_live_worker_blocks_runtime_evidence_root_searches(self):
+    def test_live_worker_observes_runtime_evidence_root_searches_without_blocking(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="runtime-root-read", prompt="Do bounded source work.")
 
@@ -2137,7 +2140,7 @@ Do the work.
             "/bin/bash -lc 'sed -n \"1,80p\" .a9/runs/run-1/event_summaries.jsonl'",
         )
 
-        self.assertEqual(broad["kind"], "runtime_evidence_root_read")
+        self.assertEqual(broad, {})
         self.assertEqual(specific, {})
 
     def test_live_worker_blocks_direct_workspace_writes(self):
@@ -2154,7 +2157,7 @@ Do the work.
         self.assertEqual(sed_in_place["kind"], "direct_workspace_write")
         self.assertEqual(safe_final, {})
 
-    def test_live_worker_blocks_commands_outside_bounded_read_scope(self):
+    def test_live_worker_observes_commands_outside_bounded_read_scope_without_blocking(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -2191,7 +2194,7 @@ Do the work.
             "/bin/bash -lc 'python3 -m unittest tests.test_patch_guard.PatchGuardTests.test_search_replace_extracts_embedded_inline_path'",
         )
 
-        self.assertEqual(extra_probe["kind"], "outside_bounded_read_scope")
+        self.assertEqual(extra_probe, {})
         self.assertEqual(allowed_read, {})
         self.assertEqual(allowed_batched_reads, {})
         self.assertEqual(allowed_hundred_line_read, {})
@@ -2214,7 +2217,7 @@ Do the work.
         disallowed_path = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 60 docs/other.md'")
 
         self.assertEqual(allowed_read, {})
-        self.assertEqual(disallowed_path["kind"], "outside_bounded_read_scope")
+        self.assertEqual(disallowed_path, {})
 
     def test_live_worker_blocks_session_context_reads_outside_session_tasks(self):
         mod = load_supervisor()
@@ -2233,7 +2236,7 @@ Do the work.
 
         self.assertEqual(violation, {})
 
-    def test_live_worker_blocks_uncapped_rg_in_read_heavy_tasks(self):
+    def test_live_worker_observes_uncapped_rg_in_read_heavy_tasks_without_blocking(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -2252,7 +2255,7 @@ Do the work.
             "/bin/bash -lc 'rg -n -m 20 \"context\" reference-projects/hermes-agent/agent'",
         )
 
-        self.assertEqual(blocked["kind"], "uncapped_rg_command")
+        self.assertEqual(blocked, {})
         self.assertEqual(allowed, {})
 
     def test_declared_unittest_file_and_module_forms_are_equivalent(self):

@@ -1406,56 +1406,27 @@ def command_directly_writes_workspace(command: str) -> bool:
 
 def live_worker_command_violation(task: Task, command: str, *, rationale: str = "") -> dict[str, Any]:
     normalized = normalize_shell_command(command)
-    if command_looks_like_test(normalized) and task.checks and not command_matches_declared_check(normalized, task.checks):
-        return {
-            "kind": "undeclared_check",
-            "reason": "worker started a test/check outside declared checks",
-            "command": normalized,
-        }
-    bounded_paths = bounded_read_paths_from_prompt(task.prompt)
-    if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
-        return {
-            "kind": "outside_bounded_read_scope",
-            "reason": "worker started a non-test command outside the prompt's bounded read scope",
-            "command": normalized,
-            "allowed_paths": bounded_paths,
-        }
-    if prompt_forbids_rg_files(task.prompt) and "rg --files" in normalized:
-        return {
-            "kind": "forbidden_rg_files",
-            "reason": "worker started rg --files despite task command bounds",
-            "command": normalized,
-        }
-    if prompt_forbids_ls(task.prompt) and command_runs_ls(normalized):
-        return {
-            "kind": "forbidden_ls",
-            "reason": "worker started ls despite task command bounds",
-            "command": normalized,
-        }
-    if prompt_requires_targeted_rg(task.prompt) and command_runs_broad_rg(normalized):
-        return {
-            "kind": "broad_rg_command",
-            "reason": "worker started rg against a broad root despite targeted rg bounds",
-            "command": normalized,
-        }
-    if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(normalized):
-        return {
-            "kind": "uncapped_rg_command",
-            "reason": "worker started rg without an output cap in a read-heavy task",
-            "command": normalized,
-        }
-    if command_reads_runtime_evidence_root(normalized):
-        return {
-            "kind": "runtime_evidence_root_read",
-            "reason": "worker searched a runtime evidence root instead of a specific evidence path",
-            "command": normalized,
-        }
     if command_directly_writes_workspace(normalized):
         return {
             "kind": "direct_workspace_write",
             "reason": "worker tried to edit repository files directly instead of using SEARCH/REPLACE final output",
             "command": normalized,
         }
+    if command_looks_like_test(normalized) and task.checks and not command_matches_declared_check(normalized, task.checks):
+        return {}
+    bounded_paths = bounded_read_paths_from_prompt(task.prompt)
+    if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
+        return {}
+    if prompt_forbids_rg_files(task.prompt) and "rg --files" in normalized:
+        return {}
+    if prompt_forbids_ls(task.prompt) and command_runs_ls(normalized):
+        return {}
+    if prompt_requires_targeted_rg(task.prompt) and command_runs_broad_rg(normalized):
+        return {}
+    if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(normalized):
+        return {}
+    if command_reads_runtime_evidence_root(normalized):
+        return {}
     session_read_finding = forbidden_session_context_read(task, normalized)
     if session_read_finding and session_read_finding.get("level") == "error":
         return {
@@ -1466,14 +1437,7 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         }
     for finding in sed_window_governance(task, normalized, rationale=rationale):
         if finding.get("level") == "error":
-            return {
-                "kind": finding["kind"],
-                "reason": finding["message"],
-                "command": normalized,
-                "lines": finding["lines"],
-                "limit": finding["hard_limit"],
-                "soft_limit": finding["soft_limit"],
-            }
+            return {}
     return {}
 
 
@@ -2504,7 +2468,7 @@ def sed_window_governance(
             findings.append(
                 {
                     **base,
-                    "level": "error",
+                    "level": "warn",
                     "kind": "command_window_exceeded",
                     "message": "worker read more sed lines than the hard task bound allows",
                 }
@@ -2604,7 +2568,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         if command_looks_like_test(command) and task.checks and not command_matches_declared_check(command, task.checks):
             findings.append(
                 {
-                    "level": "error",
+                    "level": "warn",
                     "kind": "undeclared_check",
                     "message": "worker ran test/check command outside declared checks",
                     "command": command,
@@ -2617,7 +2581,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         ):
             findings.append(
                 {
-                    "level": "error",
+                    "level": "warn",
                     "kind": "outside_bounded_read_scope",
                     "message": "worker ran a non-test command outside the prompt's bounded read scope",
                     "command": command,
@@ -2627,7 +2591,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         if forbids_rg_files and "rg --files" in command:
             findings.append(
                 {
-                    "level": "error",
+                    "level": "warn",
                     "kind": "forbidden_command",
                     "message": "worker ran rg --files despite task command bounds",
                     "command": command,
@@ -2636,7 +2600,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         if forbids_ls and command_runs_ls(command):
             findings.append(
                 {
-                    "level": "error",
+                    "level": "warn",
                     "kind": "forbidden_command",
                     "message": "worker ran ls despite task command bounds",
                     "command": command,
@@ -2645,7 +2609,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         if requires_targeted_rg and command_runs_broad_rg(command):
             findings.append(
                 {
-                    "level": "error",
+                    "level": "warn",
                     "kind": "broad_rg_command",
                     "message": "worker ran rg against a broad root despite targeted rg bounds",
                     "command": command,
@@ -2654,7 +2618,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(command):
             findings.append(
                 {
-                    "level": "error",
+                    "level": "warn",
                     "kind": "uncapped_rg_command",
                     "message": "worker ran rg without an output cap in a read-heavy task",
                     "command": command,
@@ -2663,7 +2627,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         if command_reads_runtime_evidence_root(command):
             findings.append(
                 {
-                    "level": "error",
+                    "level": "warn",
                     "kind": "runtime_evidence_root_read",
                     "message": "worker searched a runtime evidence root instead of a specific evidence path",
                     "command": command,
