@@ -259,6 +259,7 @@ def build_evaluator_contract(
     text: str,
     experts: list[dict[str, Any]],
     gates: dict[str, Any],
+    role_review: dict[str, Any],
     recommended_action: str,
 ) -> dict[str, Any]:
     """Stable input/output shape for future LLM or multi-model evaluators."""
@@ -272,6 +273,7 @@ def build_evaluator_contract(
                 "status": "complete",
                 "experts": [item.get("name", "") for item in experts],
                 "gates": gates,
+                "role_review": role_review,
                 "recommended_action": recommended_action,
             },
             "llm_evaluator": {
@@ -302,7 +304,7 @@ def build_evaluator_contract(
             "completion_requires_evidence: pass/complete claims need current-state proof, not intent",
         ],
         "output_contract": {
-            "required_fields": ["recommended_action", "failed_experts", "findings", "evidence_refs"],
+            "required_fields": ["recommended_action", "failed_experts", "failed_roles", "findings", "evidence_refs"],
             "allowed_actions": [
                 "continue",
                 "monitor_review",
@@ -715,6 +717,77 @@ def merge_experts(experts: list[dict[str, Any]]) -> tuple[float, str, list[dict[
     return score, action, findings
 
 
+ROLE_REVIEW_GROUPS = [
+    {
+        "name": "product_mainline_role",
+        "label": "Product/Mainline",
+        "experts": ["why_expert", "role_boundary_expert", "product_mainline_expert", "product_pressure_expert"],
+    },
+    {
+        "name": "architecture_role",
+        "label": "Architecture",
+        "experts": ["scope_dependency_expert", "system_requirement_expert", "tradeoff_architecture_expert"],
+    },
+    {
+        "name": "test_data_role",
+        "label": "Test/Data",
+        "experts": ["test_verifiability_expert", "quality_expert", "data_model_expert"],
+    },
+    {
+        "name": "reference_copy_role",
+        "label": "Reference/Copy",
+        "experts": ["external_learning_expert", "business_boundary_expert"],
+    },
+    {
+        "name": "runtime_governance_role",
+        "label": "Runtime Governance",
+        "experts": [
+            "execution_governance_expert",
+            "exception_governance_expert",
+            "nfr_security_expert",
+            "performance_depth_expert",
+        ],
+    },
+]
+
+
+def build_role_review(experts: list[dict[str, Any]]) -> dict[str, Any]:
+    by_name = {str(item.get("name")): item for item in experts}
+    roles: list[dict[str, Any]] = []
+    for group in ROLE_REVIEW_GROUPS:
+        group_experts = [by_name[name] for name in group["experts"] if name in by_name]
+        score, action, findings = merge_experts(group_experts)
+        failed_experts = [
+            str(item.get("name"))
+            for item in group_experts
+            if float(item.get("score", 0.0)) >= 0.35 or action_rank(str(item.get("recommended_action", ""))) > 0
+        ]
+        roles.append(
+            {
+                "name": group["name"],
+                "label": group["label"],
+                "status": "fail" if failed_experts else "pass",
+                "score": score,
+                "recommended_action": action,
+                "experts": [str(item.get("name")) for item in group_experts],
+                "failed_experts": failed_experts,
+                "finding_count": len(findings),
+            }
+        )
+    failed_roles = [role["name"] for role in roles if role["status"] == "fail"]
+    action = "continue"
+    for role in roles:
+        if action_rank(str(role.get("recommended_action"))) > action_rank(action):
+            action = str(role.get("recommended_action"))
+    return {
+        "schema": "a9.role_review.v1",
+        "status": "fail" if failed_roles else "pass",
+        "recommended_action": action,
+        "failed_roles": failed_roles,
+        "roles": roles,
+    }
+
+
 def gate_state(experts: list[dict[str, Any]]) -> dict[str, Any]:
     by_name = {str(item.get("name")): item for item in experts}
 
@@ -775,6 +848,7 @@ def score_run(run_dir: Path) -> dict[str, Any]:
     score, recommended_action, findings = merge_experts(experts)
     gates = gate_state(experts)
     recommended_action = apply_gate_action(recommended_action, gates)
+    role_review = build_role_review(experts)
     eval_contract = build_evaluator_contract(
         run_dir=run_dir,
         summary=summary,
@@ -783,6 +857,7 @@ def score_run(run_dir: Path) -> dict[str, Any]:
         text=text,
         experts=experts,
         gates=gates,
+        role_review=role_review,
         recommended_action=recommended_action,
     )
     eval_contract_path = run_dir / "moe_eval_contract.json"
@@ -797,6 +872,7 @@ def score_run(run_dir: Path) -> dict[str, Any]:
         "eval_contract_path": str(eval_contract_path),
         "layers": eval_contract["layers"],
         "gates": gates,
+        "role_review": role_review,
         "experts": experts,
         "findings": findings,
         "observed": {

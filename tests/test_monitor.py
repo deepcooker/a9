@@ -235,6 +235,11 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(experts["product_mainline_expert"]["recommended_action"], "continue")
         self.assertEqual(experts["product_pressure_expert"]["recommended_action"], "product_rewrite")
         self.assertEqual(score["gates"]["tradeoff_gate"]["status"], "fail")
+        role_review = score["role_review"]
+        roles = {item["name"]: item for item in role_review["roles"]}
+        self.assertEqual(role_review["schema"], "a9.role_review.v1")
+        self.assertEqual(roles["product_mainline_role"]["status"], "fail")
+        self.assertIn("product_mainline_role", role_review["failed_roles"])
 
     def test_external_learning_blocks_copy_task_without_reference_evidence(self):
         mod = load_monitor()
@@ -647,8 +652,11 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(contract["schema"], "a9.moe_eval_contract.v1")
         self.assertEqual(contract["layers"]["rule_monitor"]["status"], "complete")
         self.assertEqual(contract["layers"]["llm_evaluator"]["status"], "not_configured")
+        self.assertEqual(contract["layers"]["rule_monitor"]["role_review"]["schema"], "a9.role_review.v1")
+        self.assertEqual(score["role_review"]["schema"], "a9.role_review.v1")
         self.assertIn("data_first", " ".join(contract["criteria"]))
         self.assertIn("recommended_action", contract["output_contract"]["required_fields"])
+        self.assertIn("failed_roles", contract["output_contract"]["required_fields"])
         self.assertEqual(score["layers"]["llm_evaluator"]["status"], "not_configured")
 
 
