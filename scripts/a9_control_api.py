@@ -1112,11 +1112,61 @@ def command_gate(command: str, *, root: Path = ROOT) -> dict[str, Any]:
     }
 
 
-def guarded_remote_post(command: str, payload: dict[str, Any], action: Any) -> tuple[int, dict[str, Any]]:
-    gate = command_gate(command)
+def infer_remote_audit_node_id(payload: dict[str, Any], result: dict[str, Any] | None = None) -> str:
+    for source in (result or {}, payload):
+        for key in ("node_id", "ssh_target", "target"):
+            value = source.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def build_remote_post_audit_receipt(
+    command: str,
+    endpoint: str,
+    gate: dict[str, Any],
+    *,
+    result: dict[str, Any] | None = None,
+    payload: dict[str, Any] | None = None,
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    receipt = {
+        "request_id": str((payload or {}).get("request_id") or ""),
+        "command": command,
+        "endpoint": endpoint,
+        "gate_status": gate.get("status"),
+        "gate_reason": gate.get("reason"),
+        "allowed": bool(gate.get("allowed")),
+        "result_status": (result or {}).get("status") or ("allowed" if gate.get("allowed") else "blocked"),
+        "action_evidence_path": str((result or {}).get("evidence_path") or ""),
+        "evidence_path": "",
+        "at": utc_now(),
+    }
+    node_id = infer_remote_audit_node_id(payload or {}, result)
+    if node_id:
+        evidence_path = write_node_evidence("remote-post-audit", node_id, receipt, root=root)
+        receipt["evidence_path"] = str(evidence_path)
+    return receipt
+
+
+def guarded_remote_post(
+    command: str,
+    payload: dict[str, Any],
+    action: Any,
+    *,
+    endpoint: str,
+    root: Path = ROOT,
+) -> tuple[int, dict[str, Any]]:
+    gate = command_gate(command, root=root)
     if not gate.get("allowed"):
-        return 403, {"status": "blocked", "gate": gate}
-    return 200, action(payload)
+        audit_receipt = build_remote_post_audit_receipt(command, endpoint, gate, payload=payload, root=root)
+        return 403, {"status": "blocked", "gate": gate, "audit_receipt": audit_receipt}
+
+    result = action(payload)
+    if not isinstance(result, dict):
+        result = {"status": "ok", "result": result}
+    audit_receipt = build_remote_post_audit_receipt(command, endpoint, gate, result=result, payload=payload, root=root)
+    return 200, {**result, "audit_receipt": audit_receipt}
 
 
 def node_status(root: Path = ROOT) -> dict[str, Any]:
@@ -2674,7 +2724,12 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/nodes/register":
                 self.write_json(200, register_node(payload))
             elif self.path == "/api/nodes/probe":
-                status, body = guarded_remote_post("nodes.probe.execute", payload, probe_node)
+                status, body = guarded_remote_post(
+                    "nodes.probe.execute",
+                    payload,
+                    probe_node,
+                    endpoint="/api/nodes/probe",
+                )
                 self.write_json(status, body)
             elif self.path == "/api/nodes/bootstrap-plan":
                 self.write_json(200, bootstrap_plan_node(payload))
@@ -2685,7 +2740,12 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif self.path == "/api/nodes/tmux-ensure":
                 self.write_json(200, tmux_ensure_node(payload))
             elif self.path == "/api/nodes/tmux-status":
-                status, body = guarded_remote_post("nodes.tmux.status", payload, tmux_status_node)
+                status, body = guarded_remote_post(
+                    "nodes.tmux.status",
+                    payload,
+                    tmux_status_node,
+                    endpoint="/api/nodes/tmux-status",
+                )
                 self.write_json(status, body)
             elif self.path == "/api/nodes/heartbeat-tmux-start":
                 self.write_json(200, heartbeat_tmux_start_node(payload))

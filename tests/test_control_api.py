@@ -2688,7 +2688,7 @@ class ControlApiTests(unittest.TestCase):
                 mod.remote = lambda: FakeRemote
                 mod.probe_node = lambda payload: original_probe_node(payload, root=root)
                 mod.node_status = lambda: original_node_status(root)
-                mod.command_gate = lambda command: {
+                mod.command_gate = lambda command, *, root=None: {
                     "status": "allowed",
                     "allowed": True,
                     "command": command,
@@ -2732,6 +2732,10 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(captured_post["status"], 200)
         self.assertEqual(captured_post["payload"]["status"], "ok")
+        self.assertEqual(captured_post["payload"]["audit_receipt"]["command"], "nodes.probe.execute")
+        self.assertEqual(captured_post["payload"]["audit_receipt"]["endpoint"], "/api/nodes/probe")
+        self.assertTrue(captured_post["payload"]["audit_receipt"]["allowed"])
+        self.assertTrue(captured_post["payload"]["audit_receipt"]["evidence_path"])
         self.assertEqual(captured_get["status"], 200)
         self.assertEqual(captured_get["payload"]["count"], 1)
         node = captured_get["payload"]["nodes"][0]
@@ -2780,7 +2784,7 @@ class ControlApiTests(unittest.TestCase):
                 mod.remote = lambda: FakeRemote
                 mod.probe_node = lambda payload: original_probe_node(payload, root=root)
                 mod.node_status = lambda: original_node_status(root)
-                mod.command_gate = lambda command: {
+                mod.command_gate = lambda command, *, root=None: {
                     "status": "allowed",
                     "allowed": True,
                     "command": command,
@@ -2824,6 +2828,8 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(captured_post["status"], 200)
         self.assertEqual(captured_post["payload"]["status"], "ok")
+        self.assertEqual(captured_post["payload"]["audit_receipt"]["command"], "nodes.probe.execute")
+        self.assertTrue(captured_post["payload"]["audit_receipt"]["allowed"])
         self.assertEqual(captured_get["status"], 200)
         self.assertEqual(captured_get["payload"]["count"], 1)
         node = captured_get["payload"]["nodes"][0]
@@ -2840,7 +2846,7 @@ class ControlApiTests(unittest.TestCase):
         calls = []
         try:
             mod.probe_node = lambda payload: calls.append(payload) or {"status": "should-not-run"}
-            mod.command_gate = lambda command: {
+            mod.command_gate = lambda command, *, root=None: {
                 "status": "blocked",
                 "allowed": False,
                 "command": command,
@@ -2866,6 +2872,11 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 403)
         self.assertEqual(captured["payload"]["status"], "blocked")
         self.assertEqual(captured["payload"]["gate"]["command"], "nodes.probe.execute")
+        self.assertEqual(captured["payload"]["audit_receipt"]["command"], "nodes.probe.execute")
+        self.assertEqual(captured["payload"]["audit_receipt"]["endpoint"], "/api/nodes/probe")
+        self.assertFalse(captured["payload"]["audit_receipt"]["allowed"])
+        self.assertEqual(captured["payload"]["audit_receipt"]["result_status"], "blocked")
+        self.assertTrue(captured["payload"]["audit_receipt"]["evidence_path"])
         self.assertEqual(calls, [])
 
     def test_api_nodes_tmux_status_post_requires_remote_gate(self):
@@ -2875,7 +2886,7 @@ class ControlApiTests(unittest.TestCase):
         calls = []
         try:
             mod.tmux_status_node = lambda payload: calls.append(payload) or {"status": "should-not-run"}
-            mod.command_gate = lambda command: {
+            mod.command_gate = lambda command, *, root=None: {
                 "status": "blocked",
                 "allowed": False,
                 "command": command,
@@ -2901,6 +2912,9 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 403)
         self.assertEqual(captured["payload"]["status"], "blocked")
         self.assertEqual(captured["payload"]["gate"]["command"], "nodes.tmux.status")
+        self.assertEqual(captured["payload"]["audit_receipt"]["command"], "nodes.tmux.status")
+        self.assertEqual(captured["payload"]["audit_receipt"]["endpoint"], "/api/nodes/tmux-status")
+        self.assertFalse(captured["payload"]["audit_receipt"]["allowed"])
         self.assertEqual(calls, [])
 
     def test_bootstrap_plan_node_is_non_executing_plan(self):

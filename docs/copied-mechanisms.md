@@ -565,6 +565,13 @@ Mechanisms to adapt:
   success phase resets the attempt baseline. A9 adapts this into
   `gateway_reconnect_decision(...)` with bounded fields
   `phase/action/error_class/attempt/delay_ms/policy_budget_remaining/node_id/origin/ts`.
+- `scripts/a9_control_api.py`: guarded remote POST actions now attach an
+  `audit_receipt` and, when a node identity can be inferred, write
+  `remote-post-audit` node evidence. The mechanism follows the copied
+  data-first governance pattern from Barter-rs and Codex-style guarded tool
+  execution: gate status, command, endpoint, result status, action evidence,
+  and audit evidence are explicit machine-readable facts instead of implicit
+  log text.
 
 ## Client Skeleton Reference Notes
 
