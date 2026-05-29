@@ -717,3 +717,30 @@ Next monitoring target:
      not more gates. The useful invariant is flow continuity plus evidence:
      submit command, worker writes result event, API reads result event, then
      mobile/remote can close the command loop.
+
+45. By-command result lookup exposed an exec-tool compatibility failure.
+   - Task:
+     `control-api-node-command-result-by-command-20260529T1515`.
+   - Run:
+     `.a9/runs/control-api-node-command-result-by-command-20260529T1515-20260529T150732Z-a1`.
+   - Worker status:
+     `retryable-worker-failed` before implementation. The raw event error was
+     `Tool 'image_generation' is not supported with
+     gpt-5.3-codex-spark-1p-codexswic-ev3`, so the issue was Codex exec/tool
+     configuration for Spark, not task complexity or code quality.
+   - Monitor outcome:
+     manually added `node_command_result_by_command_lookup()` and
+     `GET /api/node-command-results/by-command/{command_id}`. The helper uses a
+     bounded `XREVRANGE ... COUNT N` scan on the event stream, matches
+     `kind=node_command_result` plus `command_id`, then delegates normalization to
+     `node_command_result_lookup()` rather than duplicating result parsing.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py` passed.
+     `python3 -m unittest tests.test_control_api tests.test_node
+     tests.test_remote` passed with `199` tests. Real Redis smoke queried
+     command `smoke-result-read-20260529T1455` and found result event
+     `1780066510627-0` with `status=ok`.
+   - Governance lesson:
+     Spark execution must be configurable without unsupported tools before it
+     can run continuously. Until that is fixed, the monitor should continue to
+     intervene on exec-channel failures and keep the communication flow moving.

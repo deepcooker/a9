@@ -2951,6 +2951,136 @@ class ControlApiTests(unittest.TestCase):
             [{"result_event_id": "1740000400-0", "event_stream": "a9:test-events", "timeout": 7}],
         )
 
+    def test_node_command_result_by_command_lookup_finds_latest_result(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            returncode = 0
+            stdout = (
+                "1740000500-0\n"
+                "kind\n"
+                "node_command_result\n"
+                "command_id\n"
+                "cmd-find\n"
+                "1740000400-0\n"
+                "kind\n"
+                "node_command_result\n"
+                "command_id\n"
+                "other-command\n"
+            )
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            return FakeProc()
+
+        def fake_lookup(result_event_id, *, event_stream="a9:events", timeout=3):
+            return {
+                "status": "ok",
+                "kind": "node_command_result_lookup",
+                "error_code": "ok",
+                "result_event_id": result_event_id,
+                "event_stream": event_stream,
+                "result": {"command_id": "cmd-find"},
+            }
+
+        original_redis = mod.redis_cli
+        original_lookup = mod.node_command_result_lookup
+        mod.redis_cli = fake_redis
+        mod.node_command_result_lookup = fake_lookup
+        try:
+            result = mod.node_command_result_by_command_lookup("cmd-find", event_stream="a9:test-events", limit=9, timeout=4)
+        finally:
+            mod.redis_cli = original_redis
+            mod.node_command_result_lookup = original_lookup
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["kind"], "node_command_result_by_command_lookup")
+        self.assertEqual(result["result_event_id"], "1740000500-0")
+        self.assertEqual(result["result"]["result"]["command_id"], "cmd-find")
+        self.assertEqual(calls, [["--raw", "XREVRANGE", "a9:test-events", "+", "-", "COUNT", "9"]])
+
+    def test_node_command_result_by_command_lookup_noops_when_missing(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "1740000500-0\nkind\nnode_command_result\ncommand_id\nother-command\n"
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = lambda args, *, timeout=2: FakeProc()
+        try:
+            result = mod.node_command_result_by_command_lookup("cmd-missing", limit=2)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "noop")
+        self.assertEqual(result["error_code"], "no_result")
+        self.assertEqual(result["reason"], "node_command_result_not_found")
+        self.assertEqual(result["scanned_count"], 1)
+
+    def test_node_command_result_by_command_lookup_rejects_blank_command_id_without_redis(self):
+        mod = load_control_api()
+        calls = []
+        original_redis = mod.redis_cli
+        mod.redis_cli = lambda args, *, timeout=2: calls.append(args)
+        try:
+            result = mod.node_command_result_by_command_lookup("  ")
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "invalid_payload")
+        self.assertEqual(result["reason"], "command_id_required")
+        self.assertEqual(calls, [])
+
+    def test_api_node_command_results_by_command_endpoint_returns_lookup_payload(self):
+        mod = load_control_api()
+        calls = []
+        captured = {"status": None, "payload": None}
+
+        def fake_lookup(command_id, *, event_stream="a9:events", limit=100, timeout=3):
+            calls.append(
+                {
+                    "command_id": command_id,
+                    "event_stream": event_stream,
+                    "limit": limit,
+                    "timeout": timeout,
+                }
+            )
+            return {
+                "status": "ok",
+                "kind": "node_command_result_by_command_lookup",
+                "command_id": command_id,
+                "event_stream": event_stream,
+                "limit": int(limit),
+                "result_event_id": "1740000600-0",
+                "error_code": "ok",
+                "result": {"result": {"command_id": command_id}},
+            }
+
+        class DummyNodeCommandResultByCommandGetHandler:
+            path = "/api/node-command-results/by-command/cmd-api?event_stream=a9:test-events&limit=8&timeout=6"
+            headers = {}
+
+            def write_json(self, status, response_payload):
+                captured["status"] = status
+                captured["payload"] = response_payload
+
+        original_lookup = mod.node_command_result_by_command_lookup
+        mod.node_command_result_by_command_lookup = fake_lookup
+        try:
+            mod.ControlHandler.do_GET(DummyNodeCommandResultByCommandGetHandler())
+        finally:
+            mod.node_command_result_by_command_lookup = original_lookup
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["result_event_id"], "1740000600-0")
+        self.assertEqual(
+            calls,
+            [{"command_id": "cmd-api", "event_stream": "a9:test-events", "limit": "8", "timeout": "6"}],
+        )
+
     def test_parse_xrange_events_accepts_raw_and_json_shapes(self):
         mod = load_control_api()
         raw = "1740000000-0\ntype\ntask_started\ntask_id\nt1\n1740000001-0\ntype\ntask_done\n"
@@ -4962,6 +5092,10 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
+        self.assertEqual(
+            discovery["endpoints"]["node_command_result_by_command"],
+            "/api/node-command-results/by-command/{command_id}",
+        )
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertTrue(discovery["runtime"]["gateway_reconnect_governance"])

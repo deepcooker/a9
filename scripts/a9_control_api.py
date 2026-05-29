@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1008,6 +1008,7 @@ def controller_discovery() -> dict[str, Any]:
             "node_command_submit": "/api/nodes/command-submit",
             "node_command": "/api/nodes/command",
             "node_command_result": "/api/node-command-results/{result_event_id}",
+            "node_command_result_by_command": "/api/node-command-results/by-command/{command_id}",
             "events": "/api/events",
         },
         "runtime": {
@@ -2151,6 +2152,83 @@ def node_command_result_lookup(
     return payload
 
 
+def node_command_result_by_command_lookup(
+    command_id: str,
+    *,
+    event_stream: str = EVENTS_STREAM_KEY,
+    limit: int = 100,
+    timeout: int = 3,
+) -> dict[str, Any]:
+    safe_command_id = str(command_id or "").strip()
+    safe_event_stream = str(event_stream or "").strip()
+    base: dict[str, Any] = {
+        "status": "degraded",
+        "kind": "node_command_result_by_command_lookup",
+        "command_id": safe_command_id,
+        "event_stream": safe_event_stream,
+        "limit": 0,
+        "result_event_id": "",
+        "result": {},
+    }
+    if not safe_command_id:
+        return {**base, "error_code": "invalid_payload", "reason": "command_id_required"}
+    if not safe_event_stream:
+        return {**base, "error_code": "invalid_payload", "reason": "event_stream_required"}
+    try:
+        requested = max(1, min(EVENTS_STREAM_LIMIT_MAX, int(limit)))
+    except (TypeError, ValueError):
+        return {**base, "error_code": "invalid_payload", "reason": "limit_must_be_integer"}
+    try:
+        safe_timeout = max(1, int(timeout))
+    except (TypeError, ValueError):
+        return {**base, "limit": requested, "error_code": "invalid_payload", "reason": "timeout_must_be_integer"}
+
+    try:
+        proc = redis_cli(["--raw", "XREVRANGE", safe_event_stream, "+", "-", "COUNT", str(requested)])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {**base, "limit": requested, "error_code": "redis_unavailable", "reason": str(exc)}
+    if proc.returncode != 0:
+        return {
+            **base,
+            "limit": requested,
+            "error_code": "xrevrange_failed",
+            "reason": proc.stdout.strip() or "redis command failed",
+        }
+
+    events = parse_xrange_events(proc.stdout)
+    for event in events:
+        fields = event.get("fields") or {}
+        if str(fields.get("kind") or "") != "node_command_result":
+            continue
+        if str(fields.get("command_id") or "") != safe_command_id:
+            continue
+        result_event_id = str(event.get("id") or "")
+        lookup = node_command_result_lookup(result_event_id, event_stream=safe_event_stream, timeout=safe_timeout)
+        status = str(lookup.get("status") or "degraded")
+        error_code = str(lookup.get("error_code") or ("ok" if status == "ok" else status))
+        payload: dict[str, Any] = {
+            **base,
+            "status": status,
+            "limit": requested,
+            "result_event_id": result_event_id,
+            "result": lookup,
+            "error_code": error_code,
+            "scanned_count": len(events),
+        }
+        if status != "ok":
+            payload["reason"] = str(lookup.get("reason") or error_code)
+        return payload
+
+    return {
+        **base,
+        "status": "noop",
+        "limit": requested,
+        "error_code": "no_result",
+        "reason": "node_command_result_not_found",
+        "scanned_count": len(events),
+    }
+
+
 def register_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     node_id = safe_node_id(str(payload.get("node_id") or ""))
     now = utc_now()
@@ -3079,6 +3157,17 @@ class ControlHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", ["10"])[0])
                 source = query.get("source_session_path", [None])[0]
                 self.write_json(200, operator_tail(source, limit=limit))
+            elif parsed.path.startswith("/api/node-command-results/by-command/"):
+                command_id = unquote(parsed.path.removeprefix("/api/node-command-results/by-command/")).strip("/")
+                self.write_json(
+                    200,
+                    node_command_result_by_command_lookup(
+                        command_id,
+                        event_stream=query.get("event_stream", [EVENTS_STREAM_KEY])[0],
+                        limit=query.get("limit", ["100"])[0],
+                        timeout=query.get("timeout", ["3"])[0],
+                    ),
+                )
             elif parsed.path.startswith("/api/node-command-results/"):
                 result_event_id = parsed.path.removeprefix("/api/node-command-results/").strip("/")
                 event_stream = query.get("event_stream", [EVENTS_STREAM_KEY])[0]
