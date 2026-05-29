@@ -408,16 +408,31 @@ session 精读必须服务于需求变迁：
 -> repair/next
 ```
 
+## Current Implementation
+
+已落地：
+
+1. `scripts/a9_monitor.py` 已输出本文定义的 expert names。
+2. `monitor_score.json` 已包含 `experts[]`、`findings[]`、`gates` 和
+   `recommended_action`。
+3. `scripts/a9_supervisor.py` 已把 hard gate fail 转成 `monitor-blocked`
+   或阻断 auto-next。
+4. 每轮 run 已生成 `moe_eval_contract.json`，作为第二层 LLM / 多模型
+   evaluator 的稳定输入输出契约。
+5. `monitor_score` 和 `moe_eval_contract` 已进入 `evidence.jsonl` 和
+   `state.channels`，后续可以进入 eval store / memory commit / 训练数据。
+
+当前仍是规则型 MoE + evaluator contract。LLM evaluator 尚未启用，状态为
+`not_configured`。这是刻意的：硬门禁先保持确定性、便宜、可测；LLM 评审只作为
+第二层，不替代测试、scope guard、policy attestation 和运行证据。
+
 ## Immediate Next Step
 
-不要继续扩功能。
+下一刀应把 `moe_eval_contract.json` 接入 eval store：
 
-下一刀应重构 `scripts/a9_monitor.py`：
-
-1. 引入本文定义的 expert names。
-2. 把 hard gate / tradeoff gate / execution gate / progress gate 做成显式字段。
-3. 对 worker task prompt 做需求质量检查。
-4. 先用历史坏 run 和好 run 回放验证。
+1. 按 run 持久化 rule monitor result、future evaluator result、人工 override。
+2. 为每个 failed expert 生成可回放 eval sample。
+3. 后续再接 LLM evaluator，只允许消费 contract，不允许读取无限上下文。
 
 ## References
 

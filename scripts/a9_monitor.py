@@ -79,6 +79,7 @@ APPLY_PROTOCOL_EXEMPT_HINTS = (
 )
 FAILURE_CLASS_HINTS = ("timeout", "auth", "network", "protocol", "rate_limit")
 RECOVERY_ACTION_HINTS = ("retry", "repair", "quarantine", "terminate")
+EVALUATOR_INPUT_LIMIT = 8000
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -226,6 +227,92 @@ def expert_result(name: str, score: float, action: str, findings: list[dict[str,
         "score": min(1.0, round(score, 3)),
         "recommended_action": action,
         "findings": findings,
+    }
+
+
+def bounded_text(text: str, limit: int = EVALUATOR_INPUT_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n...[truncated]\n"
+
+
+def compact_command_events(commands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for event in commands:
+        compact.append(
+            {
+                "command": normalize_command(str(event.get("command") or "")),
+                "status": event.get("status", ""),
+                "exit_code": event.get("exit_code"),
+                "output_preview": bounded_text(str(event.get("output_preview") or ""), 1200),
+            }
+        )
+    return compact
+
+
+def build_evaluator_contract(
+    *,
+    run_dir: Path,
+    summary: dict[str, Any],
+    commands: list[dict[str, Any]],
+    checks: list[str],
+    text: str,
+    experts: list[dict[str, Any]],
+    gates: dict[str, Any],
+    recommended_action: str,
+) -> dict[str, Any]:
+    """Stable input/output shape for future LLM or multi-model evaluators."""
+    worker = summary.get("worker") if isinstance(summary.get("worker"), dict) else {}
+    return {
+        "schema": "a9.moe_eval_contract.v1",
+        "run_dir": str(run_dir),
+        "decision_model": "requirements_review_council_v1",
+        "layers": {
+            "rule_monitor": {
+                "status": "complete",
+                "experts": [item.get("name", "") for item in experts],
+                "gates": gates,
+                "recommended_action": recommended_action,
+            },
+            "llm_evaluator": {
+                "status": "not_configured",
+                "reason": "deterministic contract emitted; external evaluator can consume this file",
+            },
+        },
+        "input": {
+            "task_text": bounded_text(text),
+            "summary": {
+                "status": summary.get("status", ""),
+                "phase": summary.get("phase", ""),
+                "task_id": summary.get("task_id", ""),
+                "worker_envelope_status": summary.get("worker_envelope", {}).get("status", "")
+                if isinstance(summary.get("worker_envelope"), dict)
+                else "",
+                "budget_stopped": bool(worker.get("budget_stopped")),
+                "event_bytes": worker.get("event_bytes", 0),
+            },
+            "declared_checks": checks,
+            "commands": compact_command_events(commands),
+        },
+        "criteria": [
+            "data_first: schema/table/state/event must reflect real business structure when data-sensitive",
+            "performance_second: latency/throughput/budget/stability must be explicit for runtime and communication work",
+            "reference_first: copy/reference tasks must show observable reference or external learning evidence",
+            "execution_governance: worker must stay within declared paths, checks, envelope, and evidence discipline",
+            "completion_requires_evidence: pass/complete claims need current-state proof, not intent",
+        ],
+        "output_contract": {
+            "required_fields": ["recommended_action", "failed_experts", "findings", "evidence_refs"],
+            "allowed_actions": [
+                "continue",
+                "monitor_review",
+                "needs_tradeoff",
+                "narrow_task",
+                "repair",
+                "product_rewrite",
+                "block_and_rewrite_task",
+            ],
+        },
     }
 
 
@@ -688,6 +775,18 @@ def score_run(run_dir: Path) -> dict[str, Any]:
     score, recommended_action, findings = merge_experts(experts)
     gates = gate_state(experts)
     recommended_action = apply_gate_action(recommended_action, gates)
+    eval_contract = build_evaluator_contract(
+        run_dir=run_dir,
+        summary=summary,
+        commands=commands,
+        checks=checks,
+        text=text,
+        experts=experts,
+        gates=gates,
+        recommended_action=recommended_action,
+    )
+    eval_contract_path = run_dir / "moe_eval_contract.json"
+    eval_contract_path.write_text(json.dumps(eval_contract, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     payload = {
         "status": "ok",
@@ -695,6 +794,8 @@ def score_run(run_dir: Path) -> dict[str, Any]:
         "score": score,
         "recommended_action": recommended_action,
         "decision_model": "requirements_review_council_v1",
+        "eval_contract_path": str(eval_contract_path),
+        "layers": eval_contract["layers"],
         "gates": gates,
         "experts": experts,
         "findings": findings,

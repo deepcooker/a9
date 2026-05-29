@@ -615,6 +615,42 @@ class MonitorTests(unittest.TestCase):
         self.assertNotIn("communication_failure_taxonomy_missing", kinds)
         self.assertEqual(score["gates"]["hard_gate"]["status"], "pass")
 
+    def test_score_writes_moe_eval_contract_for_second_layer_evaluator(self):
+        mod = load_monitor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = self.write_run(
+                Path(tmp),
+                {
+                    "status": "pass",
+                    "phase": "test",
+                    "task_id": "moe-contract",
+                    "worker": {"event_bytes": 42},
+                    "worker_envelope": {"status": "pass"},
+                    "checks": [{"command": "python3 -m unittest tests/test_monitor.py", "return_code": 0}],
+                },
+                [
+                    {
+                        "item_type": "command_execution",
+                        "command": "python3 -m unittest tests/test_monitor.py",
+                        "status": "completed",
+                        "exit_code": 0,
+                        "output_preview": "OK",
+                    }
+                ],
+            )
+            score = mod.score_run(run_dir)
+            contract_path = Path(score["eval_contract_path"])
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+            contract_exists = contract_path.exists()
+
+        self.assertTrue(contract_exists)
+        self.assertEqual(contract["schema"], "a9.moe_eval_contract.v1")
+        self.assertEqual(contract["layers"]["rule_monitor"]["status"], "complete")
+        self.assertEqual(contract["layers"]["llm_evaluator"]["status"], "not_configured")
+        self.assertIn("data_first", " ".join(contract["criteria"]))
+        self.assertIn("recommended_action", contract["output_contract"]["required_fields"])
+        self.assertEqual(score["layers"]["llm_evaluator"]["status"], "not_configured")
+
 
 if __name__ == "__main__":
     unittest.main()

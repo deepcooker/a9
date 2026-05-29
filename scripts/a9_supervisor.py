@@ -3735,6 +3735,26 @@ def write_evidence_and_state(
                 "attestation_hash": summary["policy_attestation"].get("attestation_hash"),
             },
         ),
+        (
+            "monitor_score",
+            Path(summary.get("monitor_score", {}).get("output_path") or run_dir / "monitor_score.missing"),
+            {
+                "decision_model": summary.get("monitor_score", {}).get("decision_model", ""),
+                "recommended_action": summary.get("monitor_score", {}).get("recommended_action", ""),
+                "score": summary.get("monitor_score", {}).get("score", 0),
+            },
+        ),
+        (
+            "moe_eval_contract",
+            Path(summary.get("monitor_score", {}).get("eval_contract_path") or run_dir / "moe_eval_contract.missing"),
+            {
+                "schema": "a9.moe_eval_contract.v1",
+                "llm_evaluator_status": summary.get("monitor_score", {})
+                .get("layers", {})
+                .get("llm_evaluator", {})
+                .get("status", ""),
+            },
+        ),
         ("execution_chain", execution_chain_path, {"schema": "a9.execution_chain.v1"}),
         ("memory_commit", memory_commit_path, summary.get("memory_commit_stats", {})),
         ("context", context_path, {"status": summary["status"]}),
@@ -3813,6 +3833,8 @@ def write_evidence_and_state(
             "guards": by_kind.get("patch_guard", []) + by_kind.get("scope_guard", []),
             "git_governance": by_kind.get("git_governance", []),
             "policy_attestations": by_kind.get("policy_attestation", []),
+            "monitor_scores": by_kind.get("monitor_score", []),
+            "moe_eval_contracts": by_kind.get("moe_eval_contract", []),
             "execution_chains": by_kind.get("execution_chain", []),
             "memory_commits": by_kind.get("memory_commit", []),
             "checks": by_kind.get("check_log", []),
@@ -3832,6 +3854,8 @@ def write_evidence_and_state(
             "guards",
             "git_governance",
             "policy_attestations",
+            "monitor_scores",
+            "moe_eval_contracts",
             "execution_chains",
             "memory_commits",
             "checks",
