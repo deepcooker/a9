@@ -1020,3 +1020,20 @@
 - 这属于 bootstrap 时序现象，不是补丁丢失。
 - 后续 run 应在 worker strict envelope 的
   `output.search_replace_blocks` 中查看并确认补丁载体。
+
+## 2026-05-29：通讯汇总任务暴露 worker 读胖无产出
+
+现象：
+
+- `remote-connection-summary-20260529` 连续 retry 到
+  `retryable-worker-budget`，最终没有输出 SEARCH/REPLACE patch。
+- `monitor_score` 认为方向可继续，但 `worker_envelope` 显示 final message
+  missing，`patch_apply` 显示没有补丁。
+
+规则：
+
+- 这不是继续加固定行数门禁能解决的问题；固定数字会压缩必要业务上下文。
+- 正确处理是收缩任务形态：给明确锚点、少量允许文件、预期函数/测试位置，
+  并要求 strict patch envelope。
+- 监控者可以介入完成最小实现，但必须记录 worker 失败证据，后续修
+  worker prompt/router/session 治理，而不是把失败掩盖成完成。
