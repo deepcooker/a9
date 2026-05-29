@@ -744,3 +744,18 @@ Next monitoring target:
      Spark execution must be configurable without unsupported tools before it
      can run continuously. Until that is fixed, the monitor should continue to
      intervene on exec-channel failures and keep the communication flow moving.
+
+46. Worker default model corrected back to stable Codex.
+   - Trigger:
+     repeated 24h worker startup failures on `gpt-5.3-codex-spark`, including
+     unsupported `image_generation` tool injection and model-capacity failures.
+   - Evidence:
+     `docs/mistakes.md` already recorded that Spark must not be the unattended
+     default and that the default should return to `gpt-5.3-codex`.
+   - Change:
+     `scripts/a9_supervisor.py` now defaults `DEFAULT_WORKER_MODEL` to
+     `gpt-5.3-codex`. Spark remains usable only when explicitly selected via
+     `A9_SUPERVISOR_MODEL` for controlled smoke or cost experiments.
+   - Governance lesson:
+     flow continuity beats cheap-model optimization. Cost tuning belongs after
+     the worker can reliably start, execute, test, and report.
