@@ -623,3 +623,33 @@ Next monitoring target:
      is low. Supervisor should eventually distinguish "no final/no patch" as a
      prompt or exec-channel issue and schedule a narrower retry before burning a
      full run.
+
+42. Redis command work-once passed but showed context-discipline drift.
+   - Task:
+     `node-command-work-once-20260529T1358`.
+   - Run:
+     `.a9/runs/node-command-work-once-20260529T1358-20260529T135424Z-a1`.
+   - Status:
+     `pass`.
+   - Worker outcome:
+     added `node_command_work_once()` and CLI `command-work-once`. The loop
+     claims at most one Redis command, executes only built-in `status`, writes a
+     `node_command_result` event to `a9:events`, and ACKs only after XADD
+     succeeds.
+   - Verification:
+     worker ran `python3 -m unittest tests.test_node tests.test_control_api
+     tests.test_remote` and `python3 -m py_compile scripts/a9_node.py`. Monitor
+     then ran a real Redis smoke: enqueue `smoke-work-once-20260529T1402`,
+     `command-work-once`, read `a9:events` by result event id
+     `1780063270699-0`; result was `status=ok`, claimed id
+     `1780063270513-0`, and ACK returned `xack=1`.
+   - Quality findings:
+     the worker initially failed tests twice, first returning XADD error output
+     as `result_event_id`, then introducing a `NameError`. It repaired both.
+     It also read `docs/communication-observation-log.md` and used a broad `rg`
+     that hit `vendor-src/codex`, exceeding the intended reference scope. Event
+     bytes reached `123180`, slightly above the `120000` observation budget.
+   - Governance lesson:
+     Spark can complete bounded implementation after self-repair, but monitor
+     must keep policing reference scope and event growth. Future prompts should
+     explicitly forbid broad `rg` roots and ask for line-window reads only.
