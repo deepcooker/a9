@@ -1115,6 +1115,11 @@ def worker_reference_slices() -> list[str]:
         "reference-projects/hermes-agent/agent/prompt_builder.py",
         "reference-projects/hermes-agent/agent/context_compressor.py",
         "reference-projects/hermes-agent/agent/memory_manager.py",
+        "reference-projects/hermes-agent/agent/background_review.py",
+        "reference-projects/hermes-agent/agent/curator.py",
+        "reference-projects/hermes-agent/agent/trajectory.py",
+        "reference-projects/hermes-agent/batch_runner.py",
+        "reference-projects/hermes-agent/datagen-config-examples/trajectory_compression.yaml",
         "reference-projects/hermes-agent/tools/delegate_tool.py",
         "reference-projects/hermes-agent/tui_gateway",
         "reference-projects/aider/aider/repomap.py",
@@ -1122,6 +1127,11 @@ def worker_reference_slices() -> list[str]:
         "reference-projects/aider/aider/prompts.py",
         "reference-projects/codex/codex-rs/core/src/context_manager",
         "reference-projects/codex/codex-rs/core/src/compact.rs",
+        "reference-projects/codex/codex-rs/core/src/goals.rs",
+        "reference-projects/codex/codex-rs/core/src/context/goal_context.rs",
+        "reference-projects/codex/codex-rs/core/templates/goals",
+        "reference-projects/codex/codex-rs/state/src/runtime/goals.rs",
+        "reference-projects/codex/codex-rs/state/src/model/thread_goal.rs",
         "reference-projects/codex/codex-rs/app-server-transport/src/transport",
         "reference-projects/openclaw/extensions/lobster",
         "reference-projects/openclaw/extensions/policy",
@@ -2728,6 +2738,147 @@ def compact_context_pressure(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+REFERENCE_PATH_RE = re.compile(r"\b(?:reference-projects|vendor-src)/[^\s`'\",)]+")
+
+
+def prompt_reference_paths(prompt: str) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for match in REFERENCE_PATH_RE.finditer(prompt):
+        path = match.group(0).rstrip("。.;:")
+        if path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def command_touches_reference(command: str, reference_path: str) -> bool:
+    normalized_command = command.replace("\\", "/")
+    normalized_reference = reference_path.replace("\\", "/")
+    return normalized_reference in normalized_command
+
+
+def command_is_bounded_read(command: str) -> bool:
+    normalized = " ".join(command.split())
+    return bool(
+        re.search(r"\b(sed\s+-n|rg\s+--line-number|rg\s+--files|head\s+-n|tail\s+-n|nl\s+-ba)\b", normalized)
+    )
+
+
+def execution_chain_next_slice(worker_envelope: dict[str, Any]) -> str:
+    envelope = worker_envelope.get("envelope") if isinstance(worker_envelope, dict) else {}
+    if not isinstance(envelope, dict):
+        return ""
+    output = envelope.get("output")
+    if isinstance(output, dict):
+        value = output.get("next_slice") or output.get("next_task") or output.get("next")
+        return str(value or "")
+    return ""
+
+
+def build_execution_chain(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+    event_summaries_path = Path(str(worker.get("event_summaries_path") or ""))
+    event_summaries = read_jsonl(event_summaries_path)
+    commands: list[dict[str, Any]] = []
+    reads: list[dict[str, Any]] = []
+    for item in event_summaries:
+        if item.get("item_type") != "command_execution":
+            continue
+        command = str(item.get("command") or "")
+        record = {
+            "command": command,
+            "status": item.get("status"),
+            "exit_code": item.get("exit_code"),
+            "output_preview": item.get("output_preview", ""),
+        }
+        commands.append(record)
+        if command_is_bounded_read(command):
+            reads.append(record)
+
+    declared_references = prompt_reference_paths(task.prompt)
+    reference_evidence = []
+    for reference_path in declared_references:
+        matching_reads = [read for read in reads if command_touches_reference(read["command"], reference_path)]
+        reference_evidence.append(
+            {
+                "path": reference_path,
+                "observed": bool(matching_reads),
+                "read_commands": matching_reads[:10],
+            }
+        )
+
+    diff = summary.get("diff", {}) if isinstance(summary.get("diff"), dict) else {}
+    patch_apply = summary.get("patch_apply", {}) if isinstance(summary.get("patch_apply"), dict) else {}
+    context_pressure = summary.get("context_pressure") or compact_context_pressure(summary)
+    tokens = {}
+    if isinstance(context_pressure, dict):
+        tokens.update(context_pressure.get("actual_token_usage") or {})
+    if not tokens:
+        tokens.update(worker.get("actual_token_usage") or {})
+
+    evidence_path = summary.get("evidence_path") or str(run_dir / "evidence.jsonl")
+    return {
+        "schema": "a9.execution_chain.v1",
+        "task_id": task.task_id,
+        "run_id": Path(str(summary.get("run_dir") or run_dir)).name,
+        "attempt": summary.get("attempt"),
+        "status": summary.get("status"),
+        "phase": summary.get("phase") or task.phase,
+        "task_prompt_preview": truncate_to_token_budget(task.prompt, 500, keep="head"),
+        "reference_evidence": reference_evidence,
+        "commands": commands,
+        "reads": reads,
+        "patch": {
+            "changed_files": diff.get("changed_files", []),
+            "diff_path": diff.get("diff_path", ""),
+            "patch_apply_status": patch_apply.get("status", ""),
+            "patch_apply_output_path": patch_apply.get("output_path", ""),
+        },
+        "checks": [
+            {
+                "command": check.get("command"),
+                "return_code": check.get("return_code"),
+                "output_path": check.get("output_path"),
+            }
+            for check in summary.get("checks", [])
+            if isinstance(check, dict)
+        ],
+        "tokens": tokens,
+        "next_slice": execution_chain_next_slice(summary.get("worker_envelope", {})),
+        "evidence_paths": {
+            "event_summaries_path": str(event_summaries_path) if str(event_summaries_path) else "",
+            "raw_task_path": str(worker.get("raw_task_path") or ""),
+            "final_path": str(worker.get("final_path") or ""),
+            "evidence_path": evidence_path,
+        },
+    }
+
+
+def write_execution_chain_artifact(task: Task, run_dir: Path, summary: dict[str, Any]) -> Path:
+    output_path = run_dir / "execution_chain.json"
+    chain = build_execution_chain(task, run_dir, summary)
+    write_json(output_path, chain)
+    summary["execution_chain_path"] = str(output_path)
+    return output_path
+
+
 def patch_apply_block_line(item: dict[str, Any]) -> str:
     path = item.get("effective_path") or item.get("path") or "unknown"
     mode = item.get("mode", "unknown")
@@ -3247,6 +3398,7 @@ def write_evidence_and_state(
     run_id = Path(summary["run_dir"]).name
     checkpoint_id = f"{run_id}:checkpoint:{summary['attempt']}"
     records: list[dict[str, Any]] = []
+    execution_chain_path = write_execution_chain_artifact(task, run_dir, summary)
 
     paths = [
         ("raw_task", Path(summary["worker"]["raw_task_path"]), {"task_id": task.task_id}),
@@ -3321,6 +3473,7 @@ def write_evidence_and_state(
                 "attestation_hash": summary["policy_attestation"].get("attestation_hash"),
             },
         ),
+        ("execution_chain", execution_chain_path, {"schema": "a9.execution_chain.v1"}),
         ("context", context_path, {"status": summary["status"]}),
     ]
     for kind, path, metadata in paths:
@@ -3395,6 +3548,7 @@ def write_evidence_and_state(
             "guards": by_kind.get("patch_guard", []) + by_kind.get("scope_guard", []),
             "git_governance": by_kind.get("git_governance", []),
             "policy_attestations": by_kind.get("policy_attestation", []),
+            "execution_chains": by_kind.get("execution_chain", []),
             "checks": by_kind.get("check_log", []),
             "deep_marks": [mark["mark_id"] for mark in deep_marks],
             "memories": [],
@@ -3410,6 +3564,7 @@ def write_evidence_and_state(
             "guards",
             "git_governance",
             "policy_attestations",
+            "execution_chains",
             "checks",
             "context_pressure",
             "deep_marks",

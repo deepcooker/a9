@@ -876,6 +876,103 @@ Do the work.
         ]
         self.assertIn("patch_apply", {item["kind"] for item in evidence})
 
+    def test_execution_chain_artifact_records_prompt_references_commands_checks_and_tokens(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events_path = run_dir / "event_summaries.jsonl"
+            raw_task = run_dir / "raw_task.md"
+            final = run_dir / "final.md"
+            check_log = run_dir / "check.log"
+            raw_task.write_text("raw task\n", encoding="utf-8")
+            final.write_text("final\n", encoding="utf-8")
+            check_log.write_text("ok\n", encoding="utf-8")
+            events_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "event_type": "item.completed",
+                                "item_type": "command_execution",
+                                "command": "sed -n '1,220p' reference-projects/codex/codex-rs/core/src/goals.rs",
+                                "status": "completed",
+                                "exit_code": 0,
+                                "output_preview": "GoalRuntimeEvent",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "event_type": "item.completed",
+                                "item_type": "command_execution",
+                                "command": "python3 -m unittest tests.test_supervisor.SupervisorTests.test_execution_chain_artifact_records_prompt_references_commands_checks_and_tokens",
+                                "status": "completed",
+                                "exit_code": 0,
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="chain-test",
+                phase="implement",
+                prompt=(
+                    "Read reference-projects/codex/codex-rs/core/src/goals.rs "
+                    "and implement execution chain."
+                ),
+            )
+            summary = {
+                "task_id": "chain-test",
+                "attempt": 1,
+                "run_dir": str(run_dir),
+                "status": "pass",
+                "phase": "implement",
+                "worker": {
+                    "event_summaries_path": str(events_path),
+                    "raw_task_path": str(raw_task),
+                    "final_path": str(final),
+                    "actual_token_usage": {
+                        "input_tokens": 10,
+                        "cached_input_tokens": 4,
+                        "output_tokens": 3,
+                        "reasoning_output_tokens": 2,
+                    },
+                },
+                "worker_envelope": {
+                    "envelope": {"output": {"next_slice": "self-evolution memory commit"}}
+                },
+                "patch_apply": {"status": "pass", "output_path": str(run_dir / "patch_apply.json")},
+                "diff": {
+                    "changed_files": ["scripts/a9_supervisor.py"],
+                    "diff_path": str(run_dir / "patch.diff"),
+                },
+                "checks": [
+                    {
+                        "command": "python3 -m unittest tests.test_supervisor.SupervisorTests.test_execution_chain_artifact_records_prompt_references_commands_checks_and_tokens",
+                        "return_code": 0,
+                        "output_path": str(check_log),
+                    }
+                ],
+            }
+
+            path = mod.write_execution_chain_artifact(task, run_dir, summary)
+            chain = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(summary["execution_chain_path"], str(path))
+        self.assertEqual(chain["schema"], "a9.execution_chain.v1")
+        self.assertEqual(chain["task_id"], "chain-test")
+        self.assertEqual(chain["reference_evidence"][0]["path"], "reference-projects/codex/codex-rs/core/src/goals.rs")
+        self.assertTrue(chain["reference_evidence"][0]["observed"])
+        self.assertEqual(chain["reads"][0]["exit_code"], 0)
+        self.assertEqual(chain["commands"][1]["status"], "completed")
+        self.assertEqual(chain["patch"]["changed_files"], ["scripts/a9_supervisor.py"])
+        self.assertEqual(chain["checks"][0]["return_code"], 0)
+        self.assertEqual(chain["tokens"]["cached_input_tokens"], 4)
+        self.assertEqual(chain["next_slice"], "self-evolution memory commit")
+        self.assertEqual(chain["evidence_paths"]["event_summaries_path"], str(events_path))
+
     def test_apply_worker_search_replace_extracts_final_message_blocks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
