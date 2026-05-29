@@ -1540,6 +1540,33 @@ Do the work.
 
         self.assertEqual(stored["status"], "budget_limited")
 
+    def test_idle_goal_continuation_can_be_disabled_by_environment(self):
+        mod = load_supervisor()
+        old_value = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "0"
+            try:
+                goal = mod.create_goal_payload("goal-a9-runtime", "Build A9 persistent goal runtime", 1000)
+                mod.write_goal(goal)
+
+                self.assertIsNone(mod.schedule_idle_goal_continuation())
+                self.assertEqual(list(mod.QUEUE_DIR.glob("*.md")), [])
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_value is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_value
+
     def test_apply_worker_search_replace_extracts_final_message_blocks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

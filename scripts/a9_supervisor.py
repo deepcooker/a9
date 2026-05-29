@@ -51,6 +51,7 @@ DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
 DEFAULT_WORKER_EVENT_BUDGET_MODE = "observe"
 DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
+DEFAULT_IDLE_GOAL_CONTINUATION_ENABLED = True
 COMMUNICATION_GATE_HINTS = (
     "gateway",
     "redis",
@@ -5298,6 +5299,8 @@ Budget:
 
 
 def schedule_idle_goal_continuation() -> Path | None:
+    if not idle_goal_continuation_enabled():
+        return None
     if next_task() is not None:
         return None
     if auto_loop_guard_blocks_next():
@@ -5317,6 +5320,13 @@ def schedule_idle_goal_continuation() -> Path | None:
         max_attempts=1,
         allowed_paths=[],
     )
+
+
+def idle_goal_continuation_enabled() -> bool:
+    value = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+    if value is None:
+        return DEFAULT_IDLE_GOAL_CONTINUATION_ENABLED
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def bounded_inline(text: str, limit: int = 500) -> str:

@@ -1177,8 +1177,11 @@ Next monitoring target:
    - Change:
      `scripts/a9_stack.sh` now starts/stops/reports `supervisor-loop` and tails
      `supervisor-loop.log`. `tests/test_service.py` locks that local stack
-     behavior. A real trial consumed one existing goal-continuation task and one
-     submitted communication reference-scan task.
+     behavior. After the trial, local stack startup now sets
+     `A9_IDLE_GOAL_CONTINUATION=0`, so it consumes queued/subsequent tasks but
+     does not invent idle goal-continuation work by default. A real trial
+     consumed one existing goal-continuation task and one submitted
+     communication reference-scan task.
    - Verification:
      `python3 -m py_compile scripts/a9_control_api.py scripts/a9_supervisor.py
      scripts/a9_recovery_loop.py scripts/a9_remote.py` passed.
@@ -1191,9 +1194,9 @@ Next monitoring target:
      auto-next generated/ran a goal-continuation task before the manually queued
      task. That proves continuous execution works, but it also exposed a token
      and priority risk: idle goal continuation can occupy the worker and read a
-     large context packet before a human-directed task. The supervisor loop was
-     paused after evidence capture, and the stale running lease was copied to
-     `.a9/tasks/interrupted/` before removal.
+     large context packet before a human-directed task. The stale running lease
+     was copied to `.a9/tasks/interrupted/` before removal, and local stack
+     now disables idle goal generation until priority/context policy is tightened.
    - Governance lesson:
      24h mode should not mean unbounded idle goal work. Next slice should add
      explicit priority and context policy: human/submitted tasks first, idle
