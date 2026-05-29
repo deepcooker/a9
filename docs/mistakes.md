@@ -1138,3 +1138,26 @@
 - 如果主 HEAD 已移动或主工作区 dirty，必须记录 `main_integration` 跳过原因，
   由监控者决定是否合并，不能悄悄覆盖用户改动。
 - 本次 smoke 也验证：当 root 工作区干净时，已接受的 worker commit 可自动集成到 main。
+
+## 2026-05-29：ignored reference-projects 不能直接写进 worker prompt
+
+现象：
+
+- `node-command-redis-stream-20260529T1245` 和
+  `node-command-claim-ack-20260529T1258` 都在 worker 启动前被
+  `reference_gate` 拦截。
+- 主工作区存在 `reference-projects/barter-rs/...`，但这些参考仓库未被 git
+  跟踪，worker worktree 里没有对应文件。
+- 即使 prompt 写绝对路径，reference gate 也会按 worker worktree 下的
+  `reference-projects/...` 做存在性校验，导致假阻断，worker 没有消耗模型
+  token，也没有进入实现。
+
+规则：
+
+- 给 worker 的任务不要直接声明未跟踪参考源码相对路径。
+- 需要抄参考项目时，先把窄机制抽取到受控文档或 source extract，并记录
+  source/commit/license；worker 再读取这些受控切片。
+- 如果确实要让 worker 直接读参考源码，必须先解决 reference source
+  materialization：把允许的窄切片复制进 worker worktree 或让 supervisor
+  支持只读 vendor mount，并让 reference gate 能识别该来源。
+- 这属于任务塑形/参考源码治理问题，不应算作 worker 质量失败。
