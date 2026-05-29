@@ -1073,3 +1073,4 @@
   worker base HEAD 时，才允许自动 cherry-pick 到主线。
 - 如果主 HEAD 已移动或主工作区 dirty，必须记录 `main_integration` 跳过原因，
   由监控者决定是否合并，不能悄悄覆盖用户改动。
+- 本次 smoke 也验证：当 root 工作区干净时，已接受的 worker commit 可自动集成到 main。
