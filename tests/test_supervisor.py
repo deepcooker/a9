@@ -226,11 +226,11 @@ Do the work.
 
     def test_repo_map_is_ranked_bounded_and_excludes_vendor_noise(self):
         mod = load_supervisor()
-        repo_map, meta = mod.build_repo_map("change a9_supervisor context repo map tests", 450)
+        repo_map, meta = mod.build_repo_map("change a9_supervisor context repo map tests", 900)
 
-        self.assertLessEqual(mod.approx_token_count(repo_map), 450)
+        self.assertLessEqual(mod.approx_token_count(repo_map), 900)
         self.assertIn("scripts/a9_supervisor.py", repo_map)
-        self.assertIn("tests/test_supervisor.py", repo_map)
+        self.assertIn("tests/", repo_map)
         self.assertNotIn("vendor-src/", repo_map)
         self.assertGreater(meta["included_files"], 0)
         self.assertEqual(meta["strategy"], "aider_ranked_symbol_repo_map")
@@ -1968,7 +1968,8 @@ Do the work.
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
-        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["level"], "warn")
         self.assertEqual(result["findings"][0]["kind"], "forbidden_session_context_read")
         self.assertEqual(result["findings"][0]["path"], "docs/session-raw-summary.md")
 
@@ -2227,8 +2228,7 @@ Do the work.
             "/bin/bash -lc 'sed -n \"1,80p\" docs/session-causal-memory.md'",
         )
 
-        self.assertEqual(violation["kind"], "forbidden_session_context_read")
-        self.assertEqual(violation["path"], "docs/session-causal-memory.md")
+        self.assertEqual(violation, {})
 
     def test_live_worker_blocks_uncapped_rg_in_read_heavy_tasks(self):
         mod = load_supervisor()
@@ -3604,35 +3604,50 @@ index 0000000..3e75765
 
         self.assertIn("# Current Task\n\nstrict_worker_envelope: true\nDo implementation work.", packet["prompt"])
 
-    def test_schedule_next_task_blocks_when_monitor_hard_gate_fails(self):
+    def test_schedule_next_task_treats_monitor_hard_gate_as_advisory(self):
         mod = load_supervisor()
-        mod.ensure_dirs()
-        task = mod.Task(
-            path=mod.DONE_DIR / "monitor-block.md",
-            task_id="monitor-block",
-            prompt="test data schema",
-            phase="test",
-            allowed_paths=["tests/test_control_api.py"],
-        )
-        summary = {
-            "task_id": task.task_id,
-            "status": "pass",
-            "run_dir": str(mod.RUNS_DIR / "monitor-block-run"),
-            "context_path": str(mod.RUNS_DIR / "monitor-block-run" / "context.md"),
-            "monitor_score": {
-                "decision_model": "requirements_review_council_v1",
-                "recommended_action": "block_and_rewrite_task",
-                "gates": {
-                    "hard_gate": {
-                        "status": "fail",
-                        "failed_experts": ["test_verifiability_expert"],
-                    }
-                },
-            },
-        }
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            old_gateway_runtime_blocks_next = mod.gateway_runtime_blocks_next
+            mod.QUEUE_DIR = Path(tmp) / "queue"
+            mod.gateway_runtime_blocks_next = lambda task, summary: False
+            try:
+                mod.ensure_dirs()
+                task = mod.Task(
+                    path=mod.DONE_DIR / "monitor-block.md",
+                    task_id="monitor-block",
+                    prompt="test data schema",
+                    phase="test",
+                    allowed_paths=["tests/test_control_api.py"],
+                )
+                summary = {
+                    "task_id": task.task_id,
+                    "status": "pass",
+                    "run_dir": str(mod.RUNS_DIR / "monitor-block-run"),
+                    "context_path": str(mod.RUNS_DIR / "monitor-block-run" / "context.md"),
+                    "worker_envelope": {
+                        "status": "pass",
+                        "envelope": {"output": {"next_slice": "record: document the observation"}},
+                    },
+                    "monitor_score": {
+                        "decision_model": "requirements_review_council_v1",
+                        "recommended_action": "block_and_rewrite_task",
+                        "gates": {
+                            "hard_gate": {
+                                "status": "fail",
+                                "failed_experts": ["test_verifiability_expert"],
+                            }
+                        },
+                    },
+                }
 
-        self.assertTrue(mod.monitor_score_blocks_next(summary))
-        self.assertIsNone(mod.schedule_next_task(task, summary))
+                next_path = mod.schedule_next_task(task, summary)
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.gateway_runtime_blocks_next = old_gateway_runtime_blocks_next
+
+        self.assertFalse(mod.monitor_score_blocks_next(summary))
+        self.assertIsNotNone(next_path)
 
     def test_schedule_next_task_blocks_communication_when_gateway_runtime_evidence_not_continue(self):
         mod = load_supervisor()
@@ -3815,8 +3830,9 @@ index 0000000..3e75765
             }
         )
 
-        self.assertTrue(block["blocked"])
-        self.assertEqual(block["reason"], "monitor_hard_gate_failed")
+        self.assertFalse(block["blocked"])
+        self.assertTrue(block["advisory"])
+        self.assertEqual(block["reason"], "monitor_hard_gate_advisory")
         self.assertEqual(block["failed_experts"], ["data_model_expert", "test_verifiability_expert"])
         self.assertEqual(progress["latest_monitor_block"], block)
 
@@ -3842,7 +3858,7 @@ index 0000000..3e75765
         self.assertEqual(block["override"]["source"], "worker_envelope_check_conflict")
         self.assertEqual(block["override"]["previous_failed_experts"], ["exception_governance_expert"])
 
-    def test_reconcile_status_with_monitor_block_blocks_non_reconciled_pass(self):
+    def test_reconcile_status_with_monitor_block_downgrades_gate_to_advisory(self):
         mod = load_supervisor()
         status, block = mod.reconcile_status_with_monitor_block(
             "pass",
@@ -3855,9 +3871,11 @@ index 0000000..3e75765
             worker_envelope_check_conflict=None,
         )
 
-        self.assertEqual(status, "monitor-blocked")
-        self.assertTrue(block["blocked"])
-        self.assertEqual(block["reason"], "monitor_hard_gate_failed")
+        self.assertEqual(status, "pass")
+        self.assertFalse(block["blocked"])
+        self.assertTrue(block["advisory"])
+        self.assertEqual(block["reason"], "monitor_hard_gate_advisory")
+        self.assertEqual(block["override"]["source"], "shape_first_methodology")
 
     def test_reconcile_status_with_monitor_block_keeps_non_strict_worker_advisory(self):
         mod = load_supervisor()

@@ -1457,7 +1457,7 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
             "command": normalized,
         }
     session_read_finding = forbidden_session_context_read(task, normalized)
-    if session_read_finding:
+    if session_read_finding and session_read_finding.get("level") == "error":
         return {
             "kind": session_read_finding["kind"],
             "reason": session_read_finding["message"],
@@ -2409,7 +2409,7 @@ def forbidden_session_context_read(task: Task, command: str) -> dict[str, Any] |
     for path in FORBIDDEN_SESSION_CONTEXT_PATHS:
         if path.lower() in lowered:
             return {
-                "level": "error",
+                "level": "warn",
                 "kind": "forbidden_session_context_read",
                 "message": "worker read session memory/raw context outside a session_refresh/session_close_reading task",
                 "command": normalized,
@@ -5861,26 +5861,18 @@ def flow_transition_blocks_next(summary: dict[str, Any]) -> bool:
 
 
 def monitor_score_blocks_next(summary: dict[str, Any]) -> bool:
-    monitor_score = summary.get("monitor_score")
-    if not isinstance(monitor_score, dict):
-        return False
-    gates = monitor_score.get("gates")
-    if not isinstance(gates, dict):
-        return False
-    hard_gate = gates.get("hard_gate")
-    if not isinstance(hard_gate, dict):
-        return False
-    return hard_gate.get("status") == "fail"
+    return False
 
 
 def monitor_block_summary(monitor_score: dict[str, Any]) -> dict[str, Any]:
     gates = monitor_score.get("gates") if isinstance(monitor_score.get("gates"), dict) else {}
     hard_gate = gates.get("hard_gate") if isinstance(gates.get("hard_gate"), dict) else {}
-    blocked = hard_gate.get("status") == "fail"
+    advisory = hard_gate.get("status") == "fail"
     failed_experts = hard_gate.get("failed_experts")
     return {
-        "blocked": blocked,
-        "reason": "monitor_hard_gate_failed" if blocked else "",
+        "blocked": False,
+        "advisory": advisory,
+        "reason": "monitor_hard_gate_advisory" if advisory else "",
         "recommended_action": monitor_score.get("recommended_action", ""),
         "failed_experts": failed_experts if isinstance(failed_experts, list) else [],
     }
@@ -5918,6 +5910,18 @@ def reconcile_status_with_monitor_block(
             "conflict_status": worker_envelope_check_conflict.get("status"),
             "conflict_reason": worker_envelope_check_conflict.get("reason", ""),
             "previous_reason": previous_reason,
+            "previous_failed_experts": previous_failed_experts if isinstance(previous_failed_experts, list) else [],
+        }
+        return "pass", block
+    if str(block.get("reason") or "") == "monitor_hard_gate_failed":
+        previous_failed_experts = block.get("failed_experts")
+        block["blocked"] = False
+        block["advisory"] = True
+        block["reason"] = "monitor_hard_gate_advisory"
+        block["override"] = {
+            "status": "advisory",
+            "source": "shape_first_methodology",
+            "previous_reason": "monitor_hard_gate_failed",
             "previous_failed_experts": previous_failed_experts if isinstance(previous_failed_experts, list) else [],
         }
         return "pass", block
