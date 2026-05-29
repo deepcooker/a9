@@ -41,6 +41,7 @@ RECORDS_DIR = STATE_DIR / "records"
 GOALS_DIR = STATE_DIR / "goals"
 EVAL_STORE_DIR = STATE_DIR / "eval_store"
 EVAL_STORE_RUNS_DIR = EVAL_STORE_DIR / "runs"
+EVAL_STORE_OVERRIDES_DIR = EVAL_STORE_DIR / "overrides"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
@@ -327,6 +328,7 @@ def ensure_dirs() -> None:
         GOALS_DIR,
         EVAL_STORE_DIR,
         EVAL_STORE_RUNS_DIR,
+        EVAL_STORE_OVERRIDES_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -3257,6 +3259,105 @@ def write_eval_store_record(task: Task, run_dir: Path, summary: dict[str, Any]) 
     return result
 
 
+EVAL_OVERRIDE_ACTIONS = {
+    "continue",
+    "monitor_review",
+    "needs_tradeoff",
+    "narrow_task",
+    "repair",
+    "product_rewrite",
+    "block_and_rewrite_task",
+}
+
+
+def load_eval_store_record_for_run(run_id: str) -> tuple[Path, dict[str, Any]]:
+    run_path = RUNS_DIR / run_id / "eval_store_record.json"
+    global_path = EVAL_STORE_RUNS_DIR / f"{compact_task_ref(run_id)}.json"
+    for path in (run_path, global_path):
+        record = read_json_file(path)
+        if record:
+            return path, record
+    raise FileNotFoundError(f"eval store record not found for run_id={run_id}")
+
+
+def append_eval_override_index(override: dict[str, Any]) -> None:
+    ensure_dirs()
+    index_path = EVAL_STORE_DIR / "overrides.jsonl"
+    with index_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(override, ensure_ascii=False, sort_keys=True) + "\n")
+
+
+def write_eval_manual_override(
+    *,
+    run_id: str,
+    action: str,
+    reason: str,
+    actor: str,
+    evidence_refs: list[str] | None = None,
+) -> dict[str, Any]:
+    if action not in EVAL_OVERRIDE_ACTIONS:
+        raise ValueError(f"invalid override action: {action}")
+    if not reason.strip():
+        raise ValueError("override reason is required")
+    record_path, record = load_eval_store_record_for_run(run_id)
+    override_id = f"override-{compact_task_ref(run_id)}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    rule_monitor = record.get("rule_monitor") if isinstance(record.get("rule_monitor"), dict) else {}
+    override = {
+        "schema": "a9.eval_manual_override.v1",
+        "override_id": override_id,
+        "run_id": run_id,
+        "task_id": record.get("task_id", ""),
+        "created_at": utc_now(),
+        "actor": actor,
+        "action": action,
+        "reason": reason.strip(),
+        "evidence_refs": evidence_refs or [],
+        "original": {
+            "record_path": str(record_path),
+            "record_hash": record.get("record_hash", ""),
+            "status": record.get("status", ""),
+            "recommended_action": rule_monitor.get("recommended_action", ""),
+            "failed_experts": rule_monitor.get("failed_experts", []),
+            "gates": rule_monitor.get("gates", {}),
+        },
+        "training_label": {
+            "kind": "manual_eval_override",
+            "input_contract_path": record.get("eval_contract", {}).get("path", ""),
+            "rule_action": rule_monitor.get("recommended_action", ""),
+            "human_action": action,
+            "reason": reason.strip(),
+        },
+    }
+    override["override_hash"] = sha256_text(stable_json({key: value for key, value in override.items() if key != "override_hash"}))
+    output_path = EVAL_STORE_OVERRIDES_DIR / f"{override_id}.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(output_path, override)
+    append_eval_override_index({**override, "override_path": str(output_path)})
+    return {
+        "status": "written",
+        "output_path": str(output_path),
+        "index_path": str(EVAL_STORE_DIR / "overrides.jsonl"),
+        "override_id": override_id,
+        "override_hash": override["override_hash"],
+    }
+
+
+def eval_override(args: argparse.Namespace) -> int:
+    try:
+        result = write_eval_manual_override(
+            run_id=args.run_id,
+            action=args.action,
+            reason=args.reason,
+            actor=args.actor,
+            evidence_refs=args.evidence_ref or [],
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def patch_apply_block_line(item: dict[str, Any]) -> str:
     path = item.get("effective_path") or item.get("path") or "unknown"
     mode = item.get("mode", "unknown")
@@ -5910,6 +6011,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "persistent_goal_runtime": True,
         "idle_goal_continuation": True,
         "eval_store_records": True,
+        "eval_manual_overrides": True,
     }
     capability_groups = {
         "runtime": [
@@ -5931,6 +6033,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
             "external_session_close_reading_route",
             "persistent_goal_runtime",
             "eval_store_records",
+            "eval_manual_overrides",
         ],
         "automation": [
             "auto_next_scheduler",
@@ -6866,6 +6969,13 @@ def main(argv: list[str]) -> int:
     enqueue_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
     enqueue_parser.add_argument("--max-attempts", type=int, default=2)
 
+    override_parser = sub.add_parser("eval-override")
+    override_parser.add_argument("run_id")
+    override_parser.add_argument("--action", required=True, choices=sorted(EVAL_OVERRIDE_ACTIONS))
+    override_parser.add_argument("--reason", required=True)
+    override_parser.add_argument("--actor", default="operator")
+    override_parser.add_argument("--evidence-ref", action="append", default=[])
+
     args = parser.parse_args(argv)
     if args.command == "init":
         return init()
@@ -6877,6 +6987,8 @@ def main(argv: list[str]) -> int:
         return status()
     if args.command == "enqueue":
         return enqueue(args)
+    if args.command == "eval-override":
+        return eval_override(args)
     raise AssertionError(args.command)
 
 

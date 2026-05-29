@@ -424,6 +424,10 @@ session 精读必须服务于需求变迁：
 6. 每轮普通 worker run 已生成 `eval_store_record.json`，并同步写入
    `.a9/eval_store/runs/<run_id>.json` 和 `.a9/eval_store/index.jsonl`。
    failed expert 会展开为可回放 `eval_samples`。
+7. 人工 override 已作为独立 artifact 落地：
+   `.a9/eval_store/overrides/<override_id>.json` 和
+   `.a9/eval_store/overrides.jsonl`。override 不修改 run-local
+   `eval_store_record.json`，避免破坏原 evidence hash。
 
 当前仍是规则型 MoE + evaluator contract。LLM evaluator 尚未启用，状态为
 `not_configured`。这是刻意的：硬门禁先保持确定性、便宜、可测；LLM 评审只作为
@@ -431,10 +435,10 @@ session 精读必须服务于需求变迁：
 
 ## Immediate Next Step
 
-下一刀应把 eval store 接到人工 override / LLM evaluator：
+下一刀应把 eval store 接到 LLM evaluator / control API：
 
-1. 增加人工 override 记录，保留 override 人、原因、证据和原始 gate。
-2. 接一个可选 LLM evaluator，只允许消费 `moe_eval_contract.json`。
+1. 接一个可选 LLM evaluator，只允许消费 `moe_eval_contract.json`。
+2. 把 `eval-override` 暴露到 control API / mobile，让手机端能纠偏。
 3. 对比 rule monitor、LLM evaluator、人工 override，沉淀训练/评审样本。
 
 ## References

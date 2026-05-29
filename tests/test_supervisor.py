@@ -1133,6 +1133,69 @@ Do the work.
         self.assertEqual(len(index_lines), 1)
         self.assertEqual(index_lines[0]["record_id"], record["record_id"])
 
+    def test_eval_manual_override_records_operator_label_without_mutating_record(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_eval_store = mod.EVAL_STORE_DIR
+            old_eval_runs = mod.EVAL_STORE_RUNS_DIR
+            old_eval_overrides = mod.EVAL_STORE_OVERRIDES_DIR
+            old_runs = mod.RUNS_DIR
+            mod.EVAL_STORE_DIR = tmp_path / "eval_store"
+            mod.EVAL_STORE_RUNS_DIR = mod.EVAL_STORE_DIR / "runs"
+            mod.EVAL_STORE_OVERRIDES_DIR = mod.EVAL_STORE_DIR / "overrides"
+            mod.RUNS_DIR = tmp_path / "runs"
+            try:
+                run_dir = mod.RUNS_DIR / "run-override"
+                run_dir.mkdir(parents=True)
+                record = {
+                    "schema": "a9.eval_store_record.v1",
+                    "record_id": "eval-run-override",
+                    "run_id": "run-override",
+                    "task_id": "override-task",
+                    "status": "monitor-blocked",
+                    "rule_monitor": {
+                        "recommended_action": "block_and_rewrite_task",
+                        "failed_experts": ["data_model_expert"],
+                        "gates": {"hard_gate": {"status": "fail", "failed_experts": ["data_model_expert"]}},
+                    },
+                    "eval_contract": {"path": str(run_dir / "moe_eval_contract.json")},
+                }
+                record["record_hash"] = mod.sha256_text(mod.stable_json({k: v for k, v in record.items() if k != "record_hash"}))
+                (run_dir / "eval_store_record.json").write_text(json.dumps(record), encoding="utf-8")
+
+                result = mod.write_eval_manual_override(
+                    run_id="run-override",
+                    action="continue",
+                    reason="monitor false positive; current evidence proves data model in state.json",
+                    actor="human-monitor",
+                    evidence_refs=["state.json#channels"],
+                )
+                override = json.loads(Path(result["output_path"]).read_text(encoding="utf-8"))
+                stored_record = json.loads((run_dir / "eval_store_record.json").read_text(encoding="utf-8"))
+                override_lines = [
+                    json.loads(line)
+                    for line in Path(result["index_path"]).read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                ]
+            finally:
+                mod.EVAL_STORE_DIR = old_eval_store
+                mod.EVAL_STORE_RUNS_DIR = old_eval_runs
+                mod.EVAL_STORE_OVERRIDES_DIR = old_eval_overrides
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(result["status"], "written")
+        self.assertEqual(override["schema"], "a9.eval_manual_override.v1")
+        self.assertEqual(override["actor"], "human-monitor")
+        self.assertEqual(override["action"], "continue")
+        self.assertEqual(override["original"]["record_hash"], record["record_hash"])
+        self.assertEqual(override["original"]["failed_experts"], ["data_model_expert"])
+        self.assertEqual(override["training_label"]["rule_action"], "block_and_rewrite_task")
+        self.assertEqual(override["training_label"]["human_action"], "continue")
+        self.assertEqual(stored_record["record_hash"], record["record_hash"])
+        self.assertEqual(len(override_lines), 1)
+        self.assertEqual(override_lines[0]["override_id"], override["override_id"])
+
     def test_reference_gate_blocks_missing_prompt_declared_reference_before_worker_launch(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
