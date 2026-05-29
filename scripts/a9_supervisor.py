@@ -1149,6 +1149,8 @@ def worker_reference_slices() -> list[str]:
         "reference-projects/openclaw/extensions/memory-core",
         "reference-projects/openclaw/extensions/memory-wiki",
         "reference-projects/barter-rs/barter-integration/src/socket",
+        "reference-projects/barter-rs/barter-data/src/streams/consumer.rs",
+        "reference-projects/barter-rs/barter/src/engine/command.rs",
         "reference-projects/barter-rs/barter/src/engine/audit",
         "reference-projects/barter-rs/barter/src/strategy",
         "vendor-src",

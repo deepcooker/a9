@@ -130,7 +130,7 @@ Do the work.
         self.assertIn("test_verifiability_expert", {item["name"] for item in score["experts"]})
         self.assertEqual(score["gates"]["hard_gate"]["status"], "fail")
 
-    def test_default_worker_uses_stable_codex_model_and_can_be_overridden(self):
+    def test_default_worker_uses_configured_codex_model_and_can_be_overridden(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="model-test", prompt="demo")
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,7 +146,7 @@ Do the work.
                 self.assertIn(f"TMPDIR={mod.WORKER_TMP_DIR}", cmd)
                 self.assertIn("--ephemeral", cmd)
                 self.assertIn("--model", cmd)
-                self.assertEqual(cmd[cmd.index("--model") + 1], "gpt-5.3-codex")
+                self.assertEqual(cmd[cmd.index("--model") + 1], mod.DEFAULT_WORKER_MODEL)
 
                 os.environ["A9_SUPERVISOR_MODEL"] = "gpt-5.5"
                 cmd = mod.build_worker_cmd(task, Path("/tmp/worktree"), run_dir, final_path, "prompt")
@@ -394,6 +394,14 @@ Do the work.
             )
             barter_socket.mkdir(parents=True)
             (barter_socket / "mod.rs").write_text("pub mod reconnect;\n", encoding="utf-8")
+            barter_streams = (
+                source_root / "reference-projects" / "barter-rs" / "barter-data" / "src" / "streams"
+            )
+            barter_streams.mkdir(parents=True)
+            (barter_streams / "consumer.rs").write_text("pub trait StreamConsumer {}\n", encoding="utf-8")
+            barter_engine = source_root / "reference-projects" / "barter-rs" / "barter" / "src" / "engine"
+            barter_engine.mkdir(parents=True)
+            (barter_engine / "command.rs").write_text("pub enum EngineCommand {}\n", encoding="utf-8")
             barter_audit = source_root / "reference-projects" / "barter-rs" / "barter" / "src" / "engine" / "audit"
             barter_audit.mkdir(parents=True)
             (barter_audit / "mod.rs").write_text("pub struct AuditEngine;\n", encoding="utf-8")
@@ -421,6 +429,8 @@ Do the work.
             self.assertIn("reference-projects/codex/codex-rs/app-server-transport/src/transport", copied)
             self.assertIn("reference-projects/openclaw/extensions/lobster", copied)
             self.assertIn("reference-projects/barter-rs/barter-integration/src/socket", copied)
+            self.assertIn("reference-projects/barter-rs/barter-data/src/streams/consumer.rs", copied)
+            self.assertIn("reference-projects/barter-rs/barter/src/engine/command.rs", copied)
             self.assertIn("reference-projects/barter-rs/barter/src/engine/audit", copied)
             self.assertIn("reference-projects/barter-rs/barter/src/strategy", copied)
             self.assertIn("vendor-src", copied)
@@ -486,6 +496,28 @@ Do the work.
                     / "src"
                     / "socket"
                     / "mod.rs"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "barter-rs"
+                    / "barter-data"
+                    / "src"
+                    / "streams"
+                    / "consumer.rs"
+                ).exists()
+            )
+            self.assertTrue(
+                (
+                    worktree
+                    / "reference-projects"
+                    / "barter-rs"
+                    / "barter"
+                    / "src"
+                    / "engine"
+                    / "command.rs"
                 ).exists()
             )
             self.assertTrue(
