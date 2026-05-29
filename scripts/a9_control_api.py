@@ -37,7 +37,14 @@ NODE_ONLINE_TTL_SECONDS = 90
 NODE_STALE_TTL_SECONDS = 300
 PHONE_ADMIN_SCOPE = "operator.admin"
 PHONE_CONTROL_GROUPS = {
-    "runtime": ["submit.run", "session.refresh.trial", "flow.resume", "approval.approve", "approval.reject"],
+    "runtime": [
+        "submit.run",
+        "session.refresh.trial",
+        "flow.resume",
+        "approval.approve",
+        "approval.reject",
+        "eval.override",
+    ],
     "remote": [
         "nodes.bootstrap.execute",
         "nodes.probe.execute",
@@ -931,6 +938,7 @@ def controller_discovery() -> dict[str, Any]:
             "submit": "/api/submit",
             "runtime_run_one": "/api/runtime/run-one",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
+            "eval_override": "/api/eval/override",
             "gateway_transport_contract": "/api/gateway/transport-contract",
             "gateway_reconnect_decision": "/api/gateway/reconnect-decision",
             "gateway_reconnect_diagnostic": "/api/gateway/reconnect-diagnostic",
@@ -2658,6 +2666,27 @@ def runtime_session_refresh_trial(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def eval_override(payload: dict[str, Any]) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("eval.override", root=ROOT)
+    if not gate.get("allowed"):
+        return {"status": "blocked", "command": "eval.override", "gate": gate}
+    evidence_refs = payload.get("evidence_refs", [])
+    if isinstance(evidence_refs, str):
+        evidence_refs = [evidence_refs]
+    if not isinstance(evidence_refs, list):
+        evidence_refs = []
+    mod = supervisor()
+    result = mod.write_eval_manual_override(
+        run_id=str(payload.get("run_id") or "").strip(),
+        action=str(payload.get("action") or "").strip(),
+        reason=str(payload.get("reason") or "").strip(),
+        actor=str(payload.get("actor") or "mobile-operator").strip(),
+        evidence_refs=[str(item) for item in evidence_refs],
+    )
+    return {"command": "eval.override", "gate": gate, **result}
+
+
 def response(status: int, payload: Any) -> tuple[int, bytes]:
     return status, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
 
@@ -2780,6 +2809,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_run_one(payload))
             elif self.path == "/api/runtime/session-refresh-trial":
                 self.write_json(200, runtime_session_refresh_trial(payload))
+            elif self.path == "/api/eval/override":
+                self.write_json(200, eval_override(payload))
             elif self.path == "/api/nodes/register":
                 self.write_json(200, register_node(payload))
             elif self.path == "/api/nodes/probe":

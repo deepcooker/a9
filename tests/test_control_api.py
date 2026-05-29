@@ -3178,6 +3178,119 @@ class ControlApiTests(unittest.TestCase):
             self.assertFalse(unknown["allowed"])
             self.assertEqual(unknown["reason"], "unknown_command")
 
+    def test_eval_override_requires_runtime_arm_and_writes_override(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_root = mod.ROOT
+            original_supervisor_loader = mod.supervisor
+            mod.ROOT = root
+            supervisor = mod.supervisor()
+            old_runs = supervisor.RUNS_DIR
+            old_eval_store = supervisor.EVAL_STORE_DIR
+            old_eval_runs = supervisor.EVAL_STORE_RUNS_DIR
+            old_eval_overrides = supervisor.EVAL_STORE_OVERRIDES_DIR
+            supervisor.RUNS_DIR = root / ".a9" / "runs"
+            supervisor.EVAL_STORE_DIR = root / ".a9" / "eval_store"
+            supervisor.EVAL_STORE_RUNS_DIR = supervisor.EVAL_STORE_DIR / "runs"
+            supervisor.EVAL_STORE_OVERRIDES_DIR = supervisor.EVAL_STORE_DIR / "overrides"
+            try:
+                mod.supervisor = lambda: supervisor
+                run_dir = supervisor.RUNS_DIR / "run-eval"
+                run_dir.mkdir(parents=True)
+                record = {
+                    "schema": "a9.eval_store_record.v1",
+                    "record_id": "eval-run-eval",
+                    "run_id": "run-eval",
+                    "task_id": "eval-task",
+                    "status": "monitor-blocked",
+                    "rule_monitor": {
+                        "recommended_action": "block_and_rewrite_task",
+                        "failed_experts": ["data_model_expert"],
+                        "gates": {"hard_gate": {"status": "fail", "failed_experts": ["data_model_expert"]}},
+                    },
+                    "eval_contract": {"path": str(run_dir / "moe_eval_contract.json")},
+                }
+                record["record_hash"] = supervisor.sha256_text(
+                    supervisor.stable_json({key: value for key, value in record.items() if key != "record_hash"})
+                )
+                (run_dir / "eval_store_record.json").write_text(json.dumps(record), encoding="utf-8")
+
+                blocked = mod.eval_override(
+                    {
+                        "run_id": "run-eval",
+                        "action": "continue",
+                        "reason": "false positive",
+                        "operator_scopes": ["operator.admin"],
+                    }
+                )
+                mod.phone_control_arm(
+                    {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                result = mod.eval_override(
+                    {
+                        "run_id": "run-eval",
+                        "action": "continue",
+                        "reason": "monitor false positive; state evidence is sufficient",
+                        "actor": "mobile-human",
+                        "evidence_refs": [".a9/runs/run-eval/state.json"],
+                        "operator_scopes": ["operator.admin"],
+                    }
+                )
+                override = json.loads(Path(result["output_path"]).read_text(encoding="utf-8"))
+            finally:
+                mod.ROOT = old_root
+                mod.supervisor = original_supervisor_loader
+                supervisor.RUNS_DIR = old_runs
+                supervisor.EVAL_STORE_DIR = old_eval_store
+                supervisor.EVAL_STORE_RUNS_DIR = old_eval_runs
+                supervisor.EVAL_STORE_OVERRIDES_DIR = old_eval_overrides
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(result["status"], "written")
+        self.assertEqual(result["command"], "eval.override")
+        self.assertEqual(result["gate"]["status"], "allowed")
+        self.assertEqual(override["actor"], "mobile-human")
+        self.assertEqual(override["training_label"]["human_action"], "continue")
+
+    def test_eval_override_post_route_calls_handler(self):
+        mod = load_control_api()
+        original_eval_override = mod.eval_override
+        post_body = json.dumps(
+            {
+                "run_id": "run-eval",
+                "action": "continue",
+                "reason": "false positive",
+                "operator_scopes": ["operator.admin"],
+            }
+        ).encode("utf-8")
+        captured = {"status": None, "payload": None, "called_payload": None}
+        try:
+            def fake_eval_override(payload):
+                captured["called_payload"] = payload
+                return {"status": "written", "command": "eval.override", "run_id": payload["run_id"]}
+
+            mod.eval_override = fake_eval_override
+
+            class DummyEvalOverridePostHandler:
+                path = "/api/eval/override"
+                headers = {"Content-Length": str(len(post_body))}
+                rfile = io.BytesIO(post_body)
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["payload"] = payload
+
+            mod.ControlHandler.do_POST(DummyEvalOverridePostHandler())
+        finally:
+            mod.eval_override = original_eval_override
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["command"], "eval.override")
+        self.assertEqual(captured["called_payload"]["run_id"], "run-eval")
+
     def test_heartbeat_tmux_start_requires_arm_and_uses_persisted_plan(self):
         mod = load_control_api()
 
@@ -3880,6 +3993,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_diagnostic"], "/api/gateway/reconnect-diagnostic")
         self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
+        self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)

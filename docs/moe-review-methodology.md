@@ -428,6 +428,8 @@ session 精读必须服务于需求变迁：
    `.a9/eval_store/overrides/<override_id>.json` 和
    `.a9/eval_store/overrides.jsonl`。override 不修改 run-local
    `eval_store_record.json`，避免破坏原 evidence hash。
+8. control API 已暴露 `POST /api/eval/override`，受 phone-control
+   `runtime` 组和 `operator.admin` 保护。
 
 当前仍是规则型 MoE + evaluator contract。LLM evaluator 尚未启用，状态为
 `not_configured`。这是刻意的：硬门禁先保持确定性、便宜、可测；LLM 评审只作为
@@ -435,10 +437,10 @@ session 精读必须服务于需求变迁：
 
 ## Immediate Next Step
 
-下一刀应把 eval store 接到 LLM evaluator / control API：
+下一刀应把 eval store 接到 LLM evaluator / mobile UI：
 
 1. 接一个可选 LLM evaluator，只允许消费 `moe_eval_contract.json`。
-2. 把 `eval-override` 暴露到 control API / mobile，让手机端能纠偏。
+2. 把 `POST /api/eval/override` 接入 mobile UI，让手机端能纠偏。
 3. 对比 rule monitor、LLM evaluator、人工 override，沉淀训练/评审样本。
 
 ## References
