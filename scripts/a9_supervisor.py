@@ -46,7 +46,6 @@ DEFAULT_WORKER_MODEL = "gpt-5.3-codex"
 DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
 DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
-DEFAULT_BOUNDED_READ_LINE_LIMIT = 80
 COMMUNICATION_GATE_HINTS = (
     "gateway",
     "redis",
@@ -2178,12 +2177,12 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
     target_pattern = "|".join(re.escape(path) for path in paths)
     tail_match = re.search(rf"^tail\s+-n\s+(\d+)\s+['\"]?(?:{target_pattern})['\"]?$", inner)
     if tail_match:
-        return int(tail_match.group(1)) <= DEFAULT_BOUNDED_READ_LINE_LIMIT
+        return True
     sed_match = re.search(rf"^sed\s+-n\s+['\"]?(\d+)\s*,\s*(\d+)p['\"]?\s+['\"]?(?:{target_pattern})['\"]?$", inner)
     if sed_match:
         start = int(sed_match.group(1))
         end = int(sed_match.group(2))
-        return end >= start and (end - start + 1) <= DEFAULT_BOUNDED_READ_LINE_LIMIT
+        return end >= start
     try:
         parts = shlex.split(inner)
     except ValueError:

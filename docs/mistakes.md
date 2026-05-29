@@ -983,7 +983,7 @@
 - strict worker 产出文件改动时，优先把补丁放进 `output.search_replace_blocks`。
 - block 必须可直接 deterministic apply，且 path 明确、范围最小。
 
-## 2026-05-29：bounded read 建议本身也必须遵守窗口上限
+## 2026-05-29：bounded read 不能靠固定行数做硬门禁
 
 现象：
 
@@ -991,10 +991,11 @@
   `sed -n '1580,1668p' scripts/a9_supervisor.py` 建议窗口有 89 行，超过 80 行上限。
 - live/process governance 正确判定为 `monitor-blocked`，但旧逻辑仍继续跑 declared checks，
   造成“worker 已被拦截但检查通过”的混乱证据。
+- 后续 `remote-action-audit-receipts` 又因为 81-90 行窗口被拦，说明固定数额没有稳定标准，
+  会直接影响 worker 理解完整函数和测试上下文。
 
 规则：
 
-- 监控者写 worker prompt 时，所有建议读取窗口也必须小于等于 bounded read 上限。
 - `monitor-blocked` 属于硬治理失败，应和 retryable budget 一样短路 checks，先修边界或 prompt。
 - bounded scope 不能过严到禁止 worker 在允许文件内做 `rg -n` 定位；允许窄路径 locator，
   继续禁止 runtime 广根搜索、管道和无路径搜索。
@@ -1002,6 +1003,8 @@
   `a9_service ps` 这类状态探针仍然必须拦截。
 - `/bin/bash -lc` 的内层命令必须用 shell parser 解析；正则会在 `rg -n \"a|b\"`
   这类转义引号处截断，导致合理 locator 被误判。
+- 不再用固定行数做 bounded read 硬门禁；入口只管路径、命令形态和禁止状态探针。
+  大输出由 event bytes/token budget、上下文压缩、摘要和 repair 机制治理。
 
 ## 2026-05-29：patch_source 首次 bootstrap 的 patch_apply 摘要会滞后一轮
 
