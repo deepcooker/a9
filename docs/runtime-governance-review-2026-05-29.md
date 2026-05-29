@@ -7,7 +7,7 @@
 必须先把三件事纳入主流程：
 
 1. reference-first review gate：每个非平凡任务先证明看了正确参考项目。
-2. goal / session / execution-chain governance：抄 Codex goal 和 Hermes context/trajectory，而不是只做队列。
+2. goal / session / execution-chain governance：抄 Codex goal 和 Hermes self-improvement / trajectory，而不是只做队列。
 3. token/cost architecture：token 不是靠固定数字门禁优化，而是靠上下文架构、缓存、压缩、分层事实源和可观测执行链优化。
 
 当前可以保留的通路：
@@ -30,10 +30,12 @@ worker strict envelope
 - `docs/session-raw-summary.md` / `docs/session-raw-close-reading.md`：用户明确要求观察 worker 意图、提示词、查询 session 方式、exec 行为和“思维链路/执行链”。
 - `reference-projects/codex/codex-rs/core/src/goals.rs`：Codex 有 persisted thread goals、goal runtime events、token/wall-clock accounting、idle continuation、budget limit steering、blocked audit。
 - `reference-projects/codex/codex-rs/core/templates/goals/continuation.md`：Codex goal 明确要求保留完整 objective，不把目标缩成容易完成的小子集；完成必须 requirement-by-requirement audit。
-- `reference-projects/hermes-agent/agent/context_engine.py`：Hermes 把 context engine 做成可插拔生命周期，负责 should_compress、compress、usage tracking、session start/end/reset 和工具暴露。
-- `reference-projects/hermes-agent/agent/context_compressor.py`：Hermes compression 不是简单截断，而是保护 head/tail、工具输出预处理、结构化 summary、remaining work、summary budget、图片 token 成本。
-- `reference-projects/hermes-agent/agent/prompt_caching.py`：Hermes 用 prompt cache breakpoint 降低多轮输入成本。
+- `reference-projects/hermes-agent/agent/background_review.py`：Hermes 在每轮对话后 fork review agent，复盘对话并把有效信号写入 memory / skill，主会话和 prompt cache 不被污染。
+- `reference-projects/hermes-agent/agent/curator.py`：Hermes curator 周期性维护 agent-created skills，做 stale/archive/consolidate/pin，且保留 dry-run/report/structured summary。
+- `reference-projects/hermes-agent/batch_runner.py`：Hermes batch runner 把 agent run 变成 trajectory、tool stats、reasoning coverage、checkpoint 和可恢复批处理。
 - `reference-projects/hermes-agent/agent/trajectory.py`：Hermes 保存 trajectory，区分 completed / failed，用于后续训练和回放。
+- `reference-projects/hermes-agent/agent/context_compressor.py`：Hermes compression 不是简单截断，而是保护 head/tail、工具输出预处理、结构化 summary、remaining work、summary budget、图片 token 成本。
+- `reference-projects/hermes-agent/datagen-config-examples/trajectory_compression.yaml`：Hermes 对 trajectory compression 有独立数据处理配置，保护 first system / first human / first gpt / first tool / tail turns，并记录 metrics。
 - `scripts/a9_monitor.py`：已有 requirements_review_council_v1，但 reference evidence、goal fidelity、execution-chain observation 还不够硬。
 - `scripts/a9_supervisor.py`：已有 event summaries、context pressure、actual token usage、context router，但 token governance 仍偏预算截断。
 
@@ -123,6 +125,33 @@ worker prompt
 - 不能也不应该要求隐藏思维链。
 - 应该把外显执行链做成可评分、可回放、可训练的数据结构。
 
+### 5. Hermes 被误读成普通上下文系统
+
+用户纠偏正确：Hermes 值得抄的主线不是“它也会压缩”，而是它有自我进化闭环雏形：
+
+```text
+conversation snapshot
+-> background review fork
+-> memory / skill write
+-> curator consolidate / archive / pin
+-> trajectory / stats / checkpoint
+-> datagen / compression / replay
+```
+
+这套机制的关键不是单次总结，而是把一次 run 的经验变成未来 agent 的可检索能力、可维护 skill、可训练 trajectory。
+
+A9 当前对应关系：
+
+- 已有：session 精读、因果变迁、worker evidence、monitor review、git commit。
+- 缺失：自动把 evidence 归因为 memory commit / skill doctrine / task rule / eval sample。
+- 缺失：周期性 curator，把碎片规则合并成 umbrella doctrine，避免文档和规则爆炸。
+- 缺失：trajectory dataset 与回放评估，让 24h worker 的执行链能反哺下一轮。
+
+结论：
+
+- A9 的 MoE + 精读 session + 外显执行链 + 24h worker 可以比 Hermes 更强，但前提是自动化闭环落地。
+- 不能再只把 session refresh 当“总结文档”；它必须升级为 causal memory commit。
+
 ## What To Keep
 
 保留：
@@ -198,7 +227,50 @@ Requirements Review Council
   v
 Git / Evidence / Memory Commit
   accepted commit + causal memory + trajectory dataset
+  |
+  v
+Self-Evolution Curator
+  memory commit -> doctrine / skill / eval sample / next task
 ```
+
+## Codex Goal Mechanism To Copy
+
+Codex goal 能持续工作的原因不是“多跑几轮”，而是 runtime 持有目标状态：
+
+- `thread_goals` 持久化 objective、status、token_budget、tokens_used、time_used_seconds。
+- `GoalRuntimeEvent` 在 turn start/tool complete/turn finish/usage limit/external mutation/thread resume 时统一结算。
+- `maybe_start_goal_continuation_turn` 只在空闲、无 queued input、goal 仍 active 时注入 continuation turn。
+- `continuation.md` 明确要求保留完整 objective，不能把目标缩小成更容易完成的版本。
+- completion 必须逐项 audit 当前文件、命令、测试、运行态等 authoritative evidence。
+- blocked 不能第一次失败就标记，必须连续多轮同一 blocker 才允许 blocked。
+
+A9 要抄的是这个结构：
+
+```text
+goal object
+-> task slices
+-> continuation prompt
+-> accounting
+-> completion/block audit
+-> persisted status
+```
+
+不是简单 while-loop，也不是靠页面监控手动续命。
+
+## Hermes Self-Evolution Mechanism To Copy
+
+Hermes 的自我进化有三层：
+
+1. Turn-level review：`background_review.py` fork review agent，只开放 memory/skill 工具，把用户纠偏、工作流修正、技术经验写成持久能力。
+2. Library-level curator：`curator.py` 周期性审查 skill collection，按 umbrella class 合并、归档、保护 pinned，不让经验库碎片化。
+3. Trajectory/datagen：`batch_runner.py` 和 `trajectory.py` 保存 completed/failed trajectories、tool stats、reasoning coverage、checkpoint，后续可压缩、回放、训练。
+
+A9 要抄但要改造：
+
+- Hermes 是 agent skill/memory 自我维护；A9 要扩展成工程执行治理：reference evidence、execution chain、git evidence、test evidence、session causal memory。
+- Hermes background review 是后台 fork；A9 可以用 24h worker 做执行，用主监控做验收，但必须有 deterministic memory commit，不允许只靠自然语言自评。
+- Hermes curator 维护 skill；A9 curator 要维护 doctrine、需求主线、错题本、reference gate、eval case。
+- Hermes trajectory 面向训练数据；A9 trajectory 要同时支持回放评审、worker 质量评分、未来私有模型数据闭环。
 
 ## Data First Acceptance
 
@@ -226,17 +298,19 @@ Git / Evidence / Memory Commit
 
 ## Immediate Next Steps
 
-下一刀不要继续通讯功能，先做治理重构切片：
+下一刀不要继续通讯功能，先做治理重构切片。顺序调整为先让 24h worker 具备“持续目标 + 自我进化证据”的骨架：
 
-1. 新增 `docs/reference-review-gate.md`：
-   定义每个任务必须记录 reference source、mechanism、boundary、license。
-2. 新增 A9 goal runtime 最小数据模型：
+1. 新增 A9 goal runtime 最小数据模型：
    `goal_id/objective/status/token_budget/tokens_used/blocked_count/completion_audit`.
-3. 升级 `scripts/a9_monitor.py`：
+2. 增加 execution chain summary：
+   每个 run 生成机器可读 `execution_chain.json`，记录 prompt、reference reads、commands、patch、checks、tokens、next_slice。
+3. 新增 self-evolution memory commit：
+   把 execution chain + session 精读归因为 doctrine / skill / eval sample / next task，保留原始 evidence path。
+4. 新增 `docs/reference-review-gate.md`：
+   定义每个任务必须记录 reference source、mechanism、boundary、license。
+5. 升级 `scripts/a9_monitor.py`：
    增加 `reference_evidence_expert`、`goal_fidelity_expert`、`execution_chain_expert`。
-4. 增加 execution chain summary：
-   每个 run 生成机器可读 `execution_chain.json`。
-5. 再恢复通讯五大块：
+6. 再恢复通讯五大块：
    node 状态机 -> Redis Streams 生产治理 -> 多机器接入 -> SSE replay -> 指标/soak。
 
 ## Current Verdict
