@@ -1175,6 +1175,31 @@ def hydrate_worker_reference_slices(worktree: Path) -> list[str]:
     return copied
 
 
+def validate_worker_reference_gate(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
+    output_path = run_dir / "reference_gate.json"
+    declared = prompt_reference_paths(task.prompt)
+    items = []
+    missing = []
+    for rel in declared:
+        exists = (worktree / rel).exists()
+        item = {"path": rel, "exists": exists}
+        items.append(item)
+        if not exists:
+            missing.append(rel)
+    result = {
+        "status": "fail" if missing else "pass",
+        "kind": "reference_gate",
+        "declared_count": len(declared),
+        "missing_count": len(missing),
+        "items": items,
+        "missing_paths": missing,
+        "output_path": str(output_path),
+        "source": "prompt_declared_reference_paths_in_worker_worktree",
+    }
+    write_json(output_path, result)
+    return result
+
+
 def build_worker_cmd(
     task: Task,
     worktree: Path,
@@ -1452,8 +1477,64 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     context_packet = build_context_packet(task)
     raw_task_path.write_text(task.prompt + "\n", encoding="utf-8")
     prompt_path.write_text(context_packet["prompt"], encoding="utf-8")
+    reference_gate = validate_worker_reference_gate(task, worktree, run_dir)
 
     cmd = build_worker_cmd(task, worktree, run_dir, final_path, context_packet["prompt"])
+    if reference_gate["status"] == "fail":
+        event_summaries_path.write_text(
+            json.dumps(
+                {
+                    "event_type": "reference_gate.failed",
+                    "label": "reference_gate_failed",
+                    "missing_paths": reference_gate["missing_paths"],
+                    "output_path": reference_gate["output_path"],
+                },
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        events_path.write_text("", encoding="utf-8")
+        stderr_path.write_text("reference gate failed before worker launch\n", encoding="utf-8")
+        return {
+            "command": cmd,
+            "return_code": 0,
+            "timed_out": False,
+            "idle_timed_out": False,
+            "idle_timeout_seconds": effective_worker_idle_timeout_seconds(task),
+            "budget_stopped": False,
+            "budget_stop_kind": "",
+            "budget_reason": "",
+            "event_count": 1,
+            "event_bytes": 0,
+            "event_budget": {
+                "max_events": worker_budget_limit("A9_WORKER_MAX_EVENTS", DEFAULT_MAX_WORKER_EVENTS),
+                "max_event_bytes": worker_budget_limit("A9_WORKER_MAX_EVENT_BYTES", DEFAULT_MAX_WORKER_EVENT_BYTES),
+            },
+            "event_counts": {"reference_gate.failed": 1},
+            "event_summary_count": 1,
+            "events_path": str(events_path),
+            "event_summaries_path": str(event_summaries_path),
+            "stderr_path": str(stderr_path),
+            "final_path": str(final_path),
+            "raw_task_path": str(raw_task_path),
+            "actual_token_usage": {
+                "input_tokens": 0,
+                "cached_input_tokens": 0,
+                "output_tokens": 0,
+                "reasoning_output_tokens": 0,
+                "uncached_input_tokens": 0,
+                "total_tokens": 0,
+            },
+            "prompt_approx_tokens": context_packet["approx_tokens"],
+            "prompt_budget_tokens": context_packet["budget_tokens"],
+            "prompt_section_budgets": context_packet["section_budgets"],
+            "previous_context_path": context_packet["previous_context_path"],
+            "previous_context_compression": context_packet["previous_context_compression"],
+            "repo_map": context_packet["repo_map"],
+            "context_router": context_packet.get("context_router", {}),
+            "reference_gate": reference_gate,
+        }
     started = time.monotonic()
     last_output = started
     idle_timeout_seconds = effective_worker_idle_timeout_seconds(task)
@@ -1590,6 +1671,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "previous_context_compression": context_packet["previous_context_compression"],
         "repo_map": context_packet["repo_map"],
         "context_router": context_packet.get("context_router", {}),
+        "reference_gate": reference_gate,
     }
 
 
@@ -2887,10 +2969,24 @@ def monitor_findings(summary: dict[str, Any]) -> list[dict[str, Any]]:
 
 def guard_findings(summary: dict[str, Any]) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
-    for name in ("worker_envelope", "patch_apply", "patch_guard", "scope_guard", "process_governance"):
+    for name in ("reference_gate", "worker_envelope", "patch_apply", "patch_guard", "scope_guard", "process_governance"):
         guard = summary.get(name, {})
+        if name == "reference_gate":
+            worker = summary.get("worker", {})
+            guard = worker.get("reference_gate", {}) if isinstance(worker, dict) else {}
         if not isinstance(guard, dict):
             continue
+        if name == "reference_gate" and guard.get("status") == "fail":
+            findings.append(
+                {
+                    "source": name,
+                    "level": "error",
+                    "kind": "reference_gate_missing",
+                    "message": "prompt-declared reference paths missing from worker worktree",
+                    "output_path": guard.get("output_path", ""),
+                    "missing_paths": guard.get("missing_paths", []),
+                }
+            )
         for item in guard.get("findings", []) or []:
             if isinstance(item, dict):
                 findings.append({"source": name, **item})
@@ -3557,6 +3653,14 @@ def write_evidence_and_state(
         ("stderr", Path(summary["worker"]["stderr_path"]), {}),
         ("final_message", Path(summary["worker"]["final_path"]), {}),
         (
+            "reference_gate",
+            Path(summary["worker"].get("reference_gate", {}).get("output_path") or run_dir / "reference_gate.missing"),
+            {
+                "status": summary["worker"].get("reference_gate", {}).get("status"),
+                "missing_count": summary["worker"].get("reference_gate", {}).get("missing_count", 0),
+            },
+        ),
+        (
             "worker_envelope",
             Path(summary["worker_envelope"]["output_path"]),
             {
@@ -3683,6 +3787,7 @@ def write_evidence_and_state(
             "messages": by_kind.get("final_message", []) + by_kind.get("context", []),
             "tool_events": by_kind.get("events", []) + by_kind.get("stderr", []),
             "event_summaries": by_kind.get("event_summary", []),
+            "reference_gates": by_kind.get("reference_gate", []),
             "worker_envelopes": by_kind.get("worker_envelope", []),
             "repo_state": [
                 {
@@ -3705,6 +3810,7 @@ def write_evidence_and_state(
             "messages",
             "tool_events",
             "event_summaries",
+            "reference_gates",
             "worker_envelopes",
             "repo_state",
             "patches",
@@ -4215,6 +4321,15 @@ def worker_failure_text(worker: dict[str, Any], limit: int = 12000) -> str:
 
 
 def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
+    reference_gate = worker.get("reference_gate", {})
+    if isinstance(reference_gate, dict) and reference_gate.get("status") == "fail":
+        return {
+            "status": "monitor-blocked",
+            "category": "reference_gate",
+            "reason": "prompt-declared reference paths missing from worker worktree",
+            "matched_pattern": "reference_gate_missing",
+            "missing_paths": reference_gate.get("missing_paths", []),
+        }
     if worker.get("budget_stopped"):
         if worker.get("budget_stop_kind") == "command_bounds":
             return {

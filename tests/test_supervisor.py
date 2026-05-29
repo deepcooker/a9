@@ -1044,6 +1044,37 @@ Do the work.
         self.assertEqual(commit["next_tasks"][0]["text"], "build deterministic memory commit writer")
         self.assertEqual(commit["evidence_paths"]["execution_chain_path"], str(execution_chain))
 
+    def test_reference_gate_blocks_missing_prompt_declared_reference_before_worker_launch(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="reference-gate-test",
+                prompt="Read reference-projects/hermes-agent/agent/missing_curator.py before editing.",
+            )
+            old_override = os.environ.get("A9_SUPERVISOR_WORKER_CMD")
+            os.environ["A9_SUPERVISOR_WORKER_CMD"] = "touch {run_dir}/worker-launched"
+            try:
+                worker = mod.run_worker(task, worktree, run_dir)
+            finally:
+                if old_override is None:
+                    os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+                else:
+                    os.environ["A9_SUPERVISOR_WORKER_CMD"] = old_override
+
+            failure = mod.classify_worker_failure(worker)
+            gate = json.loads((run_dir / "reference_gate.json").read_text(encoding="utf-8"))
+
+        self.assertFalse((run_dir / "worker-launched").exists())
+        self.assertEqual(worker["reference_gate"]["status"], "fail")
+        self.assertEqual(gate["missing_count"], 1)
+        self.assertEqual(failure["status"], "monitor-blocked")
+        self.assertEqual(failure["category"], "reference_gate")
+
     def test_apply_worker_search_replace_extracts_final_message_blocks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
