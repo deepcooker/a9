@@ -998,3 +998,33 @@ Next monitoring target:
      data quality comes before automation. Keeping smoke nodes as evidence but
      excluding them from default recovery makes the 24h monitor less noisy
      without hiding facts or inventing a hard gate.
+
+56. Recovery planning dedupes node aliases by canonical SSH target.
+   - Trigger:
+     after smoke noise was filtered, real observations still showed two
+     Tailscale registry records pointing at the same `root@100.74.166.86:2200`
+     target. That would make a 24h monitor repeat the same recovery work under
+     two node ids.
+   - Mechanism copied:
+     inventory reconciliation from mature control planes: preserve raw records,
+     derive a canonical resource key, select one primary by freshness, expose
+     aliases as evidence, and run default repair once per real resource.
+   - Change:
+     `scripts/a9_control_api.py` now derives `target_key` with
+     `canonical_ssh_target()`, reports `duplicate_target_groups`,
+     `duplicate_node_count`, and `duplicate_nodes` in
+     `/api/nodes/connection-summary`, and skips duplicate aliases in default
+     `/api/nodes/recovery-cycle`. `include_duplicates=true` still exposes the
+     full set, and `communication_followup` now follows only the primary node.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py
+     scripts/a9_recovery_loop.py` passed. `python3 -m unittest
+     tests.test_control_api tests.test_recovery_loop tests.test_service
+     tests.test_remote tests.test_node` passed with `230` tests. Real API
+     smoke after stack restart showed `risk_count=1`,
+     `duplicate_node_count=1`, default recovery `step_count=1`, and
+     `skipped_duplicate_count=1` while preserving the duplicate alias evidence.
+   - Governance lesson:
+     24h automation must act on real resources, not registry aliases. Raw
+     events remain visible, but reconciliation decides what the executor should
+     touch by default.

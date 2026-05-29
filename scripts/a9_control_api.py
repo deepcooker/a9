@@ -899,6 +899,62 @@ def node_hygiene(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def canonical_ssh_target(target: str) -> str:
+    raw = str(target or "").strip().lower()
+    if not raw:
+        return ""
+    ssh_target, port = split_ssh_target(raw)
+    user = ""
+    host = ssh_target
+    if "@" in ssh_target:
+        user, host = ssh_target.split("@", 1)
+    try:
+        ip = ipaddress.ip_address(host.strip("[]"))
+        host = str(ip)
+    except ValueError:
+        host = host.strip("[]")
+    if user and port:
+        return f"{user}@{host}:{port}"
+    if user:
+        return f"{user}@{host}"
+    if port:
+        return f"{host}:{port}"
+    return host
+
+
+def node_freshness_seconds(record: dict[str, Any]) -> float:
+    dt = parse_iso_datetime(str(record.get("last_heartbeat_at") or record.get("updated_at") or ""))
+    return dt.timestamp() if dt else 0.0
+
+
+def duplicate_target_groups(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for node in nodes:
+        key = canonical_ssh_target(str(node.get("ssh_target") or ""))
+        if not key:
+            continue
+        buckets.setdefault(key, []).append(node)
+    groups = []
+    for key, items in sorted(buckets.items()):
+        if len(items) < 2:
+            continue
+        sorted_items = sorted(
+            items,
+            key=lambda item: (node_freshness_seconds(item), str(item.get("node_id") or "")),
+            reverse=True,
+        )
+        primary = sorted_items[0]
+        groups.append(
+            {
+                "target_key": key,
+                "primary_node_id": str(primary.get("node_id") or ""),
+                "node_ids": [str(item.get("node_id") or "") for item in sorted_items],
+                "count": len(sorted_items),
+            }
+        )
+    return groups
+
+
 def tailscale_status() -> dict[str, Any]:
     binary = shutil.which("tailscale")
     if not binary:
@@ -1328,9 +1384,18 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
     hygiene_categories: dict[str, int] = {}
     risk_nodes: list[dict[str, Any]] = []
     skipped_noise_nodes: list[dict[str, Any]] = []
+    duplicate_nodes: list[dict[str, Any]] = []
+    seen_operational_targets: dict[str, str] = {}
     evidence_paths: list[str] = []
+    duplicate_groups = duplicate_target_groups(nodes)
+    duplicate_primary_by_target = {
+        str(group.get("target_key") or ""): str(group.get("primary_node_id") or "")
+        for group in duplicate_groups
+    }
 
     for node in nodes:
+        node_id = str(node.get("node_id") or "")
+        target_key = canonical_ssh_target(str(node.get("ssh_target") or ""))
         state = str(node.get("connection_state") or "unknown")
         connection_states[state] = connection_states.get(state, 0) + 1
         summary_action = str(node.get("action") or "unknown")
@@ -1368,11 +1433,42 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
             )
             continue
 
+        if target_key:
+            primary_node_id = duplicate_primary_by_target.get(target_key)
+            if primary_node_id and node_id != primary_node_id:
+                duplicate_nodes.append(
+                    {
+                        "node_id": node.get("node_id"),
+                        "ssh_target": node.get("ssh_target"),
+                        "target_key": target_key,
+                        "primary_node_id": primary_node_id,
+                        "connection_state": state,
+                        "recovery_action": recovery_action,
+                        "hygiene": hygiene,
+                    }
+                )
+                continue
+            if target_key in seen_operational_targets:
+                duplicate_nodes.append(
+                    {
+                        "node_id": node.get("node_id"),
+                        "ssh_target": node.get("ssh_target"),
+                        "target_key": target_key,
+                        "primary_node_id": seen_operational_targets[target_key],
+                        "connection_state": state,
+                        "recovery_action": recovery_action,
+                        "hygiene": hygiene,
+                    }
+                )
+                continue
+            seen_operational_targets[target_key] = node_id
+
         if state in {"stale", "offline", "degraded", "disconnected", "needs_repair", "unknown"} or recovery_action not in {"observe"}:
             risk_nodes.append(
                 {
-                    "node_id": node.get("node_id"),
+                    "node_id": node_id,
                     "ssh_target": node.get("ssh_target"),
+                    "target_key": target_key,
                     "connection_state": state,
                     "connection_action": node.get("connection_action"),
                     "action": str(node.get("action") or ""),
@@ -1396,6 +1492,9 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
         "hygiene_categories": hygiene_categories,
         "risk_count": len(risk_nodes),
         "risk_nodes": risk_nodes,
+        "duplicate_target_groups": duplicate_groups,
+        "duplicate_node_count": len(duplicate_nodes),
+        "duplicate_nodes": duplicate_nodes,
         "skipped_noise_count": len(skipped_noise_nodes),
         "skipped_noise_nodes": skipped_noise_nodes,
         "latest_evidence_paths": evidence_paths[-20:],
@@ -1422,6 +1521,7 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
     payload = payload or {}
     execute = bool(payload.get("execute") or payload.get("apply"))
     include_noise = parse_truthy(payload.get("include_noise"))
+    include_duplicates = parse_truthy(payload.get("include_duplicates"))
     try:
         max_actions = max(1, int(payload.get("max_actions") or payload.get("max_nodes") or 3))
     except (TypeError, ValueError):
@@ -1430,6 +1530,12 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
     status = node_status(root)
     nodes = status.get("nodes") if isinstance(status.get("nodes"), list) else []
     steps: list[dict[str, Any]] = []
+    duplicate_groups = duplicate_target_groups(nodes)
+    duplicate_primary_by_target = {
+        str(group.get("target_key") or ""): str(group.get("primary_node_id") or "")
+        for group in duplicate_groups
+    }
+    skipped_duplicates: list[dict[str, Any]] = []
     recovery_gate = command_gate("nodes.recovery.cycle", root=root) if execute else {
         "status": "not_required",
         "allowed": True,
@@ -1443,6 +1549,7 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
             "generated_at": utc_now(),
             "execute": execute,
             "include_noise": include_noise,
+            "include_duplicates": include_duplicates,
             "max_actions": max_actions,
             "node_id": requested_node_id,
             "step_count": 0,
@@ -1464,14 +1571,34 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
             continue
         if not include_noise and not requested_node_id and hygiene.get("risk_scope") == "noise":
             continue
+        target_key = canonical_ssh_target(str(node.get("ssh_target") or ""))
+        primary_node_id = duplicate_primary_by_target.get(target_key)
+        node_id = str(node.get("node_id") or "")
+        if (
+            not include_duplicates
+            and not requested_node_id
+            and target_key
+            and primary_node_id
+            and node_id != primary_node_id
+        ):
+            skipped_duplicates.append(
+                {
+                    "node_id": node_id,
+                    "ssh_target": str(node.get("ssh_target") or ""),
+                    "target_key": target_key,
+                    "primary_node_id": primary_node_id,
+                    "hygiene": hygiene,
+                }
+            )
+            continue
         if len(steps) >= max_actions:
             break
 
-        node_id = str(node.get("node_id") or "")
         action_payload = _node_recovery_action_payload(node, payload)
         step: dict[str, Any] = {
             "node_id": node_id,
             "ssh_target": str(node.get("ssh_target") or ""),
+            "target_key": target_key,
             "recovery_action": recovery_action,
             "reason": str(plan.get("reason") or ""),
             "route": route,
@@ -1575,10 +1702,13 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
         "generated_at": utc_now(),
         "execute": execute,
         "include_noise": include_noise,
+        "include_duplicates": include_duplicates,
         "max_actions": max_actions,
         "node_id": requested_node_id,
         "step_count": len(steps),
         "steps": steps,
+        "skipped_duplicate_count": len(skipped_duplicates),
+        "skipped_duplicates": skipped_duplicates,
         "gate": recovery_gate,
         "summary": node_connection_summary(root),
     }
@@ -1734,9 +1864,18 @@ def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dic
         "status": status_by_action["continue"],
         "evidence": {"nodes": [], "tasks_stream": {"action": "continue", "reason": "none"}},
     }
+    duplicate_primary_by_target = {
+        str(group.get("target_key") or ""): str(group.get("primary_node_id") or "")
+        for group in duplicate_target_groups(nodes)
+    }
     for node in nodes:
         hygiene = node.get("hygiene") if isinstance(node.get("hygiene"), dict) else node_hygiene(node)
         if hygiene.get("risk_scope") == "noise":
+            continue
+        target_key = canonical_ssh_target(str(node.get("ssh_target") or ""))
+        node_id = str(node.get("node_id") or "")
+        primary_node_id = duplicate_primary_by_target.get(target_key)
+        if target_key and primary_node_id and node_id != primary_node_id:
             continue
         action = str(node.get("connection_action") or "continue")
         if action not in action_priority:
@@ -1745,7 +1884,8 @@ def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dic
         if priority < best["priority"]:
             continue
         node_evidence = {
-            "node_id": str(node.get("node_id") or ""),
+            "node_id": node_id,
+            "target_key": target_key,
             "connection_state": str(node.get("connection_state") or ""),
             "action": action,
             "reason": str(node.get("connection_action_reason") or ""),
@@ -3395,6 +3535,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                             "max_actions": query.get("max_actions", [""])[0],
                             "node_id": query.get("node_id", [""])[0],
                             "include_noise": query.get("include_noise", [""])[0],
+                            "include_duplicates": query.get("include_duplicates", [""])[0],
                         }
                     ),
                 )
