@@ -1037,6 +1037,14 @@ def ssh_remote_command(target: str, remote_command: str, *, connect_timeout: int
     return cmd
 
 
+def remote_shell_path(path_value: str) -> str:
+    raw = str(path_value or "").strip()
+    if raw.startswith("~/"):
+        suffix = raw[2:].replace("\\", "\\\\").replace('"', '\\"').replace("`", "\\`").replace("$", "\\$")
+        return f'"$HOME/{suffix}"'
+    return shlex.quote(raw)
+
+
 def node_path(node_id: str, root: Path = ROOT) -> Path:
     return root / ".a9" / "nodes" / f"{safe_node_id(node_id)}.json"
 
@@ -1359,6 +1367,7 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
                 record = enrich_node_tmux_action(record, root=root)
                 record = enrich_node_probe_evidence(record, root=root)
                 record = enrich_node_heartbeat_start_evidence(record, root=root)
+                record = enrich_node_heartbeat_repair_evidence(record, root=root)
                 record["hygiene"] = node_hygiene(record)
                 record = enrich_node_recovery_plan(record)
                 nodes.append(record)
@@ -1625,13 +1634,17 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
 
             elif recovery_action == "tmux":
                 evidence_path = str(node.get("tmux_evidence_path") or "")
-                if not evidence_path or "tmux-plan-" not in Path(evidence_path).name:
+                evidence_name = Path(evidence_path).name if evidence_path else ""
+                if not evidence_path or ("tmux-plan-" not in evidence_name and "heartbeat-tmux-plan-" not in evidence_name):
                     plan_payload = {
                         **action_payload,
-                        "session": payload.get("session") or "a9",
+                        "session": route.get("session") or payload.get("session") or "a9",
                         "remote_dir": payload.get("remote_dir") or "~/a9-worker",
                     }
-                    tmux_plan = tmux_plan_node(plan_payload, root=root)
+                    if route.get("plan_kind") == "heartbeat_tmux":
+                        tmux_plan = heartbeat_tmux_plan_node(plan_payload, root=root)
+                    else:
+                        tmux_plan = tmux_plan_node(plan_payload, root=root)
                     evidence_path = str(tmux_plan.get("evidence_path") or "")
                     step["prepared_plan"] = tmux_plan
                 action_payload["evidence_path"] = evidence_path
@@ -1668,6 +1681,34 @@ def node_recovery_cycle(payload: dict[str, Any] | None = None, *, root: Path = R
                     step.update({"status": "executed" if result.get("status") != "blocked" else "blocked", "result": result})
                 else:
                     step["result"] = {"status": "planned", "endpoint": "/api/nodes/heartbeat-tmux-start", "payload": action_payload}
+
+            elif recovery_action == "heartbeat_repair":
+                action_payload.update(
+                    {
+                        "controller_url": payload.get("controller_url") or "",
+                        "remote_dir": payload.get("remote_dir") or "~/a9-worker",
+                        "worker_name": payload.get("worker_name") or node_id,
+                    }
+                )
+                step["prepared_plan"] = {
+                    "status": "planned",
+                    "endpoint": "/api/nodes/heartbeat-repair",
+                    "target": action_payload["target"],
+                    "remote_dir": action_payload["remote_dir"],
+                    "worker_name": action_payload["worker_name"],
+                    "controller_url": action_payload["controller_url"] or "http://127.0.0.1:8787",
+                    "execution_enabled": False,
+                    "steps": ["write heartbeat config", "write heartbeat.sh", "chmod heartbeat.sh"],
+                }
+                if execute:
+                    result = heartbeat_repair_node(action_payload, root=root)
+                    step.update({"status": "executed" if result.get("status") != "blocked" else "blocked", "result": result})
+                else:
+                    step["result"] = {
+                        "status": "planned",
+                        "endpoint": "/api/nodes/heartbeat-repair",
+                        "payload": action_payload,
+                    }
 
             elif recovery_action == "quarantine":
                 step["status"] = "manual_required"
@@ -1735,7 +1776,93 @@ def node_recovery_plan(record: dict[str, Any]) -> dict[str, Any]:
     probe_action = str(record.get("probe_action") or "")
     tmux_action = str(record.get("tmux_action") or "")
     heartbeat_start_action = str(record.get("heartbeat_start_action") or "")
+    heartbeat_repair_action = str(record.get("heartbeat_repair_action") or "")
     hygiene = record.get("hygiene") if isinstance(record.get("hygiene"), dict) else node_hygiene(record)
+    heartbeat_start_at = parse_iso_datetime(str(record.get("heartbeat_start_executed_at") or ""))
+    heartbeat_repair_at = parse_iso_datetime(str(record.get("heartbeat_repair_executed_at") or ""))
+    tmux_checked_at = parse_iso_datetime(str(record.get("tmux_checked_at") or ""))
+    repair_after_start = bool(heartbeat_repair_at and (not heartbeat_start_at or heartbeat_repair_at > heartbeat_start_at))
+    tmux_missing_after_start = bool(
+        tmux_checked_at
+        and (not heartbeat_start_at or tmux_checked_at > heartbeat_start_at)
+        and (not heartbeat_repair_at or tmux_checked_at > heartbeat_repair_at)
+    )
+
+    if (
+        hygiene.get("category") == "remote_candidate"
+        and heartbeat_repair_action == "continue"
+        and (
+            heartbeat_start_action != "continue"
+            or repair_after_start
+        )
+    ):
+        return {
+            "action": "heartbeat_start",
+            "reason": "heartbeat_repaired_start_required",
+            "steps": ["start_heartbeat_tmux", "refresh_node_status"],
+            "requires_operator": False,
+            "route": {
+                "method": "POST",
+                "endpoint": "/api/nodes/heartbeat-tmux-start",
+                "command": "nodes.heartbeat.tmux.start",
+                "requires_arm": True,
+            },
+        }
+
+    if hygiene.get("category") == "remote_candidate" and probe_action == "continue" and heartbeat_start_action != "continue":
+        return {
+            "action": "heartbeat_start",
+            "reason": str(record.get("heartbeat_start_action_reason") or "remote_probe_ok_heartbeat_missing"),
+            "steps": ["start_heartbeat_tmux", "refresh_node_status"],
+            "requires_operator": False,
+            "route": {
+                "method": "POST",
+                "endpoint": "/api/nodes/heartbeat-tmux-start",
+                "command": "nodes.heartbeat.tmux.start",
+                "requires_arm": True,
+            },
+        }
+
+    if (
+        hygiene.get("category") == "remote_candidate"
+        and heartbeat_start_action == "continue"
+        and tmux_action in {"retry", "repair"}
+        and str(record.get("tmux_session") or "") == "a9-heartbeat"
+        and tmux_missing_after_start
+    ):
+        return {
+            "action": "heartbeat_repair",
+            "reason": "heartbeat_tmux_missing_after_start",
+            "steps": ["repair_remote_heartbeat_script", "start_heartbeat_tmux", "refresh_node_status"],
+            "requires_operator": True,
+            "route": {
+                "method": "POST",
+                "endpoint": "/api/nodes/heartbeat-repair",
+                "command": "nodes.remote.repair",
+                "requires_arm": True,
+            },
+        }
+
+    if (
+        hygiene.get("category") == "remote_candidate"
+        and heartbeat_start_action == "continue"
+        and connection_state in {"stale", "offline", "degraded", "unknown", "connected"}
+        and connection_action not in {"continue", "watch"}
+    ):
+        return {
+            "action": "tmux",
+            "reason": "remote_heartbeat_stale_check_tmux",
+            "steps": ["check_heartbeat_tmux_session", "refresh_node_status"],
+            "requires_operator": True,
+            "route": {
+                "method": "POST",
+                "endpoint": "/api/nodes/tmux-status",
+                "command": "nodes.tmux.status",
+                "requires_arm": True,
+                "session": "a9-heartbeat",
+                "plan_kind": "heartbeat_tmux",
+            },
+        }
 
     if connection_action in {"continue", "watch"} or connection_state == "online":
         return {
@@ -2001,6 +2128,8 @@ def latest_tmux_action_for_node(node_id: str, *, root: Path = ROOT) -> dict[str,
             "tmux_action": str(action),
             "tmux_action_reason": str(reason or ""),
             "tmux_status": str(payload.get("status") or ""),
+            "tmux_session": str(payload.get("session") or ""),
+            "tmux_checked_at": str(payload.get("checked_at") or payload.get("executed_at") or ""),
             "tmux_evidence_path": str(path),
         }
     return None
@@ -2079,6 +2208,33 @@ def latest_heartbeat_start_evidence_for_node(node_id: str, *, root: Path = ROOT)
     return None
 
 
+def latest_heartbeat_repair_evidence_for_node(node_id: str, *, root: Path = ROOT) -> dict[str, Any] | None:
+    evidence_dir = node_evidence_dir(node_id, root)
+    if not evidence_dir.exists():
+        return None
+    candidates = sorted(
+        evidence_dir.glob("heartbeat-repair*.json"),
+        key=lambda item: (item.stat().st_mtime, item.name.rsplit("-", 1)[-1]),
+        reverse=True,
+    )
+    for path in candidates:
+        try:
+            payload = read_json(path)
+        except (json.JSONDecodeError, OSError):
+            continue
+        action = payload.get("repair_action")
+        if not action:
+            continue
+        return {
+            "heartbeat_repair_status": str(payload.get("status") or ""),
+            "heartbeat_repair_action": str(action),
+            "heartbeat_repair_action_reason": str(payload.get("repair_action_reason") or ""),
+            "heartbeat_repair_executed_at": str(payload.get("executed_at") or ""),
+            "heartbeat_repair_evidence_path": str(path),
+        }
+    return None
+
+
 def enrich_node_tmux_action(record: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     node_id = str(record.get("node_id") or "")
     if not node_id:
@@ -2107,6 +2263,16 @@ def enrich_node_heartbeat_start_evidence(record: dict[str, Any], *, root: Path =
     if not heartbeat_start:
         return record
     return {**record, **heartbeat_start}
+
+
+def enrich_node_heartbeat_repair_evidence(record: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    node_id = str(record.get("node_id") or "")
+    if not node_id:
+        return record
+    repair = latest_heartbeat_repair_evidence_for_node(node_id, root=root)
+    if not repair:
+        return record
+    return {**record, **repair}
 
 
 def redis_node_hot_status() -> dict[str, Any]:
@@ -2944,6 +3110,165 @@ def bootstrap_dry_run_node(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("nodes.bootstrap.execute", root=root)
+    if not gate.get("allowed"):
+        return {
+            "status": "blocked",
+            "execution_enabled": False,
+            "bootstrap_action": "wait_for_approval",
+            "bootstrap_action_reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "gate": gate,
+        }
+    plan = bootstrap_plan_node(payload)
+    target = str(plan.get("target") or "")
+    if not target:
+        raise ValueError("bootstrap plan is missing target")
+    connect_timeout = int(payload.get("connect_timeout") or 5)
+    identity_file = str(payload.get("identity_file") or default_identity_file())
+    command = ssh_remote_command(target, str(plan.get("dry_run_script") or ""), connect_timeout=connect_timeout, identity_file=identity_file)
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=int(payload.get("timeout_seconds") or 60),
+        )
+        return_code = proc.returncode
+        output = proc.stdout
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        return_code = 124
+        output = str(exc)
+    status = "timeout" if timed_out else "ok" if return_code == 0 else "failed"
+    action = "retry" if status == "timeout" else "continue" if status == "ok" else "repair"
+    reason = "bootstrap_timeout" if status == "timeout" else "bootstrap_ok" if status == "ok" else "bootstrap_failed"
+    result = {
+        "status": status,
+        "transport": "tailscale+ssh+bootstrap",
+        "transport_quality": transport_quality(target),
+        "node_id": safe_node_id(str(payload.get("node_id") or target)),
+        "target": target,
+        "controller_url": plan.get("controller_url"),
+        "repo": plan.get("repo"),
+        "remote_dir": plan.get("remote_dir"),
+        "worker_name": plan.get("worker_name"),
+        "executed_at": utc_now(),
+        "return_code": return_code,
+        "timed_out": timed_out,
+        "output": compact_text(output, 4000),
+        "bootstrap_action": action,
+        "bootstrap_action_reason": reason,
+        "reason": reason,
+        "gate": gate,
+        "command_preview": [*command[:-1], "<bootstrap_script>"],
+    }
+    evidence_path = write_node_evidence("bootstrap", str(result.get("node_id") or target or "node"), result, root=root)
+    return {**result, "evidence_path": str(evidence_path)}
+
+
+def heartbeat_repair_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("nodes.remote.repair", root=root)
+    if not gate.get("allowed"):
+        return {
+            "status": "blocked",
+            "execution_enabled": False,
+            "repair_action": "wait_for_approval",
+            "repair_action_reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "gate": gate,
+        }
+    target = str(payload.get("ssh_target") or payload.get("target") or "").strip()
+    if not target:
+        raise ValueError("ssh_target is required")
+    controller_url = str(payload.get("controller_url") or "http://127.0.0.1:8787")
+    remote_dir = str(payload.get("remote_dir") or "~/a9-worker")
+    worker_name = str(payload.get("worker_name") or payload.get("node_id") or "")
+    mod = remote()
+    args = type(
+        "HeartbeatRepairArgs",
+        (),
+        {
+            "controller_url": controller_url,
+            "worker_name": worker_name,
+        },
+    )()
+    script = mod.heartbeat_loop_script(args)
+    quoted_remote_dir = remote_shell_path(remote_dir)
+    command_text = "\n".join(
+        [
+            "set -eu",
+            f"REMOTE_DIR={quoted_remote_dir}",
+            f"CONTROLLER_URL={shlex.quote(controller_url)}",
+            f"WORKER_NAME={shlex.quote(worker_name)}",
+            'mkdir -p "$REMOTE_DIR/.a9/remote-node"',
+            'cat > "$REMOTE_DIR/.a9/remote-node/config.json" <<EOF',
+            "{",
+            '  "controller_url": "$CONTROLLER_URL",',
+            '  "worker_name": "$WORKER_NAME",',
+            '  "installed_at": "' + utc_now() + '"',
+            "}",
+            "EOF",
+            'cat > "$REMOTE_DIR/.a9/remote-node/heartbeat.sh" <<\'EOF\'',
+            script,
+            "EOF",
+            'chmod +x "$REMOTE_DIR/.a9/remote-node/heartbeat.sh"',
+            'printf "A9 heartbeat repaired: %s -> %s\\n" "$REMOTE_DIR" "$CONTROLLER_URL"',
+        ]
+    )
+    connect_timeout = int(payload.get("connect_timeout") or 5)
+    identity_file = str(payload.get("identity_file") or default_identity_file())
+    command = ssh_remote_command(target, command_text, connect_timeout=connect_timeout, identity_file=identity_file)
+    timed_out = False
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=int(payload.get("timeout_seconds") or 20),
+        )
+        return_code = proc.returncode
+        output = proc.stdout
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        return_code = 124
+        output = str(exc)
+    status = "timeout" if timed_out else "ok" if return_code == 0 else "failed"
+    action = "retry" if status == "timeout" else "continue" if status == "ok" else "repair"
+    reason = "heartbeat_repair_timeout" if status == "timeout" else "heartbeat_repair_ok" if status == "ok" else "heartbeat_repair_failed"
+    result = {
+        "status": status,
+        "transport": "tailscale+ssh+heartbeat-repair",
+        "transport_quality": transport_quality(target),
+        "node_id": safe_node_id(str(payload.get("node_id") or target)),
+        "target": target,
+        "controller_url": controller_url,
+        "remote_dir": remote_dir,
+        "worker_name": worker_name,
+        "executed_at": utc_now(),
+        "return_code": return_code,
+        "timed_out": timed_out,
+        "output": compact_text(output, 4000),
+        "repair_action": action,
+        "repair_action_reason": reason,
+        "reason": reason,
+        "gate": gate,
+        "command_preview": [*command[:-1], "<heartbeat_repair_script>"],
+    }
+    evidence_path = write_node_evidence("heartbeat-repair", str(result.get("node_id") or target or "node"), result, root=root)
+    return {**result, "evidence_path": str(evidence_path)}
+
+
 def tmux_plan_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     target = str(payload.get("ssh_target") or payload.get("target") or "").strip()
     if not target:
@@ -2995,9 +3320,9 @@ def heartbeat_tmux_plan_node(payload: dict[str, Any], *, root: Path = ROOT) -> d
     heartbeat_interval = int(payload.get("heartbeat_interval") or 30)
     smoke = bool(payload.get("smoke_test") or payload.get("smoke"))
     heartbeat_script = f"{remote_dir.rstrip('/')}/.a9/remote-node/heartbeat.sh"
-    quoted_remote_dir = shlex.quote(remote_dir)
+    quoted_remote_dir = remote_shell_path(remote_dir)
     quoted_session = shlex.quote(session)
-    quoted_heartbeat_script = shlex.quote(heartbeat_script)
+    quoted_heartbeat_script = remote_shell_path(heartbeat_script)
     heartbeat_env_value = " ".join(
         [
             f"A9_HEARTBEAT_INTERVAL={shlex.quote(str(heartbeat_interval))}",
@@ -3670,6 +3995,22 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, bootstrap_plan_node(payload))
             elif self.path == "/api/nodes/bootstrap-dry-run":
                 self.write_json(200, bootstrap_dry_run_node(payload))
+            elif self.path == "/api/nodes/bootstrap-execute":
+                status, body = guarded_remote_post(
+                    "nodes.bootstrap.execute",
+                    payload,
+                    bootstrap_execute_node,
+                    endpoint="/api/nodes/bootstrap-execute",
+                )
+                self.write_json(status, body)
+            elif self.path == "/api/nodes/heartbeat-repair":
+                status, body = guarded_remote_post(
+                    "nodes.remote.repair",
+                    payload,
+                    heartbeat_repair_node,
+                    endpoint="/api/nodes/heartbeat-repair",
+                )
+                self.write_json(status, body)
             elif self.path == "/api/nodes/tmux-plan":
                 self.write_json(200, tmux_plan_node(payload))
             elif self.path == "/api/nodes/tmux-ensure":

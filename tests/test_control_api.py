@@ -1013,6 +1013,167 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertTrue(cycle_path_exists)
 
+    def test_node_recovery_cycle_execute_probe_when_remote_armed(self):
+        mod = load_control_api()
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "remote/a",
+                    "ssh_target": "root@100.74.166.86:2200",
+                    "labels": ["mobile-added"],
+                },
+                root=root,
+            )
+            node_path = mod.node_path("remote/a", root)
+            node = mod.read_json(node_path)
+            offline_at = (mod.utc_now_dt() - mod.timedelta(seconds=600)).isoformat(timespec="seconds")
+            node["updated_at"] = offline_at
+            node["last_heartbeat_at"] = offline_at
+            node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            mod.phone_control_arm(
+                {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            original_probe = mod.probe_node
+            try:
+                def fake_probe(payload, *, root=mod.ROOT):
+                    calls.append(payload)
+                    return {"status": "ok", "probe_action": "continue", "evidence_path": "/tmp/probe.json"}
+
+                mod.probe_node = fake_probe
+                result = mod.node_recovery_cycle(
+                    {"execute": True, "max_actions": 1, "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+            finally:
+                mod.probe_node = original_probe
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["execute"])
+        self.assertEqual(result["step_count"], 1)
+        self.assertEqual(result["steps"][0]["recovery_action"], "probe")
+        self.assertEqual(result["steps"][0]["status"], "executed")
+        self.assertEqual(result["steps"][0]["result"]["audit_receipt"]["command"], "nodes.probe.execute")
+        self.assertEqual(calls[0]["node_id"], "remote-a")
+        self.assertEqual(calls[0]["ssh_target"], "root@100.74.166.86:2200")
+
+    def test_node_recovery_cycle_plans_heartbeat_tmux_status_for_stale_remote_heartbeat(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "remote/a",
+                    "ssh_target": "root@100.74.166.86:2200",
+                    "labels": ["mobile-added"],
+                },
+                root=root,
+            )
+            node_path = mod.node_path("remote/a", root)
+            node = mod.read_json(node_path)
+            stale_at = (mod.utc_now_dt() - mod.timedelta(seconds=120)).isoformat(timespec="seconds")
+            node["updated_at"] = stale_at
+            node["last_heartbeat_at"] = stale_at
+            node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            mod.write_node_evidence(
+                "probe",
+                "remote/a",
+                {
+                    "status": "ok",
+                    "probe_action": "continue",
+                    "probe_action_reason": "probe_ok",
+                    "checked_at": stale_at,
+                },
+                root=root,
+            )
+            start_at = (mod.utc_now_dt() - mod.timedelta(seconds=90)).isoformat(timespec="seconds")
+            missing_at = (mod.utc_now_dt() - mod.timedelta(seconds=60)).isoformat(timespec="seconds")
+            mod.write_node_evidence(
+                "heartbeat-tmux-start",
+                "remote/a",
+                {
+                    "status": "ok",
+                    "heartbeat_action": "continue",
+                    "heartbeat_action_reason": "heartbeat_tmux_start_ok",
+                    "executed_at": start_at,
+                },
+                root=root,
+            )
+
+            result = mod.node_recovery_cycle({"max_actions": 1}, root=root)
+
+        step = result["steps"][0]
+        self.assertEqual(step["recovery_action"], "tmux")
+        self.assertEqual(step["route"]["endpoint"], "/api/nodes/tmux-status")
+        self.assertEqual(step["prepared_plan"]["session"], "a9-heartbeat")
+        self.assertIn("heartbeat-tmux-plan-", step["prepared_plan"]["evidence_path"])
+        self.assertEqual(step["result"]["endpoint"], "/api/nodes/tmux-status")
+
+    def test_node_recovery_cycle_plans_heartbeat_repair_after_heartbeat_tmux_missing(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.register_node(
+                {
+                    "node_id": "remote/a",
+                    "ssh_target": "root@100.74.166.86:2200",
+                    "labels": ["mobile-added"],
+                },
+                root=root,
+            )
+            node_path = mod.node_path("remote/a", root)
+            node = mod.read_json(node_path)
+            stale_at = (mod.utc_now_dt() - mod.timedelta(seconds=120)).isoformat(timespec="seconds")
+            node["updated_at"] = stale_at
+            node["last_heartbeat_at"] = stale_at
+            node_path.write_text(json.dumps(node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            mod.write_node_evidence(
+                "probe",
+                "remote/a",
+                {
+                    "status": "ok",
+                    "probe_action": "continue",
+                    "probe_action_reason": "probe_ok",
+                    "checked_at": stale_at,
+                },
+                root=root,
+            )
+            start_at = (mod.utc_now_dt() - mod.timedelta(seconds=90)).isoformat(timespec="seconds")
+            missing_at = (mod.utc_now_dt() - mod.timedelta(seconds=60)).isoformat(timespec="seconds")
+            mod.write_node_evidence(
+                "heartbeat-tmux-start",
+                "remote/a",
+                {
+                    "status": "ok",
+                    "heartbeat_action": "continue",
+                    "heartbeat_action_reason": "heartbeat_tmux_start_ok",
+                    "executed_at": start_at,
+                },
+                root=root,
+            )
+            mod.write_node_evidence(
+                "tmux-status",
+                "remote/a",
+                {
+                    "status": "missing",
+                    "session": "a9-heartbeat",
+                    "tmux_action": "repair",
+                    "tmux_action_reason": "tmux_session_missing",
+                    "checked_at": missing_at,
+                },
+                root=root,
+            )
+
+            result = mod.node_recovery_cycle({"max_actions": 1}, root=root)
+
+        step = result["steps"][0]
+        self.assertEqual(step["recovery_action"], "heartbeat_repair")
+        self.assertEqual(step["route"]["endpoint"], "/api/nodes/heartbeat-repair")
+        self.assertEqual(step["prepared_plan"]["status"], "planned")
+        self.assertEqual(step["result"]["endpoint"], "/api/nodes/heartbeat-repair")
+
     def test_node_recovery_cycle_marks_offline_nodes_manual_required(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -3098,6 +3259,152 @@ class ControlApiTests(unittest.TestCase):
             },
         )
 
+    def test_node_recovery_plan_starts_heartbeat_after_remote_probe_ok(self):
+        mod = load_control_api()
+        plan = mod.node_recovery_plan(
+            {
+                "connection_state": "connected",
+                "connection_action": "continue",
+                "connection_action_reason": "heartbeat_fresh",
+                "probe_action": "continue",
+                "probe_action_reason": "probe_ok",
+                "ssh_target": "root@100.74.166.86:2200",
+                "labels": ["mobile-added"],
+                "hygiene": {
+                    "category": "remote_candidate",
+                    "risk_scope": "operational",
+                },
+            }
+        )
+        self.assertEqual(plan["action"], "heartbeat_start")
+        self.assertEqual(plan["reason"], "remote_probe_ok_heartbeat_missing")
+        self.assertFalse(plan["requires_operator"])
+        self.assertEqual(
+            plan["route"],
+            {
+                "method": "POST",
+                "endpoint": "/api/nodes/heartbeat-tmux-start",
+                "command": "nodes.heartbeat.tmux.start",
+                "requires_arm": True,
+            },
+        )
+
+    def test_node_recovery_plan_observes_remote_after_heartbeat_start_ok(self):
+        mod = load_control_api()
+        plan = mod.node_recovery_plan(
+            {
+                "connection_state": "connected",
+                "connection_action": "continue",
+                "connection_action_reason": "heartbeat_fresh",
+                "probe_action": "continue",
+                "heartbeat_start_action": "continue",
+                "ssh_target": "root@100.74.166.86:2200",
+                "labels": ["mobile-added"],
+                "hygiene": {
+                    "category": "remote_candidate",
+                    "risk_scope": "operational",
+                },
+            }
+        )
+        self.assertEqual(plan["action"], "observe")
+
+    def test_node_recovery_plan_starts_heartbeat_after_repair_ok(self):
+        mod = load_control_api()
+        plan = mod.node_recovery_plan(
+            {
+                "connection_state": "stale",
+                "connection_action": "reconnect",
+                "connection_action_reason": "heartbeat_stale",
+                "probe_action": "continue",
+                "heartbeat_repair_action": "continue",
+                "ssh_target": "root@100.74.166.86:2200",
+                "labels": ["mobile-added"],
+                "hygiene": {
+                    "category": "remote_candidate",
+                    "risk_scope": "operational",
+                },
+            }
+        )
+        self.assertEqual(plan["action"], "heartbeat_start")
+        self.assertEqual(plan["reason"], "heartbeat_repaired_start_required")
+        self.assertEqual(plan["route"]["endpoint"], "/api/nodes/heartbeat-tmux-start")
+
+    def test_node_recovery_plan_restarts_heartbeat_after_repair_even_with_old_start_evidence(self):
+        mod = load_control_api()
+        plan = mod.node_recovery_plan(
+            {
+                "connection_state": "stale",
+                "connection_action": "reconnect",
+                "connection_action_reason": "heartbeat_stale",
+                "probe_action": "continue",
+                "heartbeat_start_action": "continue",
+                "heartbeat_start_executed_at": "2026-05-30T00:00:00+00:00",
+                "heartbeat_repair_action": "continue",
+                "heartbeat_repair_executed_at": "2026-05-30T00:01:00+00:00",
+                "tmux_action": "repair",
+                "tmux_session": "a9-heartbeat",
+                "tmux_checked_at": "2026-05-30T00:00:30+00:00",
+                "ssh_target": "root@100.74.166.86:2200",
+                "labels": ["mobile-added"],
+                "hygiene": {
+                    "category": "remote_candidate",
+                    "risk_scope": "operational",
+                },
+            }
+        )
+        self.assertEqual(plan["action"], "heartbeat_start")
+        self.assertEqual(plan["reason"], "heartbeat_repaired_start_required")
+
+    def test_node_recovery_plan_checks_tmux_when_started_heartbeat_goes_stale(self):
+        mod = load_control_api()
+        plan = mod.node_recovery_plan(
+            {
+                "connection_state": "stale",
+                "connection_action": "reconnect",
+                "connection_action_reason": "heartbeat_stale",
+                "probe_action": "continue",
+                "heartbeat_start_action": "continue",
+                "ssh_target": "root@100.74.166.86:2200",
+                "labels": ["mobile-added"],
+                "hygiene": {
+                    "category": "remote_candidate",
+                    "risk_scope": "operational",
+                },
+            }
+        )
+        self.assertEqual(plan["action"], "tmux")
+        self.assertEqual(plan["reason"], "remote_heartbeat_stale_check_tmux")
+        self.assertTrue(plan["requires_operator"])
+        self.assertEqual(plan["route"]["endpoint"], "/api/nodes/tmux-status")
+        self.assertEqual(plan["route"]["session"], "a9-heartbeat")
+        self.assertEqual(plan["route"]["plan_kind"], "heartbeat_tmux")
+
+    def test_node_recovery_plan_repairs_heartbeat_when_tmux_missing_after_start(self):
+        mod = load_control_api()
+        plan = mod.node_recovery_plan(
+            {
+                "connection_state": "stale",
+                "connection_action": "reconnect",
+                "connection_action_reason": "heartbeat_stale",
+                "probe_action": "continue",
+                "heartbeat_start_action": "continue",
+                "heartbeat_start_executed_at": "2026-05-30T00:00:00+00:00",
+                "tmux_action": "repair",
+                "tmux_session": "a9-heartbeat",
+                "tmux_checked_at": "2026-05-30T00:01:00+00:00",
+                "ssh_target": "root@100.74.166.86:2200",
+                "labels": ["mobile-added"],
+                "hygiene": {
+                    "category": "remote_candidate",
+                    "risk_scope": "operational",
+                },
+            }
+        )
+        self.assertEqual(plan["action"], "heartbeat_repair")
+        self.assertEqual(plan["reason"], "heartbeat_tmux_missing_after_start")
+        self.assertEqual(plan["route"]["endpoint"], "/api/nodes/heartbeat-repair")
+        self.assertEqual(plan["route"]["command"], "nodes.remote.repair")
+
     def test_publish_node_heartbeat_redis_writes_json_stream_and_timeseries(self):
         mod = load_control_api()
         calls = []
@@ -4572,6 +4879,109 @@ class ControlApiTests(unittest.TestCase):
         self.assertIn("<dry_run_script>", result["command_preview"])
         self.assertIn("git clone", result["dry_run_script"])
 
+    def test_bootstrap_execute_requires_arm_and_runs_script(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "A9 remote node prepared\n"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked = mod.bootstrap_execute_node(
+                {
+                    "ssh_target": "root@100.64.0.1",
+                    "operator_scopes": ["operator.admin"],
+                },
+                root=root,
+            )
+            mod.phone_control_arm(
+                {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.bootstrap_execute_node(
+                    {
+                        "ssh_target": "root@100.64.0.1",
+                        "node_id": "remote/a",
+                        "operator_scopes": ["operator.admin"],
+                        "connect_timeout": 3,
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+            evidence_path_exists = Path(result["evidence_path"]).exists()
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["bootstrap_action"], "wait_for_approval")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["bootstrap_action"], "continue")
+        self.assertTrue(evidence_path_exists)
+        self.assertEqual(calls[0][0][0], "ssh")
+        self.assertIn("ConnectTimeout=3", calls[0][0])
+        self.assertIn("cat > .a9/remote-node/heartbeat.sh", calls[0][0][-1])
+
+    def test_heartbeat_repair_requires_arm_and_only_writes_heartbeat_contract(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "A9 heartbeat repaired\n"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked = mod.heartbeat_repair_node(
+                {
+                    "ssh_target": "root@100.64.0.1",
+                    "operator_scopes": ["operator.admin"],
+                },
+                root=root,
+            )
+            mod.phone_control_arm(
+                {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.heartbeat_repair_node(
+                    {
+                        "ssh_target": "root@100.64.0.1",
+                        "node_id": "remote/a",
+                        "worker_name": "remote-a",
+                        "operator_scopes": ["operator.admin"],
+                        "connect_timeout": 3,
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+            evidence_path_exists = Path(result["evidence_path"]).exists()
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["repair_action"], "wait_for_approval")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["repair_action"], "continue")
+        self.assertTrue(evidence_path_exists)
+        self.assertEqual(calls[0][0][0], "ssh")
+        self.assertIn("ConnectTimeout=3", calls[0][0])
+        self.assertIn('REMOTE_DIR="$HOME/a9-worker"', calls[0][0][-1])
+        self.assertIn("cat > \"$REMOTE_DIR/.a9/remote-node/heartbeat.sh\"", calls[0][0][-1])
+        self.assertNotIn("git pull", calls[0][0][-1])
+
     def test_tmux_plan_node_is_ssh_tailscale_first_and_non_executing(self):
         mod = load_control_api()
 
@@ -4662,6 +5072,21 @@ class ControlApiTests(unittest.TestCase):
             self.assertNotIn("mkdir -p /tmp/a9;bad", command)
             self.assertIn("tmux new-session", command)
             self.assertIn("\"'\"'/tmp/a9;bad/.a9/remote-node/heartbeat.sh'\"'\"'", command)
+
+    def test_heartbeat_tmux_plan_node_expands_default_home_path(self):
+        mod = load_control_api()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = mod.heartbeat_tmux_plan_node(
+                {"ssh_target": "root@100.64.0.1", "remote_dir": "~/a9-worker"},
+                root=root,
+            )
+
+            command = result["command_preview"][0][-1]
+            self.assertIn('"$HOME/a9-worker"', command)
+            self.assertIn('"$HOME/a9-worker/.a9/remote-node/heartbeat.sh"', command)
+            self.assertNotIn("'~/a9-worker'", command)
 
     def test_phone_control_requires_admin_and_expires_to_disarmed(self):
         mod = load_control_api()

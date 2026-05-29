@@ -1,4 +1,6 @@
 import importlib.util
+import subprocess
+import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -62,6 +64,11 @@ class RemoteBootstrapTests(unittest.TestCase):
         self.assertIn('"message"', heartbeat_script)
         self.assertIn('"load"', heartbeat_script)
         self.assertIn("export NODE_ID STATUS CURRENT_TASK MESSAGE LOAD CAPABILITIES", heartbeat_script)
+        with tempfile.NamedTemporaryFile("w", suffix=".sh") as handle:
+            handle.write(heartbeat_script)
+            handle.flush()
+            result = subprocess.run(["sh", "-n", handle.name], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(result.returncode, 0, result.stdout)
 
     def test_ssh_base_uses_batch_mode_and_identity(self):
         mod = load_module()

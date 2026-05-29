@@ -1058,3 +1058,41 @@ Next monitoring target:
      recovery should narrow uncertainty before escalating to humans. The loop
      now has a deterministic next diagnostic step, while execution remains
      controlled by phone-control.
+
+58. Remote heartbeat recovery loop reached observe after repair/start.
+   - Trigger:
+     real recovery execution showed the probe path worked, but heartbeat tmux
+     was missing after start. Full bootstrap then timed out in git/bootstrap
+     work, so the recovery path needed a smaller repair action focused only on
+     the heartbeat contract.
+   - Mechanism copied:
+     staged control-plane repair: diagnose SSH, repair the smallest broken
+     runtime contract, restart the agent heartbeat, then verify state before
+     declaring the node healthy.
+   - Change:
+     `scripts/a9_control_api.py` now supports gated
+     `/api/nodes/heartbeat-repair` through `nodes.remote.repair`, reads
+     heartbeat-repair evidence, uses evidence timestamps to avoid stale
+     tmux-status loops, and routes recovery through
+     `probe -> heartbeat_start -> tmux_status -> heartbeat_repair ->
+     heartbeat_start -> observe`. `scripts/a9_remote.py` heartbeat script
+     generation now passes `sh -n`; the missing here-doc close was fixed.
+     Home-path expansion for `~/a9-worker` now uses `$HOME` correctly in
+     remote shell commands.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py
+     scripts/a9_recovery_loop.py scripts/a9_remote.py` passed.
+     `python3 -m unittest tests.test_control_api tests.test_recovery_loop
+     tests.test_service tests.test_remote tests.test_node` passed with `243`
+     tests. Real gated smoke: `nodes.probe.execute` returned `probe_ok`;
+     `nodes.heartbeat.tmux.start` initially started but tmux session vanished;
+     `nodes.remote.repair` wrote `/root/a9-worker/.a9/remote-node/heartbeat.sh`;
+     after restart, `/api/nodes/status` showed
+     `last_heartbeat_at=2026-05-29T19:02:55+00:00` and recovery plan
+     `observe`. Final `/api/nodes/recovery-cycle` returned `step_count=0`,
+     summary `risk_count=0`, phone-control `disarmed`, and Redis pending `0`.
+   - Governance lesson:
+     executing the loop exposed two real failure modes that static planning
+     missed: a too-heavy bootstrap path and a generated shell syntax bug.
+     Keeping every step gated but runnable let the controller converge without
+     guessing or hiding the failed intermediate evidence.
