@@ -16,6 +16,7 @@ import socket
 import subprocess
 import sys
 import re
+import time
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -1004,6 +1005,66 @@ def node_command_work_once(
         }
 
 
+def node_command_work_loop(
+    node_id: str,
+    *,
+    group: str = "a9-worker",
+    stream: str = "a9:tasks",
+    event_stream: str = "a9:events",
+    block_ms: int = 1000,
+    timeout: int = 3,
+    sleep_seconds: float = 1.0,
+    max_iterations: int = 0,
+    emit=None,
+) -> dict[str, Any]:
+    safe_node_id = str(node_id or default_node_id()).strip() or default_node_id()
+    safe_sleep = max(0.0, float(sleep_seconds))
+    safe_max = max(0, int(max_iterations))
+    safe_timeout = max(int(timeout), int(block_ms / 1000) + 2)
+    iterations = 0
+    processed = 0
+    noop = 0
+    degraded = 0
+    last_result: dict[str, Any] = {}
+    while safe_max == 0 or iterations < safe_max:
+        iterations += 1
+        result = node_command_work_once(
+            safe_node_id,
+            group=group,
+            stream=stream,
+            event_stream=event_stream,
+            block_ms=block_ms,
+            timeout=safe_timeout,
+        )
+        last_result = result
+        if result.get("status") == "ok":
+            processed += 1
+        elif result.get("status") == "noop":
+            noop += 1
+        else:
+            degraded += 1
+        if emit is not None:
+            emit(result)
+        if safe_max == 0 or iterations < safe_max:
+            time.sleep(safe_sleep)
+
+    return {
+        "status": "ok" if degraded == 0 else "degraded",
+        "error_code": "ok" if degraded == 0 else "loop_degraded",
+        "action": "work_loop",
+        "node_id": safe_node_id,
+        "stream": stream,
+        "event_stream": event_stream,
+        "group": group,
+        "timeout": safe_timeout,
+        "iterations": iterations,
+        "processed": processed,
+        "noop": noop,
+        "degraded": degraded,
+        "last_result": last_result,
+    }
+
+
 def node_command_result_read_once(
     result_event_id: str,
     event_stream: str = "a9:events",
@@ -1251,6 +1312,27 @@ def command_work_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_work_loop(args: argparse.Namespace) -> int:
+    node_id = args.node_id or default_node_id()
+
+    def emit(payload: dict[str, Any]) -> None:
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
+
+    summary = node_command_work_loop(
+        node_id=node_id,
+        group=args.group,
+        stream=args.stream,
+        event_stream=args.event_stream,
+        block_ms=args.block_ms,
+        timeout=args.timeout_cmd_work_loop,
+        sleep_seconds=args.sleep_seconds,
+        max_iterations=args.max_iterations,
+        emit=emit,
+    )
+    print(json.dumps(summary, ensure_ascii=False, separators=(",", ":")), flush=True)
+    return 0 if summary.get("status") == "ok" else 1
+
+
 def command_result_read_once(args: argparse.Namespace) -> int:
     payload = node_command_result_read_once(
         result_event_id=args.result_event_id,
@@ -1306,6 +1388,15 @@ def main(argv: list[str]) -> int:
     work_once_parser.add_argument("--block-ms", type=int, default=1000)
     work_once_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_work")
 
+    work_loop_parser = sub.add_parser("command-work-loop")
+    work_loop_parser.add_argument("--group", default="a9-worker")
+    work_loop_parser.add_argument("--stream", default="a9:tasks")
+    work_loop_parser.add_argument("--event-stream", default="a9:events")
+    work_loop_parser.add_argument("--block-ms", type=int, default=1000)
+    work_loop_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_work_loop")
+    work_loop_parser.add_argument("--sleep-seconds", type=float, default=1.0)
+    work_loop_parser.add_argument("--max-iterations", type=int, default=0)
+
     result_read_once_parser = sub.add_parser("command-result-read-once")
     result_read_once_parser.add_argument("result_event_id")
     result_read_once_parser.add_argument("--event-stream", default="a9:events")
@@ -1328,6 +1419,8 @@ def main(argv: list[str]) -> int:
         return command_ack_once(args)
     if args.command == "command-work-once":
         return command_work_once(args)
+    if args.command == "command-work-loop":
+        return command_work_loop(args)
     if args.command == "command-result-read-once":
         return command_result_read_once(args)
     raise AssertionError(args.command)

@@ -1,0 +1,19 @@
+[Unit]
+Description=A9 Redis node-command worker loop
+Wants=docker.service a9-control-api.service
+After=network-online.target docker.service a9-control-api.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/a9
+EnvironmentFile=-/root/a9/.env
+ExecStart=/root/a9/scripts/a9_node.py command-work-loop --block-ms 5000 --timeout 10 --sleep-seconds 1
+Restart=always
+RestartSec=10
+KillSignal=SIGINT
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

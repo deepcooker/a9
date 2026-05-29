@@ -1,10 +1,11 @@
 # A9 Production Services
 
-The first deployable 24-hour runtime has two services:
+The first deployable 24-hour runtime has three services:
 
 ```text
 a9-control-api.service    stable ingress for phone/browser/Linux/WSL clients
 a9-supervisor.service     guarded 24-hour executor that consumes queued tasks
+a9-node-worker.service    Redis Stream node-command consumer for mobile/remote commands
 ```
 
 The supervisor auto-next loop is:
@@ -25,6 +26,7 @@ Manual install hint prints both:
 ```text
 infra/systemd/a9-supervisor.service
 infra/systemd/a9-control-api.service
+infra/systemd/a9-node-worker.service
 ```
 
 The controller host should normally bind `a9-control-api` to Tailscale/WireGuard
@@ -117,7 +119,10 @@ Multi-node direction:
 
 - HTTP clients submit bounded tasks to the controller.
 - The supervisor consumes local queue tasks today.
-- Redis Streams should become the cross-machine task/event bus.
+- Redis Streams are the hot node-command bus: mobile/API writes to `a9:tasks`;
+  `a9-node-worker.service` runs `scripts/a9_node.py command-work-loop`, writes
+  `node_command_result` events to `a9:events`, and ACKs only after result
+  persistence.
 - MySQL should keep canonical sessions, runs, evidence indexes, and governance
   decisions.
 - Remote Linux/WSL workers should register/heartbeat through the controller or

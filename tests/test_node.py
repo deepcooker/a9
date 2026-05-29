@@ -923,6 +923,103 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(payload["node_id"], "node-cli-02")
         self.assertEqual(payload["error_code"], "no_events")
 
+    def test_node_command_work_loop_runs_bounded_iterations(self):
+        mod = load_module()
+        calls = []
+        results = [
+            {"status": "noop", "error_code": "no_events"},
+            {"status": "ok", "error_code": "ok", "command_id": "cmd-1"},
+        ]
+
+        def fake_work_once(node_id, **kwargs):
+            calls.append({"node_id": node_id, **kwargs})
+            return results[len(calls) - 1]
+
+        emitted = []
+        original_work_once = mod.node_command_work_once
+        original_sleep = mod.time.sleep
+        mod.node_command_work_once = fake_work_once
+        mod.time.sleep = lambda seconds: emitted.append({"sleep": seconds})
+        try:
+            summary = mod.node_command_work_loop(
+                "node-loop",
+                stream="a9:test-tasks",
+                event_stream="a9:test-events",
+                block_ms=25,
+                timeout=2,
+                sleep_seconds=0.5,
+                max_iterations=2,
+                emit=emitted.append,
+            )
+        finally:
+            mod.node_command_work_once = original_work_once
+            mod.time.sleep = original_sleep
+
+        self.assertEqual(summary["status"], "ok")
+        self.assertEqual(summary["iterations"], 2)
+        self.assertEqual(summary["processed"], 1)
+        self.assertEqual(summary["noop"], 1)
+        self.assertEqual(summary["degraded"], 0)
+        self.assertEqual(summary["timeout"], 2)
+        self.assertEqual(summary["last_result"]["command_id"], "cmd-1")
+        self.assertEqual(calls[0]["stream"], "a9:test-tasks")
+        self.assertEqual(calls[0]["event_stream"], "a9:test-events")
+        self.assertEqual(emitted[0]["status"], "noop")
+        self.assertEqual(emitted[1], {"sleep": 0.5})
+        self.assertEqual(emitted[2]["status"], "ok")
+
+    def test_command_work_loop_cli_prints_json_lines(self):
+        mod = load_module()
+        captured = io.StringIO()
+
+        def fake_work_once(node_id, **kwargs):
+            return {"status": "noop", "error_code": "no_events", "node_id": node_id}
+
+        original_work_once = mod.node_command_work_once
+        original_sleep = mod.time.sleep
+        mod.node_command_work_once = fake_work_once
+        mod.time.sleep = lambda seconds: None
+        try:
+            with contextlib.redirect_stdout(captured):
+                status = mod.main(
+                    [
+                        "--node-id",
+                        "node-cli-loop",
+                        "command-work-loop",
+                        "--max-iterations",
+                        "1",
+                        "--sleep-seconds",
+                        "0",
+                    ]
+                )
+        finally:
+            mod.node_command_work_once = original_work_once
+            mod.time.sleep = original_sleep
+
+        self.assertEqual(status, 0)
+        lines = [json.loads(line) for line in captured.getvalue().splitlines()]
+        self.assertEqual(lines[0]["status"], "noop")
+        self.assertEqual(lines[1]["action"], "work_loop")
+        self.assertEqual(lines[1]["node_id"], "node-cli-loop")
+        self.assertEqual(lines[1]["iterations"], 1)
+        self.assertEqual(lines[1]["timeout"], 3)
+
+    def test_node_command_work_loop_timeout_covers_block_ms(self):
+        mod = load_module()
+        calls = []
+        original_work_once = mod.node_command_work_once
+        original_sleep = mod.time.sleep
+        mod.node_command_work_once = lambda node_id, **kwargs: calls.append(kwargs) or {"status": "noop", "error_code": "no_events"}
+        mod.time.sleep = lambda seconds: None
+        try:
+            summary = mod.node_command_work_loop("node-loop", block_ms=5000, timeout=3, max_iterations=1)
+        finally:
+            mod.node_command_work_once = original_work_once
+            mod.time.sleep = original_sleep
+
+        self.assertEqual(calls[0]["timeout"], 7)
+        self.assertEqual(summary["timeout"], 7)
+
     def test_node_command_result_read_once_cli_prints_payload(self):
         mod = load_module()
         captured = io.StringIO()

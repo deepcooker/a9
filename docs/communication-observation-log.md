@@ -794,3 +794,30 @@ Next monitoring target:
      channels. The UI must not pretend a normal `/api/submit` task can be read
      via node-command result lookup; use the by-command result API only for
      commands written to `a9:tasks`.
+
+49. Node-command worker loop became a real local daemon path.
+   - Change:
+     added `scripts/a9_node.py command-work-loop`, a bounded/infinite Redis
+     Stream consumer loop that repeatedly calls `node_command_work_once()`,
+     emits JSON-lines results, and summarizes processed/noop/degraded counts.
+   - Service wiring:
+     added `infra/systemd/a9-node-worker.service`, wired it into
+     `scripts/a9_service.py unit/install-hint/process detection`, and added it
+     to `scripts/a9_stack.sh start|stop|status|logs` so local WSL operation now
+     starts control-api, node-worker, and mobile-web together.
+   - Runtime bug found by smoke:
+     the first stack worker used `--block-ms 5000` with a 3 second subprocess
+     timeout, so long-polling falsely degraded as `redis_unavailable`. The loop
+     now raises effective timeout above block time, and service/stack pass
+     `--timeout 10`.
+   - Verification:
+     `python3 -m py_compile scripts/a9_node.py scripts/a9_service.py` and
+     `bash -n scripts/a9_stack.sh` passed. `python3 -m unittest
+     tests.test_node tests.test_service tests.test_control_api tests.test_remote`
+     passed with `211` tests. Real stack smoke submitted
+     `stack-node-worker-smoke-1780069227`; background node-worker consumed
+     stream id `1780069228062-0`, wrote result event `1780069228128-0`, ACKed
+     it, and by-command lookup returned `status_ok`.
+   - Governance lesson:
+     daemon settings must be tested under their real blocking behavior. A green
+     `work-once` is not enough when the service wrapper changes timing.
