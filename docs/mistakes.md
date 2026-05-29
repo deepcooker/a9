@@ -1,5 +1,25 @@
 # A9 错题本
 
+## 2026-05-29：worker pass 后仍必须由监控者复跑相关测试
+
+现象：
+
+- `goal-continuation-...121722Z` 被 supervisor 接受并提交，但 worker 自己没有跑测试。
+- 监控者复跑 `tests.test_control_api tests.test_monitor` 时发现 `tests/test_control_api.py`
+  有语法错误，且新测试插入位置破坏了相邻测试的 monkeypatch 作用域。
+
+处理：
+
+- 监控者停止当前泛化续跑，修复测试语法、作用域和 endpoint root 注入方式。
+- 复跑 `python3 -m unittest tests.test_control_api tests.test_monitor`，140 tests OK。
+
+产品判断：
+
+- worker 的 pass 只代表自动通路接受，不代表质量最终可信。
+- 非平凡 worker patch 必须由监控者复跑相关测试；未跑测试的 worker 产物只能算候选 patch。
+- 下一轮任务要更窄地指向多机器 SSH/Tailscale/tmux 通讯治理，不能继续让泛化 goal continuation
+  自由选择小测试切片。
+
 ## 2026-05-29：事件预算硬杀会打断有效 worker，envelope JSON 失败不能掩盖 patch 价值
 
 现象：
