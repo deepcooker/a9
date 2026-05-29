@@ -354,6 +354,128 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(payload["group"], "workers")
         self.assertEqual(payload["node_id"], "node-cli-01")
 
+    def test_node_command_ack_once_returns_ok_when_xack_acknowledges(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis_cli(args, *, timeout=2):
+            calls.append(args)
+            if args[:1] == ["XACK"]:
+                return FakeProc("1")
+            raise AssertionError(f"unexpected args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis_cli
+        try:
+            result = mod.node_command_ack_once(
+                "node-01",
+                "1740000200-0",
+                group="a9-worker",
+                stream="a9:tasks",
+                timeout=3,
+            )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["error_code"], "ok")
+        self.assertEqual(result["action"], "ack_once")
+        self.assertEqual(result["acked_count"], 1)
+        self.assertEqual(result["acked_ids"], ["1740000200-0"])
+        self.assertEqual(calls, [["XACK", "a9:tasks", "a9-worker", "1740000200-0"]])
+
+    def test_node_command_ack_once_returns_noop_when_not_pending(self):
+        mod = load_module()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = lambda args, *, timeout=2: FakeProc("0")
+        try:
+            result = mod.node_command_ack_once("node-01", "1740000200-0")
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "noop")
+        self.assertEqual(result["error_code"], "not_pending_or_already_acked")
+        self.assertEqual(result["acked_count"], 0)
+        self.assertEqual(result["reason"], "not_pending_or_already_acked")
+
+    def test_node_command_ack_once_rejects_invalid_stream_id_without_redis(self):
+        mod = load_module()
+        calls: list[list[str]] = []
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = lambda args, *, timeout=2: calls.append(args)
+        try:
+            result = mod.node_command_ack_once("node-01", "bad-id")
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "invalid_payload")
+        self.assertEqual(result["reason"], "command_stream_id_must_be_redis_stream_id")
+        self.assertEqual(calls, [])
+
+    def test_node_command_ack_once_degraded_on_redis_unavailable(self):
+        mod = load_module()
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("redis unavailable"))
+        try:
+            result = mod.node_command_ack_once("node-01", "1740000200-0")
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "redis_unavailable")
+        self.assertIn("redis unavailable", result["reason"])
+
+    def test_command_ack_once_cli_prints_payload(self):
+        mod = load_module()
+        captured = io.StringIO()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = lambda args, *, timeout=2: FakeProc("1")
+        try:
+            with contextlib.redirect_stdout(captured):
+                status = mod.main(
+                    [
+                        "--node-id",
+                        "node-cli-01",
+                        "command-ack-once",
+                        "1740000200-0",
+                        "--group",
+                        "workers",
+                        "--stream",
+                        "a9:test-tasks",
+                    ]
+                )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status, 0)
+        payload = json.loads(captured.getvalue())
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["action"], "ack_once")
+        self.assertEqual(payload["stream"], "a9:test-tasks")
+        self.assertEqual(payload["group"], "workers")
+        self.assertEqual(payload["node_id"], "node-cli-01")
+        self.assertEqual(payload["command_stream_id"], "1740000200-0")
+
 
 if __name__ == "__main__":
     unittest.main()

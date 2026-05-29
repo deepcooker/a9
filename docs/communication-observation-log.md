@@ -593,3 +593,33 @@ Next monitoring target:
      `python3 -m py_compile scripts/a9_remote.py scripts/a9_control_api.py
      scripts/a9_supervisor.py && python3 -m unittest tests/test_remote.py
      tests/test_control_api.py` passed with `69` tests.
+
+41. Redis command ACK-once needed monitor takeover after worker produced no final.
+   - Task:
+     `node-command-ack-once-20260529T1348`.
+   - Run:
+     `.a9/runs/node-command-ack-once-20260529T1348-20260529T134512Z-a1`.
+   - Status:
+     `retryable-worker-failed`.
+   - Worker failure mode:
+     no `final.md`, no strict envelope, no SEARCH/REPLACE patch, and no git
+     diff. The monitor score did not block, so this is an execution-output
+     failure rather than a task-quality finding.
+   - Monitor takeover:
+     implemented `node_command_ack_once()` and CLI `command-ack-once` directly,
+     following the existing claim-once Redis Streams boundary and Barter-style
+     external command separation. ACK is now a bounded XACK-only action; it
+     never executes a task action.
+   - Verification:
+     `python3 -m unittest tests.test_node tests.test_control_api
+     tests.test_remote` passed with `178` tests; `python3 -m unittest
+     tests.test_control_api tests.test_node tests.test_remote tests.test_monitor`
+     passed with `196` tests; `python3 -m py_compile scripts/a9_node.py`
+     passed. Real Redis smoke enqueued command `smoke-ack-once-20260529T1353`,
+     claimed stream id `1780062705420-0`, and `command-ack-once` returned
+     `status=ok`, `acked_count=1`.
+   - Governance lesson:
+     worker can still fail before emitting an envelope even when prompt budget
+     is low. Supervisor should eventually distinguish "no final/no patch" as a
+     prompt or exec-channel issue and schedule a narrower retry before burning a
+     full run.

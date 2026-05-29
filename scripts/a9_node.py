@@ -552,6 +552,106 @@ def node_command_claim_once(
         }
 
 
+def node_command_ack_once(
+    node_id: str,
+    command_stream_id: str,
+    group: str = "a9-worker",
+    stream: str = "a9:tasks",
+    timeout: int = 3,
+) -> dict[str, Any]:
+    try:
+        safe_node_id = _safe_node_id(node_id)
+        safe_timeout = max(1, int(timeout))
+        safe_group = group.strip()
+        safe_stream = stream.strip()
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "error_code": "invalid_payload",
+            "action": "ack_once",
+            "node_id": str(node_id or ""),
+            "stream": str(stream or ""),
+            "group": str(group or ""),
+            "consumer": "",
+            "command_stream_id": str(command_stream_id or ""),
+            "acked_count": 0,
+            "acked_ids": [],
+            "raw_output": {},
+            "reason": "node_id_or_timeout_invalid",
+        }
+
+    consumer = node_command_consumer_name(safe_node_id)
+    raw_output: dict[str, str] = {}
+
+    def degraded(reason: str, error_code: str = "invalid_payload") -> dict[str, Any]:
+        return {
+            "status": "degraded",
+            "error_code": error_code,
+            "action": "ack_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": safe_group,
+            "consumer": consumer,
+            "command_stream_id": str(command_stream_id or ""),
+            "acked_count": 0,
+            "acked_ids": [],
+            "raw_output": raw_output,
+            "reason": reason,
+        }
+
+    if not safe_group:
+        return degraded("group_required")
+    if not safe_stream:
+        return degraded("stream_required")
+    if not _looks_like_stream_id(str(command_stream_id or "")):
+        return degraded("command_stream_id_must_be_redis_stream_id")
+
+    safe_command_stream_id = str(command_stream_id)
+    try:
+        ack_proc = redis_cli(["XACK", safe_stream, safe_group, safe_command_stream_id], timeout=safe_timeout)
+        raw_output["xack"] = _compact_output(ack_proc.stdout, 500)
+        if ack_proc.returncode != 0:
+            return degraded(ack_proc.stdout.strip() or "xack_failed", "redis_command_error")
+
+        try:
+            acked_count = int((ack_proc.stdout or "").strip() or "0")
+        except ValueError:
+            return degraded(ack_proc.stdout.strip() or "xack_count_invalid", "redis_command_error")
+
+        if acked_count <= 0:
+            return {
+                "status": "noop",
+                "error_code": "not_pending_or_already_acked",
+                "action": "ack_once",
+                "node_id": safe_node_id,
+                "stream": safe_stream,
+                "group": safe_group,
+                "consumer": consumer,
+                "command_stream_id": safe_command_stream_id,
+                "acked_count": 0,
+                "acked_ids": [],
+                "raw_output": raw_output,
+                "reason": "not_pending_or_already_acked",
+            }
+
+        return {
+            "status": "ok",
+            "error_code": "ok",
+            "action": "ack_once",
+            "node_id": safe_node_id,
+            "stream": safe_stream,
+            "group": safe_group,
+            "consumer": consumer,
+            "command_stream_id": safe_command_stream_id,
+            "acked_count": acked_count,
+            "acked_ids": [safe_command_stream_id],
+            "raw_output": raw_output,
+        }
+
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return degraded(str(exc), "redis_unavailable")
+
+
 def http_json(method: str, url: str, payload: dict[str, Any] | None = None, timeout: int = 10) -> dict[str, Any]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, method=method, headers={"Content-Type": "application/json"})
@@ -641,6 +741,19 @@ def command_claim_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_ack_once(args: argparse.Namespace) -> int:
+    node_id = args.node_id or default_node_id()
+    payload = node_command_ack_once(
+        node_id=node_id,
+        command_stream_id=args.command_stream_id,
+        group=args.group,
+        stream=args.stream,
+        timeout=args.timeout_cmd_ack,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 local node discovery/register helper")
     parser.add_argument("--controller-url", default=os.environ.get("A9_CONTROLLER_URL", "http://127.0.0.1:8787"))
@@ -673,6 +786,12 @@ def main(argv: list[str]) -> int:
     ack_plan_parser.add_argument("--group", default="a9-worker")
     ack_plan_parser.add_argument("--stream", default="a9:tasks")
 
+    ack_once_parser = sub.add_parser("command-ack-once")
+    ack_once_parser.add_argument("command_stream_id")
+    ack_once_parser.add_argument("--group", default="a9-worker")
+    ack_once_parser.add_argument("--stream", default="a9:tasks")
+    ack_once_parser.add_argument("--timeout", type=int, default=3, dest="timeout_cmd_ack")
+
     args = parser.parse_args(argv)
     if args.command == "discover":
         return discover(args)
@@ -686,6 +805,8 @@ def main(argv: list[str]) -> int:
         return command_claim_once(args)
     if args.command == "command-ack-plan":
         return command_ack_plan(args)
+    if args.command == "command-ack-once":
+        return command_ack_once(args)
     raise AssertionError(args.command)
 
 
