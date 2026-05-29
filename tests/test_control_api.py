@@ -14,10 +14,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTROL_API_PATH = ROOT / "scripts" / "a9_control_api.py"
+NODE_PATH = ROOT / "scripts" / "a9_node.py"
 
 
 def load_control_api():
     spec = importlib.util.spec_from_file_location("a9_control_api", CONTROL_API_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_node():
+    spec = importlib.util.spec_from_file_location("a9_node", NODE_PATH)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -3725,6 +3735,54 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["command"]["stream"], "a9:tasks")
         self.assertEqual(captured["payload"]["status"], "ok")
         self.assertTrue(any(call[:2] == ["XADD", "a9:tasks"] for call in calls))
+
+    def test_node_command_consumer_name_is_deterministic(self):
+        mod = load_node()
+        self.assertEqual(mod.node_command_consumer_name("worker@node-01.example"), "worker-node-01.example-consumer")
+        with self.assertRaises(ValueError):
+            mod.node_command_consumer_name("  ")
+
+    def test_node_command_claim_plan_includes_claim_commands(self):
+        mod = load_node()
+        plan = mod.node_command_claim_plan("node-01", count=2, block_ms=5000)
+        self.assertEqual(plan["status"], "ok")
+        self.assertEqual(plan["node_id"], "node-01")
+        self.assertEqual(plan["stream"], "a9:tasks")
+        self.assertEqual(plan["group"], "a9-worker")
+        self.assertEqual(plan["action"], "claim")
+        self.assertEqual(plan["evidence"]["stream"], "a9:tasks")
+        self.assertEqual(plan["evidence"]["group"], "a9-worker")
+        self.assertEqual(plan["evidence"]["node_id"], "node-01")
+        self.assertEqual(plan["evidence"]["action"], "claim")
+        self.assertEqual(plan["commands"][0], ["XGROUP", "CREATE", "a9:tasks", "a9-worker", "0-0", "MKSTREAM"])
+        self.assertEqual(
+            plan["commands"][1],
+            ["XREADGROUP", "GROUP", "a9-worker", "node-01-consumer", "COUNT", "2", "BLOCK", "5000", "STREAMS", "a9:tasks", ">"],
+        )
+
+    def test_node_command_claim_plan_invalid_payload_returns_degraded(self):
+        mod = load_node()
+        plan = mod.node_command_claim_plan("node-01", count=0)
+        self.assertEqual(plan["status"], "degraded")
+        self.assertEqual(plan["error_code"], "invalid_payload")
+        self.assertEqual(plan["action"], "claim")
+        self.assertEqual(plan["reason"], "count_must_be_positive")
+
+    def test_node_command_ack_plan_includes_xack(self):
+        mod = load_node()
+        plan = mod.node_command_ack_plan("node-01", "1740000200-0")
+        self.assertEqual(plan["status"], "ok")
+        self.assertEqual(plan["action"], "ack")
+        self.assertEqual(plan["evidence"]["action"], "ack")
+        self.assertEqual(plan["commands"], [["XACK", "a9:tasks", "a9-worker", "1740000200-0"]])
+
+    def test_node_command_ack_plan_invalid_payload_returns_degraded(self):
+        mod = load_node()
+        plan = mod.node_command_ack_plan("", "")
+        self.assertEqual(plan["status"], "degraded")
+        self.assertEqual(plan["error_code"], "invalid_payload")
+        self.assertEqual(plan["action"], "ack")
+        self.assertEqual(plan["reason"], "node_id is required")
 
     def test_bootstrap_plan_node_is_non_executing_plan(self):
         mod = load_control_api()

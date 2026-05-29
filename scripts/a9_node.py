@@ -15,6 +15,7 @@ import platform
 import socket
 import subprocess
 import sys
+import re
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -23,6 +24,28 @@ from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_CONFIG = ROOT / ".a9" / "node.json"
+
+
+def _safe_node_id(value: str) -> str:
+    node_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value or "").strip())[:80].strip(".-")
+    if not node_id:
+        raise ValueError("node_id is required")
+    return node_id
+
+
+def _plan_invalid_payload(action: str, node_id: str, *, reason: str) -> dict[str, Any]:
+    return {
+        "status": "degraded",
+        "error_code": "invalid_payload",
+        "action": action,
+        "node_id": node_id,
+        "reason": reason,
+        "stream": "",
+        "group": "",
+        "consumer": "",
+        "evidence": {"node_id": node_id, "action": action, "reason": reason},
+        "commands": [],
+    }
 
 
 def classify_node_connection_state(
@@ -126,6 +149,111 @@ def node_payload(node_id: str, *, ssh_target: str = "") -> dict[str, Any]:
             "codex": command_path("codex"),
         },
         "labels": ["linux-or-wsl"],
+    }
+
+
+def node_command_consumer_name(node_id: str) -> str:
+    safe = _safe_node_id(node_id)
+    return f"{safe}-consumer"
+
+
+def node_command_claim_plan(
+    node_id: str,
+    count: int = 1,
+    block_ms: int = 5000,
+    group: str = "a9-worker",
+    stream: str = "a9:tasks",
+) -> dict[str, Any]:
+    try:
+        safe_node_id = _safe_node_id(node_id)
+        safe_count = int(count)
+        safe_block_ms = int(block_ms)
+    except (TypeError, ValueError):
+        return _plan_invalid_payload("claim", str(node_id or ""), reason="count_and_block_must_be_ints")
+    if safe_count < 1:
+        return _plan_invalid_payload("claim", safe_node_id, reason="count_must_be_positive")
+    if safe_block_ms < 0:
+        return _plan_invalid_payload("claim", safe_node_id, reason="block_ms_must_be_non_negative")
+    if not group.strip():
+        return _plan_invalid_payload("claim", safe_node_id, reason="group_required")
+    if not stream.strip():
+        return _plan_invalid_payload("claim", safe_node_id, reason="stream_required")
+
+    consumer = node_command_consumer_name(safe_node_id)
+    return {
+        "status": "ok",
+        "stream": stream.strip(),
+        "group": group.strip(),
+        "consumer": consumer,
+        "node_id": safe_node_id,
+        "action": "claim",
+        "reason": "claim_next_command",
+        "execution_enabled": False,
+        "evidence": {
+            "stream": stream.strip(),
+            "group": group.strip(),
+            "consumer": consumer,
+            "node_id": safe_node_id,
+            "action": "claim",
+            "reason": "claim_next_command",
+        },
+        "commands": [
+            ["XGROUP", "CREATE", stream.strip(), group.strip(), "0-0", "MKSTREAM"],
+            [
+                "XREADGROUP",
+                "GROUP",
+                group.strip(),
+                consumer,
+                "COUNT",
+                str(safe_count),
+                "BLOCK",
+                str(safe_block_ms),
+                "STREAMS",
+                stream.strip(),
+                ">",
+            ],
+        ],
+    }
+
+
+def node_command_ack_plan(
+    node_id: str,
+    command_stream_id: str,
+    group: str = "a9-worker",
+    stream: str = "a9:tasks",
+) -> dict[str, Any]:
+    try:
+        safe_node_id = _safe_node_id(node_id)
+    except ValueError as exc:
+        return _plan_invalid_payload("ack", str(node_id or ""), reason=str(exc))
+    if not command_stream_id:
+        return _plan_invalid_payload("ack", safe_node_id, reason="command_stream_id_required")
+    if not group.strip():
+        return _plan_invalid_payload("ack", safe_node_id, reason="group_required")
+    if not stream.strip():
+        return _plan_invalid_payload("ack", safe_node_id, reason="stream_required")
+
+    consumer = node_command_consumer_name(safe_node_id)
+    return {
+        "status": "ok",
+        "stream": stream.strip(),
+        "group": group.strip(),
+        "consumer": consumer,
+        "node_id": safe_node_id,
+        "action": "ack",
+        "reason": "ack_completed_command",
+        "execution_enabled": False,
+        "evidence": {
+            "stream": stream.strip(),
+            "group": group.strip(),
+            "consumer": consumer,
+            "node_id": safe_node_id,
+            "action": "ack",
+            "reason": "ack_completed_command",
+        },
+        "commands": [
+            ["XACK", stream.strip(), group.strip(), str(command_stream_id)],
+        ],
     }
 
 
