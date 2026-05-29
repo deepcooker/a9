@@ -124,6 +124,82 @@ def classify_probe_result(return_code: int, output: dict[str, str]) -> dict[str,
     }
 
 
+def summarize_node_connection_state(
+    *,
+    node_id: str,
+    return_code: int,
+    output: dict[str, str],
+    attempt: int = 0,
+    policy_budget_remaining: int = 3,
+) -> dict[str, Any]:
+    ssh_status = "connected" if return_code == 0 else "unreachable"
+    required_missing = [name for name in ("git", "python3", "curl") if not output.get(name, "").strip()]
+    optional_missing = [name for name in ("tmux", "tailscale") if not output.get(name, "").strip()]
+    if return_code != 0:
+        classification = classify_probe_result(return_code, output)
+        decision = gateway_reconnect_decision(
+            phase="connect",
+            error_class=classification["probe_action_reason"],
+            attempt=attempt,
+            policy_budget_remaining=policy_budget_remaining,
+            node_id=node_id,
+            origin="probe",
+        )
+        return {
+            "node_id": node_id,
+            "ssh_status": ssh_status,
+            "tailscale_status": "unknown",
+            "tmux_status": "unknown",
+            "connection_state": "disconnected",
+            "action": decision["action"],
+            "action_reason": classification["probe_action_reason"],
+            "retry_delay_ms": decision["delay_ms"],
+            "required_missing": required_missing,
+            "optional_missing": optional_missing,
+        }
+
+    if required_missing:
+        return {
+            "node_id": node_id,
+            "ssh_status": ssh_status,
+            "tailscale_status": "present" if output.get("tailscale", "").strip() else "missing",
+            "tmux_status": "present" if output.get("tmux", "").strip() else "missing",
+            "connection_state": "needs_repair",
+            "action": "repair",
+            "action_reason": "missing_required_tools",
+            "retry_delay_ms": 0,
+            "required_missing": required_missing,
+            "optional_missing": optional_missing,
+        }
+
+    if optional_missing:
+        return {
+            "node_id": node_id,
+            "ssh_status": ssh_status,
+            "tailscale_status": "present" if output.get("tailscale", "").strip() else "missing",
+            "tmux_status": "present" if output.get("tmux", "").strip() else "missing",
+            "connection_state": "degraded",
+            "action": "continue",
+            "action_reason": "optional_tools_missing",
+            "retry_delay_ms": 0,
+            "required_missing": required_missing,
+            "optional_missing": optional_missing,
+        }
+
+    return {
+        "node_id": node_id,
+        "ssh_status": ssh_status,
+        "tailscale_status": "present" if output.get("tailscale", "").strip() else "missing",
+        "tmux_status": "present" if output.get("tmux", "").strip() else "missing",
+        "connection_state": "connected",
+        "action": "connected",
+        "action_reason": "probe_ok",
+        "retry_delay_ms": 0,
+        "required_missing": required_missing,
+        "optional_missing": optional_missing,
+    }
+
+
 def capped_reconnect_backoff_seconds(attempt: int, *, base_seconds: int = 1, cap_seconds: int = 30) -> int:
     safe_attempt = max(0, int(attempt))
     return min(cap_seconds, base_seconds * (2**safe_attempt))
@@ -343,6 +419,11 @@ def probe(args: argparse.Namespace) -> int:
     proc = run([*cmd, remote_probe_script()])
     parsed_probe = parse_probe(proc.stdout)
     classification = classify_probe_result(proc.returncode, parsed_probe)
+    connection_summary = summarize_node_connection_state(
+        node_id=args.target,
+        return_code=proc.returncode,
+        output=parsed_probe,
+    )
     payload: dict[str, Any] = {
         "checked_at": utc_now(),
         "target": args.target,
@@ -353,6 +434,18 @@ def probe(args: argparse.Namespace) -> int:
         "probe_action_reason": classification["probe_action_reason"],
         "required_missing": classification["required_missing"],
         "optional_missing": classification["optional_missing"],
+        "connection_summary": {
+            "node_id": connection_summary["node_id"],
+            "ssh_status": connection_summary["ssh_status"],
+            "tailscale_status": connection_summary["tailscale_status"],
+            "tmux_status": connection_summary["tmux_status"],
+            "connection_state": connection_summary["connection_state"],
+            "action": connection_summary["action"],
+            "action_reason": connection_summary["action_reason"],
+            "retry_delay_ms": connection_summary["retry_delay_ms"],
+            "required_missing": connection_summary["required_missing"],
+            "optional_missing": connection_summary["optional_missing"],
+        },
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if proc.returncode == 0 else proc.returncode

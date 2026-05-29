@@ -226,6 +226,81 @@ class RemoteBootstrapTests(unittest.TestCase):
         self.assertEqual(decision["delay_ms"], 0)
         self.assertEqual(decision["node_id"], "node-1")
 
+    def test_connection_summary_returns_data_shape_on_ok(self):
+        mod = load_module()
+        payload = mod.summarize_node_connection_state(
+            node_id="node-ok",
+            return_code=0,
+            output={
+                "git": "/usr/bin/git",
+                "python3": "/usr/bin/python3",
+                "curl": "/usr/bin/curl",
+                "tmux": "/usr/bin/tmux",
+                "tailscale": "/usr/bin/tailscale",
+            },
+        )
+        self.assertEqual(payload["node_id"], "node-ok")
+        self.assertEqual(payload["ssh_status"], "connected")
+        self.assertEqual(payload["tailscale_status"], "present")
+        self.assertEqual(payload["tmux_status"], "present")
+        self.assertEqual(payload["connection_state"], "connected")
+        self.assertEqual(payload["action"], "connected")
+        self.assertEqual(payload["action_reason"], "probe_ok")
+        self.assertEqual(payload["retry_delay_ms"], 0)
+
+    def test_connection_summary_requires_repair_on_required_tool_miss(self):
+        mod = load_module()
+        payload = mod.summarize_node_connection_state(
+            node_id="node-missing-required",
+            return_code=0,
+            output={
+                "git": "",
+                "python3": "/usr/bin/python3",
+                "curl": "/usr/bin/curl",
+                "tmux": "/usr/bin/tmux",
+                "tailscale": "/usr/bin/tailscale",
+            },
+        )
+        self.assertEqual(payload["connection_state"], "needs_repair")
+        self.assertEqual(payload["action"], "repair")
+        self.assertEqual(payload["action_reason"], "missing_required_tools")
+        self.assertEqual(payload["required_missing"], ["git"])
+
+    def test_connection_summary_degraded_when_optional_tools_missing(self):
+        mod = load_module()
+        payload = mod.summarize_node_connection_state(
+            node_id="node-degraded",
+            return_code=0,
+            output={
+                "git": "/usr/bin/git",
+                "python3": "/usr/bin/python3",
+                "curl": "/usr/bin/curl",
+                "tmux": "",
+                "tailscale": "",
+            },
+        )
+        self.assertEqual(payload["connection_state"], "degraded")
+        self.assertEqual(payload["action"], "continue")
+        self.assertEqual(payload["action_reason"], "optional_tools_missing")
+        self.assertEqual(payload["tmux_status"], "missing")
+        self.assertEqual(payload["tailscale_status"], "missing")
+
+    def test_connection_summary_reconnects_when_ssh_unreachable(self):
+        mod = load_module()
+        payload = mod.summarize_node_connection_state(
+            node_id="node-unreachable",
+            return_code=255,
+            output={},
+            attempt=0,
+            policy_budget_remaining=2,
+        )
+        self.assertEqual(payload["connection_state"], "disconnected")
+        self.assertEqual(payload["ssh_status"], "unreachable")
+        self.assertEqual(payload["tmux_status"], "unknown")
+        self.assertEqual(payload["tailscale_status"], "unknown")
+        self.assertEqual(payload["action"], "reconnect")
+        self.assertEqual(payload["retry_delay_ms"], 1000)
+
 
 if __name__ == "__main__":
     unittest.main()
