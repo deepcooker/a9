@@ -979,6 +979,17 @@ class ControlApiTests(unittest.TestCase):
             captured["emit_event"] = emit_event
             return {"status": "ok", "kind": "gateway_transport_contract"}
 
+        try:
+            mod.gateway_transport_contract = fake_gateway_transport_contract
+            mod.ControlHandler.do_GET(DummyTransportContractGetHandler())
+        finally:
+            mod.gateway_transport_contract = original_gateway_transport_contract
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["status"], "ok")
+        self.assertEqual(captured["payload"]["kind"], "gateway_transport_contract")
+        self.assertTrue(captured["emit_event"])
+
     def test_api_status_endpoint_reads_supervisor_status_payload(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None}
@@ -1002,8 +1013,11 @@ class ControlApiTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (state_dir / "runs" / "run-1" / "summary.json").write_text(
-                json.dumps({"task_id": "run-1", "status": "pass", "run_dir": str(state_dir / "runs" / "run-1"}),
-                             ensure_ascii=False) + "\n",
+                json.dumps(
+                    {"task_id": "run-1", "status": "pass", "run_dir": str(state_dir / "runs" / "run-1")},
+                    ensure_ascii=False,
+                )
+                + "\n",
                 encoding="utf-8",
             )
             (state_dir / "progress.json").write_text('{"progress_percent": 42}', encoding="utf-8")
@@ -1024,12 +1038,12 @@ class ControlApiTests(unittest.TestCase):
                 def write_sse(self, status_code, payload):
                     raise AssertionError("write_sse should not be used for /api/status")
 
-            old_root = mod.ROOT
-            mod.ROOT = root
+            old_supervisor_status = mod.supervisor_status
+            mod.supervisor_status = lambda: old_supervisor_status(root)
             try:
                 mod.ControlHandler.do_GET(DummyStatusHandler())
             finally:
-                mod.ROOT = old_root
+                mod.supervisor_status = old_supervisor_status
 
         self.assertEqual(captured["status"], 200)
         status = captured["payload"]
@@ -1046,17 +1060,6 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["daemon_heartbeat"]["status"], "ok")
         self.assertEqual(status["nodes"]["count"], 1)
         self.assertEqual(status["nodes"]["nodes"][0]["node_id"], "node-a")
-
-        try:
-            mod.gateway_transport_contract = fake_gateway_transport_contract
-            mod.ControlHandler.do_GET(DummyTransportContractGetHandler())
-        finally:
-            mod.gateway_transport_contract = original_gateway_transport_contract
-
-        self.assertEqual(captured["status"], 200)
-        self.assertEqual(captured["payload"]["status"], "ok")
-        self.assertEqual(captured["payload"]["kind"], "gateway_transport_contract")
-        self.assertTrue(captured["emit_event"])
 
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
         mod = load_control_api()
