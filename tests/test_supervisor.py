@@ -973,6 +973,77 @@ Do the work.
         self.assertEqual(chain["next_slice"], "self-evolution memory commit")
         self.assertEqual(chain["evidence_paths"]["event_summaries_path"], str(events_path))
 
+    def test_memory_commit_artifact_derives_rules_eval_and_next_task_from_execution_chain(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            execution_chain = run_dir / "execution_chain.json"
+            execution_chain.write_text(
+                json.dumps(
+                    {
+                        "schema": "a9.execution_chain.v1",
+                        "task_id": "memory-test",
+                        "run_id": "run-1",
+                        "reference_evidence": [
+                            {
+                                "path": "reference-projects/codex/codex-rs/core/src/goals.rs",
+                                "observed": True,
+                            },
+                            {
+                                "path": "reference-projects/hermes-agent/agent/curator.py",
+                                "observed": False,
+                            },
+                        ],
+                        "next_slice": "build deterministic memory commit writer",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="memory-test",
+                phase="implement",
+                prompt="copy Codex goal and Hermes curator",
+            )
+            summary = {
+                "task_id": "memory-test",
+                "attempt": 1,
+                "run_dir": str(run_dir),
+                "status": "retryable-worker-budget",
+                "phase": "implement",
+                "execution_chain_path": str(execution_chain),
+                "worker": {"event_summaries_path": str(run_dir / "event_summaries.jsonl")},
+                "worker_failure": {
+                    "category": "budget",
+                    "reason": "worker event bytes exceeded 120000",
+                },
+                "patch_guard": {
+                    "findings": [{"level": "warn", "message": "patch touched broad surface"}],
+                },
+                "checks": [
+                    {
+                        "command": "python3 -m unittest tests.test_supervisor",
+                        "return_code": 1,
+                        "output_path": str(run_dir / "check.log"),
+                    }
+                ],
+            }
+
+            path = mod.write_memory_commit_artifact(task, run_dir, summary)
+            commit = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(summary["memory_commit_path"], str(path))
+        self.assertEqual(commit["schema"], "a9.memory_commit.v1")
+        self.assertEqual(commit["stats"]["observed_reference_count"], 1)
+        self.assertEqual(commit["stats"]["missing_reference_count"], 1)
+        self.assertTrue(commit["doctrine_updates"])
+        rule_kinds = {item["kind"] for item in commit["rules"]}
+        self.assertIn("reference_gate", rule_kinds)
+        self.assertIn("budget_governance", rule_kinds)
+        self.assertEqual(commit["eval_samples"][0]["status"], "fail")
+        self.assertEqual(commit["next_tasks"][0]["text"], "build deterministic memory commit writer")
+        self.assertEqual(commit["evidence_paths"]["execution_chain_path"], str(execution_chain))
+
     def test_apply_worker_search_replace_extracts_final_message_blocks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

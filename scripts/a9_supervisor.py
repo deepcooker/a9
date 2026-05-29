@@ -2879,6 +2879,150 @@ def write_execution_chain_artifact(task: Task, run_dir: Path, summary: dict[str,
     return output_path
 
 
+def monitor_findings(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    monitor_score = summary.get("monitor_score", {})
+    findings = monitor_score.get("findings", []) if isinstance(monitor_score, dict) else []
+    return [item for item in findings if isinstance(item, dict)]
+
+
+def guard_findings(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for name in ("worker_envelope", "patch_apply", "patch_guard", "scope_guard", "process_governance"):
+        guard = summary.get(name, {})
+        if not isinstance(guard, dict):
+            continue
+        for item in guard.get("findings", []) or []:
+            if isinstance(item, dict):
+                findings.append({"source": name, **item})
+    return findings
+
+
+def build_memory_commit(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    execution_chain_path = Path(str(summary.get("execution_chain_path") or run_dir / "execution_chain.json"))
+    execution_chain = read_json_file(execution_chain_path)
+    reference_evidence = execution_chain.get("reference_evidence", []) if isinstance(execution_chain, dict) else []
+    observed_references = [item for item in reference_evidence if isinstance(item, dict) and item.get("observed")]
+    missing_references = [item for item in reference_evidence if isinstance(item, dict) and not item.get("observed")]
+    checks = summary.get("checks", []) if isinstance(summary.get("checks"), list) else []
+    failed_checks = [item for item in checks if isinstance(item, dict) and item.get("return_code") not in {0, None}]
+    passed_checks = [item for item in checks if isinstance(item, dict) and item.get("return_code") == 0]
+    worker_failure = summary.get("worker_failure", {}) if isinstance(summary.get("worker_failure"), dict) else {}
+    status = str(summary.get("status") or "")
+    next_slice = str(execution_chain.get("next_slice") or "") if isinstance(execution_chain, dict) else ""
+
+    doctrine_updates: list[dict[str, Any]] = []
+    rules: list[dict[str, Any]] = []
+    eval_samples: list[dict[str, Any]] = []
+    next_tasks: list[dict[str, Any]] = []
+
+    if observed_references:
+        doctrine_updates.append(
+            {
+                "kind": "reference_first",
+                "memory_type": "procedure",
+                "text": "Worker run produced observable bounded reads for prompt-declared reference sources before implementation evidence.",
+                "confidence": 0.72,
+                "evidence": [item.get("path") for item in observed_references],
+            }
+        )
+    if missing_references:
+        rules.append(
+            {
+                "kind": "reference_gate",
+                "memory_type": "risk",
+                "text": "Prompt-declared reference sources were not observed in execution_chain reads; future workers should repair reference slice/path access before continuing implementation.",
+                "severity": "warn",
+                "evidence": [item.get("path") for item in missing_references],
+            }
+        )
+    if worker_failure.get("category") == "budget" or status.startswith("retryable-worker-budget"):
+        rules.append(
+            {
+                "kind": "budget_governance",
+                "memory_type": "risk",
+                "text": "Worker budget failure is an execution-chain signal; inspect event_summaries for path churn or over-broad reads before retrying.",
+                "severity": "warn",
+                "evidence": [summary.get("worker", {}).get("event_summaries_path", "")],
+            }
+        )
+    for finding in guard_findings(summary) + monitor_findings(summary):
+        level = str(finding.get("level") or "")
+        if level not in {"error", "warn"}:
+            continue
+        rules.append(
+            {
+                "kind": str(finding.get("kind") or finding.get("message") or "governance_finding")[:80],
+                "memory_type": "risk" if level == "error" else "procedure",
+                "text": bounded_inline(str(finding.get("message") or finding), 500),
+                "severity": level,
+                "evidence": [str(finding.get("output_path") or summary.get("evidence_path") or "")],
+            }
+        )
+    if checks:
+        eval_samples.append(
+            {
+                "kind": "supervisor_run_eval",
+                "status": "fail" if failed_checks else "pass",
+                "text": f"Run {Path(str(summary.get('run_dir') or run_dir)).name} finished with {len(passed_checks)} passing checks and {len(failed_checks)} failing checks.",
+                "checks": [
+                    {
+                        "command": item.get("command"),
+                        "return_code": item.get("return_code"),
+                        "output_path": item.get("output_path"),
+                    }
+                    for item in checks
+                    if isinstance(item, dict)
+                ],
+            }
+        )
+    if next_slice:
+        next_tasks.append(
+            {
+                "kind": "worker_next_slice",
+                "text": next_slice,
+                "source": "worker_envelope.output.next_slice",
+            }
+        )
+
+    evidence_paths = {
+        "execution_chain_path": str(execution_chain_path),
+        "evidence_path": str(summary.get("evidence_path") or run_dir / "evidence.jsonl"),
+        "state_path": str(summary.get("state_path") or run_dir / "state.json"),
+        "deep_marks_path": str(summary.get("deep_marks_path") or run_dir / "deep_marks.jsonl"),
+    }
+    return {
+        "schema": "a9.memory_commit.v1",
+        "task_id": task.task_id,
+        "run_id": Path(str(summary.get("run_dir") or run_dir)).name,
+        "checkpoint_id": summary.get("checkpoint_id") or "",
+        "status": status,
+        "phase": summary.get("phase") or task.phase,
+        "created_at": utc_now(),
+        "source": "deterministic_execution_chain_curator",
+        "doctrine_updates": doctrine_updates,
+        "rules": rules,
+        "eval_samples": eval_samples,
+        "next_tasks": next_tasks,
+        "evidence_paths": evidence_paths,
+        "stats": {
+            "observed_reference_count": len(observed_references),
+            "missing_reference_count": len(missing_references),
+            "rule_count": len(rules),
+            "eval_sample_count": len(eval_samples),
+            "next_task_count": len(next_tasks),
+        },
+    }
+
+
+def write_memory_commit_artifact(task: Task, run_dir: Path, summary: dict[str, Any]) -> Path:
+    output_path = run_dir / "memory_commit.json"
+    commit = build_memory_commit(task, run_dir, summary)
+    write_json(output_path, commit)
+    summary["memory_commit_path"] = str(output_path)
+    summary["memory_commit_stats"] = commit.get("stats", {})
+    return output_path
+
+
 def patch_apply_block_line(item: dict[str, Any]) -> str:
     path = item.get("effective_path") or item.get("path") or "unknown"
     mode = item.get("mode", "unknown")
@@ -3399,6 +3543,7 @@ def write_evidence_and_state(
     checkpoint_id = f"{run_id}:checkpoint:{summary['attempt']}"
     records: list[dict[str, Any]] = []
     execution_chain_path = write_execution_chain_artifact(task, run_dir, summary)
+    memory_commit_path = write_memory_commit_artifact(task, run_dir, summary)
 
     paths = [
         ("raw_task", Path(summary["worker"]["raw_task_path"]), {"task_id": task.task_id}),
@@ -3474,6 +3619,7 @@ def write_evidence_and_state(
             },
         ),
         ("execution_chain", execution_chain_path, {"schema": "a9.execution_chain.v1"}),
+        ("memory_commit", memory_commit_path, summary.get("memory_commit_stats", {})),
         ("context", context_path, {"status": summary["status"]}),
     ]
     for kind, path, metadata in paths:
@@ -3549,9 +3695,10 @@ def write_evidence_and_state(
             "git_governance": by_kind.get("git_governance", []),
             "policy_attestations": by_kind.get("policy_attestation", []),
             "execution_chains": by_kind.get("execution_chain", []),
+            "memory_commits": by_kind.get("memory_commit", []),
             "checks": by_kind.get("check_log", []),
             "deep_marks": [mark["mark_id"] for mark in deep_marks],
-            "memories": [],
+            "memories": by_kind.get("memory_commit", []),
         },
         "updated_channels": [
             "task",
@@ -3565,6 +3712,7 @@ def write_evidence_and_state(
             "git_governance",
             "policy_attestations",
             "execution_chains",
+            "memory_commits",
             "checks",
             "context_pressure",
             "deep_marks",
@@ -3779,6 +3927,9 @@ def redis_session_payload(
         "state_path": str(Path(summary["run_dir"]) / "state.json"),
         "evidence_path": summary.get("evidence_path"),
         "deep_marks_path": summary.get("deep_marks_path"),
+        "execution_chain_path": summary.get("execution_chain_path"),
+        "memory_commit_path": summary.get("memory_commit_path"),
+        "memory_commit_stats": summary.get("memory_commit_stats", {}),
         "guard_summary": summary.get("guard_summary", compact_guard_summary(summary)),
         "context_pressure": summary.get("context_pressure", compact_context_pressure(summary)),
         "git_governance": summary.get("git_governance", {}),
