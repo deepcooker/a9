@@ -2778,7 +2778,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                     self.write_json(400, {"error": "limit must be integer"})
                     return
                 payload = read_events(last_id, limit=limit)
-                if query.get("format", ["json"])[0] == "sse":
+                if str(query.get("format", ["json"])[0]).lower() == "sse":
                     self.write_sse(200, payload)
                 else:
                     self.write_json(200, payload)

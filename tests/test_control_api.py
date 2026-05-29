@@ -1015,6 +1015,91 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(captured["success"])
         self.assertEqual(captured["payload"]["kind"], "gateway_reconnect_diagnostic")
 
+    def test_api_events_get_endpoint_returns_json_state_payload(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None}
+        calls = []
+
+        class DummyEventsGetHandler:
+            path = "/api/events?limit=3&last_id=1740000001-0"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for /api/events without format=sse")
+
+        original_read_events = mod.read_events
+        try:
+            def fake_read_events(last_id, limit=100):
+                calls.append((last_id, limit))
+                return {
+                    "status": "ok",
+                    "stream": "a9:events",
+                    "count": 1,
+                    "requested_count": 3,
+                    "last_id": last_id,
+                    "next_last_id": "1740000002-0",
+                    "events": [{"id": "1740000002-0", "fields": {"type": "task_started"}}],
+                }
+
+            mod.read_events = fake_read_events
+            mod.ControlHandler.do_GET(DummyEventsGetHandler())
+        finally:
+            mod.read_events = original_read_events
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["status"], "ok")
+        self.assertEqual(captured["payload"]["stream"], "a9:events")
+        self.assertEqual(captured["payload"]["count"], 1)
+        self.assertEqual(captured["payload"]["events"][0]["fields"]["type"], "task_started")
+        self.assertEqual(calls, [("1740000001-0", 3)])
+
+    def test_api_events_get_endpoint_uses_last_event_header_for_sse_format(self):
+        mod = load_control_api()
+
+        captured = {"status": None, "payload": None, "content_type": None}
+        calls = []
+
+        class DummyEventsSSEGetHandler:
+            path = "/api/events?format=sse&limit=2"
+            headers = {"Last-Event-ID": "1740000010-0"}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+                captured["content_type"] = "text/event-stream"
+
+        original_read_events = mod.read_events
+        try:
+            def fake_read_events(last_id, limit=100):
+                calls.append((last_id, limit))
+                return {
+                    "status": "ok",
+                    "stream": "a9:events",
+                    "count": 0,
+                    "requested_count": 2,
+                    "last_id": last_id,
+                    "next_last_id": last_id,
+                    "events": [],
+                }
+
+            mod.read_events = fake_read_events
+            mod.ControlHandler.do_GET(DummyEventsSSEGetHandler())
+        finally:
+            mod.read_events = original_read_events
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["content_type"], "text/event-stream")
+        self.assertEqual(calls, [("1740000010-0", 2)])
+
     def test_node_status_aggregates_latest_tmux_action_from_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
