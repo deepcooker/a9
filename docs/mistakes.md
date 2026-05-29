@@ -28,6 +28,22 @@
 - 24h worker 的主要缺陷不是“不会做”，而是会漏跑测试、输出非法 JSON、
   读得过宽。解决方式是流程拆分和监控救回，不是继续加死门禁。
 
+补充观察：
+
+- 后续 `goal-continuation-...115514Z` 因模型容量错误
+  `Selected model is at capacity` 中断，属于供应侧可重试失败。
+- 该 run 遗留 patch 试图把“communication queue/handler 必须声明 queue schema/state”
+  做成 `data_model_expert` 的 hard gate，并且测试把 `role_review.roles[].failed_experts`
+  当成 finding kind 断言，测试本身也不成立。
+
+处理：
+
+- 不救回该 patch。保留为负样本。
+- 队列/事件状态模型要求应先作为评审观察和任务改写建议，不应在业务形态未稳定时
+  直接进入 hard gate。
+- 正确方向是：在需求分析/任务 shaping 阶段要求写清 `request_id/status/error_code/state/cursor`
+  等数据结构；worker 执行阶段用测试和证据验证，而不是靠 monitor 后置硬卡。
+
 ## 2026-05-28：worker envelope 自评不能覆盖 supervisor 检查事实
 
 现象：
