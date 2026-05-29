@@ -1075,6 +1075,92 @@ Do the work.
         self.assertEqual(failure["status"], "monitor-blocked")
         self.assertEqual(failure["category"], "reference_gate")
 
+    def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            try:
+                run_dir = tmp_path / "run"
+                run_dir.mkdir()
+                task = mod.Task(
+                    path=run_dir / "task.md",
+                    task_id="goal-task",
+                    phase="implement",
+                    prompt=(
+                        "goal_objective: Build A9 goal runtime\n"
+                        "goal_token_budget: 1000\n"
+                        "Implement a bounded slice."
+                    ),
+                )
+                summary = {
+                    "status": "pass",
+                    "phase": "implement",
+                    "run_dir": str(run_dir),
+                    "started_at": "2026-05-29T00:00:00+00:00",
+                    "finished_at": "2026-05-29T00:00:07+00:00",
+                    "worker": {
+                        "actual_token_usage": {
+                            "total_tokens": 123,
+                        }
+                    },
+                }
+
+                goal_state = mod.update_goal_from_summary(task, run_dir, summary)
+                goal = goal_state["goal"]
+                goal_path = Path(goal_state["output_path"])
+                stored = json.loads((mod.GOALS_DIR / f"{goal['goal_id']}.json").read_text(encoding="utf-8"))
+                goal_state_exists = goal_path.exists()
+            finally:
+                mod.GOALS_DIR = old_goals
+
+        self.assertEqual(goal_state["status"], "updated")
+        self.assertEqual(goal["schema"], "a9.goal.v1")
+        self.assertEqual(goal["objective"], "Build A9 goal runtime")
+        self.assertEqual(goal["status"], "active")
+        self.assertEqual(goal["tokens_used"], 123)
+        self.assertEqual(goal["time_used_seconds"], 7)
+        self.assertIn("goal-task", goal["task_ids"])
+        self.assertTrue(goal_state_exists)
+        self.assertEqual(stored["goal_id"], goal["goal_id"])
+
+    def test_goal_runtime_records_completion_only_with_audit(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            try:
+                run_dir = tmp_path / "run"
+                run_dir.mkdir()
+                task = mod.Task(
+                    path=run_dir / "task.md",
+                    task_id="goal-complete",
+                    phase="record",
+                    prompt=(
+                        "goal_id: a9-goal\n"
+                        "goal_objective: Finish goal runtime\n"
+                        "goal_status: complete\n"
+                        "goal_completion_audit: tests and evidence prove the requested slice is complete"
+                    ),
+                )
+                summary = {
+                    "status": "pass",
+                    "phase": "record",
+                    "run_dir": str(run_dir),
+                    "started_at": "2026-05-29T00:00:00+00:00",
+                    "finished_at": "2026-05-29T00:00:01+00:00",
+                    "worker": {"actual_token_usage": {"total_tokens": 1}},
+                }
+
+                goal_state = mod.update_goal_from_summary(task, run_dir, summary)
+            finally:
+                mod.GOALS_DIR = old_goals
+
+        self.assertEqual(goal_state["goal"]["status"], "complete")
+        self.assertEqual(goal_state["goal"]["completion_audit"][0]["audit"], "tests and evidence prove the requested slice is complete")
+
     def test_apply_worker_search_replace_extracts_final_message_blocks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2593,6 +2679,34 @@ Do the work.
         self.assertIn("Do not read `docs/session-raw-summary.md`", prompt)
         self.assertIn("raw session logs", prompt)
         self.assertIn("Use `rg -n` first", prompt)
+
+    def test_next_task_prompt_carries_active_goal_continuation(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="goal-source", prompt="demo", phase="implement")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "test: verify goal runtime"}}},
+            "goal_state": {
+                "goal": {
+                    "goal_id": "goal-a9-runtime",
+                    "objective": "Build A9 persistent goal runtime",
+                    "status": "active",
+                    "token_budget": 1000,
+                    "tokens_used": 125,
+                }
+            },
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "test")
+
+        self.assertIn("Active goal:", prompt)
+        self.assertIn("goal_id: goal-a9-runtime", prompt)
+        self.assertIn("Build A9 persistent goal runtime", prompt)
+        self.assertIn("goal_tokens_remaining: 875", prompt)
+        self.assertIn("Keep the full objective intact", prompt)
+        self.assertIn("goal_completion_audit", prompt)
 
     def test_next_task_prompt_includes_communication_acceptance_hints_when_gateway_evidence_required(self):
         mod = load_supervisor()

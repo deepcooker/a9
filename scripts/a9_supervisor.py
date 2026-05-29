@@ -38,6 +38,7 @@ WORKER_CODEX_HOME = STATE_DIR / "codex-home"
 WORKER_TMP_DIR = STATE_DIR / "tmp"
 EXTERNAL_SESSIONS_DIR = STATE_DIR / "external_sessions"
 RECORDS_DIR = STATE_DIR / "records"
+GOALS_DIR = STATE_DIR / "goals"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
@@ -321,6 +322,7 @@ def ensure_dirs() -> None:
         WORKER_TMP_DIR,
         EXTERNAL_SESSIONS_DIR,
         RECORDS_DIR,
+        GOALS_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -3661,6 +3663,17 @@ def write_evidence_and_state(
             },
         ),
         (
+            "goal_state",
+            Path(summary.get("goal_state", {}).get("output_path") or run_dir / "goal_state.missing"),
+            {
+                "enabled": summary.get("goal_state", {}).get("enabled", False),
+                "status": summary.get("goal_state", {}).get("status", ""),
+                "goal_id": summary.get("goal_state", {}).get("goal", {}).get("goal_id")
+                if isinstance(summary.get("goal_state", {}).get("goal"), dict)
+                else summary.get("goal_state", {}).get("goal_id", ""),
+            },
+        ),
+        (
             "worker_envelope",
             Path(summary["worker_envelope"]["output_path"]),
             {
@@ -3788,6 +3801,7 @@ def write_evidence_and_state(
             "tool_events": by_kind.get("events", []) + by_kind.get("stderr", []),
             "event_summaries": by_kind.get("event_summary", []),
             "reference_gates": by_kind.get("reference_gate", []),
+            "goal_states": by_kind.get("goal_state", []),
             "worker_envelopes": by_kind.get("worker_envelope", []),
             "repo_state": [
                 {
@@ -3811,6 +3825,7 @@ def write_evidence_and_state(
             "tool_events",
             "event_summaries",
             "reference_gates",
+            "goal_states",
             "worker_envelopes",
             "repo_state",
             "patches",
@@ -4036,6 +4051,7 @@ def redis_session_payload(
         "execution_chain_path": summary.get("execution_chain_path"),
         "memory_commit_path": summary.get("memory_commit_path"),
         "memory_commit_stats": summary.get("memory_commit_stats", {}),
+        "goal_state": summary.get("goal_state", {}),
         "guard_summary": summary.get("guard_summary", compact_guard_summary(summary)),
         "context_pressure": summary.get("context_pressure", compact_context_pressure(summary)),
         "git_governance": summary.get("git_governance", {}),
@@ -4698,6 +4714,185 @@ def parse_task_flow_spec(prompt: str) -> dict[str, Any]:
     }
 
 
+GOAL_STATUSES = {"active", "paused", "blocked", "usage_limited", "budget_limited", "complete"}
+
+
+def parse_task_goal_spec(prompt: str) -> dict[str, Any]:
+    fields = parse_key_value_prompt(prompt)
+    status = str(fields.get("goal_status") or "").strip().lower()
+    if status and status not in GOAL_STATUSES:
+        status = ""
+    return {
+        "goal_id": fields.get("goal_id", ""),
+        "goal_objective": fields.get("goal_objective", ""),
+        "goal_status": status,
+        "goal_token_budget": parse_optional_int(fields.get("goal_token_budget")),
+        "goal_completion_audit": fields.get("goal_completion_audit", ""),
+        "goal_blocked_reason": fields.get("goal_blocked_reason", ""),
+    }
+
+
+def goal_id_for_objective(objective: str) -> str:
+    digest = hashlib.sha256(objective.encode("utf-8")).hexdigest()[:10]
+    return f"goal-{slugify(objective)[:48]}-{digest}"
+
+
+def goal_path(goal_id: str) -> Path:
+    return GOALS_DIR / f"{slugify(goal_id)}.json"
+
+
+def load_goal(goal_id: str) -> dict[str, Any]:
+    return read_json_file(goal_path(goal_id))
+
+
+def create_goal_payload(goal_id: str, objective: str, token_budget_value: int | None = None) -> dict[str, Any]:
+    now = utc_now()
+    return {
+        "schema": "a9.goal.v1",
+        "goal_id": goal_id,
+        "objective": objective,
+        "status": "active",
+        "token_budget": token_budget_value,
+        "tokens_used": 0,
+        "time_used_seconds": 0,
+        "blocked_count": 0,
+        "completion_audit": [],
+        "blocked_audit": [],
+        "task_ids": [],
+        "run_ids": [],
+        "created_at": now,
+        "updated_at": now,
+        "source": "codex_thread_goal_shape",
+    }
+
+
+def task_goal_context(task: Task) -> dict[str, Any]:
+    spec = parse_task_goal_spec(task.prompt)
+    goal_id = str(spec.get("goal_id") or "").strip()
+    objective = str(spec.get("goal_objective") or "").strip()
+    if not goal_id and not objective:
+        return {"enabled": False, "status": "none"}
+    if not goal_id:
+        goal_id = goal_id_for_objective(objective)
+    goal = load_goal(goal_id)
+    if not goal:
+        if not objective:
+            return {"enabled": True, "status": "missing", "goal_id": goal_id}
+        goal = create_goal_payload(goal_id, objective, spec.get("goal_token_budget"))
+    else:
+        if objective and objective != goal.get("objective"):
+            goal["objective"] = objective
+        if spec.get("goal_token_budget") is not None:
+            goal["token_budget"] = spec.get("goal_token_budget")
+    return {"enabled": True, "status": "loaded", "goal_id": goal_id, "goal": goal, "spec": spec}
+
+
+def parse_utc_datetime(value: Any) -> datetime | None:
+    try:
+        text = str(value or "")
+        if not text:
+            return None
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def run_duration_seconds(summary: dict[str, Any]) -> int:
+    started = parse_utc_datetime(summary.get("started_at"))
+    finished = parse_utc_datetime(summary.get("finished_at"))
+    if not started or not finished:
+        return 0
+    return max(0, int((finished - started).total_seconds()))
+
+
+def summary_token_usage(summary: dict[str, Any]) -> int:
+    worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+    usage = worker.get("actual_token_usage", {}) if isinstance(worker.get("actual_token_usage"), dict) else {}
+    total = usage.get("total_tokens")
+    if isinstance(total, int) and not isinstance(total, bool):
+        return max(0, total)
+    return 0
+
+
+def update_goal_from_summary(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    context = task_goal_context(task)
+    output_path = run_dir / "goal_state.json"
+    if not context.get("enabled"):
+        result = {"enabled": False, "status": "skipped", "output_path": str(output_path)}
+        write_json(output_path, result)
+        return result
+    if context.get("status") == "missing":
+        result = {
+            "enabled": True,
+            "status": "missing",
+            "goal_id": context.get("goal_id"),
+            "output_path": str(output_path),
+            "reason": "goal_id specified but no goal exists and no goal_objective was provided",
+        }
+        write_json(output_path, result)
+        return result
+
+    goal = dict(context["goal"])
+    spec = context.get("spec", {})
+    status = str(summary.get("status") or "")
+    run_id = Path(str(summary.get("run_dir") or run_dir)).name
+    token_delta = summary_token_usage(summary)
+    time_delta = run_duration_seconds(summary)
+    goal["tokens_used"] = int(goal.get("tokens_used") or 0) + token_delta
+    goal["time_used_seconds"] = int(goal.get("time_used_seconds") or 0) + time_delta
+    if task.task_id not in goal.setdefault("task_ids", []):
+        goal["task_ids"].append(task.task_id)
+    if run_id not in goal.setdefault("run_ids", []):
+        goal["run_ids"].append(run_id)
+    if status in {"needs-repair", "monitor-blocked"} or status.startswith("retryable-"):
+        goal["blocked_count"] = int(goal.get("blocked_count") or 0) + 1
+        goal.setdefault("blocked_audit", []).append(
+            {
+                "run_id": run_id,
+                "task_id": task.task_id,
+                "status": status,
+                "reason": summary.get("worker_failure", {}).get("reason", ""),
+                "created_at": utc_now(),
+            }
+        )
+
+    requested_status = str(spec.get("goal_status") or "")
+    if requested_status == "complete":
+        audit = str(spec.get("goal_completion_audit") or "").strip()
+        goal.setdefault("completion_audit", []).append(
+            {
+                "run_id": run_id,
+                "task_id": task.task_id,
+                "audit": audit,
+                "created_at": utc_now(),
+            }
+        )
+        goal["status"] = "complete" if audit else "active"
+    elif requested_status == "blocked":
+        goal["status"] = "blocked"
+        goal.setdefault("blocked_audit", []).append(
+            {
+                "run_id": run_id,
+                "task_id": task.task_id,
+                "status": status,
+                "reason": spec.get("goal_blocked_reason") or summary.get("worker_failure", {}).get("reason", ""),
+                "created_at": utc_now(),
+            }
+        )
+    elif requested_status in {"active", "paused"}:
+        goal["status"] = requested_status
+
+    token_budget_value = goal.get("token_budget")
+    if goal.get("status") == "active" and isinstance(token_budget_value, int) and goal["tokens_used"] >= token_budget_value:
+        goal["status"] = "budget_limited"
+    goal["updated_at"] = utc_now()
+    ensure_dirs()
+    write_json(goal_path(str(goal["goal_id"])), goal)
+    result = {"enabled": True, "status": "updated", "goal": goal, "output_path": str(output_path)}
+    write_json(output_path, result)
+    return result
+
+
 def bounded_inline(text: str, limit: int = 500) -> str:
     normalized = re.sub(r"\s+", " ", str(text)).strip()
     if len(normalized) <= limit:
@@ -4893,6 +5088,30 @@ Managed flow:
 Deterministic record:
 - record_path: {summary['deterministic_record_path']}
 """
+    goal_lines = ""
+    goal_state = summary.get("goal_state", {})
+    goal = goal_state.get("goal", {}) if isinstance(goal_state, dict) else {}
+    if isinstance(goal, dict) and goal.get("goal_id") and goal.get("status") in {"active", "budget_limited"}:
+        token_budget_value = goal.get("token_budget")
+        token_budget_text = str(token_budget_value) if token_budget_value is not None else "none"
+        remaining = "unbounded"
+        if isinstance(token_budget_value, int):
+            remaining = str(max(0, token_budget_value - int(goal.get("tokens_used") or 0)))
+        goal_lines = f"""
+Active goal:
+- goal_id: {goal.get('goal_id')}
+- goal_objective: {goal.get('objective')}
+- goal_status: {goal.get('status')}
+- goal_token_budget: {token_budget_text}
+- goal_tokens_used: {goal.get('tokens_used', 0)}
+- goal_tokens_remaining: {remaining}
+
+Codex-style goal continuation:
+- Keep the full objective intact across task slices; do not shrink success to the easiest subset.
+- Work from current files, run evidence, checks, and state as authoritative.
+- Mark a goal complete only with explicit `goal_status: complete` and a concrete `goal_completion_audit`.
+- Use `goal_status: blocked` only when the same blocker repeats and no meaningful progress is possible.
+"""
     communication_acceptance_lines = communication_acceptance_hints(task, summary)
     return f"""strict_worker_envelope: true
 
@@ -4908,6 +5127,7 @@ Previous context: {summary['context_path']}
 Phase: {phase}
 {flow_lines}
 {record_lines}
+{goal_lines}
 {phase_lines}
 {communication_acceptance_lines}
 
@@ -6203,6 +6423,7 @@ def run_one(*, auto_next: bool = False) -> int:
         summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
+        summary["goal_state"] = update_goal_from_summary(task, run_dir, summary)
         evidence_path, state_path, deep_marks_path, evidence, state, deep_marks = write_evidence_and_state(
             task, run_dir, summary, context_path
         )
