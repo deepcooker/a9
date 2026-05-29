@@ -15,6 +15,7 @@ SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
 UNIT_PATH = ROOT / "infra" / "systemd" / "a9-supervisor.service"
 NODE_WORKER_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-node-worker.service"
 RECOVERY_LOOP_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-recovery-loop.service"
+STACK_PATH = ROOT / "scripts" / "a9_stack.sh"
 
 
 def load_service():
@@ -41,6 +42,13 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("ExecStart=/root/a9/scripts/a9_supervisor.py run-loop --auto-next", unit)
         self.assertIn("Restart=always", unit)
         self.assertIn("ExecStartPre=/root/a9/scripts/a9_middleware.py status", unit)
+
+    def test_local_stack_runs_supervisor_loop(self):
+        stack = STACK_PATH.read_text(encoding="utf-8")
+        self.assertIn("start_supervisor_loop", stack)
+        self.assertIn("scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error", stack)
+        self.assertIn("supervisor-loop.log", stack)
+        self.assertIn("status_one supervisor-loop 0", stack)
 
     def test_node_worker_systemd_unit_runs_command_loop(self):
         unit = NODE_WORKER_UNIT_PATH.read_text(encoding="utf-8")

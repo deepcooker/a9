@@ -55,6 +55,13 @@ start_api() {
   echo $! >"$(pid_file control-api)"
 }
 
+start_supervisor_loop() {
+  stop_one supervisor-loop
+  setsid bash -lc "cd '$ROOT' && while true; do python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error; sleep 15; done" \
+    >"${LOG_DIR}/supervisor-loop.log" 2>&1 < /dev/null &
+  echo $! >"$(pid_file supervisor-loop)"
+}
+
 start_mobile() {
   stop_one mobile-web
   stop_port "$WEB_PORT"
@@ -105,6 +112,7 @@ status_one() {
 case "${1:-status}" in
   start)
     start_api
+    start_supervisor_loop
     start_node_worker
     start_recovery_loop
     start_mobile
@@ -113,6 +121,7 @@ case "${1:-status}" in
     stop_one mobile-web
     stop_one recovery-loop
     stop_one node-worker
+    stop_one supervisor-loop
     stop_one control-api
     stop_port "$WEB_PORT"
     stop_port "$API_PORT"
@@ -123,12 +132,13 @@ case "${1:-status}" in
     ;;
   status)
     status_one control-api "$API_PORT"
+    status_one supervisor-loop 0
     status_one node-worker 0
     status_one recovery-loop 0
     status_one mobile-web "$WEB_PORT"
     ;;
   logs)
-    tail -n "${2:-80}" "${LOG_DIR}/control-api.log" "${LOG_DIR}/node-worker.log" "${LOG_DIR}/recovery-loop.log" "${LOG_DIR}/mobile-web.log"
+    tail -n "${2:-80}" "${LOG_DIR}/control-api.log" "${LOG_DIR}/supervisor-loop.log" "${LOG_DIR}/node-worker.log" "${LOG_DIR}/recovery-loop.log" "${LOG_DIR}/mobile-web.log"
     ;;
   *)
     echo "usage: $0 {start|stop|restart|status|logs}" >&2
