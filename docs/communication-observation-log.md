@@ -1163,3 +1163,39 @@ Next monitoring target:
      for communication governance, first improve observability composition, then tune
      retry policy. Typed actions already exist; the current gap is transcript
      assembly across machines and transports.
+
+61. Local stack now runs supervisor loop, but idle goal continuation needs priority control.
+   - Trigger:
+     after adding recovery observability, local development still did not have
+     the same always-on supervisor behavior as the systemd unit. The stack ran
+     control API, node worker, recovery loop, and mobile web, but not the
+     primary `a9_supervisor.py run-loop`.
+   - Mechanism copied:
+     reuse the existing `infra/systemd/a9-supervisor.service` shape:
+     `run-loop --auto-next --sleep-seconds 10 --keep-going-on-error`, with the
+     local stack acting as a development daemon wrapper.
+   - Change:
+     `scripts/a9_stack.sh` now starts/stops/reports `supervisor-loop` and tails
+     `supervisor-loop.log`. `tests/test_service.py` locks that local stack
+     behavior. A real trial consumed one existing goal-continuation task and one
+     submitted communication reference-scan task.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py scripts/a9_supervisor.py
+     scripts/a9_recovery_loop.py scripts/a9_remote.py` passed.
+     `python3 -m unittest tests.test_control_api tests.test_recovery_loop
+     tests.test_service tests.test_remote tests.test_node` passed with `247`
+     tests. Stack status showed `control-api`, `supervisor-loop`, `node-worker`,
+     `recovery-loop`, and `mobile-web` running. The submitted worker task
+     passed and was integrated as commit `a152f37`.
+   - Observation:
+     auto-next generated/ran a goal-continuation task before the manually queued
+     task. That proves continuous execution works, but it also exposed a token
+     and priority risk: idle goal continuation can occupy the worker and read a
+     large context packet before a human-directed task. The supervisor loop was
+     paused after evidence capture, and the stale running lease was copied to
+     `.a9/tasks/interrupted/` before removal.
+   - Governance lesson:
+     24h mode should not mean unbounded idle goal work. Next slice should add
+     explicit priority and context policy: human/submitted tasks first, idle
+     goal continuation only when queue is empty and within a bounded context
+     budget, with the chosen model recorded.
