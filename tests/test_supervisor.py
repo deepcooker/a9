@@ -1272,10 +1272,103 @@ Do the work.
         self.assertEqual(goal["objective"], "Build A9 goal runtime")
         self.assertEqual(goal["status"], "active")
         self.assertEqual(goal["tokens_used"], 123)
+        self.assertEqual(goal["total_tokens_observed"], 123)
+        self.assertEqual(goal["token_accounting"]["budget_mode"], "legacy_total_tokens")
         self.assertEqual(goal["time_used_seconds"], 7)
         self.assertIn("goal-task", goal["task_ids"])
         self.assertTrue(goal_state_exists)
         self.assertEqual(stored["goal_id"], goal["goal_id"])
+
+    def test_goal_runtime_budgets_uncached_tokens_without_cached_input(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            try:
+                run_dir = tmp_path / "run"
+                run_dir.mkdir()
+                task = mod.Task(
+                    path=run_dir / "task.md",
+                    task_id="goal-cached-usage",
+                    phase="implement",
+                    prompt=(
+                        "goal_objective: Keep active despite cached context\n"
+                        "goal_token_budget: 120000\n"
+                        "Implement a bounded slice."
+                    ),
+                )
+                summary = {
+                    "status": "pass",
+                    "phase": "implement",
+                    "run_dir": str(run_dir),
+                    "started_at": "2026-05-29T00:00:00+00:00",
+                    "finished_at": "2026-05-29T00:00:07+00:00",
+                    "worker": {
+                        "actual_token_usage": {
+                            "input_tokens": 195088,
+                            "cached_input_tokens": 160896,
+                            "uncached_input_tokens": 34192,
+                            "output_tokens": 3219,
+                            "reasoning_output_tokens": 1190,
+                            "total_tokens": 199497,
+                        }
+                    },
+                }
+
+                goal_state = mod.update_goal_from_summary(task, run_dir, summary)
+            finally:
+                mod.GOALS_DIR = old_goals
+
+        goal = goal_state["goal"]
+        self.assertEqual(goal["status"], "active")
+        self.assertEqual(goal["tokens_used"], 38601)
+        self.assertEqual(goal["total_tokens_observed"], 199497)
+        self.assertEqual(goal["token_accounting"]["budget_mode"], "uncached_input_plus_output_plus_reasoning")
+        self.assertEqual(goal["token_accounting"]["last_delta"]["cached_input_tokens"], 160896)
+
+    def test_goal_runtime_budget_limits_on_effective_tokens(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            try:
+                run_dir = tmp_path / "run"
+                run_dir.mkdir()
+                task = mod.Task(
+                    path=run_dir / "task.md",
+                    task_id="goal-effective-over-budget",
+                    phase="implement",
+                    prompt=(
+                        "goal_objective: Stop only on effective usage\n"
+                        "goal_token_budget: 100\n"
+                        "Implement a bounded slice."
+                    ),
+                )
+                summary = {
+                    "status": "pass",
+                    "phase": "implement",
+                    "run_dir": str(run_dir),
+                    "started_at": "2026-05-29T00:00:00+00:00",
+                    "finished_at": "2026-05-29T00:00:01+00:00",
+                    "worker": {
+                        "actual_token_usage": {
+                            "input_tokens": 110,
+                            "cached_input_tokens": 100,
+                            "output_tokens": 80,
+                            "reasoning_output_tokens": 20,
+                            "total_tokens": 210,
+                        }
+                    },
+                }
+
+                goal_state = mod.update_goal_from_summary(task, run_dir, summary)
+            finally:
+                mod.GOALS_DIR = old_goals
+
+        self.assertEqual(goal_state["goal"]["tokens_used"], 110)
+        self.assertEqual(goal_state["goal"]["status"], "budget_limited")
 
     def test_goal_runtime_records_completion_only_with_audit(self):
         mod = load_supervisor()

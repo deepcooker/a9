@@ -5033,6 +5033,11 @@ def create_goal_payload(goal_id: str, objective: str, token_budget_value: int | 
         "status": "active",
         "token_budget": token_budget_value,
         "tokens_used": 0,
+        "total_tokens_observed": 0,
+        "token_accounting": {
+            "budget_mode": "uncached_input_plus_output_plus_reasoning",
+            "last_delta": {},
+        },
         "time_used_seconds": 0,
         "blocked_count": 0,
         "completion_audit": [],
@@ -5085,12 +5090,47 @@ def run_duration_seconds(summary: dict[str, Any]) -> int:
 
 
 def summary_token_usage(summary: dict[str, Any]) -> int:
+    return summary_token_accounting(summary)["effective_tokens"]
+
+
+def summary_token_accounting(summary: dict[str, Any]) -> dict[str, int | str]:
     worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
     usage = worker.get("actual_token_usage", {}) if isinstance(worker.get("actual_token_usage"), dict) else {}
-    total = usage.get("total_tokens")
-    if isinstance(total, int) and not isinstance(total, bool):
-        return max(0, total)
-    return 0
+
+    def token_int(name: str) -> int:
+        value = usage.get(name)
+        return max(0, value) if isinstance(value, int) and not isinstance(value, bool) else 0
+
+    input_tokens = token_int("input_tokens")
+    cached_input_tokens = token_int("cached_input_tokens")
+    uncached_input_tokens = token_int("uncached_input_tokens")
+    output_tokens = token_int("output_tokens")
+    reasoning_output_tokens = token_int("reasoning_output_tokens")
+    total_tokens = token_int("total_tokens")
+
+    if not uncached_input_tokens and input_tokens:
+        uncached_input_tokens = max(0, input_tokens - cached_input_tokens)
+    if not total_tokens:
+        total_tokens = input_tokens + output_tokens + reasoning_output_tokens
+
+    has_detailed_usage = any((input_tokens, cached_input_tokens, uncached_input_tokens, output_tokens, reasoning_output_tokens))
+    if has_detailed_usage:
+        effective_tokens = uncached_input_tokens + output_tokens + reasoning_output_tokens
+        mode = "uncached_input_plus_output_plus_reasoning"
+    else:
+        effective_tokens = total_tokens
+        mode = "legacy_total_tokens"
+
+    return {
+        "budget_mode": mode,
+        "effective_tokens": max(0, effective_tokens),
+        "total_tokens": max(0, total_tokens),
+        "input_tokens": input_tokens,
+        "cached_input_tokens": cached_input_tokens,
+        "uncached_input_tokens": uncached_input_tokens,
+        "output_tokens": output_tokens,
+        "reasoning_output_tokens": reasoning_output_tokens,
+    }
 
 
 def update_goal_from_summary(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
@@ -5115,9 +5155,16 @@ def update_goal_from_summary(task: Task, run_dir: Path, summary: dict[str, Any])
     spec = context.get("spec", {})
     status = str(summary.get("status") or "")
     run_id = Path(str(summary.get("run_dir") or run_dir)).name
-    token_delta = summary_token_usage(summary)
+    token_accounting = summary_token_accounting(summary)
+    token_delta = int(token_accounting["effective_tokens"])
+    total_token_delta = int(token_accounting["total_tokens"])
     time_delta = run_duration_seconds(summary)
     goal["tokens_used"] = int(goal.get("tokens_used") or 0) + token_delta
+    goal["total_tokens_observed"] = int(goal.get("total_tokens_observed") or 0) + total_token_delta
+    goal["token_accounting"] = {
+        "budget_mode": token_accounting["budget_mode"],
+        "last_delta": token_accounting,
+    }
     goal["time_used_seconds"] = int(goal.get("time_used_seconds") or 0) + time_delta
     if task.task_id not in goal.setdefault("task_ids", []):
         goal["task_ids"].append(task.task_id)
@@ -5193,6 +5240,7 @@ def idle_goal_continuation_prompt(goal: dict[str, Any]) -> str:
     token_budget_value = goal.get("token_budget")
     token_budget_text = str(token_budget_value) if token_budget_value is not None else "none"
     tokens_used = int(goal.get("tokens_used") or 0)
+    total_tokens_observed = int(goal.get("total_tokens_observed") or 0)
     remaining = "unbounded"
     if isinstance(token_budget_value, int):
         remaining = str(max(0, token_budget_value - tokens_used))
@@ -5213,7 +5261,8 @@ Codex goal continuation mechanism copied:
 - Mark blocked only after the same blocker repeats and no meaningful progress is possible.
 
 Budget:
-- tokens_used: {tokens_used}
+- tokens_used_effective: {tokens_used}
+- total_tokens_observed: {total_tokens_observed}
 - token_budget: {token_budget_text}
 - tokens_remaining: {remaining}
 """
