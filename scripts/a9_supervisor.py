@@ -2157,7 +2157,7 @@ def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> b
     normalized = normalize_shell_command(command)
     inner = shell_lc_inner_command(normalized)
     inner = inner.strip()
-    if re.search(r"\s(?:\|\||;|\|)\s", inner):
+    if re.search(r"\s(?:\|\||;)\s", inner):
         return False
     fragments = [part.strip() for part in re.split(r"\s+&&\s+", inner) if part.strip()]
     return bool(fragments) and all(command_fragment_is_bounded_read_of_paths(fragment, paths) for fragment in fragments)
@@ -2174,6 +2174,11 @@ def shell_lc_inner_command(command: str) -> str:
 
 
 def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> bool:
+    pipe_parts = [part.strip() for part in re.split(r"\s+\|\s+", inner) if part.strip()]
+    if len(pipe_parts) == 2 and re.fullmatch(r"head\s+-n\s+\d+", pipe_parts[1]):
+        return command_fragment_is_bounded_read_of_paths(pipe_parts[0], paths)
+    if len(pipe_parts) > 1:
+        return False
     target_pattern = "|".join(re.escape(path) for path in paths)
     tail_match = re.search(rf"^tail\s+-n\s+(\d+)\s+['\"]?(?:{target_pattern})['\"]?$", inner)
     if tail_match:

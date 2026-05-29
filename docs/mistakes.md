@@ -1005,6 +1005,8 @@
   这类转义引号处截断，导致合理 locator 被误判。
 - 不再用固定行数做 bounded read 硬门禁；入口只管路径、命令形态和禁止状态探针。
   大输出由 event bytes/token budget、上下文压缩、摘要和 repair 机制治理。
+- 允许 `rg` 对允许路径做 `| head -n N` 输出限流；这类管道是在降低 token 成本，
+  不是绕过边界。其他任意管道仍不放行。
 
 ## 2026-05-29：patch_source 首次 bootstrap 的 patch_apply 摘要会滞后一轮
 

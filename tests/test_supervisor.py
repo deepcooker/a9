@@ -1590,6 +1590,10 @@ Do the work.
             task,
             '/bin/bash -lc "rg -n \\"strict envelope|patch_source\\" docs/mistakes.md && sed -n \'1,20p\' docs/mistakes.md"',
         )
+        allowed_capped_locator = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'rg -n \"strict envelope\" docs/mistakes.md | head -n 40'",
+        )
         large_read = mod.live_worker_command_violation(task, "/bin/bash -lc 'tail -n 120 docs/mistakes.md'")
         allowed_check = mod.live_worker_command_violation(
             task,
@@ -1602,6 +1606,7 @@ Do the work.
         self.assertEqual(allowed_hundred_line_read, {})
         self.assertEqual(allowed_locator, {})
         self.assertEqual(allowed_complex_locator, {})
+        self.assertEqual(allowed_capped_locator, {})
         self.assertEqual(large_read, {})
         self.assertEqual(allowed_check, {})
 
