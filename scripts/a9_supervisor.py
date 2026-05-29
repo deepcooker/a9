@@ -937,8 +937,10 @@ LangGraph/mem0/OpenHands/Continue complement persistence:
 Hard rules:
 - The project core is copying mature mechanisms, then adapting them with license awareness.
 - Prefer Codex session/compaction/context governance before weaker alternatives.
+- Task-local hard rules override generic repository guidance when they conflict.
 - Do not inline huge raw logs or whole reference repositories.
 - Do not search `.a9/tasks/done`, `.a9/worktrees`, or `.a9/runs` as broad roots; read only explicit evidence paths.
+- Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, or raw session logs unless phase is `session_refresh`/`session_close_reading`.
 - Do not edit repository files with shell redirection, `tee`, or `sed -i`; output SEARCH/REPLACE blocks in final and let A9 deterministic apply write files.
 - Cite local source paths when borrowing ideas from reference projects.
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
