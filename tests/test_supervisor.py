@@ -2639,6 +2639,59 @@ Do the work.
         self.assertIn("run=run-iso-1", progress)
         self.assertIn("status=needs-followup", progress)
 
+    def test_update_active_plan_from_run_normalizes_invalid_expected_flow_revision_from_prompt_and_preserves_progress_append(self):
+        mod = load_supervisor()
+        expected_lines = [
+            "- expected_flow_revision: \n",
+            "- expected_flow_revision:    \n",
+            "- expected_flow_revision: not-a-number\n",
+        ]
+        for index, expected_line in enumerate(expected_lines):
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                old_plans = mod.PLANS_DIR
+                old_active = mod.ACTIVE_PLAN_PATH
+                mod.PLANS_DIR = tmp_path / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                try:
+                    run_dir = tmp_path / "runs" / f"run-iso-invalid-expected-{index}"
+                    run_dir.mkdir(parents=True)
+                    next_task_path = f"/tmp/next-invalid-expected-{index}.md"
+                    summary = {
+                        "status": "pass",
+                        "phase": "record",
+                        "run_dir": str(run_dir),
+                        "next_task_path": next_task_path,
+                    }
+                    task = mod.Task(
+                        path=Path("task.md"),
+                        task_id=f"record-iso-invalid-expected-{index}",
+                        phase="record",
+                        prompt=(
+                            "Active plan contract:\n"
+                            "- plan_id: a9-plan-lane-runtime\n"
+                            "- goal_id: goal-A9-runtime\n"
+                            f"{expected_line}"
+                            "- must: keep required fields deterministic\n"
+                        ),
+                    )
+
+                    result = mod.update_active_plan_from_run(task, run_dir, summary)
+                    plan_dir = mod.plan_path("a9-plan-lane-runtime")
+                    stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                    progress = (plan_dir / "progress.md").read_text(encoding="utf-8")
+                finally:
+                    mod.PLANS_DIR = old_plans
+                    mod.ACTIVE_PLAN_PATH = old_active
+
+            self.assertEqual(result["status"], "updated")
+            self.assertEqual(stored["plan_id"], "a9-plan-lane-runtime")
+            self.assertEqual(stored["goal_id"], "goal-A9-runtime")
+            self.assertIsNone(stored["expected_flow_revision"])
+            self.assertIn(run_dir.name, stored["run_ids"])
+            self.assertIn(f"run={run_dir.name}", progress)
+            self.assertIn(f"next={next_task_path}", progress)
+
     def test_update_active_plan_from_run_skips_recovery_for_malformed_active_plan_contract(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
