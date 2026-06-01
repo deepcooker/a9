@@ -6346,6 +6346,78 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["intervention_decision"]["action"], "observe")
         self.assertEqual(result["intervention_decision"]["reason"], "healthy")
 
+    def test_recovery_transcript_includes_node_command_recovery_hint_and_evidence_refs(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nodes_dir = root / ".a9" / "nodes"
+            nodes_dir.mkdir(parents=True)
+            node_path = nodes_dir / "node-a.json"
+            node_path.write_text(
+                json.dumps(
+                    {
+                        "node_id": "node-a",
+                        "status": "online",
+                        "connection_state": "stale",
+                        "connection_action": "reconnect",
+                        "connection_action_reason": "heartbeat_stale",
+                        "last_heartbeat_at": "2026-05-29T00:00:00+00:00",
+                        "updated_at": "2026-05-29T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            original_gateway = mod.latest_gateway_reconnect_decision_event
+            original_status = mod.node_status
+            original_latest = mod.recovery_loop_latest
+            try:
+                mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+                mod.node_status = lambda root=mod.ROOT: {
+                    "nodes": [
+                        {
+                            "node_id": "node-a",
+                            "connection_state": "stale",
+                            "connection_action": "reconnect",
+                            "connection_action_reason": "heartbeat_stale",
+                        }
+                    ],
+                    "tasks_stream": {
+                        "status": "unavailable",
+                        "stream_action": "intervene",
+                        "stream_action_reason": "redis_unavailable",
+                        "sampled_at": "2026-05-30T00:00:00+00:00",
+                    },
+                    "communication_followup": {
+                        "status": "needs_attention",
+                        "action": "reconnect",
+                        "reason": "node:heartbeat_stale",
+                        "evidence": {"nodes": [{"node_id": "node-a"}]},
+                    },
+                }
+                mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "missing"}
+                result = mod.recovery_transcript("node-a", root=root, limit=20)
+            finally:
+                mod.latest_gateway_reconnect_decision_event = original_gateway
+                mod.node_status = original_status
+                mod.recovery_loop_latest = original_latest
+
+        hint_items = [item for item in result["items"] if item.get("source") == "node_command_recovery_hint"]
+        self.assertTrue(hint_items)
+        self.assertTrue(
+            any(item.get("details", {}).get("recovery_hint", {}).get("reason") == "redis_unavailable" for item in hint_items)
+        )
+        self.assertTrue(
+            any(
+                item.get("details", {}).get("recovery_hint", {}).get("action") in {"reconnect", "probe", "wait"}
+                and item.get("details", {}).get("recovery_hint", {}).get("next_endpoint")
+                in {"/api/nodes/probe", "/api/node-command-results/by-command/{command_id}"}
+                for item in hint_items
+            )
+        )
+        refs = result["intervention_decision"]["evidence_refs"]
+        self.assertIn("redis:ping", refs)
+        self.assertIn(str(node_path), refs)
+
     def test_recovery_transcript_intervention_decision_quarantine_on_sequence_conflict(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -6454,6 +6526,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertTrue(discovery["runtime"]["gateway_reconnect_governance"])
+        self.assertTrue(discovery["runtime"]["node_command_recovery_hint_contract"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)
         self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])
 

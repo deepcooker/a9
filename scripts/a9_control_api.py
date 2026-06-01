@@ -1308,6 +1308,54 @@ def transcript_intervention_decision(
     }
 
 
+def _append_transcript_recovery_hint_item(
+    items: list[dict[str, Any]],
+    *,
+    hint: dict[str, Any],
+    source: str,
+    phase: str,
+    node_id: str = "",
+    ts: str = "",
+) -> None:
+    if not isinstance(hint, dict):
+        return
+    action = str(hint.get("action") or "").strip()
+    reason = str(hint.get("reason") or "").strip()
+    if not action and not reason:
+        return
+    items.append(
+        _transcript_item(
+            source=source,
+            phase=phase,
+            action=action or "observe",
+            reason=reason or "recovery_hint",
+            node_id=node_id,
+            ts=ts or utc_now(),
+            details={"recovery_hint": hint},
+        )
+    )
+
+
+def _transcript_recovery_hint_evidence_refs(items: list[dict[str, Any]]) -> list[str]:
+    refs: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        details = item.get("details") if isinstance(item.get("details"), dict) else {}
+        hint = details.get("recovery_hint") if isinstance(details, dict) else {}
+        if not isinstance(hint, dict):
+            continue
+        raw_refs = hint.get("evidence_refs")
+        if not isinstance(raw_refs, list):
+            continue
+        for ref in raw_refs:
+            normalized = str(ref).strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            refs.append(normalized)
+    return refs
+
+
 def recovery_transcript(
     node_id: str | None = None,
     *,
@@ -1364,6 +1412,7 @@ def recovery_transcript(
         )
 
     status = node_status(root)
+    nodes = status.get("nodes") if isinstance(status.get("nodes"), list) else []
     tasks_stream = status.get("tasks_stream") if isinstance(status.get("tasks_stream"), dict) else {}
     if tasks_stream:
         items.append(
@@ -1398,6 +1447,55 @@ def recovery_transcript(
                 ts=utc_now(),
                 details={"evidence": followup.get("evidence")},
             )
+        )
+    if str(tasks_stream.get("stream_action_reason") or "") == "redis_unavailable":
+        redis_hint = node_command_recovery_hint(
+            node_id=node_id or "",
+            result_status="degraded",
+            result_error_code="redis_unavailable",
+            root=root,
+        )
+        _append_transcript_recovery_hint_item(
+            items,
+            hint=redis_hint,
+            source="node_command_recovery_hint",
+            phase="stream-health",
+            node_id=node_id or "",
+            ts=str(tasks_stream.get("sampled_at") or ""),
+        )
+    candidate_node_ids: list[str] = []
+    if node_id:
+        candidate_node_ids.append(str(node_id))
+    followup_evidence = followup.get("evidence") if isinstance(followup, dict) else {}
+    for ref in followup_evidence.get("nodes", []) if isinstance(followup_evidence, dict) else []:
+        if not isinstance(ref, dict):
+            continue
+        hinted_node_id = str(ref.get("node_id") or "").strip()
+        if hinted_node_id and hinted_node_id not in candidate_node_ids:
+            candidate_node_ids.append(hinted_node_id)
+    for node in nodes:
+        current_node_id = str(node.get("node_id") or "").strip()
+        if not current_node_id:
+            continue
+        if candidate_node_ids and current_node_id not in candidate_node_ids:
+            continue
+        if not candidate_node_ids:
+            connection_state = str(node.get("connection_state") or "")
+            if connection_state not in {"stale", "degraded", "offline", "unknown"}:
+                continue
+        node_hint = node_command_recovery_hint(
+            node_id=current_node_id,
+            result_status="noop",
+            result_error_code="no_result",
+            root=root,
+        )
+        _append_transcript_recovery_hint_item(
+            items,
+            hint=node_hint,
+            source="node_command_recovery_hint",
+            phase="reconnecting",
+            node_id=current_node_id,
+            ts=utc_now(),
         )
 
     loop = recovery_loop_latest(root=root)
@@ -1436,6 +1534,17 @@ def recovery_transcript(
     intervention = _normalize_intervention_decision_payload(followup.get("intervention_decision"))
     if not intervention:
         intervention = transcript_intervention_decision(items, tasks_stream, followup, loop)
+    hint_refs = _transcript_recovery_hint_evidence_refs(items)
+    if hint_refs:
+        merged_refs: list[str] = []
+        seen_refs: set[str] = set()
+        for ref in list(intervention.get("evidence_refs") or []) + hint_refs:
+            normalized = str(ref).strip()
+            if not normalized or normalized in seen_refs:
+                continue
+            seen_refs.add(normalized)
+            merged_refs.append(normalized)
+        intervention["evidence_refs"] = merged_refs
     return {
         "status": status_value,
         "kind": "node_recovery_transcript",
@@ -1493,6 +1602,7 @@ def controller_discovery() -> dict[str, Any]:
             "redis_streams_target": True,
             "gateway_transport_contract": True,
             "gateway_reconnect_governance": True,
+            "node_command_recovery_hint_contract": True,
             "worker_claim_ready": False,
         },
         "events": {

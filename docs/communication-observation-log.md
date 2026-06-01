@@ -1407,3 +1407,33 @@ Next monitoring target:
    - Governance lesson:
      receipt and recovery become the same typed control-plane contract, so
      mobile can drive `probe/wait/reconnect/tmux` routing without parsing free text.
+
+70. Monitor transcript now consumes node command recovery hints as typed evidence.
+   - Trigger:
+     hint contract existed in node command lookup responses, but monitor/control
+     transcript endpoints still required clients to infer next action from mixed
+     followup prose and stream state.
+   - Mechanism copied:
+     OpenClaw/Lobster typed envelope boundary (`ok/status/output` style machine
+     contract), Barter-rs reconnect lifecycle modeling (typed action/reason over
+     prose), and existing A9 `recovery_transcript + intervention_decision`
+     evidence linking.
+   - Change:
+     `scripts/a9_control_api.py` adds transcript-local hint ingestion helpers that
+     normalize `node_command_recovery_hint()` into transcript items
+     (`details.recovery_hint`) and merge hint `evidence_refs` into final
+     `intervention_decision.evidence_refs`. `recovery_transcript` now emits hint
+     items for `redis_unavailable` and node stale/missing-result recovery paths,
+     and `controller_discovery.runtime` exposes
+     `node_command_recovery_hint_contract=true`.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py` passed.
+     `python3 -m unittest tests.test_control_api` passed.
+   - Monitor intervention:
+     the 24h worker implementation and tests were valid, but supervisor rolled
+     the attempt back because the final envelope was not compliant. I manually
+     applied the same bounded change to main and kept this as an execution
+     discipline finding instead of blocking useful runtime progress.
+   - Governance lesson:
+     monitor contract should consume typed runtime evidence directly and route by
+     explicit action/reason/evidence refs, not by natural-language interpretation.
