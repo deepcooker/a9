@@ -1574,3 +1574,33 @@ Next monitoring target:
      `/api/nodes/command-submit`, execute `scripts/a9_node.py command-work-once`,
      then verify `/api/node-command-results/by-command/{command_id}` returns the
      emitted `result_event_id` and status.
+
+76. Real Redis/API node-command smoke proved background node-worker consumes and result lookup is command-id based.
+   - Trigger:
+     after entry 75 added deterministic lifecycle tests, the next risk was real
+     stack behavior with the long-running node worker, Redis consumer group, and
+     HTTP control API all active.
+   - Smoke:
+     posted `/api/nodes/command-submit` with
+     `command_id=smoke-real-work-once-20260601-0528`, `node_id=smoke-node`,
+     `action=status`. Submit returned `status=ok`,
+     `stream_id=1780291436594-0`, and
+     `recovery_hint={action:wait, reason:await_result,
+     next_endpoint:/api/node-command-results/by-command/smoke-real-work-once-20260601-0528}`.
+   - Observation:
+     a manual `scripts/a9_node.py --node-id smoke-node command-work-once`
+     returned `noop/no_events` because the background worker had already claimed
+     and processed the command. The by-command lookup returned
+     `status=ok`, `result_event_id=1780291436648-0`,
+     `claimed_id=1780291436594-0`, `node_id=DESKTOP-92A9ATS-0`, and
+     `result.result=status_ok`.
+   - Verification:
+     `docker exec a9-redis redis-cli XPENDING a9:tasks a9-worker` returned `0`.
+     `python3 scripts/a9_service.py ps` showed supervisor, node-worker,
+     recovery-loop, and control-api still running.
+   - Governance lesson:
+     multi-consumer runtime must not assume the manually requested node is the
+     consumer. Control UI and recovery routing must track `command_id`,
+     `claimed_id`, and `result_event_id`, then render the actual consuming
+     `node_id`. This matches Redis Streams consumer-group semantics and avoids
+     fake certainty in mobile/operator views.
