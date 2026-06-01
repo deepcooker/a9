@@ -6,6 +6,11 @@ Close-reading, causal memory, and requirements analysis do not automatically
 raise worker quality. They only help when each role receives the right memory
 projection before it acts.
 
+This decision is constrained by the reference scan in
+`docs/role-memory-reference-scan.md`. Do not treat this document as a
+self-invented final architecture; when it conflicts with reference evidence or
+new run evidence, update the scan and this governance doc together.
+
 A9 should use one unified evidence/cache layer, but not one shared prompt.
 
 ```text
