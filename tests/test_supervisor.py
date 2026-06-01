@@ -19,6 +19,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
+MONITOR_BLOCKED_REGRESSION_TARGET = (
+    "tests.test_supervisor.SupervisorTests."
+    "test_test_slice_monitor_blocked_and_fallback_routing_regression"
+)
 
 
 def load_supervisor():
@@ -5600,11 +5604,7 @@ index 0000000..3e75765
     def test_schedule_next_task_routes_monitor_blocked_to_repair_takeover(self):
         mod = load_supervisor()
         mod.ensure_dirs()
-        deterministic_check = (
-            "python3 -m unittest "
-            "tests.test_supervisor.SupervisorTests."
-            "test_test_slice_monitor_blocked_and_fallback_routing_regression"
-        )
+        deterministic_check = "python3 -m unittest " + MONITOR_BLOCKED_REGRESSION_TARGET
         task = mod.Task(
             path=mod.DONE_DIR / "monitor-blocked.md",
             task_id="monitor-blocked",
@@ -5669,8 +5669,7 @@ index 0000000..3e75765
             self.assertIn("Declared checks are authoritative", text)
             self.assertIn("prefer <=180 line", text)
             self.assertIn(
-                "python3 -m unittest tests.test_supervisor.SupervisorTests."
-                "test_test_slice_monitor_blocked_and_fallback_routing_regression",
+                f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}",
                 text,
             )
             self.assertNotIn("rg -n other docs .", text)
@@ -5691,7 +5690,11 @@ index 0000000..3e75765
                 "findings": [
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_test_slice_monitor_blocked_and_fallback_routing_regression'",
+                        "command": (
+                            "/bin/bash -lc 'python3 -m unittest "
+                            + MONITOR_BLOCKED_REGRESSION_TARGET
+                            + "'"
+                        ),
                     },
                     {"kind": "undeclared_check", "command": "rg -n monitor_blocked_repair_checks tests/test_supervisor.py"},
                     {"kind": "undeclared_check", "command": "python3 -m unittest tests/test_control_api.py"},
@@ -5705,7 +5708,7 @@ index 0000000..3e75765
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
-                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_test_slice_monitor_blocked_and_fallback_routing_regression",
+                f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}",
             ],
         )
 
@@ -5724,7 +5727,11 @@ index 0000000..3e75765
                     {"kind": "undeclared_check", "command": "echo python3 -m unittest tests/test_supervisor.py"},
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_test_slice_monitor_blocked_and_fallback_routing_regression'",
+                        "command": (
+                            "/bin/bash -lc 'python3 -m unittest "
+                            + MONITOR_BLOCKED_REGRESSION_TARGET
+                            + "'"
+                        ),
                     },
                 ]
             }
@@ -5736,7 +5743,7 @@ index 0000000..3e75765
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
-                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_test_slice_monitor_blocked_and_fallback_routing_regression",
+                f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}",
             ],
         )
 
@@ -5754,7 +5761,11 @@ index 0000000..3e75765
                 "findings": [
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'python -m pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression'",
+                        "command": (
+                            "/bin/bash -lc 'python -m pytest "
+                            "tests/test_supervisor.py::SupervisorTests::"
+                            "test_test_slice_monitor_blocked_and_fallback_routing_regression'"
+                        ),
                     },
                     {"kind": "undeclared_check", "command": "echo python -m pytest tests/test_supervisor.py"},
                 ]
@@ -5785,7 +5796,10 @@ index 0000000..3e75765
                 "findings": [
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q'",
+                        "command": (
+                            "/bin/bash -lc 'pytest tests/test_supervisor.py::SupervisorTests::"
+                            "test_test_slice_monitor_blocked_and_fallback_routing_regression -q'"
+                        ),
                     },
                     {"kind": "undeclared_check", "command": "echo pytest tests/test_supervisor.py"},
                 ]
@@ -5824,7 +5838,10 @@ index 0000000..3e75765
                     },
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q'",
+                        "command": (
+                            "/bin/bash -lc 'pytest tests/test_supervisor.py::SupervisorTests::"
+                            "test_test_slice_monitor_blocked_and_fallback_routing_regression -q'"
+                        ),
                     },
                 ]
             }
