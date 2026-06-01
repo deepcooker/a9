@@ -1320,3 +1320,27 @@ Next monitoring target:
      intervention output is now transcript-native and evidence-referenced, so
      followup/recovery routing can be consumed by monitor/mobile without
      re-parsing mixed human text.
+
+66. Followup now carries the same intervention decision boundary.
+   - Trigger:
+     entry 65 made transcript decisions machine-readable, but
+     `communication_followup_intent()` still had a separate action surface.
+     That risked transcript and followup telling monitor/mobile different
+     intervention stories for the same evidence.
+   - Mechanism copied:
+     Barter-rs typed action domains, OpenClaw-style envelope payload,
+     Codex compact/handoff evidence boundary, and Redis Streams typed health
+     reasons.
+   - Change:
+     `communication_followup_intent()` now keeps its existing followup action
+     domain stable and attaches
+     `intervention_decision={action,reason,evidence_refs}` using
+     `transcript_intervention_decision(...)`. `recovery_transcript()` prefers
+     the embedded decision and recalculates only when it is missing or invalid.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py` passed.
+     `python3 -m unittest tests.test_control_api` passed with `179` tests.
+   - Governance lesson:
+     this is a business-routing consistency fix, not token engineering. Token
+     and context pressure remain observation signals unless a low-risk noise
+     removal is obvious.

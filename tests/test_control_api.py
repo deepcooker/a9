@@ -2861,6 +2861,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(followup["status"], "ok")
         self.assertEqual(followup["reason"], "tasks_stream:none")
         self.assertEqual(followup["evidence"]["tasks_stream"]["action"], "continue")
+        self.assertEqual(followup["intervention_decision"]["action"], "observe")
+        self.assertEqual(followup["intervention_decision"]["reason"], "healthy")
 
     def test_communication_followup_intent_reconnect_for_degraded_node(self):
         mod = load_control_api()
@@ -2879,6 +2881,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(followup["status"], "degraded")
         self.assertEqual(followup["reason"], "node:heartbeat_reported_degraded")
         self.assertEqual(followup["evidence"]["nodes"][0]["node_id"], "node-a")
+        self.assertEqual(followup["intervention_decision"]["action"], "repair")
 
     def test_communication_followup_intent_prioritizes_quarantine_and_intervene(self):
         mod = load_control_api()
@@ -2904,6 +2907,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(stream_intervene["reason"], "tasks_stream:lag_critical")
         self.assertEqual(stream_intervene["status"], "needs_attention")
         self.assertEqual(stream_intervene["evidence"]["tasks_stream"]["reason"], "lag_critical")
+        self.assertEqual(stream_intervene["intervention_decision"]["action"], "repair")
+        self.assertEqual(stream_intervene["intervention_decision"]["reason"], "stream_lag_critical")
 
     def _fake_redis_for_healthy_tasks_stream(self, mod, *, heartbeat_len: str):
         class FakeProc:
@@ -6168,6 +6173,42 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["conclusion"], "bouncing")
         self.assertEqual(result["items"][-1]["action"], "intervene")
         self.assertEqual(result["intervention_decision"]["action"], "repair")
+
+    def test_recovery_transcript_prefers_followup_embedded_intervention_decision(self):
+        mod = load_control_api()
+        original_gateway = mod.latest_gateway_reconnect_decision_event
+        original_status = mod.node_status
+        original_latest = mod.recovery_loop_latest
+        try:
+            mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+            mod.node_status = lambda root=mod.ROOT: {
+                "tasks_stream": {
+                    "status": "ok",
+                    "stream_action": "continue",
+                    "stream_action_reason": "none",
+                },
+                "communication_followup": {
+                    "status": "ok",
+                    "action": "continue",
+                    "reason": "healthy",
+                    "evidence": {},
+                    "intervention_decision": {
+                        "action": "watch",
+                        "reason": "recovery_risk_present",
+                        "evidence_refs": ["loop:risk_count"],
+                    },
+                },
+            }
+            mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "ok", "risk_count": 0, "cycle_status": "ok"}
+            result = mod.recovery_transcript(root=Path(tempfile.mkdtemp()), limit=5)
+        finally:
+            mod.latest_gateway_reconnect_decision_event = original_gateway
+            mod.node_status = original_status
+            mod.recovery_loop_latest = original_latest
+
+        self.assertEqual(result["intervention_decision"]["action"], "watch")
+        self.assertEqual(result["intervention_decision"]["reason"], "recovery_risk_present")
+        self.assertEqual(result["intervention_decision"]["evidence_refs"], ["loop:risk_count"])
 
     def test_recovery_transcript_intervention_decision_observe_when_healthy(self):
         mod = load_control_api()

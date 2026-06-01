@@ -1433,7 +1433,9 @@ def recovery_transcript(
     bouncing = active_attention and actions.count("repair") + actions.count("reconnect") + actions.count("intervene") >= 2
     status_value = "needs_attention" if active_attention else "degraded" if active_watch else "ok"
     conclusion = "bouncing" if bouncing else "repairing" if active_attention else "watching" if active_watch else "converging"
-    intervention = transcript_intervention_decision(items, tasks_stream, followup, loop)
+    intervention = _normalize_intervention_decision_payload(followup.get("intervention_decision"))
+    if not intervention:
+        intervention = transcript_intervention_decision(items, tasks_stream, followup, loop)
     return {
         "status": status_value,
         "kind": "node_recovery_transcript",
@@ -2351,6 +2353,29 @@ def probe_action_to_followup(probe_action: Any, probe_action_reason: Any = "") -
     return supervisor().probe_action_to_followup(probe_action, probe_action_reason)
 
 
+def _normalize_intervention_decision_payload(payload: Any) -> dict[str, Any]:
+    allowed_actions = {"observe", "watch", "repair", "intervene", "quarantine"}
+    if not isinstance(payload, dict):
+        return {}
+    action = str(payload.get("action") or "")
+    if action not in allowed_actions:
+        return {}
+    refs_raw = payload.get("evidence_refs") if isinstance(payload.get("evidence_refs"), list) else []
+    refs: list[str] = []
+    seen = set()
+    for ref in refs_raw:
+        normalized = str(ref).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        refs.append(normalized)
+    return {
+        "action": action,
+        "reason": str(payload.get("reason") or "healthy"),
+        "evidence_refs": refs,
+    }
+
+
 def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dict[str, Any]) -> dict[str, Any]:
     action_priority = {"continue": 1, "watch": 2, "reconnect": 3, "intervene": 4, "quarantine": 5}
     status_by_action = {
@@ -2427,12 +2452,14 @@ def communication_followup_intent(nodes: list[dict[str, Any]], tasks_stream: dic
                 },
             },
         }
-    return {
+    followup = {
         "action": best["action"],
         "reason": best["reason"],
         "status": best["status"],
         "evidence": best["evidence"],
     }
+    followup["intervention_decision"] = transcript_intervention_decision([], tasks_stream, followup, {})
+    return followup
 
 
 def enrich_node_connection(record: dict[str, Any]) -> dict[str, Any]:
