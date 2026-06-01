@@ -7700,6 +7700,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "git_governance": git_governance,
             "checks": checks,
         }
+        summary["worker_output"] = worker_output_from_summary(summary)
         summary["policy_attestation"] = create_policy_attestation(task, run_dir, summary)
         write_json(run_dir / "summary.json", summary)
         summary["context_pressure"] = compact_context_pressure(summary)

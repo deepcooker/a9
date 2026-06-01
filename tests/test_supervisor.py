@@ -1188,6 +1188,16 @@ Do the work.
         self.assertEqual(done["status"], "pass")
         self.assertTrue(done["next_task_path"])
         self.assertEqual(done["next_task_path"], run_summary.get("next_task_path"))
+        self.assertEqual(
+            done.get("worker_output", {}).get("next_slice_source"),
+            "worker_envelope.output.next_recommended_task",
+        )
+        self.assertEqual(
+            run_summary.get("worker_output", {}).get("next_slice_source"),
+            "worker_envelope.output.next_recommended_task",
+        )
+        self.assertEqual(done.get("worker_output", {}).get("next_slice_resolution_revision"), 1)
+        self.assertEqual(run_summary.get("worker_output", {}).get("next_slice_resolution_revision"), 1)
         self.assertIn("next_slice_source: worker_envelope.output.next_recommended_task", next_task_text)
         self.assertIn("next_slice_resolution_revision: 1", next_task_text)
 
