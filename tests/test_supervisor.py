@@ -6104,7 +6104,8 @@ index 0000000..3e75765
             }
         }
 
-        checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
+        with mock.patch.object(mod, "python_module_available", return_value=True):
+            checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
         self.assertEqual(
             checks,
@@ -6138,7 +6139,8 @@ index 0000000..3e75765
             }
         }
 
-        checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
+        with mock.patch.object(mod, "python_module_available", return_value=True):
+            checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
         self.assertEqual(
             checks,
@@ -6179,13 +6181,48 @@ index 0000000..3e75765
             }
         }
 
-        checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
+        with mock.patch.object(mod, "python_module_available", return_value=True):
+            checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
         self.assertEqual(
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
                 "pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q",
+            ],
+        )
+
+    def test_monitor_blocked_repair_checks_fallbacks_pytest_to_unittest_when_pytest_missing(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="monitor-blocked-checks-pytest-fallback",
+            prompt="repair monitor blocked checks",
+            phase="repair",
+            checks=["python3 -m unittest tests/test_control_api.py"],
+        )
+        summary = {
+            "process_governance": {
+                "findings": [
+                    {
+                        "kind": "undeclared_check",
+                        "command": (
+                            "/bin/bash -lc 'python3 -m pytest tests/test_supervisor.py::SupervisorTests::"
+                            "test_test_slice_monitor_blocked_and_fallback_routing_regression -q'"
+                        ),
+                    }
+                ]
+            }
+        }
+
+        with mock.patch.object(mod, "python_module_available", return_value=False):
+            checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
+
+        self.assertEqual(
+            checks,
+            [
+                "python3 -m unittest tests/test_control_api.py",
+                f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}",
             ],
         )
 

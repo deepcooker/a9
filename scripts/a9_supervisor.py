@@ -6453,6 +6453,10 @@ def monitor_blocked_repair_checks(task: Task, summary: dict[str, Any], phase: st
         command = shell_lc_inner_command(command).strip()
         if re.match(r"^python\s+-m\s+pytest\b", command):
             command = re.sub(r"^python\s+-m\s+pytest\b", "python3 -m pytest", command, count=1)
+        if re.match(r"^(python3?\s+-m\s+pytest|pytest)\b", command) and not python_module_available("pytest"):
+            fallback = pytest_command_to_unittest_command(command)
+            if fallback:
+                command = fallback
         if not command or not command_looks_like_test(command):
             continue
         # Only promote runnable test commands; avoid non-test commands that merely
@@ -6473,6 +6477,51 @@ def monitor_blocked_repair_command_is_test_case(command: str) -> bool:
         r"^(python3?\s+-m\s+pytest|pytest|cargo\s+test|npm\s+test|pnpm\s+test|yarn\s+test)\b",
         normalized,
     ) is not None
+
+
+def python_module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def pytest_command_to_unittest_command(command: str) -> str:
+    normalized = normalize_shell_command(command)
+    if not re.match(r"^(python3?\s+-m\s+pytest|pytest)\b", normalized):
+        return ""
+    try:
+        parts = shlex.split(normalized)
+    except ValueError:
+        return ""
+    if parts[:3] in (["python", "-m", "pytest"], ["python3", "-m", "pytest"]):
+        args = parts[3:]
+    elif parts and parts[0] == "pytest":
+        args = parts[1:]
+    else:
+        return ""
+    selector = next((item for item in args if item and not item.startswith("-")), "")
+    target = pytest_selector_to_unittest_target(selector)
+    if not target:
+        return ""
+    return f"python3 -m unittest {target}"
+
+
+def pytest_selector_to_unittest_target(selector: str) -> str:
+    if not selector:
+        return ""
+    selector = selector.split("[", 1)[0]
+    node_parts = selector.split("::")
+    if not node_parts:
+        return ""
+    file_part = node_parts[0]
+    if not file_part.endswith(".py"):
+        return ""
+    module = file_part[:-3].replace("/", ".").replace("\\", ".").strip(".")
+    if not module:
+        return ""
+    tail = [part.strip() for part in node_parts[1:] if part.strip()]
+    return ".".join([module, *tail]) if tail else module
 
 
 def communication_task_requires_gateway_runtime_evidence(task: Task, summary: dict[str, Any]) -> bool:
