@@ -2966,7 +2966,7 @@ def execution_chain_next_slice(worker_envelope: dict[str, Any]) -> str:
         return ""
     output = envelope.get("output")
     if isinstance(output, dict):
-        value = output.get("next_slice") or output.get("next_recommended_task") or output.get("next_task") or output.get("next")
+        value = output.get("next_slice") or output.get("next_recommended_task") or output.get("next_task") or output.get("next") or output.get("slice")
         return str(value or "")
     return ""
 
@@ -4234,7 +4234,22 @@ def mysql_exec_stdin(sql: str) -> subprocess.CompletedProcess[str]:
 
 
 def redis_cli(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return run_cmd_no_raise(["docker", "exec", "a9-redis", "redis-cli", *args])
+    try:
+        return subprocess.run(
+            ["docker", "exec", "a9-redis", "redis-cli", *args],
+            cwd=ROOT,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return subprocess.CompletedProcess(
+            ["docker", "exec", "a9-redis", "redis-cli", *args],
+            124,
+            stdout=f"redis-cli timeout after {exc.timeout}s",
+        )
 
 
 def redis_available() -> bool:
@@ -5863,7 +5878,7 @@ def worker_output_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
         return {"raw_output": output}
     normalized = dict(output)
     if not str(normalized.get("next_slice") or "").strip():
-        fallback = normalized.get("next_recommended_task") or normalized.get("next_task") or normalized.get("next")
+        fallback = normalized.get("next_recommended_task") or normalized.get("next_task") or normalized.get("next") or normalized.get("slice")
         if fallback:
             normalized["next_slice"] = str(fallback)
             normalized["next_slice_source"] = "fallback"
@@ -6313,6 +6328,7 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
                 "task_id": task.task_id,
             }
             return None
+        summary.pop("auto_next_block", None)
         routed_phase = phase_from_next_slice(worker_output.get("next_slice"))
         if routed_phase:
             phase = routed_phase

@@ -1836,6 +1836,22 @@ Do the work.
                 mod.ACTIVE_PLAN_PATH = old_active
         self.assertEqual(code, 1)
 
+    def test_redis_cli_timeout_returns_completed_process(self):
+        mod = load_supervisor()
+        original_run = mod.subprocess.run
+
+        def fake_run(*args, **kwargs):
+            raise mod.subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout"))
+
+        try:
+            mod.subprocess.run = fake_run
+            result = mod.redis_cli(["PING"])
+        finally:
+            mod.subprocess.run = original_run
+
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("redis-cli timeout", result.stdout)
+
     def test_idle_goal_continuation_schedules_reference_first_task(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -3523,6 +3539,24 @@ Do the work.
         self.assertEqual(output["next_slice"], "Extend active-plan prompt hydration with progress tails.")
         self.assertEqual(output["next_slice_source"], "fallback")
 
+    def test_worker_output_uses_slice_as_last_next_slice_fallback(self):
+        mod = load_supervisor()
+        summary = {
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "changed_files": ["scripts/a9_supervisor.py"],
+                        "slice": "add supervisor plan-note append-only lane",
+                    }
+                }
+            }
+        }
+
+        output = mod.worker_output_from_summary(summary)
+
+        self.assertEqual(output["next_slice"], "add supervisor plan-note append-only lane")
+        self.assertEqual(output["next_slice_source"], "fallback")
+
     def test_next_task_prompt_enforces_worker_prompt_discipline(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="test-discipline", prompt="demo", phase="test")
@@ -4781,6 +4815,37 @@ index 0000000..3e75765
             self.assertIn('phase: "mechanism_extract"', text)
             self.assertNotIn("auto_next_block", summary)
             self.assertIn("Extend active-plan prompt hydration", text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
+    def test_schedule_next_task_clears_stale_auto_next_block_when_fallback_succeeds(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-slice-fallback.md",
+            task_id="auto-slice-fallback",
+            prompt="scan next reference",
+            phase="reference_scan",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-slice-fallback-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-slice-fallback-run" / "context.md"),
+            "auto_next_block": {"reason": "missing_worker_next_slice"},
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"slice": "add supervisor plan-note append-only lane"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            self.assertNotIn("auto_next_block", summary)
+            self.assertIn("add supervisor plan-note", next_path.read_text(encoding="utf-8"))
         finally:
             next_path.unlink(missing_ok=True)
 
