@@ -258,6 +258,7 @@ Failure modes A9 must keep machine-readable:
 3. Terminal stream error cutover:
    terminal inner-stream errors must force reconnect path, not stay in
    `continue` branch.
+
 4. Reconnect observability:
    reconnect transitions must emit explicit lifecycle events
    (`reconnecting`/origin) so control plane can reflect degraded state and
@@ -275,6 +276,113 @@ Adaptation target for A9 gateway/node stack:
   jitter only after baseline behavior is proven in soak runs.
 - Bind terminal/recoverable classification to existing typed failure buckets so
   action routing stays deterministic under retry pressure.
+
+## Transcript-Backed Intervention Policy (v1)
+
+Scope:
+
+- This policy is derived from `/api/nodes/recovery-transcript` and is for
+  communication governance decisions only.
+- It does not replace raw evidence. Transcript rows are compact handoff records
+  that must keep `evidence_path` / `event_id` references.
+- It keeps observation windows reason-driven; it does not hard-code new token
+  gates.
+
+Reference mechanisms copied:
+
+- Barter-rs reconnect action domain:
+  `connect/stream + Reconnect|Terminate|Continue`
+  (`reference-projects/barter-rs/barter-integration/src/socket/on_connect_err.rs`,
+  `reference-projects/barter-rs/barter-integration/src/socket/on_stream_err.rs`,
+  `reference-projects/barter-rs/barter-data/src/streams/consumer.rs`).
+- Codex compact/handoff boundary:
+  compact output is handoff, not truth
+  (`vendor-src/codex/codex-rs/core/src/compact.rs`,
+  `vendor-src/codex/codex-rs/core/src/context_manager/history.rs`).
+- OpenClaw managed workflow/policy envelope:
+  typed status, expected revision, wait/resume compatibility
+  (`reference-projects/openclaw/extensions/lobster/src/lobster-taskflow.ts`,
+  `reference-projects/openclaw/extensions/lobster/src/lobster-runner.ts`).
+- Redis Streams consumer-group health:
+  lag/pending/no-group/unavailable probe as machine-readable input
+  (this doc, `Pending/lag evidence contract` section).
+
+### Input Contract
+
+Minimum input is the latest bounded rows from
+`/api/nodes/recovery-transcript` and current stream-health snapshot.
+
+Required fields:
+
+- `ts`
+- `node_id`
+- `flow_id` (optional but preferred)
+- `source` (`node_evidence|gateway_reconnect|tasks_stream|followup|recovery_loop`)
+- `phase` (`probe|connect|stream|repair|resume|observe|quarantine`)
+- `action` (`continue|watch|repair|intervene|quarantine|reconnect|terminate`)
+- `reason` (typed reason code, not prose-only)
+- `status` (`ok|degraded|offline|failed|waiting`)
+- `evidence_path` (optional)
+- `event_id` (optional)
+
+Policy evaluators must also read:
+
+- tasks stream probe: `lag`, `pending_total`, `reason`, and consumer skew/stuck
+  fields when available;
+- recovery-loop latest: whether loop is converging or bouncing;
+- gateway reconnect decision rows: `phase/action/error_class/attempt/delay_ms`.
+
+### Action Levels
+
+1. `observe`
+   - Use when newest signals are stable and converging.
+   - Typical indicators: `tasks_stream.reason=none`, loop status healthy, latest
+     reconnect action is `continue` or no active reconnect.
+2. `watch`
+   - Use when degradation exists but no immediate manual/system repair is
+     required.
+   - Typical indicators: lag warning, consumer-group missing, short reconnect
+     bursts that still self-recover.
+3. `repair`
+   - Use when deterministic repair action should run now.
+   - Typical indicators: pending stuck/skew, reconnect backoff growing without
+     convergence, known repairable node-step failures (tmux/heartbeat/service
+     mismatch).
+4. `intervene`
+   - Use when monitor/operator intervention is required to keep flow continuity.
+   - Typical indicators: repeated worker envelope/protocol failures, policy
+     mismatch, retry loops that keep bouncing across surfaces.
+5. `quarantine`
+   - Use when normal apply path must stop and isolate risk.
+   - Typical indicators: sequence gap/revision mismatch, irrecoverable terminal
+     path (`terminate` with exhausted budget), unsafe/conflicting state writes.
+
+### Output Contract
+
+Every decision output must be machine-readable and bounded:
+
+```json
+{
+  "action": "observe|watch|repair|intervene|quarantine",
+  "reason": "typed_reason_code",
+  "evidence_refs": [
+    {
+      "source": "tasks_stream|gateway_reconnect|node_evidence|recovery_loop|followup",
+      "event_id": "optional",
+      "evidence_path": "optional"
+    }
+  ]
+}
+```
+
+Rules:
+
+- `reason` must be typed and reproducible from input rows, not free-form summary
+  text.
+- `evidence_refs` must point to the specific transcript rows used for the
+  decision.
+- If multiple sources disagree, raise level to at least `watch`; if conflict
+  implies unsafe apply/revision risk, escalate to `quarantine`.
 
 ## Redis Streams Pending/Lag Evidence Contract (XINFO GROUPS + XPENDING)
 

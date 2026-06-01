@@ -1270,3 +1270,27 @@ Next monitoring target:
      unbounded token spend. Spark can be tested by setting
      `A9_SUPERVISOR_REFERENCE_MODEL=gpt-5.3-codex-spark` for low-risk
      reference scans, while implementation keeps the stable default.
+
+64. Transcript-backed intervention policy was extracted and documented.
+   - Trigger:
+     entry 62 delivered unified recovery transcript rows, but intervention
+     decisions still relied on monitor habit instead of a minimal typed policy.
+   - Mechanism copied:
+     Barter-rs action-domain boundaries (`connect/stream`,
+     `Reconnect|Terminate|Continue`), Codex compact-as-handoff boundary,
+     OpenClaw typed workflow envelope, and Redis Streams consumer-group health
+     evidence.
+   - Change:
+     `docs/communication-governance-framework.md` now defines a minimal
+     transcript-backed intervention policy with:
+     `observe|watch|repair|intervene|quarantine` action ladder,
+     required transcript input fields, and bounded machine output
+     `{action, reason, evidence_refs}`.
+   - Observation interval + reason + repair:
+     policy keeps "observation window + typed reason + repair/intervention"
+     semantics and does not add new token-number gates. It escalates by
+     cross-surface conflict and apply-safety risk, not by prose heuristics.
+   - Governance lesson:
+     next implementation slice should consume this policy directly in control
+     API followup generation, so intervention routing is transcript-native and
+     reproducible from evidence references.
