@@ -2996,8 +2996,7 @@ def execution_chain_next_slice(worker_envelope: dict[str, Any]) -> str:
         return ""
     output = envelope.get("output")
     if isinstance(output, dict):
-        value = output.get("next_slice") or output.get("next_recommended_task") or output.get("next_task") or output.get("next") or output.get("slice")
-        return str(value or "")
+        return resolve_next_slice_contract(output).get("next_slice", "")
     return ""
 
 
@@ -5914,6 +5913,8 @@ NEXT_SLICE_PHASE_PREFIXES = {
     "record": "record",
 }
 
+NEXT_SLICE_RESOLUTION_REVISION = 1
+
 
 def phase_from_next_slice(next_slice: Any) -> str | None:
     text = str(next_slice or "").strip()
@@ -5921,6 +5922,36 @@ def phase_from_next_slice(next_slice: Any) -> str | None:
         return None
     prefix = text.split(":", 1)[0].strip().lower().replace("-", "_")
     return NEXT_SLICE_PHASE_PREFIXES.get(prefix)
+
+
+def resolve_next_slice_contract(output: Any) -> dict[str, Any]:
+    if not isinstance(output, dict):
+        return {
+            "next_slice": "",
+            "next_slice_source": "",
+            "next_slice_resolution_revision": NEXT_SLICE_RESOLUTION_REVISION,
+        }
+    ordered_candidates = (
+        ("next_slice", "worker_envelope.output.next_slice"),
+        ("next_recommended_task", "worker_envelope.output.next_recommended_task"),
+        ("next_task", "worker_envelope.output.next_task"),
+        ("next", "worker_envelope.output.next"),
+        ("slice", "worker_envelope.output.slice"),
+    )
+    for key, source in ordered_candidates:
+        value = output.get(key)
+        text = str(value).strip() if value is not None else ""
+        if text:
+            return {
+                "next_slice": text,
+                "next_slice_source": source,
+                "next_slice_resolution_revision": NEXT_SLICE_RESOLUTION_REVISION,
+            }
+    return {
+        "next_slice": "",
+        "next_slice_source": "",
+        "next_slice_resolution_revision": NEXT_SLICE_RESOLUTION_REVISION,
+    }
 
 
 def probe_action_to_followup(probe_action: Any, probe_action_reason: Any = "") -> dict[str, str]:
@@ -5978,11 +6009,10 @@ def worker_output_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(output, dict):
         return {"raw_output": output}
     normalized = dict(output)
-    if not str(normalized.get("next_slice") or "").strip():
-        fallback = normalized.get("next_recommended_task") or normalized.get("next_task") or normalized.get("next") or normalized.get("slice")
-        if fallback:
-            normalized["next_slice"] = str(fallback)
-            normalized["next_slice_source"] = "fallback"
+    next_slice_contract = resolve_next_slice_contract(output)
+    normalized["next_slice"] = next_slice_contract["next_slice"]
+    normalized["next_slice_source"] = next_slice_contract["next_slice_source"]
+    normalized["next_slice_resolution_revision"] = next_slice_contract["next_slice_resolution_revision"]
     return normalized
 
 

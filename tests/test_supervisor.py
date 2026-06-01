@@ -3899,7 +3899,8 @@ Do the work.
         output = mod.worker_output_from_summary(summary)
 
         self.assertEqual(output["next_slice"], "Extend active-plan prompt hydration with progress tails.")
-        self.assertEqual(output["next_slice_source"], "fallback")
+        self.assertEqual(output["next_slice_source"], "worker_envelope.output.next_recommended_task")
+        self.assertEqual(output["next_slice_resolution_revision"], 1)
 
     def test_worker_output_uses_slice_as_last_next_slice_fallback(self):
         mod = load_supervisor()
@@ -3917,7 +3918,28 @@ Do the work.
         output = mod.worker_output_from_summary(summary)
 
         self.assertEqual(output["next_slice"], "add supervisor plan-note append-only lane")
-        self.assertEqual(output["next_slice_source"], "fallback")
+        self.assertEqual(output["next_slice_source"], "worker_envelope.output.slice")
+        self.assertEqual(output["next_slice_resolution_revision"], 1)
+
+    def test_worker_output_filters_blank_candidates_before_fallback(self):
+        mod = load_supervisor()
+        summary = {
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "next_slice": "   ",
+                        "next_recommended_task": "",
+                        "next_task": " implement: hydrate plan contract ",
+                    }
+                }
+            }
+        }
+
+        output = mod.worker_output_from_summary(summary)
+
+        self.assertEqual(output["next_slice"], "implement: hydrate plan contract")
+        self.assertEqual(output["next_slice_source"], "worker_envelope.output.next_task")
+        self.assertEqual(output["next_slice_resolution_revision"], 1)
 
     def test_next_task_prompt_enforces_worker_prompt_discipline(self):
         mod = load_supervisor()
@@ -4861,9 +4883,12 @@ index 0000000..3e75765
         self.assertIsNotNone(next_path)
         assert next_path is not None
         try:
+            worker_output = mod.worker_output_from_summary(summary)
             text = next_path.read_text(encoding="utf-8")
             self.assertIn('phase: "vendor_import"', text)
             self.assertIn("repair idle goal continuation tests", text)
+            self.assertEqual(worker_output.get("next_slice_source"), "worker_envelope.output.next_recommended_task")
+            self.assertEqual(worker_output.get("next_slice_resolution_revision"), 1)
             self.assertEqual(summary["gateway_runtime_gate"]["status"], "skip")
             self.assertEqual(summary["gateway_runtime_gate"]["reason"], "not_communication_task")
             self.assertNotIn("auto_next_block", summary)
@@ -5341,6 +5366,10 @@ index 0000000..3e75765
         }
 
         self.assertIsNone(mod.schedule_next_task(task, summary))
+        worker_output = mod.worker_output_from_summary(summary)
+        self.assertEqual(worker_output.get("next_slice"), "")
+        self.assertEqual(worker_output.get("next_slice_source"), "")
+        self.assertEqual(worker_output.get("next_slice_resolution_revision"), 1)
         self.assertEqual(summary["auto_next_block"]["reason"], "missing_worker_next_slice")
 
     def test_auto_loop_guard_trips_after_consecutive_failures_and_resets_on_pass(self):
