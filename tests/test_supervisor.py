@@ -1128,6 +1128,79 @@ Do the work.
         self.assertIn("next_slice_source: worker_envelope.output.next_recommended_task", next_task_text)
         self.assertIn("next_slice_resolution_revision: 1", next_task_text)
 
+    def test_run_one_auto_next_creates_next_task_after_gateway_hint_filtering(self):
+        env = os.environ.copy()
+        env["A9_SUPERVISOR_WORKER_CMD"] = (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "import json\n"
+            "print(json.dumps({'type':'fake.start'}))\n"
+            "Path('worker-output.txt').write_text('done\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_recommended_task':'test: verify fallback queue creation remains deterministic'}}) + '\\n')\n"
+            "print(json.dumps({'type':'fake.done'}))\n"
+            "PY"
+        )
+        task_id = "selftest-auto-next-gateway-hint-filtering"
+        queue_path = ROOT / ".a9" / "tasks" / "queue" / f"{task_id}.md"
+        done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
+        queue_dir = ROOT / ".a9" / "tasks" / "queue"
+
+        with tempfile.TemporaryDirectory() as held_tmp:
+            held_dir = Path(held_tmp)
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            held_paths = []
+            for path in queue_dir.glob("*.md"):
+                held_path = held_dir / path.name
+                shutil.move(str(path), str(held_path))
+                held_paths.append((held_path, path))
+            try:
+                if done_path.exists():
+                    done_path.unlink()
+                subprocess.run(
+                    [
+                        str(SUPERVISOR_PATH),
+                        "enqueue",
+                        task_id,
+                        "last_change_request: add deterministic verification after gateway hint filtering.",
+                        "--phase",
+                        "mechanism_extract",
+                        "--check",
+                        "test -f worker-output.txt",
+                        "--allow-path",
+                        "worker-output.txt",
+                        "--allow-path",
+                        "scripts/a9_supervisor.py",
+                        "--allow-path",
+                        "tests/test_supervisor.py",
+                        "--timeout-seconds",
+                        "60",
+                        "--idle-timeout-seconds",
+                        "20",
+                        "--max-attempts",
+                        "1",
+                    ],
+                    cwd=ROOT,
+                    check=True,
+                )
+                subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
+                done = json.loads(done_path.read_text(encoding="utf-8"))
+                next_task_text = Path(done["next_task_path"]).read_text(encoding="utf-8")
+            finally:
+                queue_path.unlink(missing_ok=True)
+                for path in queue_dir.glob("auto-*-selftest-auto-next-gateway-hint-filtering-*.md"):
+                    path.unlink()
+                for held_path, original_path in held_paths:
+                    if held_path.exists() and not original_path.exists():
+                        shutil.move(str(held_path), str(original_path))
+
+        self.assertEqual(done["status"], "pass")
+        self.assertTrue(done["next_task_path"])
+        self.assertEqual(done["gateway_runtime_gate"]["status"], "skip")
+        self.assertEqual(done["gateway_runtime_gate"]["reason"], "not_communication_task")
+        self.assertIn('phase: "test"', next_task_text)
+        self.assertIn("next_slice_source: worker_envelope.output.next_recommended_task", next_task_text)
+        self.assertIn("verify fallback queue creation remains deterministic", next_task_text)
+
     def test_execution_chain_artifact_records_prompt_references_commands_checks_and_tokens(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
