@@ -116,3 +116,43 @@ Bounded implement next slice:
   - add it explicitly into generated task `checks`; or
   - rewrite prompt wording to mark it as proposal-only and explicitly non-executable unless declared in `checks`.
   - Add focused tests to lock the chosen behavior and prevent undeclared test execution drift.
+
+## 2026-06-02: communication worker produced useful patch but failed full declared check
+
+Run evidence:
+- `.a9/runs/000-implement-node-result-replay-contract-20260602-20260601T200026Z-a1`
+
+Observation:
+- Worker stayed on the communication mainline and copied the right mechanism:
+  `/api/events` cursor replay plus Codex reconnect cursor carry-over and
+  Barter-style typed recovery actions.
+- Patch and scope guard passed, but the run ended `needs-repair` because
+  `python3 -m unittest tests.test_control_api.ControlApiTests` failed.
+- Worker ran several undeclared checks first (`pytest`, `python3 -m pytest`,
+  wrong `TestControlAPI` class path, and a malformed `rg` check). Process
+  governance logged them as warnings, but the real rollback cause was the
+  failing declared full test.
+- The implementation was mostly correct. The missing point was compatibility:
+  an existing test wrapper around `node_command_result_by_command_lookup` did
+  not accept the new `result_last_id` keyword, causing the handler path to
+  return 500.
+- The worker also emitted empty/noop web search events again. This is noise,
+  not useful reference_scan evidence.
+
+Monitor intervention:
+- Reapplied the worker patch from `patch.diff`.
+- Fixed the compatibility wrapper.
+- Ran declared checks:
+  `python3 -m py_compile scripts/a9_control_api.py` and
+  `python3 -m unittest tests.test_control_api.ControlApiTests` (206 tests).
+- Committed the accepted patch as
+  `846b6f2 a9 control: add node result replay cursor contract`.
+
+Governance lesson:
+- Worker quality was acceptable on direction and mechanism extraction, but
+  still weak on execution discipline.
+- For implement tasks, full declared checks must run before final envelope.
+  Targeted checks are useful as local debugging, but cannot substitute for the
+  task contract.
+- Empty/noop web actions should be blocked or downgraded into a visible
+  process-governance finding.

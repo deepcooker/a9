@@ -1190,3 +1190,24 @@
   明确契约。
 - close-reading 的 markdown 不是角色知识。角色只有在 task prompt、memory
   retrieval、control API 或 role packet 中被注入对应片段时，才“知道”这些内容。
+
+## 2026-06-02：worker 不能用局部自测替代声明检查
+
+现象：
+
+- `000-implement-node-result-replay-contract-20260602` 方向正确，patch/scope
+  guard 通过，但最终 `needs-repair` 并回滚。
+- Worker 先跑了未声明的 `pytest`、`python3 -m pytest`、错误 class path
+  unittest 和 malformed `rg` 检查。
+- 它在 final envelope 里报告 targeted unittest 通过，但没有先修到完整
+  `python3 -m unittest tests.test_control_api.ControlApiTests` 通过。
+- 完整测试暴露真实兼容性问题：旧 wrapper 没有接收新增
+  `result_last_id` 参数，handler 返回 500。
+
+规则：
+
+- Targeted tests 只能作为调试证据，不能替代 task frontmatter 的声明检查。
+- Worker final 之前必须跑完整声明检查；失败要继续修，不能只报告局部通过。
+- 新增函数参数时，要搜索并更新所有 wrapper/fake/handler 测试路径。
+- 空 `web_search/noop` 是执行噪音，应记录并在后续 supervisor/process
+  governance 中拦截或降噪。
