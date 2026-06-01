@@ -1658,7 +1658,10 @@ Do the work.
                 (plan_dir / "progress.md").write_text("# Progress\n\n- ran declared tests\n", encoding="utf-8")
                 (plan_dir / "findings.md").write_text("# Findings\n\n- copied Codex history ordering\n", encoding="utf-8")
                 (plan_dir / "mistakes.md").write_text("# Mistakes\n\n- avoid broad search roots\n", encoding="utf-8")
-                (plan_dir / "change_request.md").write_text("# Change Request\n\n- none\n", encoding="utf-8")
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n## cr-1\n\n- status: proposed\n- proposal: change acceptance after evidence\n- evidence_refs: /tmp/run/summary.json\n",
+                    encoding="utf-8",
+                )
 
                 args = type("Args", (), {"plan_id": "plan-status-recovery"})()
                 buffer = io.StringIO()
@@ -1674,7 +1677,7 @@ Do the work.
         self.assertIn("last_progress: - ran declared tests", text)
         self.assertIn("last_findings: - copied Codex history ordering", text)
         self.assertIn("last_mistake: - avoid broad search roots", text)
-        self.assertIn("last_change_request: - none", text)
+        self.assertIn("last_change_request: - proposal: change acceptance after evidence", text)
         self.assertIn("run_ids_count: 2", text)
         self.assertIn("latest_run_id: run-1", text)
         self.assertIn("evidence_refs_count: 2", text)
@@ -1729,6 +1732,46 @@ Do the work.
         self.assertIn("run=run-1", progress)
         self.assertIn("status=pass", progress)
         self.assertIn("commit=abcdef123456", progress)
+
+    def test_plan_change_request_appends_without_mutating_contract(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-change-request",
+                    goal_id="goal-change-request",
+                    contract={
+                        "problem": "Original problem stays fixed.",
+                        "acceptance": "Original acceptance stays fixed.",
+                    },
+                )
+                plan_dir = mod.write_plan_files(plan)
+
+                result = mod.append_plan_change_request(
+                    plan_id="plan-change-request",
+                    field="acceptance",
+                    proposal="Add regression check for change_request append path.",
+                    reason="Worker found missing evidence path during implementation.",
+                    actor="worker",
+                    evidence_refs=["/tmp/run/summary.json"],
+                )
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                change_request = (plan_dir / "change_request.md").read_text(encoding="utf-8")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "appended")
+        self.assertEqual(stored["contract"]["acceptance"], "Original acceptance stays fixed.")
+        self.assertIn("status: proposed", change_request)
+        self.assertIn("field: acceptance", change_request)
+        self.assertIn("proposal: Add regression check for change_request append path.", change_request)
+        self.assertIn("evidence_refs: /tmp/run/summary.json", change_request)
 
     def test_idle_goal_continuation_schedules_reference_first_task(self):
         mod = load_supervisor()

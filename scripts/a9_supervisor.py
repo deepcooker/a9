@@ -5274,6 +5274,18 @@ def tail_recovery_line(path: Path, *, max_chars: int = 260) -> str:
     return ""
 
 
+def tail_change_request_line(path: Path, *, max_chars: int = 260) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for raw in reversed(lines):
+        text = str(raw or "").strip()
+        if text.startswith("- proposal:"):
+            return bounded_inline(text, max_chars)
+    return tail_recovery_line(path, max_chars=max_chars)
+
+
 def plan_latest_run_snapshot(plan: dict[str, Any]) -> dict[str, str]:
     evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
     summary_path = ""
@@ -5311,6 +5323,42 @@ def append_plan_progress(plan_dir: Path, line: str) -> None:
         if text and not text.endswith("\n"):
             handle.write("\n")
         handle.write(line + "\n")
+
+
+def append_plan_change_request(
+    *,
+    plan_id: str,
+    field: str,
+    proposal: str,
+    reason: str,
+    actor: str = "worker",
+    evidence_refs: list[str] | None = None,
+) -> dict[str, str]:
+    plan = load_plan(plan_id)
+    if not plan:
+        return {"status": "missing", "plan_id": plan_id, "path": ""}
+    plan_dir = plan_path(plan_id)
+    path = plan_dir / "change_request.md"
+    if not path.exists():
+        path.write_text("# Change Request\n\n", encoding="utf-8")
+    request_id = f"cr-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{hashlib.sha256((field + proposal + reason).encode('utf-8')).hexdigest()[:8]}"
+    refs = evidence_refs or []
+    lines = [
+        f"## {request_id}",
+        "",
+        f"- status: proposed",
+        f"- created_at: {utc_now()}",
+        f"- actor: {actor}",
+        f"- field: {field}",
+        f"- reason: {reason}",
+        f"- proposal: {proposal}",
+    ]
+    if refs:
+        lines.append(f"- evidence_refs: {', '.join(refs)}")
+    lines.append("")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return {"status": "appended", "plan_id": plan_id, "request_id": request_id, "path": str(path)}
 
 
 def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
@@ -7425,7 +7473,7 @@ def plan_status(args: argparse.Namespace) -> int:
     last_progress = tail_recovery_line(plan_dir / "progress.md")
     last_findings = tail_recovery_line(plan_dir / "findings.md")
     last_mistake = tail_recovery_line(plan_dir / "mistakes.md")
-    last_change_request = tail_recovery_line(plan_dir / "change_request.md")
+    last_change_request = tail_change_request_line(plan_dir / "change_request.md")
     latest_run = plan_latest_run_snapshot(plan)
     print(f"last_progress: {last_progress}")
     print(f"last_findings: {last_findings}")
@@ -7449,6 +7497,28 @@ def plan_status(args: argparse.Namespace) -> int:
     print("- why_next_action: keeps continuation/handoff based on durable runtime evidence instead of chat memory.")
     print(f"- not_doing_now: {bounded_inline(contract.get('out_of_scope', ''), 260)}")
     print("- out_of_scope: do not let worker mutate contract fields; use change_request.")
+    return 0
+
+
+def plan_change_request(args: argparse.Namespace) -> int:
+    ensure_dirs()
+    plan_id = str(args.plan_id or "").strip() or active_plan_id()
+    if not plan_id:
+        print("No active plan.")
+        return 1
+    result = append_plan_change_request(
+        plan_id=plan_id,
+        field=str(args.field or "").strip(),
+        proposal=str(args.proposal or "").strip(),
+        reason=str(args.reason or "").strip(),
+        actor=str(args.actor or "worker").strip(),
+        evidence_refs=[str(item) for item in args.evidence_ref],
+    )
+    if result["status"] != "appended":
+        print(f"Plan not found: {plan_id}")
+        return 1
+    print(result["path"])
+    print(f"request_id: {result['request_id']}")
     return 0
 
 
@@ -7564,6 +7634,14 @@ def main(argv: list[str]) -> int:
     plan_status_parser = sub.add_parser("plan-status")
     plan_status_parser.add_argument("--plan-id", default="")
 
+    change_request_parser = sub.add_parser("plan-change-request")
+    change_request_parser.add_argument("--plan-id", default="")
+    change_request_parser.add_argument("--field", required=True)
+    change_request_parser.add_argument("--proposal", required=True)
+    change_request_parser.add_argument("--reason", required=True)
+    change_request_parser.add_argument("--actor", default="worker")
+    change_request_parser.add_argument("--evidence-ref", action="append", default=[])
+
     override_parser = sub.add_parser("eval-override")
     override_parser.add_argument("run_id")
     override_parser.add_argument("--action", required=True, choices=sorted(EVAL_OVERRIDE_ACTIONS))
@@ -7586,6 +7664,8 @@ def main(argv: list[str]) -> int:
         return plan_create(args)
     if args.command == "plan-status":
         return plan_status(args)
+    if args.command == "plan-change-request":
+        return plan_change_request(args)
     if args.command == "eval-override":
         return eval_override(args)
     raise AssertionError(args.command)
