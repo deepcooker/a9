@@ -38,6 +38,7 @@ NODE_ONLINE_TTL_SECONDS = 90
 NODE_STALE_TTL_SECONDS = 300
 PHONE_ADMIN_SCOPE = "operator.admin"
 RECOVERY_LOOP_LATEST_REL_PATH = Path(".a9") / "services" / "recovery-loop-latest.json"
+COMMUNICATION_OBSERVATION_REL_PATH = Path(".a9") / "services" / "communication-observation.json"
 PHONE_CONTROL_GROUPS = {
     "runtime": [
         "submit.run",
@@ -1249,6 +1250,7 @@ def list_node_evidence(node_id: str | None = None, *, root: Path = ROOT, limit: 
 
 def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
     path = root / RECOVERY_LOOP_LATEST_REL_PATH
+    observation_path = root / COMMUNICATION_OBSERVATION_REL_PATH
     if not path.exists():
         return {
             "status": "missing",
@@ -1268,6 +1270,12 @@ def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
         }
     stat = path.stat()
     cycle = payload.get("cycle") if isinstance(payload.get("cycle"), dict) else {}
+    communication_observation = payload.get("communication_observation") if isinstance(payload.get("communication_observation"), dict) else None
+    if communication_observation is None and observation_path.exists():
+        try:
+            communication_observation = read_json(observation_path)
+        except (json.JSONDecodeError, OSError):
+            communication_observation = None
     return {
         "status": "ok",
         "kind": "recovery_loop_latest",
@@ -1279,6 +1287,11 @@ def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
         "step_count": payload.get("step_count"),
         "risk_count": payload.get("risk_count"),
         "execute": payload.get("execute"),
+        "communication_plan_status": payload.get("communication_plan_status"),
+        "communication_action": payload.get("communication_action"),
+        "communication_priority_source": payload.get("communication_priority_source"),
+        "communication_route": payload.get("communication_route") or {},
+        "communication_observation": communication_observation or {},
         "summary": cycle.get("summary") if isinstance(cycle, dict) else None,
         "steps": cycle.get("steps", [])[:8] if isinstance(cycle, dict) else [],
         "raw_status": payload.get("status"),

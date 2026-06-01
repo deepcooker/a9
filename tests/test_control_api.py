@@ -6422,6 +6422,16 @@ class ControlApiTests(unittest.TestCase):
                         "step_count": 1,
                         "risk_count": 0,
                         "execute": False,
+                        "communication_plan_status": "ready",
+                        "communication_action": "intervene",
+                        "communication_priority_source": "recovery_loop",
+                        "communication_route": {"endpoint": "/api/nodes/recovery-cycle"},
+                        "communication_observation": {
+                            "current_key": "recovery_loop:intervene:ready",
+                            "streak": 2,
+                            "recommendation": "candidate_for_repair_one",
+                            "auto_execute": False,
+                        },
                         "cycle": {
                             "summary": {"risk_count": 0},
                             "steps": [{"node_id": "node-a", "status": "planned"}],
@@ -6438,6 +6448,13 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["cycle_status"], "ok")
             self.assertEqual(result["step_count"], 1)
+            self.assertEqual(result["communication_plan_status"], "ready")
+            self.assertEqual(result["communication_action"], "intervene")
+            self.assertEqual(result["communication_priority_source"], "recovery_loop")
+            self.assertEqual(result["communication_route"]["endpoint"], "/api/nodes/recovery-cycle")
+            self.assertEqual(result["communication_observation"]["streak"], 2)
+            self.assertEqual(result["communication_observation"]["recommendation"], "candidate_for_repair_one")
+            self.assertFalse(result["communication_observation"]["auto_execute"])
             self.assertEqual(result["steps"][0]["node_id"], "node-a")
             self.assertNotIn("cycle", result)
 

@@ -2022,3 +2022,29 @@ Next monitoring target:
    - Governance lesson:
      thresholds are evidence, not hard gates. The loop now builds a stable
      observation trail before any future auto-repair policy is considered.
+
+94. Communication observation streak is now visible through API and mobile.
+   - Trigger:
+     `.a9/services/communication-observation.json` existed, but operators and
+     phone control could not see the streak/recommendation without shell access.
+   - Change:
+     `scripts/a9_control_api.py` now includes
+     `communication_plan_status`, `communication_action`,
+     `communication_priority_source`, `communication_route`, and
+     `communication_observation` in `GET /api/nodes/recovery-loop/latest`.
+     `/mnt/d/root/a9_mobile_agent_lab/store/useA9ControlStore.ts` types these
+     fields, and `/mnt/d/root/a9_mobile_agent_lab/app/(tabs)/agent.tsx` renders
+     the observation key, streak, recommendation, `auto_execute`, and route in
+     the recovery card. Mobile smoke now asserts
+     `a9-communication-observation` when the recovery detail card is present.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py scripts/a9_recovery_loop.py`;
+     `python3 -m unittest tests.test_control_api tests.test_recovery_loop`
+     passed with 205 tests. Live `GET /api/nodes/recovery-loop/latest` returned
+     `observation_key=tailscale:continue:noop`, `streak=8`,
+     `recommendation=continue_observation`, `auto_execute=false`. In the mobile
+     project, `npx tsc --noEmit` and `npm run smoke:mobile` passed.
+   - Governance lesson:
+     observe-only policy is now inspectable from the same control surface that
+     can later execute repair. This keeps automation pressure visible before it
+     becomes action.
