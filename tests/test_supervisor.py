@@ -5704,6 +5704,37 @@ index 0000000..3e75765
             ],
         )
 
+    def test_monitor_blocked_repair_checks_skips_non_test_commands_with_unittest_text(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="monitor-blocked-checks-echo",
+            prompt="repair monitor blocked checks",
+            phase="repair",
+            checks=["python3 -m unittest tests/test_control_api.py"],
+        )
+        summary = {
+            "process_governance": {
+                "findings": [
+                    {"kind": "undeclared_check", "command": "echo python3 -m unittest tests/test_supervisor.py"},
+                    {
+                        "kind": "undeclared_check",
+                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_monitor_blocked_to_repair_takeover'",
+                    },
+                ]
+            }
+        }
+
+        checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
+
+        self.assertEqual(
+            checks,
+            [
+                "python3 -m unittest tests/test_control_api.py",
+                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_monitor_blocked_to_repair_takeover",
+            ],
+        )
+
     def test_monitor_block_summary_projects_hard_gate_for_progress(self):
         mod = load_supervisor()
         monitor_score = {

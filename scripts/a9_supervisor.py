@@ -6365,10 +6365,24 @@ def monitor_blocked_repair_checks(task: Task, summary: dict[str, Any], phase: st
         command = shell_lc_inner_command(command).strip()
         if not command or not command_looks_like_test(command):
             continue
+        # Only promote runnable test commands; avoid non-test commands that merely
+        # mention test keywords in arguments or echoed strings.
+        if not monitor_blocked_repair_command_is_test_case(command):
+            continue
         if any(command_matches_declared_check(command, [item]) for item in checks):
             continue
         checks.append(command)
     return checks
+
+
+def monitor_blocked_repair_command_is_test_case(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    if re.match(r"^(python3?\s+-m\s+unittest)\b", normalized):
+        return True
+    return re.match(
+        r"^(python3?\s+-m\s+pytest|pytest|cargo\s+test|npm\s+test|pnpm\s+test|yarn\s+test)\b",
+        normalized,
+    ) is not None
 
 
 def communication_task_requires_gateway_runtime_evidence(task: Task, summary: dict[str, Any]) -> bool:
