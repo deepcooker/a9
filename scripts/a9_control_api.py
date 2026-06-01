@@ -46,6 +46,7 @@ PHONE_CONTROL_GROUPS = {
         "approval.approve",
         "approval.reject",
         "eval.override",
+        "services.start",
     ],
     "remote": [
         "nodes.bootstrap.execute",
@@ -71,6 +72,7 @@ SERVICE_PROCESS_MARKERS = {
     "recovery-loop": "a9_recovery_loop.py",
     "supervisor": "a9_supervisor.py run-loop",
 }
+SERVICE_HELPER_PATH = ROOT / "scripts" / "a9_service.py"
 SERVICE_INTENT_CONTRACT = [
     {
         "service": "control-api",
@@ -1709,6 +1711,7 @@ def controller_discovery() -> dict[str, Any]:
             "submit": "/api/submit",
             "runtime_run_one": "/api/runtime/run-one",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
+            "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
             "gateway_transport_contract": "/api/gateway/transport-contract",
             "gateway_reconnect_decision": "/api/gateway/reconnect-decision",
@@ -4596,6 +4599,101 @@ def runtime_session_refresh_trial(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("services.start", root=root)
+    observation = service_observation_status(root)
+    missing_services = [str(item) for item in observation.get("observed", {}).get("missing_services", [])]
+    if not gate.get("allowed"):
+        return {
+            "status": "blocked",
+            "command": "services.start",
+            "gate": gate,
+            "blocked_reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "missing_services": missing_services,
+            "service_observation": observation,
+        }
+
+    requested_raw = payload.get("services", payload.get("missing_services", []))
+    requested_services = [str(item).strip() for item in requested_raw] if isinstance(requested_raw, list) else []
+    requested_services = [item for item in requested_services if item]
+    if requested_services:
+        unknown = sorted({item for item in requested_services if item not in SERVICE_PROCESS_MARKERS})
+        if unknown:
+            return {
+                "status": "invalid_request",
+                "command": "services.start",
+                "gate": gate,
+                "reason": "unknown_service",
+                "unknown_services": unknown,
+                "known_services": sorted(SERVICE_PROCESS_MARKERS),
+                "missing_services": missing_services,
+                "service_observation": observation,
+            }
+        target_services = [item for item in requested_services if item in missing_services]
+    else:
+        target_services = missing_services
+    if not target_services:
+        return {
+            "status": "noop",
+            "command": "services.start",
+            "gate": gate,
+            "reason": "no_missing_services",
+            "missing_services": missing_services,
+            "requested_services": requested_services,
+            "service_observation": observation,
+        }
+
+    cmd = ["python3", str(SERVICE_HELPER_PATH), "start", "--only", *target_services]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=5,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "status": "degraded",
+            "command": "services.start",
+            "gate": gate,
+            "reason": "service_start_timeout",
+            "target_services": target_services,
+            "timeout_seconds": 5,
+            "error": str(exc),
+            "service_observation": observation,
+        }
+
+    output = (proc.stdout or "").strip()
+    try:
+        start_result = json.loads(output) if output else {}
+    except json.JSONDecodeError:
+        return {
+            "status": "degraded",
+            "command": "services.start",
+            "gate": gate,
+            "reason": "service_start_invalid_json",
+            "target_services": target_services,
+            "return_code": proc.returncode,
+            "output": output[:2000],
+            "service_observation": observation,
+        }
+    refreshed = service_observation_status(root)
+    return {
+        "status": "ok" if proc.returncode == 0 else "failed",
+        "command": "services.start",
+        "gate": gate,
+        "target_services": target_services,
+        "return_code": proc.returncode,
+        "start_result": start_result,
+        "service_observation_before": observation,
+        "service_observation_after": refreshed,
+    }
+
+
 def eval_override(payload: dict[str, Any]) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("eval.override", root=ROOT)
@@ -4803,6 +4901,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_run_one(payload))
             elif self.path == "/api/runtime/session-refresh-trial":
                 self.write_json(200, runtime_session_refresh_trial(payload))
+            elif self.path == "/api/services/start":
+                self.write_json(200, service_start_action(payload))
             elif self.path == "/api/eval/override":
                 self.write_json(200, eval_override(payload))
             elif self.path == "/api/nodes/register":

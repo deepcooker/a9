@@ -1824,3 +1824,25 @@ Next monitoring target:
    - Governance lesson:
      the phone is a control surface, not just a chat transcript. Runtime control
      and service truth must be first-viewport signals on mobile.
+
+86. Control API adds gated `services.start` action with real `a9_service.py` start evidence.
+   - Trigger:
+     phone-side `/api/status` can already detect `missing_services`, but could
+     not trigger a bounded service start from control API.
+   - Mechanism copied:
+     `scripts/a9_service.py` start contract:
+     start intent command + short verify budget + observed running state +
+     typed timeout recovery (`failure_kind`, `recovery_action`).
+   - Change:
+     `scripts/a9_control_api.py` adds `service_start_action()` and
+     `POST /api/services/start`, gated by existing phone-control soft gate
+     (`operator.admin` + `command_gate("services.start")`). The action calls
+     `python3 scripts/a9_service.py start --only ...` for missing services and
+     returns parsed helper JSON as `start_result`, including
+     `command_status/observed_running/failure_kind/recovery_action`, plus
+     before/after `service_observation`.
+   - Verification:
+     `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_start_action_requires_runtime_gate tests.test_control_api.ControlApiTests.test_service_start_action_runs_helper_and_returns_start_json tests.test_control_api.ControlApiTests.test_api_services_start_route_calls_handler`.
+   - Governance lesson:
+     use existing soft gate semantics for remote control mutations; keep action
+     runtime bounded and return raw service evidence instead of inferred labels.

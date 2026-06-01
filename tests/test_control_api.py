@@ -7180,6 +7180,102 @@ class ControlApiTests(unittest.TestCase):
                 mod.ROOT = old_root
                 mod.supervisor = old_supervisor
 
+    def test_service_start_action_requires_runtime_gate(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked = mod.service_start_action({"operator_scopes": ["operator.admin"]}, root=root)
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertEqual(blocked["command"], "services.start")
+            self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+
+    def test_service_start_action_runs_helper_and_returns_start_json(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+
+            class FakeProc:
+                returncode = 0
+                stdout = json.dumps(
+                    {
+                        "checked_at": "2026-06-01T00:00:00+00:00",
+                        "requested": ["node-worker"],
+                        "started": [
+                            {
+                                "kind": "node-worker",
+                                "command_status": {
+                                    "phase": "running",
+                                    "observed_running": True,
+                                    "verify_attempts_used": 1,
+                                    "observed_after_ms": 15,
+                                    "failure_kind": "",
+                                    "recovery_action": "",
+                                },
+                            }
+                        ],
+                    }
+                )
+
+            original_observation = mod.service_observation_status
+            original_run = mod.subprocess.run
+            try:
+                calls = []
+                mod.service_observation_status = lambda *args, **kwargs: {
+                    "status": "ok",
+                    "observed": {
+                        "missing_services": ["node-worker"],
+                        "missing_count": 1,
+                        "next_action": "start_missing_services",
+                    },
+                }
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.service_start_action({"operator_scopes": ["operator.admin"]}, root=root)
+            finally:
+                mod.service_observation_status = original_observation
+                mod.subprocess.run = original_run
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["command"], "services.start")
+        self.assertEqual(result["start_result"]["started"][0]["kind"], "node-worker")
+        self.assertTrue(result["start_result"]["started"][0]["command_status"]["observed_running"])
+        self.assertEqual(calls[0][0][0], "python3")
+        self.assertEqual(calls[0][0][2:], ["start", "--only", "node-worker"])
+
+    def test_api_services_start_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.service_start_action
+        captured = {}
+        try:
+            def fake_service_start_action(payload):
+                captured["payload"] = payload
+                return {"status": "ok", "command": "services.start"}
+
+            mod.service_start_action = fake_service_start_action
+            body = json.dumps({"operator_scopes": ["operator.admin"]}).encode("utf-8")
+
+            class DummyServicesStartPostHandler:
+                path = "/api/services/start"
+                headers = {"Content-Length": str(len(body))}
+                rfile = io.BytesIO(body)
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["response"] = payload
+
+            mod.ControlHandler.do_POST(DummyServicesStartPostHandler())
+        finally:
+            mod.service_start_action = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "services.start")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
     def test_runtime_session_refresh_trial_uses_latest_session_without_worker(self):
         mod = load_control_api()
         calls = {}
