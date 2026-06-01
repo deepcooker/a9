@@ -4170,6 +4170,192 @@ class ControlApiTests(unittest.TestCase):
             ],
         )
 
+    def test_node_command_result_watch_returns_existing_found_result(self):
+        mod = load_control_api()
+
+        def fake_lookup(command_id, *, event_stream="a9:events", limit=100, timeout=3, result_last_id=None, node_id="", root=None):
+            return {
+                "status": "ok",
+                "kind": "node_command_result_by_command_lookup",
+                "command_id": command_id,
+                "result_event_id": "1740000700-0",
+                "result": {"result": {"command_id": command_id, "status": "ok"}},
+                "result_replay_reset": {
+                    "action": "keep_cursor",
+                    "reason": "no_cursor_reset_needed",
+                    "next_last_id": "1740000700-0",
+                },
+                "error_code": "ok",
+            }
+
+        original_lookup = mod.node_command_result_by_command_lookup
+        mod.node_command_result_by_command_lookup = fake_lookup
+        try:
+            payload = mod.node_command_result_watch("cmd-watch")
+        finally:
+            mod.node_command_result_by_command_lookup = original_lookup
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["kind"], "node_command_result_watch")
+        self.assertEqual(payload["watch_action"], "terminate")
+        self.assertEqual(payload["watch_reason"], "command_result_found")
+        self.assertEqual(payload["next_last_id"], "1740000700-0")
+
+    def test_node_command_result_watch_invalid_cursor_degrades_without_redis_scan(self):
+        mod = load_control_api()
+        calls = []
+
+        def fake_replay(last_id=None, *, event_stream="a9:events", count=100, limit=None):
+            calls.append(("replay", last_id, event_stream, limit))
+            return {
+                "status": "degraded",
+                "kind": "node_command_result_replay",
+                "stream": event_stream,
+                "error_code": "invalid_cursor",
+                "error": "invalid last_id format",
+                "last_id": last_id,
+                "requested_count": int(limit or count),
+                "events": [],
+                "next_last_id": "",
+            }
+
+        def fail_redis(*args, **kwargs):
+            raise AssertionError("redis_cli should not be called for invalid cursor degrade path")
+
+        original_replay = mod.read_node_result_replay
+        original_redis = mod.redis_cli
+        mod.read_node_result_replay = fake_replay
+        mod.redis_cli = fail_redis
+        try:
+            payload = mod.node_command_result_watch("cmd-watch", result_last_id="bad-id")
+        finally:
+            mod.read_node_result_replay = original_replay
+            mod.redis_cli = original_redis
+
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["watch_action"], "terminate")
+        self.assertEqual(payload["result_replay_reset"]["action"], "retry_without_cursor")
+        self.assertEqual(calls, [("replay", "bad-id", "a9:events", 100)])
+
+    def test_node_command_result_watch_cursor_gap_returns_reset_action(self):
+        mod = load_control_api()
+
+        def fake_lookup(command_id, *, event_stream="a9:events", limit=100, timeout=3, result_last_id=None, node_id="", root=None):
+            return {
+                "status": "degraded",
+                "kind": "node_command_result_by_command_lookup",
+                "command_id": command_id,
+                "error_code": "cursor_gap",
+                "reason": "cursor_gap: last_id outside replay window",
+                "result": {},
+                "result_replay": {"status": "degraded", "error_code": "cursor_gap", "next_last_id": "1740000800-0"},
+                "result_replay_reset": {"action": "reset_cursor", "reason": "cursor_gap", "next_last_id": "1740000800-0"},
+            }
+
+        original_lookup = mod.node_command_result_by_command_lookup
+        mod.node_command_result_by_command_lookup = fake_lookup
+        try:
+            payload = mod.node_command_result_watch("cmd-watch", result_last_id="1740000001-0")
+        finally:
+            mod.node_command_result_by_command_lookup = original_lookup
+
+        self.assertEqual(payload["status"], "degraded")
+        self.assertEqual(payload["watch_action"], "reconnect")
+        self.assertEqual(payload["watch_reason"], "cursor_gap_reset_required")
+        self.assertEqual(payload["result_replay_reset"]["action"], "reset_cursor")
+        self.assertEqual(payload["next_last_id"], "1740000800-0")
+
+    def test_api_node_command_results_watch_endpoint_prefers_query_cursor_over_last_event_id(self):
+        mod = load_control_api()
+        calls = []
+        captured = {"status": None, "payload": None}
+
+        def fake_watch(command_id, *, event_stream="a9:events", limit=100, timeout=3, timeout_seconds=None, result_last_id=None, node_id=""):
+            calls.append(
+                {
+                    "command_id": command_id,
+                    "event_stream": event_stream,
+                    "limit": limit,
+                    "timeout": timeout,
+                    "timeout_seconds": timeout_seconds,
+                    "result_last_id": result_last_id,
+                    "node_id": node_id,
+                }
+            )
+            return {
+                "status": "noop",
+                "kind": "node_command_result_watch",
+                "command_id": command_id,
+                "result": {},
+                "result_replay": None,
+                "result_replay_reset": {"action": "keep_cursor", "reason": "no_cursor_reset_needed", "next_last_id": ""},
+                "watch_action": "continue",
+                "watch_reason": "node_command_result_not_found_yet",
+                "next_last_id": "1740000900-0",
+            }
+
+        class DummyWatchHandler:
+            path = "/api/node-command-results/watch/cmd-watch?event_stream=a9:test-events&limit=7&timeout=5&timeout_seconds=9&result_last_id=1740000900-0"
+            headers = {"Last-Event-ID": "1740000999-0"}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for format=json")
+
+        original_watch = mod.node_command_result_watch
+        mod.node_command_result_watch = fake_watch
+        try:
+            mod.ControlHandler.do_GET(DummyWatchHandler())
+        finally:
+            mod.node_command_result_watch = original_watch
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "node_command_result_watch")
+        self.assertEqual(calls[0]["result_last_id"], "1740000900-0")
+        self.assertEqual(calls[0]["timeout_seconds"], "9")
+
+    def test_api_node_command_results_watch_endpoint_sse_output_has_event_id_and_data(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+
+        def fake_watch(command_id, *, event_stream="a9:events", limit=100, timeout=3, timeout_seconds=None, result_last_id=None, node_id=""):
+            return {
+                "status": "noop",
+                "kind": "node_command_result_watch",
+                "command_id": command_id,
+                "result": {},
+                "result_replay": None,
+                "result_replay_reset": {"action": "keep_cursor", "reason": "no_cursor_reset_needed", "next_last_id": ""},
+                "watch_action": "continue",
+                "watch_reason": "node_command_result_not_found_yet",
+                "next_last_id": "1740001000-0",
+            }
+
+        class DummyWatchSSEHandler:
+            path = "/api/node-command-results/watch/cmd-watch?format=sse"
+            headers = {"Last-Event-ID": "1740000999-0"}
+
+            def write_json(self, status, payload):
+                raise AssertionError("write_json should not be used for format=sse")
+
+            def write_sse(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_watch = mod.node_command_result_watch
+        mod.node_command_result_watch = fake_watch
+        try:
+            mod.ControlHandler.do_GET(DummyWatchSSEHandler())
+        finally:
+            mod.node_command_result_watch = original_watch
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["events"][0]["id"], "1740001000-0")
+        self.assertEqual(captured["payload"]["events"][0]["fields"]["kind"], "node_command_result_watch")
+
     def test_node_command_result_lookup_missing_with_stale_heartbeat_returns_reconnect_hint(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

@@ -176,6 +176,18 @@ Redis ecosystem:
    Invalid cursor is degraded without Redis calls; syntactically valid cursor
    with empty replay and non-empty stream returns `error_code=cursor_gap` with
    `next_last_id`.
+   `/api/node-command-results/watch/{command_id}` adds bounded watch semantics
+   (no infinite loop): query supports `event_stream`, `limit`, `timeout` or
+   `timeout_seconds`, `result_last_id` (query first, then `Last-Event-ID`),
+   and `format=json|sse`.
+   JSON watch payload contract:
+   `status`, `kind=node_command_result_watch`, `command_id`, `result`,
+   `result_replay`, `result_replay_reset`,
+   `watch_action=continue|reconnect|terminate`,
+   `watch_reason`, `next_last_id`.
+   `format=sse` returns one bounded event frame with `id=next_last_id` and
+   `data` as the same typed watch payload, so clients can carry cursor across
+   reconnects consistently.
 6. Backpressure:
    bounded stream reads, trim policy, dead-letter stream, retry budget, and
    error-class counters. Pending/lag evidence contract for Redis Streams

@@ -2035,6 +2035,7 @@ def controller_discovery() -> dict[str, Any]:
             "node_command": "/api/nodes/command",
             "node_command_result": "/api/node-command-results/{result_event_id}",
             "node_command_result_by_command": "/api/node-command-results/by-command/{command_id}",
+            "node_command_result_watch": "/api/node-command-results/watch/{command_id}",
             "events": "/api/events",
         },
         "runtime": {
@@ -4173,6 +4174,70 @@ def node_command_result_by_command_lookup(
     return return_payload
 
 
+def node_command_result_watch(
+    command_id: str,
+    *,
+    event_stream: str = EVENTS_STREAM_KEY,
+    limit: int = 100,
+    timeout: int = 3,
+    timeout_seconds: int | None = None,
+    result_last_id: str | None = None,
+    node_id: str = "",
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    safe_timeout_raw = timeout_seconds if timeout_seconds is not None else timeout
+    lookup = node_command_result_by_command_lookup(
+        command_id,
+        event_stream=event_stream,
+        limit=limit,
+        timeout=safe_timeout_raw,
+        result_last_id=result_last_id,
+        node_id=node_id,
+        root=root,
+    )
+    status = str(lookup.get("status") or "degraded")
+    replay_reset = lookup.get("result_replay_reset") if isinstance(lookup.get("result_replay_reset"), dict) else {}
+    next_last_id = str(lookup.get("result_event_id") or replay_reset.get("next_last_id") or result_last_id or "")
+    watch_action = "reconnect"
+    watch_reason = "transient_error"
+
+    if status == "ok":
+        watch_action = "terminate"
+        watch_reason = "command_result_found"
+    elif status == "noop":
+        watch_action = "continue"
+        watch_reason = "node_command_result_not_found_yet"
+    elif status == "degraded":
+        error_code = str(lookup.get("error_code") or "")
+        if error_code in {"invalid_payload", "invalid_cursor"}:
+            watch_action = "terminate"
+            watch_reason = error_code or "invalid_payload"
+        elif error_code == "cursor_gap":
+            watch_action = "reconnect"
+            watch_reason = "cursor_gap_reset_required"
+
+    payload = {
+        "status": status,
+        "kind": "node_command_result_watch",
+        "command_id": str(lookup.get("command_id") or str(command_id or "").strip()),
+        "result": lookup.get("result") or {},
+        "result_replay": lookup.get("result_replay") if "result_replay" in lookup else None,
+        "result_replay_reset": replay_reset
+        if replay_reset
+        else {"action": "keep_cursor", "reason": "no_cursor_reset_needed", "next_last_id": ""},
+        "watch_action": watch_action,
+        "watch_reason": watch_reason,
+        "next_last_id": next_last_id,
+    }
+    if "recovery_hint" in lookup:
+        payload["recovery_hint"] = lookup["recovery_hint"]
+    if "error_code" in lookup:
+        payload["error_code"] = lookup["error_code"]
+    if "reason" in lookup:
+        payload["reason"] = lookup["reason"]
+    return payload
+
+
 def register_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     node_id = safe_node_id(str(payload.get("node_id") or ""))
     now = utc_now()
@@ -5428,6 +5493,26 @@ class ControlHandler(BaseHTTPRequestHandler):
                         node_id=query.get("node_id", [""])[0],
                     ),
                 )
+            elif parsed.path.startswith("/api/node-command-results/watch/"):
+                command_id = unquote(parsed.path.removeprefix("/api/node-command-results/watch/")).strip("/")
+                result_last_id = _resolve_event_last_id(
+                    query.get("result_last_id", [None])[0],
+                    self.headers.get("Last-Event-ID"),
+                )
+                payload = node_command_result_watch(
+                    command_id,
+                    event_stream=query.get("event_stream", [EVENTS_STREAM_KEY])[0],
+                    limit=query.get("limit", ["100"])[0],
+                    timeout=query.get("timeout", ["3"])[0],
+                    timeout_seconds=query.get("timeout_seconds", [None])[0],
+                    result_last_id=result_last_id,
+                    node_id=query.get("node_id", [""])[0],
+                )
+                if str(query.get("format", ["json"])[0]).lower() == "sse":
+                    sse_id = str(payload.get("next_last_id") or result_last_id or "")
+                    self.write_sse(200, {"events": [{"id": sse_id, "fields": payload}]})
+                else:
+                    self.write_json(200, payload)
             elif parsed.path.startswith("/api/node-command-results/"):
                 result_event_id = parsed.path.removeprefix("/api/node-command-results/").strip("/")
                 event_stream = query.get("event_stream", [EVENTS_STREAM_KEY])[0]
