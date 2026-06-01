@@ -2577,6 +2577,68 @@ Do the work.
         self.assertIn("status=pass", progress)
         self.assertIn("commit=abcdef123456", progress)
 
+    def test_update_active_plan_from_run_recovers_plan_from_prompt_when_local_state_missing(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                run_dir = tmp_path / "runs" / "run-iso-1"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "needs-followup",
+                    "phase": "record",
+                    "run_dir": str(run_dir),
+                    "evidence_path": str(run_dir / "evidence.jsonl"),
+                    "state_path": str(run_dir / "state.json"),
+                    "deep_marks_path": str(run_dir / "deep_marks.jsonl"),
+                    "context_path": str(run_dir / "context.md"),
+                    "git_governance": {"commit": "1234567890abcdef"},
+                    "next_task_path": "/tmp/next-record.md",
+                }
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="record-iso",
+                    phase="record",
+                    prompt=(
+                        "Active plan contract:\n"
+                        "- plan_id: a9-plan-lane-runtime\n"
+                        "- goal_id: goal-A9-runtime\n"
+                        "- flow_id: \n"
+                        "- expected_flow_revision: \n"
+                        "- problem: stable plan hydration in isolated worker trees\n"
+                        "- must: append run evidence deterministically\n"
+                        "- should: keep plan contract advisory\n"
+                        "- could: add richer attestation later\n"
+                        "- system_requirement: recover plan from prompt when local plan state is missing\n"
+                        "- data_shape: plan.json + progress/findings tails\n"
+                        "- normal_flow: record -> append evidence -> next slice\n"
+                        "- exception_flow: if contract missing, skip without mutation\n"
+                        "- acceptance: active plan update appends run refs and progress\n"
+                        "- out_of_scope: broad governance changes\n"
+                        "- allowed_execution: scripts/a9_supervisor.py and tests/test_supervisor.py\n"
+                        "- reference_entry: planning-with-files active contract hydration\n"
+                    ),
+                )
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                plan_dir = mod.plan_path("a9-plan-lane-runtime")
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                progress = (plan_dir / "progress.md").read_text(encoding="utf-8")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "updated")
+        self.assertIn("run-iso-1", stored["run_ids"])
+        self.assertIn(str(run_dir / "summary.json"), stored["evidence_refs"])
+        self.assertIn(str(run_dir / "evidence.jsonl"), stored["evidence_refs"])
+        self.assertIn("run=run-iso-1", progress)
+        self.assertIn("status=needs-followup", progress)
+
     def test_plan_change_request_appends_without_mutating_contract(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

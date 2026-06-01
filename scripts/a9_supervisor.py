@@ -5220,6 +5220,90 @@ def active_plan() -> dict[str, Any]:
     return load_plan(active_plan_id())
 
 
+def parse_active_plan_from_prompt(prompt: str) -> dict[str, Any]:
+    if not prompt:
+        return {}
+    lines = prompt.splitlines()
+    start = -1
+    for idx, line in enumerate(lines):
+        if line.strip() == "Active plan contract:":
+            start = idx + 1
+            break
+    if start < 0:
+        return {}
+    allowed = {
+        "plan_id",
+        "goal_id",
+        "flow_id",
+        "expected_flow_revision",
+        "problem",
+        "why_now",
+        "must",
+        "should",
+        "could",
+        "system_requirement",
+        "data_shape",
+        "normal_flow",
+        "exception_flow",
+        "acceptance",
+        "out_of_scope",
+        "allowed_execution",
+        "reference_entry",
+        "change_record",
+    }
+    values: dict[str, str] = {}
+    for line in lines[start:]:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not stripped.startswith("- "):
+            break
+        key, sep, value = stripped[2:].partition(":")
+        if not sep:
+            continue
+        field = key.strip()
+        if field not in allowed:
+            continue
+        values[field] = value.strip()
+    plan_id = values.get("plan_id", "").strip()
+    goal_id = values.get("goal_id", "").strip()
+    if not plan_id or not goal_id:
+        return {}
+    contract = {
+        key: values.get(key, "")
+        for key in (
+            "problem",
+            "why_now",
+            "must",
+            "should",
+            "could",
+            "system_requirement",
+            "data_shape",
+            "normal_flow",
+            "exception_flow",
+            "acceptance",
+            "out_of_scope",
+            "allowed_execution",
+            "reference_entry",
+            "change_record",
+        )
+    }
+    expected_raw = values.get("expected_flow_revision", "")
+    expected_flow_revision: int | None
+    try:
+        expected_flow_revision = int(expected_raw) if expected_raw else None
+    except ValueError:
+        expected_flow_revision = None
+    return create_plan_payload(
+        plan_id=plan_id,
+        goal_id=goal_id,
+        flow_id=values.get("flow_id", ""),
+        expected_flow_revision=expected_flow_revision,
+        source="a9_supervisor_prompt_recovery",
+        contract=contract,
+    )
+
+
 def write_plan_markdown(plan: dict[str, Any]) -> str:
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     lines = [
@@ -5519,7 +5603,11 @@ def append_plan_change_request(
 def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
     plan = active_plan()
     if not plan:
-        return {"status": "skipped", "reason": "no_active_plan"}
+        recovered = parse_active_plan_from_prompt(task.prompt)
+        if not recovered:
+            return {"status": "skipped", "reason": "no_active_plan"}
+        write_plan_files(recovered, activate=True)
+        plan = recovered
     plan_id = str(plan.get("plan_id") or "")
     if not plan_id:
         return {"status": "skipped", "reason": "active_plan_missing_plan_id"}
