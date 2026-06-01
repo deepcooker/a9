@@ -6192,7 +6192,7 @@ index 0000000..3e75765
             ],
         )
 
-    def test_monitor_blocked_repair_checks_fallbacks_pytest_to_unittest_when_pytest_missing(self):
+    def test_monitor_blocked_repair_checks_falls_back_to_unittest_when_pytest_unavailable(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
