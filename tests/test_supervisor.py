@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import gc
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 from unittest import mock
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -1565,6 +1567,48 @@ Do the work.
 
         self.assertEqual(worker["return_code"], 0)
         self.assertTrue(fake_proc.stdout.closed)
+
+    def test_run_worker_real_subprocess_has_no_unclosed_stdout_resource_warning(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="stdout-resourcewarning-regression",
+                prompt="Run one bounded command.",
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    "print(json.dumps({'type':'thread.started','payload':{'ok':True}}), flush=True)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always", ResourceWarning)
+                    worker = mod.run_worker(task, worktree, run_dir)
+                    gc.collect()
+
+        self.assertEqual(worker["return_code"], 0)
+        resource_warnings = [item for item in caught if issubclass(item.category, ResourceWarning)]
+        self.assertFalse(resource_warnings, f"unexpected ResourceWarning(s): {resource_warnings!r}")
 
     def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
         mod = load_supervisor()
