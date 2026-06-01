@@ -1197,6 +1197,117 @@ def transcript_phase_for_evidence(kind: str) -> str:
     return "evidence"
 
 
+def transcript_intervention_decision(
+    items: list[dict[str, Any]],
+    tasks_stream: dict[str, Any],
+    followup: dict[str, Any],
+    loop: dict[str, Any],
+) -> dict[str, Any]:
+    allowed_actions = {"observe", "watch", "repair", "intervene", "quarantine"}
+    severity = {"observe": 1, "watch": 2, "repair": 3, "intervene": 4, "quarantine": 5}
+    reason = "healthy"
+    evidence_refs: list[str] = []
+    action = "observe"
+
+    followup_action = str(followup.get("action") or "")
+    followup_reason = str(followup.get("reason") or "")
+    stream_action = str(tasks_stream.get("stream_action") or "")
+    stream_reason = str(tasks_stream.get("stream_action_reason") or "")
+    loop_risk_count = int(loop.get("risk_count") or 0) if isinstance(loop, dict) else 0
+
+    action_map = {
+        "continue": "observe",
+        "observe": "observe",
+        "watch": "watch",
+        "reconnect": "repair",
+        "repair": "repair",
+        "intervene": "intervene",
+        "quarantine": "quarantine",
+        "terminate": "quarantine",
+    }
+    reason_map = {
+        "lag_warn": "stream_lag_warn",
+        "pending_stuck": "stream_pending_stuck",
+        "pending_skew": "stream_pending_skew",
+        "lag_critical": "stream_lag_critical",
+        "consumer_group_missing": "stream_consumer_group_missing",
+        "invalid_lag": "stream_invalid_lag",
+        "xpending_failed": "stream_probe_failed",
+        "redis_unavailable": "stream_redis_unavailable",
+    }
+    quarantine_markers = ("unsafe_terminal", "sequence_conflict", "terminal_conflict", "quarantine")
+
+    def elevate(candidate: str, candidate_reason: str) -> None:
+        nonlocal action, reason
+        if candidate not in allowed_actions:
+            return
+        if severity[candidate] >= severity[action]:
+            action = candidate
+            reason = candidate_reason
+
+    for item in items:
+        item_reason = str(item.get("reason") or "")
+        item_action = str(item.get("action") or "")
+        if any(marker in item_reason for marker in quarantine_markers):
+            elevate("quarantine", "unsafe_terminal_or_sequence_conflict")
+            if item.get("evidence_path"):
+                evidence_refs.append(str(item["evidence_path"]))
+            elif item.get("event_id"):
+                evidence_refs.append(str(item["event_id"]))
+
+    if followup_action:
+        elevate(action_map.get(followup_action, "observe"), followup_reason or "followup")
+        evidence = followup.get("evidence") if isinstance(followup.get("evidence"), dict) else {}
+        for node_ref in evidence.get("nodes", []):
+            if isinstance(node_ref, dict):
+                node_id = str(node_ref.get("node_id") or "")
+                if node_id:
+                    evidence_refs.append(f"node:{node_id}")
+        stream_ref = evidence.get("tasks_stream") if isinstance(evidence, dict) else {}
+        if isinstance(stream_ref, dict):
+            if stream_ref.get("reason"):
+                evidence_refs.append(f"tasks_stream:{stream_ref.get('reason')}")
+
+    if stream_action:
+        mapped_stream = action_map.get(stream_action, "observe")
+        mapped_reason = reason_map.get(stream_reason, "healthy" if stream_reason in {"", "none"} else stream_reason)
+        elevate(mapped_stream, mapped_reason)
+        if stream_reason:
+            evidence_refs.append(f"tasks_stream:{stream_reason}")
+        if stream_action == "watch" and stream_reason in {"lag_warn", "consumer_group_missing", "invalid_lag"}:
+            elevate("watch", reason_map.get(stream_reason, "stream_watch"))
+        if stream_action == "intervene" and stream_reason in {"pending_stuck", "pending_skew", "lag_critical"}:
+            elevate("repair", reason_map.get(stream_reason, "stream_repair_needed"))
+
+    if (
+        followup_action == "intervene"
+        and isinstance(followup_reason, str)
+        and followup_reason.startswith("tasks_stream:")
+        and action == "intervene"
+    ):
+        stream_tail = followup_reason.split(":", 1)[1] if ":" in followup_reason else ""
+        action = "repair"
+        reason = reason_map.get(stream_tail, "stream_repair_needed")
+
+    if loop_risk_count > 0 and action == "observe":
+        elevate("watch", "recovery_risk_present")
+
+    dedup_refs: list[str] = []
+    seen = set()
+    for ref in evidence_refs:
+        normalized = str(ref).strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        dedup_refs.append(normalized)
+
+    return {
+        "action": action if action in allowed_actions else "observe",
+        "reason": reason or "healthy",
+        "evidence_refs": dedup_refs,
+    }
+
+
 def recovery_transcript(
     node_id: str | None = None,
     *,
@@ -1322,6 +1433,7 @@ def recovery_transcript(
     bouncing = active_attention and actions.count("repair") + actions.count("reconnect") + actions.count("intervene") >= 2
     status_value = "needs_attention" if active_attention else "degraded" if active_watch else "ok"
     conclusion = "bouncing" if bouncing else "repairing" if active_attention else "watching" if active_watch else "converging"
+    intervention = transcript_intervention_decision(items, tasks_stream, followup, loop)
     return {
         "status": status_value,
         "kind": "node_recovery_transcript",
@@ -1333,6 +1445,7 @@ def recovery_transcript(
         "conclusion": conclusion,
         "current_action": current_action,
         "current_reason": current_reason,
+        "intervention_decision": intervention,
         "items": items[-safe_limit:],
         "sources": {
             "node_evidence_count": evidence.get("count", 0),

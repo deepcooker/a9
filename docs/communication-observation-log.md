@@ -1294,3 +1294,29 @@ Next monitoring target:
      next implementation slice should consume this policy directly in control
      API followup generation, so intervention routing is transcript-native and
      reproducible from evidence references.
+
+65. Recovery transcript now emits machine-readable intervention decision.
+   - Trigger:
+     entry 64 defined policy, but `/api/nodes/recovery-transcript` did not yet
+     expose stable machine-readable intervention output.
+   - Mechanism copied:
+     reused A9 typed followup/stream-health action domain in
+     `scripts/a9_control_api.py` and kept OpenClaw-style typed envelope shape
+     (`action/reason/evidence_refs`) for deterministic routing.
+   - Change:
+     `scripts/a9_control_api.py` adds
+     `transcript_intervention_decision(items, tasks_stream, followup, loop)`,
+     normalizes actions to `observe|watch|repair|intervene|quarantine`, and
+     publishes `intervention_decision` in
+     `a9.node_recovery_transcript.v1` response.
+     The implementation keeps "observation window + typed reason +
+     repair/intervention" semantics and does not add token-number hard gates.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py` passed.
+     `python3 -m unittest tests.test_control_api` passed with `178` tests.
+     New coverage includes healthy -> `observe`, lag/pending pressure ->
+     `watch|repair`, and unsafe terminal sequence conflict -> `quarantine`.
+   - Governance lesson:
+     intervention output is now transcript-native and evidence-referenced, so
+     followup/recovery routing can be consumed by monitor/mobile without
+     re-parsing mixed human text.

@@ -6167,6 +6167,84 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "needs_attention")
         self.assertEqual(result["conclusion"], "bouncing")
         self.assertEqual(result["items"][-1]["action"], "intervene")
+        self.assertEqual(result["intervention_decision"]["action"], "repair")
+
+    def test_recovery_transcript_intervention_decision_observe_when_healthy(self):
+        mod = load_control_api()
+        original_gateway = mod.latest_gateway_reconnect_decision_event
+        original_status = mod.node_status
+        original_latest = mod.recovery_loop_latest
+        try:
+            mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+            mod.node_status = lambda root=mod.ROOT: {
+                "tasks_stream": {
+                    "status": "ok",
+                    "stream_action": "continue",
+                    "stream_action_reason": "none",
+                },
+                "communication_followup": {
+                    "status": "ok",
+                    "action": "continue",
+                    "reason": "healthy",
+                    "evidence": {},
+                },
+            }
+            mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "ok", "risk_count": 0, "cycle_status": "ok"}
+            result = mod.recovery_transcript(root=Path(tempfile.mkdtemp()), limit=5)
+        finally:
+            mod.latest_gateway_reconnect_decision_event = original_gateway
+            mod.node_status = original_status
+            mod.recovery_loop_latest = original_latest
+
+        self.assertEqual(result["intervention_decision"]["action"], "observe")
+        self.assertEqual(result["intervention_decision"]["reason"], "healthy")
+
+    def test_recovery_transcript_intervention_decision_quarantine_on_sequence_conflict(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence_dir = root / ".a9" / "nodes" / "evidence" / "node-a"
+            evidence_dir.mkdir(parents=True)
+            payload = {
+                "kind": "probe",
+                "action": "intervene",
+                "reason": "unsafe_terminal_sequence_conflict",
+                "status": "failed",
+                "node_id": "node-a",
+                "checked_at": "2026-05-30T00:00:00+00:00",
+            }
+            (evidence_dir / "probe-node-a-20260530T000000Z.json").write_text(
+                json.dumps(payload),
+                encoding="utf-8",
+            )
+            original_gateway = mod.latest_gateway_reconnect_decision_event
+            original_status = mod.node_status
+            original_latest = mod.recovery_loop_latest
+            try:
+                mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+                mod.node_status = lambda root=mod.ROOT: {
+                    "tasks_stream": {
+                        "status": "ok",
+                        "stream_action": "continue",
+                        "stream_action_reason": "none",
+                    },
+                    "communication_followup": {
+                        "status": "ok",
+                        "action": "continue",
+                        "reason": "healthy",
+                        "evidence": {},
+                    },
+                }
+                mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "missing"}
+                result = mod.recovery_transcript("node-a", root=root, limit=10)
+            finally:
+                mod.latest_gateway_reconnect_decision_event = original_gateway
+                mod.node_status = original_status
+                mod.recovery_loop_latest = original_latest
+
+        self.assertEqual(result["intervention_decision"]["action"], "quarantine")
+        self.assertEqual(result["intervention_decision"]["reason"], "unsafe_terminal_or_sequence_conflict")
+        self.assertTrue(result["intervention_decision"]["evidence_refs"])
 
     def test_api_recovery_transcript_endpoint_uses_query(self):
         mod = load_control_api()
