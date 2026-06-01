@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import importlib.util
+import argparse
 import json
 import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -123,6 +125,43 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["started"][0]["command"][:2], ["setsid", "-f"])
         self.assertIn("a9_control_api.py serve", " ".join(payload["started"][0]["command"]))
         self.assertIn("a9_recovery_loop.py", " ".join(payload["started"][1]["command"]))
+        self.assertIn("start_contract", payload)
+        self.assertEqual(
+            payload["start_contract"]["failure_taxonomy"],
+            ["timeout", "auth", "network", "protocol", "rate_limit"],
+        )
+        self.assertIn(payload["started"][0]["command_status"]["phase"], {"planned", "already_running"})
+
+    def test_start_cmd_sets_running_status_after_verify(self):
+        mod = load_service()
+        args = argparse.Namespace(command="start", all=False, only=["control-api"], dry_run=False)
+        with mock.patch.object(mod, "running_processes", side_effect=[[], [{"kind": "control-api", "pid": 123, "ppid": 1, "etime": "00:00:01", "cmd": "x"}]]):
+            with mock.patch.object(mod.subprocess, "Popen") as popen:
+                popen.return_value.pid = 999
+                with mock.patch.object(mod.time, "sleep"):
+                    with mock.patch("builtins.print") as printer:
+                        rc = mod.start_cmd(args)
+        self.assertEqual(rc, 0)
+        payload = json.loads(printer.call_args.args[0])
+        self.assertEqual(payload["started"][0]["command_status"]["phase"], "running")
+        self.assertTrue(payload["started"][0]["command_status"]["observed_running"])
+
+    def test_start_cmd_timeout_maps_to_retry_action(self):
+        mod = load_service()
+        args = argparse.Namespace(command="start", all=False, only=["control-api"], dry_run=False)
+        no_process = []
+        with mock.patch.object(mod, "running_processes", side_effect=[no_process] + [no_process] * mod.START_VERIFY_ATTEMPTS):
+            with mock.patch.object(mod.subprocess, "Popen") as popen:
+                popen.return_value.pid = 999
+                with mock.patch.object(mod.time, "sleep"):
+                    with mock.patch("builtins.print") as printer:
+                        rc = mod.start_cmd(args)
+        self.assertEqual(rc, 0)
+        self.assertTrue(printer.called)
+        payload = json.loads(printer.call_args.args[0])
+        self.assertEqual(payload["started"][0]["command_status"]["phase"], "start_timeout")
+        self.assertEqual(payload["started"][0]["command_status"]["failure_kind"], "timeout")
+        self.assertEqual(payload["started"][0]["command_status"]["recovery_action"], "retry")
 
     def test_service_stop_dry_run_returns_json(self):
         result = subprocess.run(

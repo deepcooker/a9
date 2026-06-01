@@ -13,6 +13,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,9 @@ SERVICE_COMMANDS = {
     ],
 }
 SERVICE_START_ORDER = ["control-api", "node-worker", "recovery-loop", "supervisor"]
+START_VERIFY_ATTEMPTS = 5
+START_VERIFY_SLEEP_SECONDS = 0.2
+START_VERIFY_TIMEOUT_SECONDS = START_VERIFY_ATTEMPTS * START_VERIFY_SLEEP_SECONDS
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -228,6 +232,30 @@ def ps_cmd(_: argparse.Namespace) -> int:
     return 0
 
 
+def start_failure_to_action(failure_kind: str) -> str:
+    mapping = {
+        "timeout": "retry",
+        "auth": "repair",
+        "network": "retry",
+        "protocol": "repair",
+        "rate_limit": "quarantine",
+    }
+    return mapping.get(failure_kind, "repair")
+
+
+def verify_started_kind(kind: str) -> tuple[bool, int, int]:
+    started_at = time.monotonic()
+    for attempt in range(1, START_VERIFY_ATTEMPTS + 1):
+        current = running_processes()
+        if any(item["kind"] == kind for item in current):
+            elapsed_ms = int((time.monotonic() - started_at) * 1000)
+            return True, attempt, elapsed_ms
+        if attempt < START_VERIFY_ATTEMPTS:
+            time.sleep(START_VERIFY_SLEEP_SECONDS)
+    elapsed_ms = int((time.monotonic() - started_at) * 1000)
+    return False, START_VERIFY_ATTEMPTS, elapsed_ms
+
+
 def start_cmd(args: argparse.Namespace) -> int:
     current = running_processes()
     running_kinds = {item["kind"] for item in current if item["kind"] in SERVICE_COMMANDS}
@@ -250,11 +278,54 @@ def start_cmd(args: argparse.Namespace) -> int:
                 stderr=subprocess.DEVNULL,
             )
             result["pid"] = proc.pid
+            observed_running, attempts_used, observed_after_ms = verify_started_kind(kind)
+            if observed_running:
+                result["command_status"] = {
+                    "phase": "running",
+                    "observed_running": True,
+                    "verify_attempts_used": attempts_used,
+                    "observed_after_ms": observed_after_ms,
+                    "failure_kind": "",
+                    "recovery_action": "",
+                }
+            else:
+                result["command_status"] = {
+                    "phase": "start_timeout",
+                    "observed_running": False,
+                    "verify_attempts_used": attempts_used,
+                    "observed_after_ms": observed_after_ms,
+                    "failure_kind": "timeout",
+                    "recovery_action": start_failure_to_action("timeout"),
+                }
+        elif kind in running_kinds:
+            result["command_status"] = {
+                "phase": "already_running",
+                "observed_running": True,
+                "verify_attempts_used": 0,
+                "observed_after_ms": 0,
+                "failure_kind": "",
+                "recovery_action": "",
+            }
+        else:
+            result["command_status"] = {
+                "phase": "planned",
+                "observed_running": False,
+                "verify_attempts_used": 0,
+                "observed_after_ms": 0,
+                "failure_kind": "",
+                "recovery_action": "",
+            }
         results.append(result)
     payload = {
         "checked_at": iso_now(),
         "dry_run": args.dry_run,
         "requested": requested,
+        "start_contract": {
+            "verify_attempt_budget": START_VERIFY_ATTEMPTS,
+            "verify_sleep_seconds": START_VERIFY_SLEEP_SECONDS,
+            "verify_timeout_seconds": START_VERIFY_TIMEOUT_SECONDS,
+            "failure_taxonomy": ["timeout", "auth", "network", "protocol", "rate_limit"],
+        },
         "started": results,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))

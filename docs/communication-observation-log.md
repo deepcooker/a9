@@ -1736,3 +1736,26 @@ Next monitoring target:
      phone/control reliability needs a single operational start contract. Manual
      shell incantations are acceptable for diagnosis, not for the repeated 24h
      runtime path.
+
+82. Service start now reports post-launch observed state with bounded retry and typed failure routing.
+   - Trigger:
+     `scripts/a9_service.py start` previously returned `status=started` right
+     after spawn, but it did not prove the target process entered running state.
+     This made start/readiness evidence ambiguous in monitor-blocked repair
+     loops.
+   - Mechanism copied:
+     systemd readiness intent from `infra/systemd/a9-supervisor.service` and
+     peers: start and active state are distinct, and restart/repair decisions
+     require observed runtime state instead of launch intent alone.
+   - Change:
+     `start` now records `start_contract` (`verify_attempt_budget`,
+     `verify_sleep_seconds`, `verify_timeout_seconds`, `failure_taxonomy`) and
+     per-service `command_status` with phase transitions:
+     `planned|already_running|running|start_timeout`. For timeout, it emits
+     `failure_kind=timeout` and `recovery_action=retry`, aligned with typed
+     recovery routing.
+   - Verification:
+     `python3 -m unittest tests.test_service.ServiceTests.test_service_start_dry_run_returns_detached_commands tests.test_service.ServiceTests.test_start_cmd_sets_running_status_after_verify tests.test_service.ServiceTests.test_start_cmd_timeout_maps_to_retry_action`.
+   - Governance lesson:
+     data-first service contracts should expose observed state transitions and
+     failure taxonomy explicitly before adding stricter start gates.
