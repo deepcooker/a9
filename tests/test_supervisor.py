@@ -1773,6 +1773,69 @@ Do the work.
         self.assertIn("proposal: Add regression check for change_request append path.", change_request)
         self.assertIn("evidence_refs: /tmp/run/summary.json", change_request)
 
+    def test_plan_note_appends_to_requested_lane(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-note",
+                    goal_id="goal-note",
+                    contract={"problem": "Need append-only note lanes."},
+                )
+                plan_dir = mod.write_plan_files(plan)
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "plan_id": "plan-note",
+                        "type": "findings",
+                        "note": "Copied Codex ordered-history mechanism.",
+                        "actor": "worker",
+                        "evidence_ref": ["/tmp/run/summary.json"],
+                    },
+                )()
+                code = mod.plan_note(args)
+                findings = (plan_dir / "findings.md").read_text(encoding="utf-8")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(code, 0)
+        self.assertIn("actor=worker", findings)
+        self.assertIn("note=Copied Codex ordered-history mechanism.", findings)
+        self.assertIn("evidence_refs=/tmp/run/summary.json", findings)
+
+    def test_plan_note_returns_error_when_plan_missing(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "plan_id": "missing-plan",
+                        "type": "progress",
+                        "note": "ran tests",
+                        "actor": "worker",
+                        "evidence_ref": [],
+                    },
+                )()
+                code = mod.plan_note(args)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+        self.assertEqual(code, 1)
+
     def test_idle_goal_continuation_schedules_reference_first_task(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

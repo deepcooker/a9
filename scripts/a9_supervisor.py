@@ -5325,6 +5325,41 @@ def append_plan_progress(plan_dir: Path, line: str) -> None:
         handle.write(line + "\n")
 
 
+def append_plan_note(
+    *,
+    plan_id: str,
+    note_type: str,
+    note: str,
+    actor: str = "worker",
+    evidence_refs: list[str] | None = None,
+) -> dict[str, str]:
+    plan = load_plan(plan_id)
+    if not plan:
+        return {"status": "missing", "plan_id": plan_id, "path": ""}
+    note_map = {
+        "findings": ("findings.md", "Findings"),
+        "progress": ("progress.md", "Progress"),
+        "mistakes": ("mistakes.md", "Mistakes"),
+    }
+    target = note_map.get(note_type)
+    if not target:
+        return {"status": "invalid_type", "plan_id": plan_id, "path": ""}
+    file_name, heading = target
+    path = plan_path(plan_id) / file_name
+    if not path.exists():
+        path.write_text(f"# {heading}\n\n", encoding="utf-8")
+    refs = [str(item).strip() for item in (evidence_refs or []) if str(item).strip()]
+    line = f"- {utc_now()} actor={actor} note={note.strip()}"
+    if refs:
+        line += f" evidence_refs={', '.join(refs)}"
+    text = path.read_text(encoding="utf-8")
+    with path.open("a", encoding="utf-8") as handle:
+        if text and not text.endswith("\n"):
+            handle.write("\n")
+        handle.write(line + "\n")
+    return {"status": "appended", "plan_id": plan_id, "path": str(path), "type": note_type}
+
+
 def append_plan_change_request(
     *,
     plan_id: str,
@@ -7522,6 +7557,29 @@ def plan_change_request(args: argparse.Namespace) -> int:
     return 0
 
 
+def plan_note(args: argparse.Namespace) -> int:
+    ensure_dirs()
+    plan_id = str(args.plan_id or "").strip() or active_plan_id()
+    if not plan_id:
+        print("No active plan.")
+        return 1
+    result = append_plan_note(
+        plan_id=plan_id,
+        note_type=str(args.type or "").strip(),
+        note=str(args.note or "").strip(),
+        actor=str(args.actor or "worker").strip(),
+        evidence_refs=[str(item) for item in args.evidence_ref],
+    )
+    if result["status"] == "missing":
+        print(f"Plan not found: {plan_id}")
+        return 1
+    if result["status"] == "invalid_type":
+        print(f"Invalid note type: {args.type}")
+        return 1
+    print(result["path"])
+    return 0
+
+
 def status() -> int:
     ensure_dirs()
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
@@ -7642,6 +7700,13 @@ def main(argv: list[str]) -> int:
     change_request_parser.add_argument("--actor", default="worker")
     change_request_parser.add_argument("--evidence-ref", action="append", default=[])
 
+    plan_note_parser = sub.add_parser("plan-note")
+    plan_note_parser.add_argument("--plan-id", default="")
+    plan_note_parser.add_argument("--type", required=True, choices=["findings", "progress", "mistakes"])
+    plan_note_parser.add_argument("--note", required=True)
+    plan_note_parser.add_argument("--actor", default="worker")
+    plan_note_parser.add_argument("--evidence-ref", action="append", default=[])
+
     override_parser = sub.add_parser("eval-override")
     override_parser.add_argument("run_id")
     override_parser.add_argument("--action", required=True, choices=sorted(EVAL_OVERRIDE_ACTIONS))
@@ -7666,6 +7731,8 @@ def main(argv: list[str]) -> int:
         return plan_status(args)
     if args.command == "plan-change-request":
         return plan_change_request(args)
+    if args.command == "plan-note":
+        return plan_note(args)
     if args.command == "eval-override":
         return eval_override(args)
     raise AssertionError(args.command)
