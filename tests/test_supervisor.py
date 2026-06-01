@@ -1721,6 +1721,57 @@ Do the work.
 
         self.assertEqual(worker["return_code"], 0)
 
+    def test_run_worker_real_subprocess_non_json_stdout_lines_are_ignored_by_event_counters(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="non-json-stdout-ignored-by-event-counters",
+                prompt="Run one bounded command.",
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    "print(json.dumps({'type':'thread.started','thread_id':'typed-line-1'}), flush=True); "
+                    "print('plain stdout line that is not json', flush=True); "
+                    "print(json.dumps({'type':'turn.completed','usage':{'input_tokens':2,'output_tokens':3}}), flush=True)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                worker = mod.run_worker(task, worktree, run_dir)
+            self.assertEqual(worker["event_count"], 2)
+            self.assertEqual(
+                worker["event_counts"],
+                {
+                    "thread.started": 1,
+                    "turn.completed": 1,
+                },
+            )
+            events_path = Path(worker["events_path"])
+            event_text = events_path.read_text(encoding="utf-8")
+            expected_event_bytes = sum(len(line.encode("utf-8")) for line in event_text.splitlines(keepends=True))
+            self.assertEqual(worker["event_bytes"], expected_event_bytes)
+
+        self.assertEqual(worker["return_code"], 0)
+
     def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

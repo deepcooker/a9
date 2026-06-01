@@ -1623,46 +1623,47 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                 line = proc.stdout.readline()
                 if line:
                     last_output = time.monotonic()
+                    payload = parse_event_payload(line)
+                    if not payload:
+                        continue
                     event_count += 1
                     event_bytes += len(line.encode("utf-8"))
                     events.write(line)
                     events.flush()
-                    event_type = classify_event(line)
+                    event_type = payload.get("type") or payload.get("event") or payload.get("msg", {}).get("type")
                     if event_type:
-                        event_counts[event_type] = event_counts.get(event_type, 0) + 1
-                    payload = parse_event_payload(line)
-                    if payload:
-                        event_summary = summarize_thread_event(payload)
-                        if event_summary:
-                            fingerprint = json_compact(event_summary)
-                            if fingerprint not in seen_event_summaries:
-                                seen_event_summaries.add(fingerprint)
-                                event_summaries.append(event_summary)
-                            if event_summary.get("item_type") in {"agent_message", "reasoning"}:
-                                last_agent_rationale = str(event_summary.get("text_preview") or "")
-                        if event_summary and event_summary.get("item_type") == "command_execution":
-                            command = str(event_summary.get("command", ""))
-                            blocked = blocked_worker_command(command)
-                            if blocked:
-                                budget_stopped = True
-                                budget_stop_kind = "command_bounds"
-                                budget_reason = f"blocked nested worker command: {blocked}"
-                                proc.kill()
-                                break
-                            violation = live_worker_command_violation(
-                                task,
-                                command,
-                                rationale=last_agent_rationale,
+                        event_counts[str(event_type)] = event_counts.get(str(event_type), 0) + 1
+                    event_summary = summarize_thread_event(payload)
+                    if event_summary:
+                        fingerprint = json_compact(event_summary)
+                        if fingerprint not in seen_event_summaries:
+                            seen_event_summaries.add(fingerprint)
+                            event_summaries.append(event_summary)
+                        if event_summary.get("item_type") in {"agent_message", "reasoning"}:
+                            last_agent_rationale = str(event_summary.get("text_preview") or "")
+                    if event_summary and event_summary.get("item_type") == "command_execution":
+                        command = str(event_summary.get("command", ""))
+                        blocked = blocked_worker_command(command)
+                        if blocked:
+                            budget_stopped = True
+                            budget_stop_kind = "command_bounds"
+                            budget_reason = f"blocked nested worker command: {blocked}"
+                            proc.kill()
+                            break
+                        violation = live_worker_command_violation(
+                            task,
+                            command,
+                            rationale=last_agent_rationale,
+                        )
+                        if violation:
+                            budget_stopped = True
+                            budget_stop_kind = "command_bounds"
+                            budget_reason = (
+                                f"blocked worker command by task bounds: {violation.get('kind')} "
+                                f"{bounded_inline(violation.get('command', ''), 240)}"
                             )
-                            if violation:
-                                budget_stopped = True
-                                budget_stop_kind = "command_bounds"
-                                budget_reason = (
-                                    f"blocked worker command by task bounds: {violation.get('kind')} "
-                                    f"{bounded_inline(violation.get('command', ''), 240)}"
-                                )
-                                proc.kill()
-                                break
+                            proc.kill()
+                            break
                     if event_count > max_events:
                         reason = f"worker event count exceeded {max_events}"
                         if event_budget_mode == "enforce":
