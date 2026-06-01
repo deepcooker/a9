@@ -65,6 +65,34 @@ TASKS_STREAM_KEY = "a9:tasks"
 TASKS_STREAM_GROUP = "a9-worker"
 TASKS_STREAM_TOP_CONSUMERS_LIMIT = 3
 GATEWAY_CONTRACT_EVENT_STALE_SECONDS = 300
+SERVICE_PROCESS_MARKERS = {
+    "control-api": "a9_control_api.py serve",
+    "node-worker": "a9_node.py command-work-loop",
+    "recovery-loop": "a9_recovery_loop.py",
+    "supervisor": "a9_supervisor.py run-loop",
+}
+SERVICE_INTENT_CONTRACT = [
+    {
+        "service": "control-api",
+        "unit_path": str(ROOT / "infra" / "systemd" / "a9-control-api.service"),
+        "start_intent": "python3 scripts/a9_control_api.py serve --host 0.0.0.0 --port 8787",
+    },
+    {
+        "service": "node-worker",
+        "unit_path": str(ROOT / "infra" / "systemd" / "a9-node-worker.service"),
+        "start_intent": "python3 scripts/a9_node.py command-work-loop --block-ms 5000 --timeout 10 --sleep-seconds 1 --min-idle-ms 30000",
+    },
+    {
+        "service": "recovery-loop",
+        "unit_path": str(ROOT / "infra" / "systemd" / "a9-recovery-loop.service"),
+        "start_intent": "python3 scripts/a9_recovery_loop.py --controller-url http://127.0.0.1:8787 --interval-seconds 60 --timeout 10 --max-actions 3",
+    },
+    {
+        "service": "supervisor",
+        "unit_path": str(ROOT / "infra" / "systemd" / "a9-supervisor.service"),
+        "start_intent": "python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error",
+    },
+]
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -384,8 +412,106 @@ def supervisor_status(root: Path = ROOT) -> dict[str, Any]:
         "latest_run": compact_summary(latest_run_summary(root)),
         "progress": read_json(progress_path) if progress_path.exists() else {},
         "daemon_heartbeat": read_json(heartbeat_path) if heartbeat_path.exists() else {},
+        "service_observation": service_observation_status(root),
         "nodes": node_status(root),
         "gateway": gateway_transport_contract(root),
+    }
+
+
+def parse_service_process_table(text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split(None, 3)
+        if len(parts) < 4 or not parts[0].isdigit():
+            continue
+        kind = ""
+        cmd = parts[3]
+        for service, marker in SERVICE_PROCESS_MARKERS.items():
+            if marker in cmd:
+                kind = service
+                break
+        if not kind:
+            continue
+        rows.append(
+            {
+                "service": kind,
+                "pid": int(parts[0]),
+                "ppid": int(parts[1]) if parts[1].isdigit() else 0,
+                "etime": parts[2],
+                "cmd": cmd,
+            }
+        )
+    return rows
+
+
+def service_observed_processes(root: Path = ROOT) -> dict[str, Any]:
+    try:
+        proc = subprocess.run(
+            ["ps", "-eo", "pid,ppid,etime,cmd"],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "degraded", "reason": "ps_probe_failed", "error": str(exc), "processes": []}
+    if proc.returncode != 0:
+        return {
+            "status": "degraded",
+            "reason": "ps_probe_failed",
+            "error": (proc.stdout or "").strip() or "ps return code non-zero",
+            "processes": [],
+        }
+    return {"status": "ok", "reason": "ps_probe_ok", "processes": parse_service_process_table(proc.stdout)}
+
+
+def service_observation_status(root: Path = ROOT) -> dict[str, Any]:
+    observed = service_observed_processes(root)
+    process_rows = observed.get("processes", [])
+    by_service: dict[str, list[dict[str, Any]]] = {}
+    for row in process_rows if isinstance(process_rows, list) else []:
+        service = str(row.get("service") or "")
+        if not service:
+            continue
+        by_service.setdefault(service, []).append(row)
+
+    services: list[dict[str, Any]] = []
+    missing_services: list[str] = []
+    for contract in SERVICE_INTENT_CONTRACT:
+        service = str(contract.get("service") or "")
+        rows = by_service.get(service, [])
+        running = bool(rows)
+        if not running:
+            missing_services.append(service)
+        services.append(
+            {
+                "service": service,
+                "unit_path": contract.get("unit_path"),
+                "start_intent": contract.get("start_intent"),
+                "observed_running": running,
+                "process_count": len(rows),
+                "observed_processes": rows,
+                "observation_status": "running" if running else "missing",
+                "next_action": "observe" if running else "start_service",
+            }
+        )
+
+    return {
+        "status": observed.get("status", "degraded"),
+        "checked_at": utc_now(),
+        "intent": {"services": SERVICE_INTENT_CONTRACT},
+        "observed": {
+            "reason": observed.get("reason", ""),
+            "services": services,
+            "missing_services": missing_services,
+            "missing_count": len(missing_services),
+            "next_action": "observe" if not missing_services else "start_missing_services",
+        },
     }
 
 

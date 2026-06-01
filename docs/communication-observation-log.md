@@ -1781,3 +1781,26 @@ Next monitoring target:
      tests for operational state must model real live-state branches. A worker
      can build the mechanism, but monitor must reject tests that only pass in an
      artificial stopped environment.
+
+84. `/api/status` now exposes service intent vs observed process state for phone-side supervision.
+   - Trigger:
+     mobile control currently needs SSH + manual `ps` to answer whether
+     `control-api`/`node-worker`/`recovery-loop`/`supervisor` are actually
+     running. This violates data-first communication governance.
+   - Mechanism copied:
+     `scripts/a9_service.py` start contract split:
+     service start intent is separate from observed runtime state, with typed
+     follow-up action (`observe` vs `start_missing_services`).
+   - Change:
+     `scripts/a9_control_api.py` `supervisor_status()` now includes
+     `service_observation`:
+     `intent.services[]` (unit path + start intent) and
+     `observed.services[]` (`observed_running`, `process_count`,
+     `observation_status`, `next_action`, `observed_processes`), plus
+     `missing_services`, `missing_count`, and top-level observed `next_action`.
+     Probe is bounded `ps -eo pid,ppid,etime,cmd` only; no blocking gate added.
+   - Verification:
+     `python3 -m unittest tests/test_control_api.py`.
+   - Governance lesson:
+     control-plane API should publish runtime truth directly. Phone is an
+     observer/dispatcher adapter; canonical state remains process evidence.

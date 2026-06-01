@@ -176,13 +176,35 @@ class ControlApiTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            status = mod.supervisor_status(root)
+            original_run = mod.subprocess.run
+            mod.subprocess.run = lambda *args, **kwargs: type(
+                "FakeProc",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": "101 1 00:10 python3 scripts/a9_control_api.py serve --host 0.0.0.0 --port 8787\n",
+                },
+            )()
+            try:
+                status = mod.supervisor_status(root)
+            finally:
+                mod.subprocess.run = original_run
 
         self.assertEqual(status["queued"], 1)
         self.assertEqual(status["latest_run"]["task_id"], "task")
         self.assertEqual(status["progress"]["progress_percent"], 1)
         self.assertEqual(status["nodes"]["count"], 0)
         self.assertEqual(status["gateway"]["status"], "missing")
+        service_observation = status["service_observation"]
+        self.assertEqual(service_observation["status"], "ok")
+        self.assertEqual(service_observation["observed"]["missing_count"], 3)
+        self.assertIn("supervisor", service_observation["observed"]["missing_services"])
+        self.assertEqual(service_observation["observed"]["next_action"], "start_missing_services")
+        self.assertEqual(service_observation["intent"]["services"][0]["service"], "control-api")
+        control_api = next(item for item in service_observation["observed"]["services"] if item["service"] == "control-api")
+        self.assertTrue(control_api["observed_running"])
+        self.assertEqual(control_api["observation_status"], "running")
+        self.assertEqual(control_api["next_action"], "observe")
 
     def test_gateway_transport_contract_runs_local_binary(self):
         mod = load_control_api()
@@ -1613,11 +1635,26 @@ class ControlApiTests(unittest.TestCase):
                     raise AssertionError("write_sse should not be used for /api/status")
 
             old_supervisor_status = mod.supervisor_status
+            original_run = mod.subprocess.run
+            mod.subprocess.run = lambda *args, **kwargs: type(
+                "FakeProc",
+                (),
+                {
+                    "returncode": 0,
+                    "stdout": (
+                        "101 1 00:10 python3 scripts/a9_control_api.py serve --host 0.0.0.0 --port 8787\n"
+                        "201 1 00:09 python3 scripts/a9_node.py command-work-loop --block-ms 5000\n"
+                        "301 1 00:08 python3 scripts/a9_recovery_loop.py --controller-url http://127.0.0.1:8787\n"
+                        "401 1 00:07 python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10\n"
+                    ),
+                },
+            )()
             mod.supervisor_status = lambda: old_supervisor_status(root)
             try:
                 mod.ControlHandler.do_GET(DummyStatusHandler())
             finally:
                 mod.supervisor_status = old_supervisor_status
+                mod.subprocess.run = original_run
 
         self.assertEqual(captured["status"], 200)
         status = captured["payload"]
@@ -1634,6 +1671,9 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["daemon_heartbeat"]["status"], "ok")
         self.assertEqual(status["nodes"]["count"], 1)
         self.assertEqual(status["nodes"]["nodes"][0]["node_id"], "node-a")
+        self.assertEqual(status["service_observation"]["status"], "ok")
+        self.assertEqual(status["service_observation"]["observed"]["missing_count"], 0)
+        self.assertEqual(status["service_observation"]["observed"]["next_action"], "observe")
 
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
         mod = load_control_api()
