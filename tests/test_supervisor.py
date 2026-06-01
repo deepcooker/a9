@@ -7296,6 +7296,58 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_lower_priority_fallback_sources_do_not_duplicate_equivalent_declared_test_check(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        fallback_cases = [
+            ("next_task", "worker_envelope.output.next_task"),
+            ("next", "worker_envelope.output.next"),
+            ("slice", "worker_envelope.output.slice"),
+        ]
+
+        for fallback_key, expected_source in fallback_cases:
+            task = mod.Task(
+                path=mod.DONE_DIR / f"auto-test-sync-fallback-equiv-{fallback_key}.md",
+                task_id=f"auto-test-sync-fallback-equiv-{fallback_key}",
+                prompt="continue fallback test slice",
+                phase="implement",
+                checks=[
+                    "python3 -m py_compile scripts/a9_supervisor.py",
+                    "python3 -m unittest tests/test_supervisor.py",
+                ],
+                allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            )
+            output = {
+                "next_slice": " ",
+                "next_recommended_task": " ",
+                "next_task": " ",
+                "next": " ",
+                "slice": " ",
+                fallback_key: "test: python3 -m unittest tests.test_supervisor",
+            }
+            summary = {
+                "task_id": task.task_id,
+                "status": "pass",
+                "run_dir": str(mod.RUNS_DIR / f"auto-test-sync-fallback-equiv-{fallback_key}-run"),
+                "context_path": str(mod.RUNS_DIR / f"auto-test-sync-fallback-equiv-{fallback_key}-run" / "context.md"),
+                "worker_envelope": {
+                    "status": "pass",
+                    "envelope": {"output": output},
+                },
+            }
+
+            next_path = mod.schedule_next_task(task, summary)
+            self.assertIsNotNone(next_path)
+            assert next_path is not None
+            try:
+                text = next_path.read_text(encoding="utf-8")
+                self.assertIn('phase: "test"', text)
+                self.assertIn(f"next_slice_source: {expected_source}", text)
+                self.assertEqual(text.count('  - "python3 -m unittest tests/test_supervisor.py"'), 1)
+                self.assertNotIn('  - "python3 -m unittest tests.test_supervisor"', text)
+            finally:
+                next_path.unlink(missing_ok=True)
+
     def test_schedule_next_task_blocks_auto_next_when_operator_task_already_queued(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
