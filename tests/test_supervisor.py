@@ -1201,6 +1201,86 @@ Do the work.
         self.assertIn("next_slice_source: worker_envelope.output.next_recommended_task", next_task_text)
         self.assertIn("next_slice_resolution_revision: 1", next_task_text)
 
+    def test_run_one_auto_next_preserves_next_task_fallback_metadata_in_done_and_run_summary(self):
+        env = os.environ.copy()
+        env["A9_SUPERVISOR_WORKER_CMD"] = (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "import json\n"
+            "print(json.dumps({'type':'fake.start'}))\n"
+            "Path('worker-output.txt').write_text('done\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_slice':'   ','next_recommended_task':' ','next_task':'test: preserve next_task fallback metadata symmetry through auto-next summary writes'}}) + '\\n')\n"
+            "print(json.dumps({'type':'fake.done'}))\n"
+            "PY"
+        )
+        task_id = "selftest-auto-next-summary-next-task-fallback-roundtrip"
+        queue_path = ROOT / ".a9" / "tasks" / "queue" / f"{task_id}.md"
+        done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
+        queue_dir = ROOT / ".a9" / "tasks" / "queue"
+
+        with tempfile.TemporaryDirectory() as held_tmp:
+            held_dir = Path(held_tmp)
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            held_paths = []
+            for path in queue_dir.glob("*.md"):
+                held_path = held_dir / path.name
+                shutil.move(str(path), str(held_path))
+                held_paths.append((held_path, path))
+            try:
+                if done_path.exists():
+                    done_path.unlink()
+                subprocess.run(
+                    [
+                        str(SUPERVISOR_PATH),
+                        "enqueue",
+                        task_id,
+                        "fake auto-next next_task fallback roundtrip task",
+                        "--phase",
+                        "test",
+                        "--check",
+                        "test -f worker-output.txt",
+                        "--allow-path",
+                        "worker-output.txt",
+                        "--timeout-seconds",
+                        "60",
+                        "--idle-timeout-seconds",
+                        "20",
+                        "--max-attempts",
+                        "1",
+                    ],
+                    cwd=ROOT,
+                    check=True,
+                )
+                subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
+                done = json.loads(done_path.read_text(encoding="utf-8"))
+                run_summary_path = Path(done["run_dir"]) / "summary.json"
+                run_summary = json.loads(run_summary_path.read_text(encoding="utf-8"))
+                next_task_text = Path(done["next_task_path"]).read_text(encoding="utf-8")
+            finally:
+                queue_path.unlink(missing_ok=True)
+                for path in queue_dir.glob("auto-*-selftest-auto-next-summary-next-task-fallback-roundtrip-*.md"):
+                    path.unlink()
+                for held_path, original_path in held_paths:
+                    if held_path.exists() and not original_path.exists():
+                        shutil.move(str(held_path), str(original_path))
+
+        self.assertEqual(done["status"], "pass")
+        self.assertTrue(done["next_task_path"])
+        self.assertEqual(done["next_task_path"], run_summary.get("next_task_path"))
+        self.assertEqual(
+            done.get("worker_output", {}).get("next_slice_source"),
+            "worker_envelope.output.next_task",
+        )
+        self.assertEqual(
+            run_summary.get("worker_output", {}).get("next_slice_source"),
+            "worker_envelope.output.next_task",
+        )
+        self.assertEqual(done.get("worker_output", {}).get("next_slice_resolution_revision"), 1)
+        self.assertEqual(run_summary.get("worker_output", {}).get("next_slice_resolution_revision"), 1)
+        self.assertIn("next_slice_source: worker_envelope.output.next_task", next_task_text)
+        self.assertIn("next_slice_resolution_revision: 1", next_task_text)
+        self.assertNotIn("worker_envelope.output.next_recommended_task", next_task_text)
+
     def test_run_one_auto_next_creates_next_task_after_gateway_hint_filtering(self):
         env = os.environ.copy()
         env["A9_SUPERVISOR_WORKER_CMD"] = (
