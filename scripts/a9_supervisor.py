@@ -6451,6 +6451,8 @@ def monitor_blocked_repair_checks(task: Task, summary: dict[str, Any], phase: st
             continue
         command = normalize_shell_command(str(finding.get("command", "")))
         command = shell_lc_inner_command(command).strip()
+        if re.match(r"^python\s+-m\s+pytest\b", command):
+            command = re.sub(r"^python\s+-m\s+pytest\b", "python3 -m pytest", command, count=1)
         if not command or not command_looks_like_test(command):
             continue
         # Only promote runnable test commands; avoid non-test commands that merely

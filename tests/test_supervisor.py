@@ -6110,7 +6110,7 @@ index 0000000..3e75765
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
-                "python -m pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression",
+                "python3 -m pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression",
             ],
         )
 
