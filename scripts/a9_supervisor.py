@@ -2962,7 +2962,7 @@ def execution_chain_next_slice(worker_envelope: dict[str, Any]) -> str:
         return ""
     output = envelope.get("output")
     if isinstance(output, dict):
-        value = output.get("next_slice") or output.get("next_task") or output.get("next")
+        value = output.get("next_slice") or output.get("next_recommended_task") or output.get("next_task") or output.get("next")
         return str(value or "")
     return ""
 
@@ -5746,7 +5746,15 @@ def worker_output_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
     output = payload.get("output", {})
-    return output if isinstance(output, dict) else {"raw_output": output}
+    if not isinstance(output, dict):
+        return {"raw_output": output}
+    normalized = dict(output)
+    if not str(normalized.get("next_slice") or "").strip():
+        fallback = normalized.get("next_recommended_task") or normalized.get("next_task") or normalized.get("next")
+        if fallback:
+            normalized["next_slice"] = str(fallback)
+            normalized["next_slice_source"] = "fallback"
+    return normalized
 
 
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:

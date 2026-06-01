@@ -3389,6 +3389,24 @@ Do the work.
         self.assertIn("mechanism_extract: formalize reconnect backoff", prompt)
         self.assertIn("Barter reconnect stream", prompt)
 
+    def test_worker_output_uses_next_recommended_task_as_next_slice_fallback(self):
+        mod = load_supervisor()
+        summary = {
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "changed_files": [],
+                        "next_recommended_task": "Extend active-plan prompt hydration with progress tails.",
+                    }
+                }
+            }
+        }
+
+        output = mod.worker_output_from_summary(summary)
+
+        self.assertEqual(output["next_slice"], "Extend active-plan prompt hydration with progress tails.")
+        self.assertEqual(output["next_slice_source"], "fallback")
+
     def test_next_task_prompt_enforces_worker_prompt_discipline(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="test-discipline", prompt="demo", phase="test")
@@ -4559,6 +4577,38 @@ index 0000000..3e75765
             self.assertIn('phase: "mechanism_extract"', unknown_text)
         finally:
             unknown_next.unlink(missing_ok=True)
+
+    def test_schedule_next_task_accepts_next_recommended_task_fallback(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-ref-fallback.md",
+            task_id="auto-ref-fallback",
+            prompt="scan next reference",
+            phase="reference_scan",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-ref-fallback-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-ref-fallback-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_recommended_task": "Extend active-plan prompt hydration with progress tails."}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "mechanism_extract"', text)
+            self.assertNotIn("auto_next_block", summary)
+            self.assertIn("Extend active-plan prompt hydration", text)
+        finally:
+            next_path.unlink(missing_ok=True)
 
     def test_schedule_next_task_blocks_pass_with_empty_worker_next_slice(self):
         mod = load_supervisor()
