@@ -5735,6 +5735,37 @@ index 0000000..3e75765
             ],
         )
 
+    def test_monitor_blocked_repair_checks_promotes_python_m_pytest_undeclared_check(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="monitor-blocked-checks-pytest",
+            prompt="repair monitor blocked checks",
+            phase="repair",
+            checks=["python3 -m unittest tests/test_control_api.py"],
+        )
+        summary = {
+            "process_governance": {
+                "findings": [
+                    {
+                        "kind": "undeclared_check",
+                        "command": "/bin/bash -lc 'python -m pytest tests/test_supervisor.py::SupervisorTests::test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks'",
+                    },
+                    {"kind": "undeclared_check", "command": "echo python -m pytest tests/test_supervisor.py"},
+                ]
+            }
+        }
+
+        checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
+
+        self.assertEqual(
+            checks,
+            [
+                "python3 -m unittest tests/test_control_api.py",
+                "python -m pytest tests/test_supervisor.py::SupervisorTests::test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks",
+            ],
+        )
+
     def test_monitor_block_summary_projects_hard_gate_for_progress(self):
         mod = load_supervisor()
         monitor_score = {
