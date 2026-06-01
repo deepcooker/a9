@@ -74,8 +74,14 @@ attestation、防上下文丢失、并行 plan 隔离这些机制。
 plan/progress/causal memory，不许直接改文件或派发 worker。
 
 参考项目不是越多越好。哪些机制进入 A9 以
-`docs/reference-adoption-decision.md` 为准：现在先做最小 plan lane 和恢复复述；
-wiki/brain/graph 先作为旁路和派生索引预留，不进入 worker 热路径。
+`docs/reference-adoption-decision.md` 为准：现在先做 A9 自己的最小 plan lane
+和恢复复述，不直接照搬 `planning-with-files` 的角色模型；wiki/brain/graph
+先作为旁路和派生索引预留，不进入 worker 热路径。
+
+A9 plan 的 contract 字段由人类监控者、product/mainline 和 requirements 角色拥有。
+执行 worker 默认只能读 `plan.md`，追加 `findings.md`、`progress.md`、`mistakes.md`；
+如果认为目标、范围、验收或不做项需要调整，必须写 change request，不许静默改 plan
+contract。
 
 ## 当前主线
 

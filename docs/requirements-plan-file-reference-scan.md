@@ -236,7 +236,9 @@ If a worker starts at step 4, it may copy the wrong thing very efficiently.
 
 ## A9 Plan File Shape
 
-A9 should introduce isolated plan directories before broad automation:
+A9 should introduce isolated plan directories before broad automation. This is
+not a direct copy of `planning-with-files`; it is an A9-owned contract with
+stricter role boundaries.
 
 ```text
 .a9/plans/<plan-id>/
@@ -244,8 +246,20 @@ A9 should introduce isolated plan directories before broad automation:
   findings.md
   progress.md
   mistakes.md
+  change_request.md
   attestation.json
 ```
+
+Ownership:
+
+- `plan.md` contract fields are owned by human monitor, product/mainline, and
+  requirements roles.
+- Execution workers read `plan.md` but do not silently change problem, goal,
+  scope, out-of-scope, or acceptance.
+- Workers append evidence to `findings.md`, actions/tests to `progress.md`, and
+  errors/drift to `mistakes.md`.
+- If a worker thinks the plan is wrong, it writes `change_request.md` and stops
+  for monitor review.
 
 The initial `plan.md` should include:
 
@@ -298,8 +312,10 @@ The next useful implementation should be a small plan-file lane:
    only.
 4. Add worker prompt generation from the active plan directory.
 5. Keep missing fields as observation/warnings at first.
-6. Run one 24h worker task from the plan directory and compare quality.
-7. Only later add attestation, hooks, and stop/compact enforcement after the
+6. Add a change-request path instead of letting workers rewrite plan contract
+   fields.
+7. Run one 24h worker task from the plan directory and compare quality.
+8. Only later add attestation, hooks, and stop/compact enforcement after the
    data shape proves useful.
 
 Only after multiple runs should missing fields become blocking policy.

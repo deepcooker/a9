@@ -47,7 +47,7 @@ Not enough:
 
 ## Round 2: What Keeps The Current Task Stable?
 
-Winner: `planning-with-files`, but only for current-task working memory.
+Winner: A9-owned plan lane, inspired by `planning-with-files`.
 
 Reason:
 
@@ -59,8 +59,8 @@ Reason:
 
 Decision:
 
-- Adopt `.a9/plans/<plan-id>/`.
-- Adopt `plan.md`, `findings.md`, `progress.md`, `mistakes.md`.
+- Adopt an A9-specific `.a9/plans/<plan-id>/`.
+- Adopt A9-specific `plan.md`, `findings.md`, `progress.md`, `mistakes.md`.
 - Adopt active plan pointer.
 - Adopt recovery restatement before acting after interruption/resume.
 - Adopt attestation later, after the basic plan lane proves useful.
@@ -71,6 +71,24 @@ Not enough:
 - Do not use one root `task_plan.md` for all A9 work.
 - Do not rely on hooks alone; supervisor and mobile/control must understand
   the plan directory.
+- Do not copy its default role model. It assumes the same agent can freely shape
+  plan phases and decisions. A9 cannot allow an execution worker to silently
+  redefine product goals, requirements, scope, or acceptance.
+
+Role conflict resolution:
+
+| Artifact | Owner | Worker permission |
+| --- | --- | --- |
+| `plan.md` problem/goal/scope/acceptance | human monitor + product/mainline + requirements | read only by default |
+| `plan.md` phase status | monitor/supervisor | propose status change only |
+| `findings.md` reference evidence | worker can append | append with source refs |
+| `progress.md` actions/tests | worker can append | append only |
+| `mistakes.md` errors/drift | worker can append | append only |
+| `change_request.md` | worker can create | propose plan/goal/scope change |
+
+This preserves A9's role boundary: the worker executes and reports; it does not
+become product manager, requirements analyst, or architect by editing the
+contract.
 
 ## Round 3: What Becomes Long-Term Memory?
 
@@ -190,10 +208,12 @@ Derived views can guide work, but they must cite canonical truth.
 ## Must Enter Now
 
 - Requirements-analysis task-shaping card.
-- `.a9/plans/<plan-id>/` isolated plan directory.
+- A9-owned `.a9/plans/<plan-id>/` isolated plan directory.
 - Recovery restatement after interruption/resume.
 - Worker prompt generation from plan/finding/progress evidence.
 - Missing plan fields as observation, not hard gate.
+- Plan contract ownership rules: worker cannot silently change problem, goal,
+  scope, out-of-scope, or acceptance.
 
 ## Should Enter Soon
 
@@ -228,10 +248,12 @@ Build the smallest plan lane:
 2. `.a9/plans/<plan-id>/findings.md`
 3. `.a9/plans/<plan-id>/progress.md`
 4. `.a9/plans/<plan-id>/mistakes.md`
-5. `.a9/plans/.active_plan`
-6. A deterministic `plan-create` helper.
-7. A deterministic `plan-status` helper that prints the recovery restatement.
-8. Supervisor prompt hydration from the active plan.
+5. `.a9/plans/<plan-id>/change_request.md` only when worker proposes scope or
+   acceptance changes.
+6. `.a9/plans/.active_plan`
+7. A deterministic `plan-create` helper.
+8. A deterministic `plan-status` helper that prints the recovery restatement.
+9. Supervisor prompt hydration from the active plan.
 
 The first real run should prove whether workers drift less and whether monitor
 intervention becomes easier.
