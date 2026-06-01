@@ -1706,7 +1706,11 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
             elif proc.poll() is not None:
                 break
 
-        return_code = proc.wait()
+        try:
+            return_code = proc.wait()
+        finally:
+            if proc.stdout is not None and not proc.stdout.closed:
+                proc.stdout.close()
 
     with event_summaries_path.open("w", encoding="utf-8") as summaries:
         for item in event_summaries:
