@@ -1699,6 +1699,43 @@ Do the work.
         self.assertIn("not_doing_now: ", text)
         self.assertIn("why_next_action", text)
 
+    def test_plan_status_prints_must_should_could_contract_excerpt(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-status-contract-scope",
+                    goal_id="goal-status-contract-scope",
+                    contract={
+                        "problem": "Need resume output with scope signals.",
+                        "must": "Keep active contract scope visible during recovery.",
+                        "should": "Show advisory guidance without mutating contract authority.",
+                        "could": "Record broader ideas as next_slice observations only.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                args = type("Args", (), {"plan_id": "plan-status-contract-scope"})()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_status(args)
+                text = buffer.getvalue()
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(code, 0)
+        self.assertIn("must: Keep active contract scope visible during recovery.", text)
+        self.assertIn("should: Show advisory guidance without mutating contract authority.", text)
+        self.assertIn("could: Record broader ideas as next_slice observations only.", text)
+
     def test_update_active_plan_from_run_records_refs_and_progress(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
