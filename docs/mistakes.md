@@ -1161,3 +1161,32 @@
   materialization：把允许的窄切片复制进 worker worktree 或让 supervisor
   支持只读 vendor mount，并让 reference gate 能识别该来源。
 - 这属于任务塑形/参考源码治理问题，不应算作 worker 质量失败。
+
+## 2026-06-01：session 精读时不能让常驻 goal-continuation 抢主线
+
+现象：
+
+- 主控明确要求先做 `session_refresh -> session_close_reading -> causal memory`
+  统筹，暂不继续堆功能。
+- 手动 session mini-flow 跑到 turns 293-454 时，常驻 supervisor 仍启动了
+  `goal-continuation-goal-A9-24h-agent-runtime-Codex-Herme-...`。
+- 该 worker 进入 `codex exec`，消耗了模型 token，并且任务目标是泛化 runtime
+  continuation，不是当前要求的 session 总结。
+- 同轮还观察到同一 turn range 的 close-reading 自动任务出现重复排队，说明
+  session mini-flow 和常驻 auto-next 存在 lane/priority 冲突。
+
+处理：
+
+- 已停止该 `codex exec` 和对应 run-loop。
+- 已把相关 queue/running 文件移到 `.a9/tasks/paused/`，避免继续烧 token。
+- session close-reading 已覆盖到当前 raw session 尾部 turn 454。
+
+规则：
+
+- `session_refresh/session_close_reading/causal_memory` 是高优先级治理 lane。
+- 运行这个 lane 时，必须暂停或隔离普通 goal-continuation。
+- Hermes-like 旁路自动化不能只是“多开一个 agent”。它需要 scheduler lane、
+  role-scoped memory、priority/exclusion、sidecar audit，以及不阻塞主热路径的
+  明确契约。
+- close-reading 的 markdown 不是角色知识。角色只有在 task prompt、memory
+  retrieval、control API 或 role packet 中被注入对应片段时，才“知道”这些内容。

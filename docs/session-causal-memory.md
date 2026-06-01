@@ -188,6 +188,107 @@ Current status:
 - Performance/stability/latency/budget is the second standard and must not hide
   a wrong data model.
 
+### 9. Gate Discipline Was Reframed As Observe First, Block Later
+
+- Problem discovered: repeated fixed numeric gates and token/line limits slowed
+  the project while the business/data/architecture shape was still moving.
+  The user repeatedly challenged why a number such as 80, 100, or 120 should be
+  trusted without a standard.
+- Resulting decision: before the product shape is stable, gates should observe,
+  explain, and collect intervals. They become hard blockers only for fact-source
+  corruption, unsafe/destructive operations, scope/license violations, missing
+  declared tests, or unrecoverable state.
+- Evidence: `docs/session-raw-summary.md` turns 313-322, 333-342, 363-370,
+  391-395.
+
+Current status:
+
+- Active hard rule in `AGENTS.md`.
+- This also explains why audit/review should be async sidecar by default:
+  collect evidence without slowing the hot path.
+
+### 10. Communication Control Stage Reached Summary Boundary
+
+- Problem discovered: A9 kept drifting between feature work and methodology
+  work. The user asked to finish the communication/control slice and then
+  summarize before continuing.
+- Resulting decision: the communication/control slice is usable enough to stop
+  feature expansion and summarize. Completed capabilities include canonical
+  communication status, action plan, bounded repair, recovery-loop observation,
+  suggestion queue, async suggestion review, and mobile controls.
+- Evidence: `docs/session-raw-summary.md` turns 443-452,
+  `docs/stage-handoff-2026-06-01.md`,
+  `docs/communication-observation-log.md` entries 88-96.
+
+Current status:
+
+- Active summary boundary.
+- Do not continue adding communication features until session memory and causal
+  consolidation are updated.
+
+### 11. Session Close Reading Became The Required Next Mainline
+
+- Problem discovered: after many implementation turns, the primary risk was no
+  longer a missing endpoint. It was idea drift: old directions, new features,
+  gate debates, mobile control, communication runtime, and future Hermes-like
+  automation were mixing in context.
+- Resulting decision: before the next implementation slice, A9 must run
+  external Codex/operator session incremental close reading, then manually
+  curate causal memory, idea iteration details, observed problem analysis, and
+  noise removal.
+- Evidence: `docs/session-raw-summary.md` turns 453-454.
+
+Current status:
+
+- Deterministic extraction now covers turns 293-454 with approximate line
+  anchors in `docs/session-raw-summary.md` and
+  `docs/session-raw-close-reading.md`.
+- This deterministic extraction is only an index. The monitor still has to
+  curate causal changes and decide which roles see which memory.
+
+### 12. Role Knowledge Is Not Automatic
+
+- Problem discovered: the user asked whether the things extracted by close
+  reading are actually known by the different roles. The answer is no: a role
+  only knows what its prompt, repo map, task packet, memory retrieval, or control
+  API explicitly injects.
+- Resulting decision: close-reading output must become role-scoped memory, not
+  just markdown. Roles need a memory distribution layer:
+  - product/mainline role sees causal memory, original idea doctrine, current
+    summary boundary, and expired branches.
+  - architecture role sees data shape, runtime state, communication/session
+    boundaries, and reference mechanisms.
+  - test role sees acceptance contracts, schema/state evidence, declared checks,
+    and known failure modes.
+  - execution worker sees only bounded task, relevant doctrine, selected
+    evidence, allowed paths, and reference slices.
+  - monitor role sees all of the above plus drift/quality observations.
+- Evidence: `docs/session-raw-summary.md` turn 454.
+
+Current status:
+
+- Not implemented as a routing layer yet.
+- Until this exists, the monitor must explicitly inject the needed summary and
+  causal anchors into each worker task. Otherwise roles will repeat old errors.
+
+### 13. Resident Goal Continuation Can Fight Session Governance
+
+- Problem discovered: while running the session mini-flow for turns 293-454, the
+  resident supervisor started a `goal-continuation` worker that consumed model
+  tokens and ignored the immediate instruction to finish close reading first.
+- Resulting decision: session governance and summary tasks need an exclusive
+  mode or pause flag for resident goal continuation. Running close-reading with
+  another auto-next loop alive can create duplicate close-reading tasks and
+  unrelated worker execution.
+- Evidence: current run on 2026-06-01 paused
+  `.a9/tasks/paused/goal-continuation-goal-A9-24h-agent-runtime-Codex-Herme-09ec03f5c3-20260601T100112Z.*`.
+
+Current status:
+
+- Operationally mitigated by pausing the queued/running goal-continuation task.
+- Needs a real fix before Hermes-like旁路 automation: scheduler lanes must be
+  explicit, and session-refresh lanes must suppress unrelated goal continuation.
+
 ## Expired Or Downgraded Branches
 
 - "Just build the finance model now": expired for current phase. Finance is a
@@ -203,6 +304,10 @@ Current status:
 - "Let worker run continuously by default": downgraded. Continuous execution is
   allowed only when the current causal state, task scope, and monitor gates are
   aligned.
+- "Every role automatically knows close-reading results": false. Role prompts
+  and memory retrieval must explicitly receive the scoped memory they need.
+- "Goal continuation can run during any summary operation": downgraded. Session
+  governance needs an exclusive/priority lane to avoid drift and duplicate work.
 
 ## Active Decisions
 
@@ -216,6 +321,10 @@ Current status:
    must satisfy data-first and performance-second acceptance.
 7. Mobile/control plane remains product-critical but should not pull the current
    engineering line back into UI polish.
+8. Close-reading outputs are not role knowledge until routed into role-scoped
+   prompt/memory packets.
+9. Hermes-like automation should be designed as sidecar lanes with explicit
+   scheduler priority and memory routing, not as another free-running worker.
 
 ## Required Post-Close-Reading Procedure
 
@@ -238,16 +347,17 @@ After each incremental close-reading batch:
 
 ## Next Bounded Task
 
-Resume the queued communication governance handler test with the upgraded
-monitor:
+Discuss and design the Hermes-like sidecar automation and role-memory routing
+before resuming feature implementation:
 
 ```text
-reconnect governance API test
--> assert response schema/state fields exactly
--> keep test bounded and no raw-session reads
--> run declared check
--> inspect monitor_score gates
+close-reading evidence
+-> causal memory
+-> role-scoped memory packets
+-> async sidecar evaluators/reviewers
+-> monitor decision
+-> bounded worker task
 ```
 
-If the worker drifts, stop and rewrite the task. If it passes with clean gates,
-continue the multi-machine SSH/Tailscale/tmux stability line.
+Only after that should A9 resume communication governance or multi-machine
+SSH/Tailscale/tmux stability work.

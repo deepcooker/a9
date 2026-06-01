@@ -5879,3 +5879,2851 @@ Execution evidence:
 Assistant preview:
 
 - 当前 reliable summary 覆盖到 257，最新 session 到 292。所以这次增量从 258-292；我会排一个 `000-` 前缀的 session_refresh 任务，让它排在现有 worker 队列前面，并只跑两个 deterministic 任务：refresh 和 close_reading，不启动模型 worker。
+
+## Auto Close Reading: Turn 293-302
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-293-302.json`
+- approx JSONL lines: `26857-27143`
+- generated_at: `2026-06-01T09:56:46+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 293
+
+Original user intent:
+
+- line `26857`: 精读后，你忘记流程，你要怎么处理了吗
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 没忘。精读后的标准处理应该是： 1. **先更新记忆主线** 把新增 session 精读结果合并进 `docs/session-raw-summary.md`，明确： - 当前主线是什么 - 哪些想法已过期 - 哪些是新决策 - 下一步不能偏到哪里 2. **再更新执行规则** 如果精读发现方法论变化，就同步更新： - `AGENTS.md` - `docs/project.md` - `docs/collaboration.md` - `docs/mistakes.md` - 相关 worker task 模板或 monitor 规则 3. **再清理噪音** 把过期/重复/误导文档归档，不让后续 worker 读错上下文。 4. **再提交干净** 精读、归档、规则更新要单独 commit，保证后续 worker 起点干净。 5. **最后才恢复 24 小时 worker** 给 worker 的任务必须来自最新主线，不允许直接继续旧队列惯性跑。 这次我只做到了：归档、增量精读、方法论文档、错题本、提交。 我还差一步：**根据精读结果更新主流程文档和执行规则**，尤其是把“MoE 方法论先行、worker 不能继续浅层评分”写进主控规则里。 所以正确下一步是：我现在补更新 `AGENTS.md` / 核心项目文档 / 协作文档，把新主线固化，然后再决定是否恢复 worker。
+
+### Turn 294
+
+Original user intent:
+
+- line `26866`: 因果变迁 和整理 你不做统筹的吗
+
+Execution evidence:
+
+- assistant_messages: `4`
+- tool_calls: `14` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `14`
+
+Assistant preview:
+
+- 对，这一步我漏了。精读后不能只更新 summary，必须做“因果变迁统筹”。 我已经补上并提交： - 新增因果变迁总线： [docs/session-causal-memory.md](/root/a9/docs/session-causal-memory.md:1) - 更新接手流程，让以后必须先读它： [AGENTS.md](/root/a9/AGENTS.md:29) [docs/project.md](/root/a9/docs/project.md:229) [docs/collaboration.md](/root/a9/docs/collaboration.md:156) - 提交：`9f70e16 add session causal memory spine` 现在流程修正为： ```text session_refresh / close_reading -> session-raw-summary 记录 turn/line 证据 -> session-causal-memory 统筹因果变迁、过期支线、当前决策 -> 必要时更新 AGENTS/project/collaboration -> 提交干净 -> 再恢复 24h worker ``` 当前因果结论也明确了：下一刀不是直接跑旧通讯队列，而是先把 `a9_monitor.py` 的浅层 MoE score 改成需求评审委员会 gate。队列还没动，工作区干净。
+
+### Turn 295
+
+Original user intent:
+
+- line `26921`: 可以，先做，因为有了这个，你再观测的时候就可以看到到底质量怎么样，还有一个重要的角色，是产品最终重要的是大局观，主线，就是哲学业务逻辑》大于工程学，就是抓大放小，对外上网考证学习能力，拉回主线不要扩散的这个能力要大重点做，除了这个还有一个就是极致产品不是工程学，本质上他要有推翻和压榨的能力。
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `5` (exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `5`
+
+Assistant preview:
+
+- 我开始做 MoE/monitor 这一刀。重点会按你刚补充的优先级调：不是工程分数优先，而是“主线/哲学业务逻辑/大局观/外部学习校验/拉回主线/必要时推翻方案”的 gate 优先。
+
+### Turn 296
+
+Original user intent:
+
+- line `26938`: 产品的角色要有这个能力
+
+Execution evidence:
+
+- assistant_messages: `0`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+### Turn 297
+
+Original user intent:
+
+- line `26940`: 压榨的能力必须有否则不会出好产品
+
+Execution evidence:
+
+- assistant_messages: `3`
+- tool_calls: `6` (exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command)
+- tool_outputs: `6`
+
+Assistant preview:
+
+- 代码外壳已经升级。现在我先跑 monitor 单测，看哪些旧断言需要按新 council 语义改掉，再补产品/外部学习/压榨这三个新能力的测试。
+
+### Turn 298
+
+Original user intent:
+
+- line `27006`: 其实我还有一个要提醒你的，产品架构师能保证大致不出错的逻辑，就是回到我们之前数据第一，性能第二，数据代表页面结构，所以可以理解建模或者反映到二维的简单表结构（有时候用不到），代表了数据代表真实的业务结构。数据对了业务99%对，只是细节可能不同。性能代表代码质量产品厚度和深度。
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 这个补充要进 gate：产品架构不能只看代码形态，要先看“数据结构是否映射真实业务结构”，再看性能/稳定性是否体现产品厚度。也就是新增两个视角：`data_model_expert` 和 `performance_depth_expert`，并让数据模型进入 hard/progress 判断。
+
+### Turn 299
+
+Original user intent:
+
+- line `27015`: 测试人员也要看表结构验收的
+
+Execution evidence:
+
+- assistant_messages: `0`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+### Turn 300
+
+Original user intent:
+
+- line `27017`: 这样才会比较好
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 对，测试视角也要看数据结构，否则只是接口通了，业务对象可能是错的。我会让 `test_verifiability_expert` 在数据敏感任务里要求测试/验收覆盖 schema/state/event/table，不满足就直接进入 hard gate。
+
+### Turn 301
+
+Original user intent:
+
+- line `27025`: 我觉得我对吗，还是不对，你可以和我沟通
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `27` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `27`
+
+Assistant preview:
+
+- 你这个判断大方向是对的，但我会改成更稳的表述： 数据结构不是业务的 99%，但它通常是业务真实结构的主骨架。数据、表结构、状态、事件如果错了，页面和接口做得再顺也大概率是错产品。剩下的风险在权限、流程、异常、时序、组织规则和用户心理。所以正确顺序是：数据/状态模型第一，流程和异常补齐，性能稳定性体现产品厚度。 我已经把这个落进 monitor 了： - `a9_monitor.py` 从浅层 score 升级成 `requirements_review_council_v1` - 新增/强化了这些关键角色： - `product_mainline_expert`：主线、哲学、业务逻辑优先 - `external_learning_expert`：需要抄/考证时必须有参考证据 - `product_pressure_expert`：推翻弱方案、压榨范围和验收标准 - `data_model_expert`：数据/schema/table/state/event 是否映射真实业务结构 - `performance_depth_expert`：性能、稳定、预算、产品厚度 - `test_verifiability_expert`：测试人员也必须验数据结构，不只是验接口通 - gates 现在是： - `hard_gate` - `tradeoff_gate` - `execution_gate` - `progress_gate` 验证： - `python3 -m unittest tests/test_monitor.py tests.test_supervisor.Sup...
+
+### Turn 302
+
+Original user intent:
+
+- line `27143`: 记住数据第一标准，性能第二标准-其他都不是。继续把
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `39` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `39`
+
+Assistant preview:
+
+- 已按“数据第一、性能第二”继续推进，并实际跑了一轮 worker。 结果： - 规则已固化： - [AGENTS.md](/root/a9/AGENTS.md:29) - [docs/moe-review-methodology.md](/root/a9/docs/moe-review-methodology.md:10) - [docs/session-causal-memory.md](/root/a9/docs/session-causal-memory.md:22) - 恢复并运行了通讯 API 测试任务。 - worker 新增了 `/api/nodes` reconnect governance schema/state 验收测试： [tests/test_control_api.py](/root/a9/tests/test_control_api.py:216) - 相关测试通过：`70 tests OK` - 工作区干净，queue/running 都为空。 关键观测： - supervisor 判定任务 `pass`，声明检查 `python3 -m unittest tests/test_control_api.py` 通过。 - 但新 monitor 正确抓到 worker 过程违规：它擅自跑了未声明的 `pytest`，还把 pytest 缺失写成 next_slice。 - 我没有继续 auto-next，而是监控接管： - cherry-pick 了有价值 patch：`a7c3d07` - 废弃错误 auto-next - 记录错题：`bf...
+
+## Auto Close Reading: Turn 303-312
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-303-312.json`
+- approx JSONL lines: `27288-28706`
+- generated_at: `2026-06-01T09:56:56+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 303
+
+Original user intent:
+
+- line `27288`: 继续
+
+Execution evidence:
+
+- assistant_messages: `17`
+- tool_calls: `51` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `51`
+
+Assistant preview:
+
+- 继续推进完成了三刀，重点是把“监控发现问题”真正接进执行链。 已完成： 1. supervisor 接入 hard gate 阻断 `monitor_score.gates.hard_gate.status == fail` 时，不再自动生成普通 auto-next。 提交：`07858ea block auto next on monitor hard gate` 2. 跑了一轮 24h worker 做了 control API compact summary 暴露 `monitor_score` 的切片。patch 有价值，但 worker 又擅自跑了未声明 `pytest`，monitor 正确 hard gate fail。 我接管后保留 patch，记录过程违规。 提交：`6fefc5d`、`be5a159` 3. control plane 显式暴露 `monitor_block` 现在不是只看到 `status=pass`，还能看到“pass 但被 hard gate 拦截”的结构化状态。 提交：`555a99a surface monitor hard gate block in control plane` 验证： - `python3 -m unittest ...` 相关 72 个测试通过 - `py_compile` 通过 - 当前 git 工作区干净 - queue/running 都为空 当前进度：24h MVP 仍是 100%，但生产长跑治理更进一步。下一步应该继续修“worker 反复擅自跑 pytest”这个执行层问题：把未声明检查从 ...
+
+### Turn 304
+
+Original user intent:
+
+- line `27506`: 继续做
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `23` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin)
+- tool_outputs: `23`
+
+Assistant preview:
+
+- 继续完成了。核心修复是把“worker 擅自跑未声明 pytest”从事后 monitor finding，升级成 supervisor 执行层违规。 本次新增： - `process_governance` - 读取 worker 的 `event_summaries.jsonl` - 发现测试类命令不在 declared checks 里，记录 `undeclared_check` - policy：`declared_checks_are_authoritative` - `decide_status` - `process_governance.status=fail` 时，run 状态变成 `monitor-blocked` - 不再当普通 `pass` - 测试覆盖： - 能抓到未声明 pytest - 即使声明检查通过，也会被 `monitor-blocked` - 错题本更新了这条治理进展 验证： - 相关 74 个测试通过 - `py_compile` 通过 - 当前工作区干净 - queue/running 都为空 - 提交：`5a8041f enforce declared checks in process governance` 现在质量链条更完整了： ```text worker 行为事件 -> process_governance 过程违规 -> monitor_score hard gate -> monitor_block 暴露到 control plane -> auto-next 被阻断 ``` 下一步可以继续跑通讯治理小任务，或者补...
+
+### Turn 305
+
+Original user intent:
+
+- line `27608`: 可以
+
+Execution evidence:
+
+- assistant_messages: `26`
+- tool_calls: `124` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `124`
+
+Assistant preview:
+
+- 已经继续推进并实测了 24 小时机器，结果很有价值。 完成了 4 个提交： - `2b6558d`：`monitor-blocked` 可以路由到 repair 接管任务。 - `ffe744c`：worker worktree 自动 hydrate Codex transport 参考切片，否则它看不到 `reference-projects/codex/...`。 - `0cddaca`：归一化 Spark 常见 envelope 别名 `reference_scan_complete`。 - `8236494`：把 prompt 里的命令边界变成硬治理：禁止的 `ls` / `rg --files`、超限 `sed` 会进入 `monitor-blocked`。 实测结果： - 第一轮失败：Codex 参考路径在 worker worktree 不可见，worker 扩散扫描，爆预算。 - 第二/三轮改善：能读 Codex transport，但 Spark envelope 有别名问题。 - 第四轮验证成功：envelope 通过，但 worker 违反 `sed windows <= 120 lines`，被新 process governance 正确拦成 `monitor-blocked`。 当前状态： - control API 还在跑：`0.0.0.0:8787` - 队列为空。 - auto-loop guard 处于 `tripped`，原因是连续失败/monitor-blocked，这是正确保护，不应该盲目继续堆任务。 - 24h supervis...
+
+### Turn 306
+
+Original user intent:
+
+- line `28121`: 可以
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `17` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command)
+- tool_outputs: `17`
+
+Assistant preview:
+
+- 已完成并提交：`a6ad6ef codify gateway backpressure contract` 这刀把 Codex app-server transport 的核心通信语义落成了 A9 Rust 网关测试合同： - request 遇到满 inbound queue：返回 overload retry error `-32001` - response 遇到满 inbound queue：等待队列释放，不返回 overload - writer queue 满：只丢 overload 反馈，不阻塞、不污染已有 writer queue - 明确容量合同：`128` 验证已过： - `cargo test -p a9-gateway`：21 passed - `cargo build --workspace`：通过，无 warning 当前状态： - git 工作树干净 - 24h queue 为空 - auto-loop guard 仍是 `tripped`，因为前面连续监控拦截了 worker 的超限 `sed` 行为。这是正确保护，不建议直接放开。 整体通信治理进度：约 `50%`。 下一步：把这个纯内存合同接到真实 `a9-gateway` 事件入口，或者先让 24h worker 在这个测试合同下实现最小 transport 模块，我来监控它是否越界。
+
+### Turn 307
+
+Original user intent:
+
+- line `28218`: 继续
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `27` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `27`
+
+Assistant preview:
+
+- 继续完成一刀并提交：`81473fc expose gateway transport contract status` 这次把上一刀的 Rust 通信合同接到了真实可执行入口和控制面： - `a9-gateway transport-contract`：本地运行 Codex-style 回压合同，输出 JSON。 - `scripts/a9_control_api.py status`：现在会返回 `gateway` 状态。 - 手机/控制面能看到： - `status: ok` - `kind: gateway_transport_contract` - `capacity: 128` - `overload_error_code: -32001` - `reason: gateway_contract_pass` 验证已过： - `cargo test -p a9-gateway`：22 passed - `cargo build --workspace`：通过 - control API 相关 4 个 unittest：通过 - `python3 scripts/a9_control_api.py status` 已确认 gateway 合同显示为 pass 当前进度：通信治理约 `55%`。 下一步应该把这个合同从“本地模拟健康检查”推进到“Redis event/控制面事件流”：gateway 合同失败或 backpressure 发生时，要写入 `a9:events`，让手机和 supervisor 能看到真实运行时压力。
+
+### Turn 308
+
+Original user intent:
+
+- line `28342`: 继续
+
+Execution evidence:
+
+- assistant_messages: `9`
+- tool_calls: `29` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `29`
+
+Assistant preview:
+
+- 已继续完成并提交：`11136e3 emit gateway transport contract events` 这刀把 gateway 通信合同从“状态快照”推进到“可 replay 的运行时事件”： - `a9-gateway transport-contract`：默认仍是无副作用本地检查。 - `a9-gateway transport-contract --emit-event`：会写入 Redis Stream `a9:events`。 - 写入事件类型：`gateway_transport_contract` - 事件字段包括： - `status` - `capacity=128` - `overload_error_code=-32001` - `request_overload_returns_retry_error` - `response_waits_on_backpressure` - `writer_full_preserves_existing_message` - `ts` - 命令输出会返回 `event_id`，实测成功：`1779893553470-0` 控制面也补了： - `/api/gateway/transport-contract` - 支持 `?emit_event=1` - `/api/status` 仍只读快照，不会每次刷新都刷 Redis 事件。 验证： - `cargo test -p a9-gateway`：25 passed - `cargo build --workspace`：通过 - control AP...
+
+### Turn 309
+
+Original user intent:
+
+- line `28507`: 继续
+
+Execution evidence:
+
+- assistant_messages: `3`
+- tool_calls: `13` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `13`
+
+Assistant preview:
+
+- 已继续完成并提交：`f923f04 surface gateway contract event evidence` 这刀把事件闭环接上了： - Rust gateway 写入 `a9:events` 的 `gateway_transport_contract` 事件。 - control API 现在会从 Redis Stream 反读最新一条合同事件。 - `/api/status` 的 `gateway.latest_event` 会显示最近一次运行时证据。 实测现在 `/api/status` 能看到： - `gateway.status: ok` - `gateway.reason: gateway_contract_pass` - `gateway.latest_event.status: ok` - `gateway.latest_event.event_id: 1779893553470-0` - `capacity: 128` - `overload_error_code: -32001` 验证： - control API 相关 5 个 unittest：通过 - `python3 -m py_compile scripts/a9_control_api.py`：通过 - git 工作树干净 - queue 为空 通信治理进度：约 `63%`。下一步建议把 `gateway.latest_event` 做成 supervisor/monitor 的判断输入：如果本地合同 pass 但 latest_event 缺失或过旧，就提示“运行时证据缺失”；如果...
+
+### Turn 310
+
+Original user intent:
+
+- line `28570`: 继续
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `12` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `12`
+
+Assistant preview:
+
+- 已继续完成并提交：`d3d28b0 grade gateway runtime evidence freshness` 这刀把 gateway 运行时证据变成 supervisor/手机可用的判定输入： - `gateway.latest_event`：最新 Redis Stream 事件证据。 - `gateway.runtime_evidence`：机器动作判断。 - 本地合同失败：`status=fail action=block` - 本地合同 pass 但事件缺失：`status=degraded action=emit_runtime_event` - 事件失败：`status=fail action=block` - 事件过旧：`status=degraded action=emit_runtime_event` - 事件新鲜：`status=ok action=continue` 我也实测刷新了一次事件： - `event_id: 1779900126603-0` - `/api/status` 现在显示： - `gateway.status: ok` - `gateway.reason: gateway_contract_pass` - `runtime_evidence.status: ok` - `runtime_evidence.action: continue` - `runtime_evidence.reason: gateway_runtime_event_fresh` 验证： - control API 相关 6 个 unittest：通过...
+
+### Turn 311
+
+Original user intent:
+
+- line `28630`: 继续
+
+Execution evidence:
+
+- assistant_messages: `6`
+- tool_calls: `16` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `16`
+
+Assistant preview:
+
+- 已继续完成并提交：`88cc6d3 gate communication auto-next on gateway evidence` 这刀把 gateway runtime evidence 接进了 supervisor auto-next： - 通信相关任务会被 gate： - gateway - Redis/stream - WS/WebSocket - SSH/Tailscale/tmux - mobile/control plane/remote - 只有 `gateway.runtime_evidence.action == continue` 才允许自动排下一步。 - 如果是 `emit_runtime_event` / `block` / missing / stale，就不继续自动推进。 - 非通信任务跳过这个 gate，不影响普通 docs/session/record 工作流。 实测已刷新 gateway event： - `event_id: 1779900453570-0` - `/api/status` 当前显示： - `gateway.status: ok` - `runtime_evidence.status: ok` - `runtime_evidence.action: continue` - `runtime_evidence.reason: gateway_runtime_event_fresh` - `age_seconds: 0` 验证： - supervisor auto-next gate 相关 6 个 unittest：通...
+
+### Turn 312
+
+Original user intent:
+
+- line `28706`: 继续
+
+Execution evidence:
+
+- assistant_messages: `29`
+- tool_calls: `121` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `121`
+
+Assistant preview:
+
+- 已继续跑了几轮，并做了监控介入修复。 当前状态： - 后台 worker：没有在跑，队列 `0`。 - git：干净，`main` ahead `120`。 - auto-loop guard：`tripped`，原因是刚才 repair worker 触发 `retryable-worker-budget`，我没有强行重置。 - 24h runtime 脚手架进度：系统显示 `100%`，但通讯治理这条线还在打磨质量门，不能算功能完成。 - 下一步主线：先修 `repair prompt` 过肥和宽搜索问题，再继续 Barter-rs reconnect/backoff 机制实现。 本轮提交了 4 个关键提交： - `7758b87`：把 worker 通过的 `/api/gateway/transport-contract?emit_event=1` 回归测试合进 `main`。 - `4981089`：worker 没有给 `next_slice` 时，禁止 auto-next 继续乱排队。 - `20e0f83`：修复 `sed windows must be <= 120 lines` 这种写法没被 governance 识别的问题。 - `9eb7c9c`：当 prompt 要求 `targeted rg` 时，worker 对 `.` / `docs .` 这种宽根搜索会被标记为违规，并把本次问题写入 `docs/mistakes.md`。 观测结论： - worker 能选对方向：Barter-rs reconnect/backoff lifecycle ...
+
+## Auto Close Reading: Turn 313-322
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-313-322.json`
+- approx JSONL lines: `29154-29955`
+- generated_at: `2026-06-01T09:57:03+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 313
+
+Original user intent:
+
+- line `29154`: 继续
+
+Execution evidence:
+
+- assistant_messages: `15`
+- tool_calls: `95` (exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `95`
+
+Assistant preview:
+
+- 继续推进了一轮，结果是：worker 暴露问题，我做了监控介入和一刀真实网关能力。 已完成： - 提交 `220b3b3`：supervisor 现在会在 worker 命令刚启动时早停违规命令，不再等任务跑完才判分。 - 拦截 `sed` 超过窗口 - 拦截未声明测试，比如 `pytest` - 拦截宽 `rg docs .` - 拦截 `ls / rg --files` - 提交 `7702774`：`a9-gateway` 的 reconnect decision evidence 增加 `reset_on_success`。 - 失败/重试/终止：`reset_on_success=false` - 连接成功：发出 `connect_success` decision，`reset_on_success=true` - 这补齐了多机器通讯治理里很关键的“成功后状态重置”证据字段。 验证： - `cargo test -p a9-gateway`：26 passed - supervisor 相关测试：passed - git 当前干净，`main` ahead `123` 24h worker 观测： - worker 仍然会犯低级边界错误，比如要求 `sed <=120`，它会跑 `sed -n '1,220p'`。 - 但现在早停已经生效：这次只跑到 9 个事件、约 29KB，就被拦住，没再烧到 120KB+。 - 当前队列：0 - 当前 guard：`watching`，连续失败 1 次，还没 tripped。 整体进度：24h runtime 脚手架约 `...
+
+### Turn 314
+
+Original user intent:
+
+- line `29496`: 继续
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `42` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `42`
+
+Assistant preview:
+
+- 继续完成了两刀，并已提交： - `fa00e45`：`/api/status` 的 `gateway` 里新增 `reconnect.latest_event`，读取 Redis Stream 里的 `gateway_reconnect_decision`。 - `7efe8b4`：新增直接接口 `/api/gateway/reconnect-decision`，手机端可以单独拉最近一次重连/重置状态，不必解析完整 status。 现在 control API 能看到这些字段： - `phase` - `action` - `error_class` - `attempt` - `delay_ms` - `policy_budget_remaining` - `origin` - `reset_on_success` 验证通过： - control API 相关 4 个单测 passed - `python3 -m py_compile scripts/a9_control_api.py` passed - 前一刀 `cargo test -p a9-gateway` 是 26 passed 当前状态： - git 干净，`main` ahead `125` - worker 队列：0 - running：0 - 24h runtime：显示 `100%` - 通讯治理进度：约 `70%` 注意：当前 `gateway.runtime_evidence.action` 是 `emit_runtime_event`，说明 transport contract 的运行时事件过...
+
+### Turn 315
+
+Original user intent:
+
+- line `29660`: 继续
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `17` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `17`
+
+Assistant preview:
+
+- 继续完成一刀并实测了。 新增提交： - `3ed07f7 add gateway health refresh endpoint` 新增能力： - 新接口：`/api/gateway/health-refresh` - 它会主动执行 `a9-gateway transport-contract --emit-event`，刷新 transport contract 运行时证据。 - 同时读取最新 `gateway_reconnect_decision`，并给出 freshness 决策。 - 关键点：如果没有真实 reconnect 事件，不伪造成功，而是返回 `degraded/action=observe`。 实测结果： - transport contract：`ok` - runtime evidence：`continue` - reconnect decision：`missing` - health refresh 总状态：`degraded` 这符合预期：说明通讯基础 contract 是新鲜可用的，但当前还没有真实 gateway reconnect lifecycle 事件。 验证： - control API 6 个相关测试 passed - `python3 -m py_compile scripts/a9_control_api.py` passed - git 干净，`main` ahead `126` - worker 队列 0，running 0 当前通讯治理进度我估到 `75%`。下一步应该让 gateway 提供一个受控的 reconn...
+
+### Turn 316
+
+Original user intent:
+
+- line `29743`: 继续
+
+Execution evidence:
+
+- assistant_messages: `9`
+- tool_calls: `35` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `35`
+
+Assistant preview:
+
+- 继续完成了 gateway reconnect diagnostic，并实测打通。 新增提交： - `efd1c53 add gateway reconnect diagnostic probe` 新增能力： - Rust gateway 新命令： - `a9-gateway reconnect-diagnostic --success` - 写入真实 Redis Stream 事件：`gateway_reconnect_decision` - 字段包含 `origin=diagnostic_success` 和 `reset_on_success=true` - Control API 新接口： - `/api/gateway/reconnect-diagnostic?success=1` - 必须显式带 `success=1`，避免把诊断事件混成自然重连事件。 - `/api/gateway/health-refresh` 现在可以在 diagnostic 后看到 reconnect evidence fresh。 实测结果： - `target/debug/a9-gateway reconnect-diagnostic --success` - 返回 `status=ok` - 生成 event_id - 随后 `gateway_health_refresh(...)` - 总状态：`ok` - transport contract：`continue/fresh` - reconnect decision：`continue/fresh` - `reset_on_...
+
+### Turn 317
+
+Original user intent:
+
+- line `29901`: 是让24小时机器做吗，你监控介入吗
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 刚才主要不是让 24 小时机器做，是我直接做的。 原因很明确：24h worker 连续两次在很小任务里违反边界： - `sed -n '1,220p'`，超过 120 行限制 - 先跑 `pytest`，再跑错 unittest 类名 - 宽 `rg docs .` 打爆 event budget 所以我先切到“监控者介入”模式，把关键治理补上： - live command bound 早停 - gateway reconnect diagnostic - control API health refresh 现在适合重新让 24h 机器做，但要投更小任务，我来监控。下一步可以让它做手机/control UI 接入这三个入口： - `/api/gateway/health-refresh` - `/api/gateway/reconnect-diagnostic?success=1` - `/api/gateway/reconnect-decision` 我会继续盯它的命令、读文件窗口、测试和产物；一旦越界，supervisor 会早停，我再介入修。
+
+### Turn 318
+
+Original user intent:
+
+- line `29909`: 120行的限制，为什么要做
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 120 行限制是为了控 token、控噪音、控跑偏。 之前 worker 出问题的模式很稳定： - 一上来 `sed -n '1,220p'`、`1,240p`，一次读太多。 - 输出进 event log，event bytes 很快爆。 - 大段源码/日志进上下文后，它开始“看似理解，实际发散”。 - 最后不是烧 token，就是自作主张跑 pytest、读无关文档、污染 next task。 所以 120 行不是业务规则，是执行机器的治理阈值： 1. 防 token 爆炸 24h 机器长期跑，不能每轮都把大文件、大日志塞进上下文。 2. 强制它先 `rg -n` 定位 正确流程应该是：先找入口，再读小窗口，不是整段扫。 3. 方便监控介入 小窗口 evidence 清楚，哪里读了、为什么读，一眼能看懂。 4. 防止 Spark 小模型发散 Spark 便宜快，但纪律差；窗口越大越容易跑偏。 不是说永远只能读 120 行。后面可以做成按任务等级动态： - 普通 worker：`<=120` - reference_scan：`<=120` - deep close reading：按批次，例如每批 10 turn 或 200-300 行，但要专门任务 - 监控者/你我主窗口：可以读更大，但要有目的 现在这个阶段，120 行是刹车，不是终点。
+
+### Turn 319
+
+Original user intent:
+
+- line `29917`: 这个可能120行他们能理解吗，这个gate合理吗
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 不完全合理。120 行这个 gate 对“防爆 token”有效，但对“让 worker 正确理解复杂机制”不一定合理。 更准确地说： - 合理点：它能强制 worker 不要一口吞大文件，避免 Spark 发散和 event budget 爆。 - 不合理点：Barter-rs / Codex 这种机制，经常一个函数或状态机跨 150-300 行，硬切 120 行会破坏语义连续性。 - 真正要管的不是“行数”，而是“读取预算 + 读取目的 + 是否有定位锚点 + 输出大小”。 所以 120 行应该降级为默认软阈值，不该是唯一硬 gate。 我建议改成分层： 1. 普通实现/测试任务 默认 `sed <=120`，硬 gate。 2. reference_scan / mechanism_extract 允许 `sed <=240`，但必须满足： - 先有 targeted `rg -n` - 文件必须在任务声明的 reference scope 内 - 同一文件最多 2-3 个窗口 - 总 event bytes 仍受限 3. session 精读 / deep reading 不用 sed 行数硬卡，改用“批次预算”： - 每批 N turn / N KB - 必须落盘摘要和行号 - 不许混到实现任务里 4. 监控者介入 可以读更大，但要记录为什么。 下一刀我应该把 supervisor 的 command bound 从单一 `sed windows <= 120` 改成 task-aware policy，比如： - prompt 写 `sed windows <...
+
+### Turn 320
+
+Original user intent:
+
+- line `29925`: 我觉得还是不太合理，可以分批和说明原因
+
+Execution evidence:
+
+- assistant_messages: `2`
+- tool_calls: `7` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `7`
+
+Assistant preview:
+
+- 我先把这个 gate 改成“基础窗口 + 分批例外 + 必须说明原因”的形式。这样 worker 能理解为什么被允许读更大窗口，也不会放开成随便整文件吞上下文。
+
+### Turn 321
+
+Original user intent:
+
+- line `29953`: 另外一个，这个我理解先把要设置限制，先观查，分批+原因就好
+
+Execution evidence:
+
+- assistant_messages: `0`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+### Turn 322
+
+Original user intent:
+
+- line `29955`: 同时可以放大一些
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `52` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `52`
+
+Assistant preview:
+
+- 改完并提交了：`9670a27 Relax sed read governance with rationale` 这刀把 120 行硬限制改成了更合理的观测型治理： - soft window 至少放大到 `180` 行。 - 超过 soft window 不直接杀任务，但 worker 要先说明为什么要分批读。 - `reference_scan / mechanism_extract / session_close_reading` 这类读参考项目阶段允许更大的 bounded batch。 - 超过 hard window 才 live block。 - post-run 会记录： - `batched_read_with_rationale` - `command_window_missing_rationale` - `command_window_exceeded` 验证： - 相关 6 个 supervisor 测试通过。 - `python3 -m py_compile scripts/a9_supervisor.py` 通过。 - `git diff --check` 通过。 - 全量 `tests.test_supervisor` 有一个旧的通信 runtime gate 环境相关测试失败，和这刀无关，我没有混改。 当前分支：`main...origin/main [ahead 128]`。
+
+## Auto Close Reading: Turn 323-332
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-323-332.json`
+- approx JSONL lines: `30178-32298`
+- generated_at: `2026-06-01T09:57:13+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 323
+
+Original user intent:
+
+- line `30178`: 现在可以24小时做了吗
+
+Execution evidence:
+
+- assistant_messages: `11`
+- tool_calls: `44` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `44`
+
+Assistant preview:
+
+- 第一轮已经结束，结论是 `needs-repair`，原因不是代码失败，而是 worker final envelope 协议又写错了 `protocolVersion`。这正好说明现在还不能“完全放飞 24 小时”，必须带监控和自动 repair。当前 run-loop 还在收尾持久化，我等它退出。
+
+### Turn 324
+
+Original user intent:
+
+- line `30335`: 质量大于行数，
+
+Execution evidence:
+
+- assistant_messages: `18`
+- tool_calls: `67` (write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `67`
+
+Assistant preview:
+
+- 对，已经按“质量大于行数”改了，并实测了一轮。 这次做了三件关键事： 1. 行数不再是主判断 `220/260` 行这种有原因、有边界、读目标文件的读取，只记录为 info，不作为阻断。 2. 真正质量问题进入阻断 无关 session/service 读取、宽扫描、错误 envelope、不可执行 next_slice、未声明测试才是重点。 3. 修了两个误伤 - Barter-rs 的 `strategy/on_disconnect.rs` 不再被误判为业务/量化漂移。 - `python3 -m unittest tests.test_remote` 和 `python3 -m unittest tests/test_remote.py` 视为同一个测试目标。 并且接管了 worker 被误回滚的有效 patch，已落地： - 新增 `scripts/a9_remote.py::gateway_reconnect_decision(...)` - 补 `tests/test_remote.py` 6 个重连决策测试 - 记录 copied mechanism 验证通过： - `tests/test_remote.py` - `tests.test_monitor` - 相关 supervisor 测试 - `py_compile` - `git diff --check` 提交： - `75830e2 Prioritize monitor quality over read length` - `04caf2c Add remote reconnect decisi...
+
+### Turn 325
+
+Original user intent:
+
+- line `30609`: 继续
+
+Execution evidence:
+
+- assistant_messages: `25`
+- tool_calls: `116` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin)
+- tool_outputs: `116`
+
+Assistant preview:
+
+- 本轮继续跑了 2 刀 24小时 worker，我监控并合入主线了。 完成内容： - 合入 `3d5be9a`：控制面现在不会忽略 node 自报 `degraded/error/failed`，会转成 `connection_state=degraded`、`connection_action=reconnect`、`connection_action_reason=heartbeat_reported_degraded`；离线年龄仍然优先。 - 合入 `1b02397`：补了真实链路测试，覆盖 `heartbeat_node -> node_status -> /api/nodes -> Redis JSON.SET/XADD`，不是只测 helper。 - 我额外监控修正了上一刀：`offline` 不能是 `continue`，已改成 `escalate` 并补测。 验证： - `python3 -m unittest tests/test_control_api.py`：80 tests OK - `python3 -m unittest tests/test_node.py`：9 tests OK - `git diff --check`：通过 - 当前队列：`queued=0 running=0 done=158` 质量观察： - worker 这两轮质量合格，能自己修失败测试。 - 仍有问题：它会读 `sed -n '1,260p'` 这种偏粗窗口，虽然没有违规，但后续 prompt 要继续压成“先 rg 定位，再读局部”。 当前进度：24h supervi...
+
+### Turn 326
+
+Original user intent:
+
+- line `31015`: 继续
+
+Execution evidence:
+
+- assistant_messages: `19`
+- tool_calls: `80` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `80`
+
+Assistant preview:
+
+- 继续推进了一轮，并且这轮很好地暴露了 worker 质量边界。 完成： - `60cf476`：worker 增加 `communication_followup`，让 `node_status` 输出机器可读的通讯 follow-up。 - `295e5c0`：worker 失败后我接手，补了 `node_status(root)` 级集成测试，并修了同优先级 node evidence 聚合。 - `8a183a3`：把这次 worker 失败原因写入错题本，后续避免重复 fake Redis 夹具导致机械修补。 验证： - `python3 -m unittest tests/test_control_api.py tests/test_node.py`：95 tests OK - `git diff --check`：通过 - 当前队列：`queued=0 running=0 done=160` 监控结论： - worker 方向对，但在重复测试夹具里补丁定位不稳，最后用了机械 rewrite，触发 `retryable-worker-budget`，supervisor 已回滚。 - 我已保留有效思想并手动落地，主线是干净的。 当前通讯治理进度约 70%。下一刀建议先抽一个测试 fake Redis helper，降低 worker 后续修测试时的重复噪音，然后继续把 `communication_followup` 接到手机/control API 展示和操作决策上。
+
+### Turn 327
+
+Original user intent:
+
+- line `31295`: 继续
+
+Execution evidence:
+
+- assistant_messages: `18`
+- tool_calls: `71` (exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command, exec_command, write_stdin, exec_command, exec_command)
+- tool_outputs: `71`
+
+Assistant preview:
+
+- 这轮完成了，并且我做了监控介入。 24h worker 跑了 1 轮，使用的是 `gpt-5.3-codex-spark`。它产出了 SSH probe timeout 治理方案，但我发现隐藏问题：它复用 `gateway_reconnect_decision()` 时没传 retry budget，真实路径会把 timeout 误判成 `terminate`。所以我没有合 worker commit，改由主控接管修复并提交。 已落主线提交： `082d5cd Handle probe node SSH timeout governance` 完成内容： - `probe_node()` 现在有 SSH probe 执行超时，不会卡死 control API。 - timeout 会变成确定性状态：`failed / return_code=124 / timed_out=true / retry / ssh_connect_timeout`。 - node registry 会写入 reconnect 状态、backoff、lifecycle，手机/控制面能看到。 - 修复并测试了 `gateway_reconnect_decision()` 的 budget 默认值陷阱。 - `docs/mistakes.md` 记录了这次 worker “测试通过但漏真实 helper 默认值”的错题。 验证通过： - `python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_nod...
+
+### Turn 328
+
+Original user intent:
+
+- line `31571`: 继续
+
+Execution evidence:
+
+- assistant_messages: `22`
+- tool_calls: `81` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `81`
+
+Assistant preview:
+
+- 本轮继续推进了 24h worker + 主控监控闭环，已合入并验收。 完成提交： - `95c5aee`：`probe_node` 写入 probe evidence，并返回 `evidence_path` - `04df4c9`：`node_status` 暴露最新 probe evidence metadata，手机端可直接看到最近 SSH probe 诊断 - `af9b939`：主控修复 latest evidence 排序不稳定问题 - `00671a7`：补 malformed probe evidence 回归测试，坏 evidence 不污染 `node_status` 验证： - `python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_node.py` - 113 tests OK - `git diff --check` OK - 当前 worker 队列：0 - 当前运行中 worker：0 - 工作区干净 监控质量观察： - worker 方向基本对，能按现有 tmux evidence pattern 抄。 - 仍会漏细节：mtime 排序在 main 上暴露了不稳定，我已主控介入修复并写入错题本。 - Spark 速度可以，但 token 仍偏高，后面需要继续压上下文包和读文件范围。 通讯治理进度估算：**45%**。现在已经有 SSH probe timeout 治理、probe evidence、node_status 诊断暴露、坏 ev...
+
+### Turn 329
+
+Original user intent:
+
+- line `31863`: 继续
+
+Execution evidence:
+
+- assistant_messages: `9`
+- tool_calls: `25` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, write_stdin, write_stdin)
+- tool_outputs: `25`
+
+Assistant preview:
+
+- 继续推进了一刀多机器接入能力，并做了主控修正。 已完成提交： - `2ecbfce` worker 提交：remote bootstrap 安装 `.a9/remote-node/heartbeat.sh` - `84f6f1b` 主控修正：修 heartbeat shell 真实远端执行风险 这轮新增能力： - `scripts/a9_remote.py` 的 bootstrap 现在会写入 `.a9/remote-node/heartbeat.sh` - heartbeat 脚本支持： - POST 到 `$CONTROLLER_URL/api/nodes/heartbeat` - 上报 `node_id/status/current_task/message/load/capabilities` - `A9_HEARTBEAT_ONCE=1` 单次 smoke test - 默认循环 heartbeat - 不自动启动 daemon/systemd/tmux，仍保持安全边界 监控介入点： - worker 方向对，但生成脚本有两个真实 shell 风险： - 未引用 heredoc 会提前展开脚本变量 - shell 变量未 `export`，Python 子进程读不到 - 我已修复为 `<<'EOF'`，并显式 `export NODE_ID STATUS CURRENT_TASK MESSAGE LOAD CAPABILITIES` - 已写入 `docs/mistakes.md` 验证： - `python3 -m unittest tests/test_re...
+
+### Turn 330
+
+Original user intent:
+
+- line `31968`: 继续
+
+Execution evidence:
+
+- assistant_messages: `11`
+- tool_calls: `42` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `42`
+
+Assistant preview:
+
+- 继续推进了一轮，已完成并验收。 本轮新增能力： - `heartbeat_tmux_plan_node(...)` - 生成远端 heartbeat loop 的 tmux 启动计划 - 只生成 plan/evidence，不执行 - 返回 `command_preview` - 写入 `heartbeat-tmux-plan` evidence - 支持默认循环 heartbeat - 支持 `smoke_test=True` 时加入 `A9_HEARTBEAT_ONCE=1` 已合入提交： - `3617095`：worker 实现 heartbeat tmux 非执行启动计划 - `d532a4f`：worker 做 shell quoting hardening - `1971984`：主控修正 tmux shell-command 嵌套 quoting，并写错题本 监控介入点： - worker 方向对，但第一次 hardening 只 quote 了路径，没有把 `tmux new-session` 的 shell-command 作为单个安全参数处理。 - 我已修成两层 quote：先 quote 内部 env/script，再 quote 整条 run command。 - 已记录到 `docs/mistakes.md`：tmux shell-command 必须是单个安全参数。 验证： - `python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_node...
+
+### Turn 331
+
+Original user intent:
+
+- line `32123`: 继续
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `53` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `53`
+
+Assistant preview:
+
+- 这轮继续把“受控执行入口”打通了。 已完成提交： - `1a8b029`：实现 `heartbeat_tmux_start_node` - `515defd`：补 route 和 non-zero failure 回归测试 新增能力： - 新增 remote gate command：`nodes.heartbeat.tmux.start` - 新增 `/api/nodes/heartbeat-tmux-start` - 只能通过 `phone_control_arm(group=remote)` 后执行 - 只 replay 已存在的 `heartbeat-tmux-plan` evidence，不从 payload 临时拼命令 - 执行后写 `heartbeat-tmux-start` evidence - 返回明确状态： - `ok -> heartbeat_action=continue` - `timeout -> heartbeat_action=retry` - `nonzero -> heartbeat_action=repair` - `disarmed -> wait_for_approval` 验证： - `python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_node.py` - 121 tests OK - `git diff --check` OK - 队列：0 - 运行中 worker：0 - 工作区干净 监控观察： - worker 第一轮...
+
+### Turn 332
+
+Original user intent:
+
+- line `32298`: 继续
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `24` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `24`
+
+Assistant preview:
+
+- 这一轮补完了 heartbeat tmux start 的错误路径包络。 已合入： - `8fe79a4`：bad evidence / missing evidence_path 回归测试 新增覆盖： - `heartbeat_tmux_start_node` 如果传入普通 `tmux-plan` evidence，会明确 `ValueError: evidence is not a heartbeat tmux plan` - 确认这种错误不会调用 `subprocess.run` - `/api/nodes/heartbeat-tmux-start` 缺少 `evidence_path` 时返回 HTTP 400 - 确认 route 错误路径也不会执行远端命令 验证： - `python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_node.py` - 123 tests OK - `git diff --check` OK - 队列：0 - 运行中 worker：0 - 工作区干净 监控观察： - worker 只补测试，方向对。 - 轻微问题：这轮没有输出合格 JSON envelope，并额外跑了 `git status/git diff`，属于输出/纪律噪音，不影响 patch 质量。 - 当前远端 heartbeat 已形成最小闭环：bootstrap 安装脚本 -> tmux plan -> phone-control gated start -> sta...
+
+## Auto Close Reading: Turn 333-342
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-333-342.json`
+- approx JSONL lines: `32380-33553`
+- generated_at: `2026-06-01T09:57:20+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 333
+
+Original user intent:
+
+- line `32380`: 继续
+
+Execution evidence:
+
+- assistant_messages: `6`
+- tool_calls: `17` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `17`
+
+Assistant preview:
+
+- a2 通过了，测试 125 个 OK。它仍然有轻微读文件噪音，但 patch 方向符合：只做 evidence 聚合，不碰执行和路由。现在验 patch 细节。
+
+### Turn 334
+
+Original user intent:
+
+- line `32439`: 这些口径是否太严了，因为现在的大模型你也不知道他出什么
+
+Execution evidence:
+
+- assistant_messages: `9`
+- tool_calls: `23` (write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `23`
+
+Assistant preview:
+
+- 不算太严，原因正是你说的：现在的大模型输出不可预测，所以规则不是为了限制它“发挥”，而是为了把不可预测关进可验证流程里。 但要分层： - **必须严**：权限、scope、测试、证据、license、git 干净、失败不掩盖。这些是安全边界。 - **不能太死**：行数、输出格式、一次任务做多少、分析深度。这里应该是“观察 + 分批 + 说明原因”，不要一刀切卡死。 - **监控者职责**：worker 可以犯错，但必须让错误可见、可复盘、可修。刚才这轮就是例子：worker 功能做成了，但最新 evidence 排序只按 `mtime`，我发现后补了稳定排序并提交。 本轮已收尾： - 新提交：`de5729f Stabilize heartbeat start evidence ordering` - 测试：`python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_node.py` - 结果：`125 tests OK` - `git diff --check`：通过 - 当前队列：`queued: 0` - 当前运行：`running: 0` 结论：口径方向对，但要改成“核心治理严，执行弹性宽”。尤其 120 行这种限制不应该是硬 gate，应该改成建议分批、超过要写原因；质量大于行数。
+
+### Turn 335
+
+Original user intent:
+
+- line `32536`: 继续
+
+Execution evidence:
+
+- assistant_messages: `21`
+- tool_calls: `85` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `85`
+
+Assistant preview:
+
+- 继续跑了两轮，结果如下： 第一轮 worker 成功： - 新增 `node_status` 缺失 heartbeat-start evidence 的负向测试。 - 合入主线：`3286da7` - 测试：`126 tests OK` 第二轮 worker 出现真实治理问题： - Spark 中途报 `Selected model is at capacity`。 - worker 已经产出合理 patch，但没有 final envelope，supervisor 标记 `retryable-worker-failed` 并回滚。 - 我接管半成品，补上： - `/api/nodes/status` alias - API 级 contract 测试 - 错题本记录这次“模型容量失败后的半成品不能只交给自动重试” - 合入主线：`ef406e1` 当前状态： - `queued: 0` - `running: 0` - git 干净 - 测试：`python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_node.py` - 结果：`127 tests OK` 通讯治理进度我现在给 **约 55%**。这轮虽然功能小，但验证了监控模式是有价值的：worker 失败不代表产物没价值，监控者要能读 patch、判断方向、接管修复、清理运行态。下一步应继续做多机器接入闭环里的实际执行路径：probe -> bootstrap -> tmux heartbeat start -> ...
+
+### Turn 336
+
+Original user intent:
+
+- line `32854`: 继续
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `28` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `28`
+
+Assistant preview:
+
+- 继续跑了一轮 24h worker，质量这轮是合格的。 完成内容： - 修了 `latest_tmux_action_for_node()` 的 latest evidence 排序。 - 之前 `probe`、`heartbeat-tmux-start` 已经用稳定排序，现在 `tmux-*` evidence 也统一为 `mtime + 文件名时间戳后缀`，避免同一秒/同一 mtime 下选错旧证据。 - 新增 tied-mtime 回归测试。 - 更新 `docs/mistakes.md`，记录 tmux evidence 也有同类 mtime 陷阱。 合入主线： - `bd423f2 a9 worker: stabilize-latest-tmux-evidence-ordering-20260528 attempt snapshot` 验证： - `python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_node.py` - `128 tests OK` - `git diff --check` 通过 - `queued: 0` - `running: 0` - git 干净 进度：通讯治理约 **56%-58%**。这轮把证据链稳定性又补了一块。下一步建议继续往真正闭环走：`probe -> bootstrap plan/dry-run -> tmux ensure/status -> heartbeat-tmux-start -> node_status` 做...
+
+### Turn 337
+
+Original user intent:
+
+- line `32955`: 继续
+
+Execution evidence:
+
+- assistant_messages: `13`
+- tool_calls: `46` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `46`
+
+Assistant preview:
+
+- 继续完成了一轮，并处理了一个监控问题。 先跑的端到端任务失败了一次： - 原因：worker 大窗口读取 `tests/test_control_api.py`，触发 `worker event bytes exceeded 120000`。 - 我停止 run-loop，清理 stale queue/running，并把这个写入 `docs/mistakes.md`。 - 结论：端到端任务也必须按锚点小窗口读文件，不能扫大测试文件。 随后重发窄任务，成功： - 新增 fake-SSH 生命周期 contract 测试： `test_fake_ssh_lifecycle_probe_tmux_heartbeat_updates_node_status` - 覆盖链路： `probe_node -> tmux_plan -> tmux_status -> heartbeat_tmux_plan -> phone_control_arm -> heartbeat_tmux_start -> node_status` - 全程 fake `subprocess.run`，不碰真实 SSH。 - 断言 SSH argv、`ConnectTimeout`、tmux evidence、heartbeat-start evidence、`node_status` 聚合字段。 合入主线： - `161018c a9 worker: multimachine-fake-lifecycle-contract-narrow-20260528 attempt snapshot` - `bac51...
+
+### Turn 338
+
+Original user intent:
+
+- line `33118`: 继续
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `36` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `36`
+
+Assistant preview:
+
+- 继续完成一轮，但这轮主要价值是发现并处理了一个治理细节。 worker 实际做对了： - 新增负向 fake-SSH lifecycle 测试： `test_fake_ssh_lifecycle_tmux_missing_then_heartbeat_start_failed_keeps_both_evidence` - 覆盖： `probe success -> tmux missing/repair -> heartbeat start failed/repair -> node_status 保留两类 evidence` - 全程 fake `subprocess.run`，无真实 SSH。 - worker 自己跑过：`130 tests OK` 但 supervisor 打回了： - 原因不是代码问题，而是 final envelope 写成了 `protocolVersion: "openclaw/v1"`。 - strict gate 要求数字 `protocolVersion: 1`。 - 所以我接管 patch，复测后提交，并把这条写入错题本。 合入主线： - `de511ea Add negative fake lifecycle contract` 验证： - `python3 -m unittest tests/test_control_api.py tests/test_remote.py tests/test_node.py` - `130 tests OK` - `git diff --check` 通过 - `queued: 0` - `r...
+
+### Turn 339
+
+Original user intent:
+
+- line `33246`: 继续
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `51` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `51`
+
+Assistant preview:
+
+- 继续完成了一刀 supervisor 治理修复。 这次修的是刚才暴露的 strict envelope 问题： - 之前 worker 写 `protocolVersion: "openclaw/v1"` 会被打回。 - 现已在 `scripts/a9_supervisor.py` 加入窄 alias： `openclaw/v1 -> 1` - 非法协议比如 `v2` 仍然失败。 - 新增回归测试： `test_worker_envelope_protocol_version_alias_openclaw_v1_normalizes_to_1` 顺手修了一个已有测试不稳定点： - `test_schedule_next_task_records_deterministically_without_record_worker` - 它会被当前 gateway runtime gate 状态影响。 - 现在测试里显式 stub 掉 gateway gate，只测 deterministic record 本身。 验证： - `python3 -m unittest tests/test_supervisor.py tests/test_control_api.py tests/test_remote.py tests/test_node.py` - `231 tests OK` - `git diff --check` 通过 - `queued: 0` - `running: 0` - git 干净 提交： - `6254381 Normalize openclaw v1 w...
+
+### Turn 340
+
+Original user intent:
+
+- line `33445`: 继续
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `28` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `28`
+
+Assistant preview:
+
+- 继续完成一轮，worker 质量正常。 这轮做的是 monitor/MOE 验收补强： - 新增测试： `test_communication_control_api_requires_explicit_event_state_schema` - 覆盖通信控制 API 任务： - 缺少 `Data model / event / state / schema` 时，`data_model_expert` 进入 hard gate。 - 明确写出 node table、heartbeat event stream、tmux evidence state、command status schema 后，不再触发 `data_model_not_explicit`。 - 没改 monitor 运行代码，只补测试。 合入主线： - `5cf34e1 a9 worker: monitor-communication-data-state-gate-20260528 attempt snapshot` 验证： - `python3 -m unittest tests/test_monitor.py` - `11 tests OK` - `git diff --check` 通过 - `queued: 0` - `running: 0` - git 干净 当前通讯治理进度：约 **64%**。下一步建议继续补 `performance_depth_expert` 和通信任务联合 gate：通信/SSH/tmux/Redis 任务如果没有 latency、timeout、retry、bu...
+
+### Turn 341
+
+Original user intent:
+
+- line `33545`: 告知我一下为什么不是24小时做，而是你再做，告知理由可以接收
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 可以接受。现在不是纯 24 小时放飞，是因为这几轮都在做“监控系统本身”的治理修补，属于我这个主控/监控位该接管的部分。 具体原因： 1. **worker 会犯系统性小错** 例如 `protocolVersion: "openclaw/v1"`、大窗口读测试文件导致 event budget 爆、模型容量失败后留下半成品。这些不是普通业务实现问题，而是执行机器自身的流程缺陷。 2. **如果继续让 24h worker 自己修自己，会循环烧 token** 好 patch 可能因为 envelope 小错被回滚，然后下一轮又重做同一件事。这里必须由监控者判断：patch 是否有价值、是否接管、是否清理 queue/running。 3. **我做的是“监控介入”和“规则修补”，不是替 worker 干全部活** 真正新增功能/测试还是让 worker 做：fake lifecycle、negative lifecycle、monitor gate 都是 worker 产出。我主要负责发现它哪里被 gate 打回、哪里跑偏、哪里需要补 supervisor 规则。 4. **当前阶段还没到完全无人值守** 现在是试炼期。目标是把失败模式记录下来并修掉，等 envelope、budget、scope、session、队列恢复这些稳定后，再放大到更长时间自动跑。 所以原则是： **worker 做可边界化执行；我监控、验收、接管异常、修运行时治理。** 这是为了让后面真正 24 小时运行不反复死在同一类小问题上。
+
+### Turn 342
+
+Original user intent:
+
+- line `33553`: ok，继续
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `24` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `24`
+
+Assistant preview:
+
+- 继续完成一轮，这次是让 24h worker 做的，我只监控和合并。 完成内容： - 新增 monitor 测试： `test_communication_task_requires_explicit_performance_depth_bounds` - 验证通信/SSH/tmux/Redis/control API 任务： - 缺少 latency / timeout / retry budget / stability / event budget 时，会触发 `performance_depth_not_explicit`。 - 明确写出这些性能边界后，不再触发该 finding。 - 没改 monitor 运行逻辑，只补测试锁住当前行为。 合入主线： - `bbf204d a9 worker: monitor-communication-performance-depth-gate-20260528 attempt snapshot` 验证： - `python3 -m unittest tests/test_monitor.py` - `12 tests OK` - `git diff --check` 通过 - `queued: 0` - `running: 0` - git 干净 当前通讯治理进度：约 **65%**。下一步建议补“失败分类 taxonomy”验收：通信任务即使有性能边界，也必须明确 timeout / auth / network / protocol / rate_limit 等失败类型和对应 retry/repair/quaranti...
+
+## Auto Close Reading: Turn 343-352
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-343-352.json`
+- approx JSONL lines: `33637-35408`
+- generated_at: `2026-06-01T09:57:25+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 343
+
+Original user intent:
+
+- line `33637`: ok，继续
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `26` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `26`
+
+Assistant preview:
+
+- 继续完成一轮，还是按“worker 执行，我监控补强”的方式。 worker 完成： - 在 `scripts/a9_monitor.py` 加了通信任务 failure taxonomy 检查： - 必须覆盖 `timeout/auth/network/protocol/rate_limit` - 必须映射到 `retry/repair/quarantine/terminate` - 新增测试： `test_communication_task_requires_failure_taxonomy_and_recovery_mapping` - worker 自测：`tests/test_monitor.py` 13 个测试通过。 我监控后补强： - worker 原测试只断言 finding 和 expert action。 - 我补了 hard gate 断言，确保缺 failure taxonomy 时 `exception_governance_expert` 真进入 `hard_gate.failed_experts`。 合入主线： - `842bb49 a9 worker: monitor-communication-failure-taxonomy-gate-20260528 attempt snapshot` - `2a8fb18 Assert hard gate for communication failure taxonomy` 验证： - `python3 -m unittest tests/test_monitor.py` - `13 tests...
+
+### Turn 344
+
+Original user intent:
+
+- line `33733`: ok，继续
+
+Execution evidence:
+
+- assistant_messages: `31`
+- tool_calls: `92` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `92`
+
+Assistant preview:
+
+- 已继续跑完两轮 24 小时 worker，并完成合入。 本轮完成： - 提交 `d7bbd62`：通信类 auto-next prompt 默认带上验收提示： - 数据模型：node table、heartbeat/event stream、tmux evidence、command status schema - 性能边界：latency、timeout、retry budget、reconnect stability、event budget - 异常分类到恢复动作：timeout/auth/network/protocol/rate_limit -> retry/repair/quarantine/terminate - 提交 `d208042`：新增 worker envelope 与 supervisor checks 冲突调和机制。 - worker 自评 `ok:false/declared_check_timeout` - 但 supervisor checks 全部 `return_code=0` - guards 都通过时，记录 `worker_envelope_check_conflict`，不再因为模型自评错误回滚有效 patch。 观测到的问题： - 第一轮 worker 误判测试 timeout，但 artifact 实际是 `103 tests OK`，我接管合入并记录到 [docs/mistakes.md](/root/a9/docs/mistakes.md)。 - 第二轮 worker 一开始又读 session 文档，触发 `retry...
+
+### Turn 345
+
+Original user intent:
+
+- line `34090`: ok，继续
+
+Execution evidence:
+
+- assistant_messages: `19`
+- tool_calls: `50` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `50`
+
+Assistant preview:
+
+- 继续完成了一刀，并提交： - `cbab728 Reconcile monitor block before git governance` 这刀修的是 24h worker 治理一致性： - 先计算 `monitor_score/monitor_block` - 再把 `status` 和 `monitor_block` 对账 - 然后才执行 `git_governance` - 避免再出现 `status=pass` 但 `monitor_block.blocked=true`，或者已经 commit 后才发现 monitor block 的矛盾 我没有直接收 worker patch，因为它加了一个过宽规则：只要是 `exception_governance_expert` 就自动放行。我手动改成更严格的版本： - 有明确 `worker_envelope_check_conflict` 证据，才可以 override monitor block - 非 strict worker 的 monitor block 只作为 advisory，不阻断旧的 fake/selftest - strict worker 没有 reconciliation 证据时仍然会 `monitor-blocked` 验证： - targeted 5 tests：OK - `python3 -m unittest tests/test_supervisor.py`：108 tests OK - `git diff --check`：OK - 工作区干净 - 当前队列：`queued=0 r...
+
+### Turn 346
+
+Original user intent:
+
+- line `34292`: ok，继续
+
+Execution evidence:
+
+- assistant_messages: `16`
+- tool_calls: `44` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `44`
+
+Assistant preview:
+
+- 完整测试已过，monitor 误伤修正也过了。现在提交 monitor 修复，保持仓库干净。
+
+### Turn 347
+
+Original user intent:
+
+- line `34450`: 固然你调试时好，但是我要说的是，你本身是否忘了我们的终止，抄抄抄，当然你可以说理由
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 没有忘。你这个提醒是对的。 这几刀我没有继续大规模看外部参考项目，原因是：24 小时机器本身的治理链路刚暴露了几个硬问题，如果不先修，后面“抄抄抄”会变成： - worker 抄对了，但被 monitor 误杀 - worker 自评错了，把有效 patch 回滚 - prompt 噪音太大，worker 被带偏 - monitor_block 和 git_governance 状态矛盾 - 通讯任务、context 任务被同一套 gate 误判 所以我这几刀是在修“抄抄抄机器”的基础设施，不是在忘记抄。对应借鉴逻辑其实是： - Aider：repo map 要 bounded、task-local、不能全仓噪音 - SWE-agent/Aider：patch 是否合入看 diff/check/guard，不信模型自评 - OpenClaw/Lobster：strict envelope，但 envelope 也要被 deterministic artifact 校验 - Codex：上下文治理、压缩、prompt 预算、不要把无关历史塞进任务 但你说得对：下一步应该重新回到“参考项目第一逻辑”。现在基础治理刚修稳，下一刀应该让 24h worker 明确做： `reference_scan -> mechanism_extract -> implement` 优先看 `Codex / Aider / OpenClaw / Continue / OpenHands` 的 context packet、repo map、task routing、monitor/eval 机...
+
+### Turn 348
+
+Original user intent:
+
+- line `34459`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `4`
+- tool_calls: `10` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, write_stdin)
+- tool_outputs: `10`
+
+Assistant preview:
+
+- 状态里已经显示 `retryable-worker-budget`，说明它很快打爆了事件预算。先不继续排自动任务，我读事件看它是参考扫描太宽，还是 prompt 触发了过量输出。
+
+### Turn 349
+
+Original user intent:
+
+- line `34498`: 对的，记得现在还有hermes最近很火，有一定的道理
+
+Execution evidence:
+
+- assistant_messages: `33`
+- tool_calls: `136` (write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command)
+- tool_outputs: `136`
+
+Assistant preview:
+
+- 继续做完一轮，并且按“监控介入”的方式处理了真实问题。 本轮完成： - 已把 Hermes 纳入 A9 参考体系，写入 [docs/copied-mechanisms.md](/root/a9/docs/copied-mechanisms.md)： - Hermes 作为 `Context Router` 参考。 - 抄它的 prompt 分层组装、context 注入扫描、memory fencing、compaction reference-only 标记、subagent 隔离总结。 - 明确它和 Codex/Aider 的分工：Codex 管 raw history/compact 生命周期，Aider 管 repo map/token edit context，Hermes 补 prompt/context/memory routing 层。 - 监控到 worker 质量问题： - worker 没有读 session 大文档，这点已经被上一刀门禁管住。 - 但它用了“定向 rg”却没有输出上限，导致 event bytes 爆掉，两次 `retryable-worker-budget`。 - 我已介入修 supervisor：read-heavy 任务里 `rg` 必须带 `-m/--max-count`、`head/tail` 或重定向，否则 live 阶段直接拦。 - 已提交： - `62530bb Block session memory reads in reference workers` - `44578a9 Cap reference rg o...
+
+### Turn 350
+
+Original user intent:
+
+- line `35029`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `41` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command)
+- tool_outputs: `41`
+
+Assistant preview:
+
+- 我顺手修了一个刚观测到的误杀点：如果声明的是同一个 unittest 文件里的几个具体方法，worker 跑整个同文件 unittest 应该算更保守验证，不该直接 kill。这个只放宽 unittest 同文件 superset，不放宽 pytest 或跨文件乱跑。
+
+### Turn 351
+
+Original user intent:
+
+- line `35176`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `13`
+- tool_calls: `65` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `65`
+
+Assistant preview:
+
+- 继续做完这一轮了。 完成内容： - 合入 Hermes-style context router： - prompt section 有 `source/role/budget/reference_only/blocked/findings` 元数据。 - reference-only section 遇到 promptware 会被屏蔽。 - context router 元数据进入 run summary / context pressure。 - 暴露到 control API： - `compact_summary()` 现在返回紧凑 `context_router`： - `strategy` - `blocked_sections` - `section_count` - 不暴露 raw prompt 和 section body。 - 修了 worker 协议误杀： - worker 把 `protocolVersion` 写成 `openclaw-lobster/v1`，之前会失败。 - 现在归一化到 A9 协议 `1`，同时 prompt 里更明确要求最终 JSON 用 `{"protocolVersion":1,...}`。 验证通过： - `python3 -m unittest tests/test_control_api.py`：106 tests OK - `python3 -m unittest tests/test_supervisor.py`：119 tests OK - `git diff --check`：OK 提交： - `ffcf...
+
+### Turn 352
+
+Original user intent:
+
+- line `35408`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `33` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command, exec_command)
+- tool_outputs: `33`
+
+Assistant preview:
+
+- 继续推进了一刀，还是围绕 Hermes/context governance。 完成： - 让 monitor 能看见 context router 的 promptware blocking： - 新 finding：`context_router_blocked_promptware` - 记录 `blocked_sections` 和 section 名称 - 不泄露 raw section body - 级别是 `warn`，不单独触发 hard gate，因为 router 已经拦住了污染内容 - 修了一个 monitor 误杀： - `monitor/control + context router/promptware` 不再被误判成通讯 runtime 任务 - 不会强行要求 timeout/auth/network/protocol/rate_limit taxonomy - worker 质量观察： - 这轮 worker 补丁方向正确，patch/scope 都 pass - 被拦是 monitor 规则误杀，不是 worker 代码质量问题 - 我合入后补了误杀回归测试 验证： - `python3 -m unittest tests/test_monitor.py`：16 tests OK - `python3 -m unittest tests/test_supervisor.py`：119 tests OK - `git diff --check`：OK 提交： - `17dcc4a Surface context router blocki...
+
+## Auto Close Reading: Turn 353-362
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-353-362.json`
+- approx JSONL lines: `35525-37877`
+- generated_at: `2026-06-01T09:57:34+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 353
+
+Original user intent:
+
+- line `35525`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `4`
+- tool_calls: `18` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `18`
+
+Assistant preview:
+
+- 定向测试通过，完整 supervisor 回归正在跑。这个改动直接针对我们刚才观察到的 “失败 attempt 交接太胖” 问题，预期能减少 retry 的输入 token 和二次失败概率。
+
+### Turn 354
+
+Original user intent:
+
+- line `35601`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `22`
+- tool_calls: `102` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `102`
+
+Assistant preview:
+
+- 继续做完这一轮了，当前干净状态。 完成提交： - `2c5d2fc`：retryable budget 失败后只传证据路径，不再把大 diff/日志塞回下一轮。 - `4c1a907`：按任务 phase 分配上下文预算，implement/repair/session_refresh 明显降 token。 - `4ebc735`：禁止 worker 广根搜索 `.a9/tasks/done`、`.a9/worktrees`、`.a9/runs`。 - `436805b`：把这轮 lesson 记录到 `docs/mistakes.md`。 - `e793a4c`：禁止 worker 用 `>`/`>>`、`tee`、`sed -i` 直接写仓库文件，必须走 SEARCH/REPLACE + A9 deterministic apply。 验证： - `python3 -m unittest tests/test_supervisor.py` 通过，123 tests OK。 - `git diff --check` 通过。 - 当前队列：`queued=0 running=0`。 - 24h 状态：四组仍是 `100%`。 - 最新上下文：约 `2267/24000`，比例 `0.094`。 实测 worker 质量结论： - 好的：新 prompt 降到约 2k token 级别，没再扫 `.a9` 广根目录，patch/scope/check 都过。 - 问题：worker 仍然尝试用 heredoc 直接改文件，没有走 SEARCH/REPLACE，所以被 mon...
+
+### Turn 355
+
+Original user intent:
+
+- line `36030`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `17`
+- tool_calls: `68` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `68`
+
+Assistant preview:
+
+- 继续跑完一轮实测和修复了，当前工作区干净，队列为空。 本轮新增两次提交： - `a8da9c6 Accept embedded SEARCH REPLACE paths` - 修了 apply 引擎：现在能识别 worker 常见输出 `SEARCH/REPLACE block for docs/mistakes.md` 这种嵌入路径标题。 - 已用上一个失败 worker 的真实 patch 做 dry-run 验证，能成功 apply。 - 顺手把 worker 产出的 lesson 用 A9 apply 引擎落到了 `docs/mistakes.md`。 - `cdf5c0c Classify command-bound stops as monitor blocked` - 修了状态口径：live guard 因越界命令杀掉 worker 时，现在是 `monitor-blocked`，不是误报成 `retryable-worker-budget`。 - 这次 worker 非 session 任务试图读 `docs/session-raw-summary.md` 等文件，被 guard 在 779 bytes 时拦下，证明监控有效。 验证： - `python3 -m unittest tests/test_patch_guard.py tests/test_patch_apply.py ...` 通过。 - `python3 -m unittest tests/test_supervisor.py` 通过，124 tests OK。 - `git diff -...
+
+### Turn 356
+
+Original user intent:
+
+- line `36299`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `11`
+- tool_calls: `54` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `54`
+
+Assistant preview:
+
+- 继续完成一轮，当前干净，队列为空。 本轮新增两次提交： - `1e50eac Constrain bounded read worker commands` - 如果任务写了 `bounded read of docs/mistakes.md`，worker 的非测试命令只能是单条有界读，比如 `tail -n 60 docs/mistakes.md`。 - 会拦截 `python3 scripts/a9_service.py ps && tail ...` 这种夹带无关探测的命令。 - `a7de261 Apply SEARCH REPLACE blocks from worker envelopes` - 支持从 strict worker envelope 的 `output.search_replace_blocks` 里提取 SEARCH/REPLACE。 - 这次 worker 已经行为改善：只读目标文件、不再乱探测、不直接写文件；失败只是 patch 放进 JSON 字段。现在这个格式也能被 A9 deterministic apply 接住。 验证： - `python3 -m unittest tests/test_supervisor.py tests/test_patch_guard.py tests/test_patch_apply.py` - 150 tests OK - `git diff --check` OK - 当前 `queued=0 running=0` - 24h 四组还是 `100%` 进度判断：无人监督质量从约 `86%` 提到...
+
+### Turn 357
+
+Original user intent:
+
+- line `36513`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `51` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `51`
+
+Assistant preview:
+
+- 继续完成一轮，当前工作区干净，队列为空。 本轮做了三件事： - `2adc36a Exempt apply protocol tasks from communication monitor` - 修了 monitor 误判：`strict worker envelope / output.search_replace_blocks / deterministic apply` 这类 apply-protocol 任务不再被当成通讯治理任务。 - 真实失败 run 重算后 hard gate 已通过。 - 复用真实 worker 产出的 `output.search_replace_blocks`，通过 A9 deterministic apply 把 lesson 落到 `docs/mistakes.md`。 - 这证明 envelope patch 提取和 apply 能工作。 - `dac40a7 Cap bounded read command windows` - 给 bounded read 加默认 80 行上限。 - `tail -n 60 docs/mistakes.md` 允许，`tail -n 120 docs/mistakes.md` 会被拦。 - 防止 worker 在窄任务里扩大读取窗口。 验证： - `python3 -m unittest tests/test_supervisor.py tests/test_monitor.py` - 144 tests OK - `git diff --check` OK - 当前 `queued=0 r...
+
+### Turn 358
+
+Original user intent:
+
+- line `36707`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `9`
+- tool_calls: `30` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `30`
+
+Assistant preview:
+
+- 继续完成了，这轮是关键进展：真实 worker 做了一个小代码改动，并且链路跑通。 新增提交： - `9d5b2d6 Accept colon bounded read prompts` - `bounded_read_paths_from_prompt` 现在同时支持： - `bounded read of docs/mistakes.md` - `bounded read: docs/mistakes.md` - 新增测试覆盖 colon 写法。 这次 worker 表现： - 只读了指定两个窗口： - `sed -n '2128,2170p' scripts/a9_supervisor.py` - `sed -n '1435,1470p' tests/test_supervisor.py` - 没乱搜 `.a9` - 没直接写文件 - 输出了 strict JSON envelope - patch 放在 `output.search_replace_blocks` - supervisor 成功 deterministic apply 2 个 block - patch/scope/process governance 全 pass - 声明测试 pass - worker 隔离 worktree commit 成功 - 我已把合格 patch 接到主分支并提交 验证： - `python3 -m unittest tests/test_supervisor.py` - 128 tests OK - `git diff --check` OK - 当前 `queu...
+
+### Turn 359
+
+Original user intent:
+
+- line `36821`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `34`
+- tool_calls: `115` (exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `115`
+
+Assistant preview:
+
+- 继续推进了一轮，结果是好的。 本轮完成： - 修了 `monitor-blocked` 后还继续跑 checks 的问题 提交：`d88cf50 Short circuit monitor blocked worker checks` - 修了 bounded read 过严的问题：允许 worker 在声明文件内用 `rg -n` 定位 提交：`f6f6e5b Allow bounded rg locators` - 让 deterministic apply 记录补丁来源： - `final_message` - `worker_envelope.output.search_replace_blocks` 提交：`a7fe49e Record worker patch source` - 兼容 worker 输出的结构化 `search/replace` 字段，不只接受 `block` 字段 提交：`efce414 Accept structured search replace blocks` - 用 24h worker 真实跑了一轮 record smoke，确认 summary 里已经出现： `patch_source=worker_envelope.output.search_replace_blocks` 提交：`249bcf8 Record patch source bootstrap lesson` 验证： - `python3 -m unittest tests/test_supervisor.py` 通过，130 tests。 - 最新 24h r...
+
+### Turn 360
+
+Original user intent:
+
+- line `37281`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `11`
+- tool_calls: `34` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `34`
+
+Assistant preview:
+
+- 继续完成了一刀通讯稳定治理。 这轮让 24h worker 做，主控监控并合入： - 新增 `node.recovery_plan` - `action` - `reason` - `steps` - `requires_operator` - `node_status` 每个节点都会带恢复计划。 - `communication_followup.evidence.nodes[]` 也带恢复计划，手机/control 端不用猜下一步。 - offline/quarantine 明确要求人工介入，不伪装自动恢复。 - stale/degraded/reconnect 会根据已有 probe/tmux/heartbeat evidence 给下一步。 提交： - `a1e72ae Expose node recovery plans` 验证： - worker run：`remote-node-recovery-plan-20260529 pass` - patch 来源：`worker_envelope.output.search_replace_blocks` - worker declared check：`python3 -m unittest tests/test_control_api.py` 通过 - 主仓复测：`python3 -m unittest tests/test_control_api.py tests/test_remote.py` 通过，124 tests - `py_compile` 通过 - 当前队列：`queued=0 running=0...
+
+### Turn 361
+
+Original user intent:
+
+- line `37406`: 好，继续
+
+Execution evidence:
+
+- assistant_messages: `38`
+- tool_calls: `108` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin)
+- tool_outputs: `108`
+
+Assistant preview:
+
+- 继续完成了两块通讯治理，并顺手修了 worker 运行中暴露的 supervisor guard 问题。 本轮提交： - `e0b94c1 Allow batched bounded reads` 允许 worker 把多个合法 bounded read 用 `&&` 批量读取，但仍拦截混入 `a9_service ps`、管道、错路径、超窗。 - `af27098 Accept file alias in worker patch blocks` deterministic apply 兼容 worker envelope 里的 `file` 字段别名，不只接受 `path`。 - `d0fc956 Parse shell lc bounded reads` 用 `shlex` 解析 `/bin/bash -lc`，修掉 `rg -n \"a|b\"` 被正则截断误判的问题。 - `8484e37 Expose recovery plan routes` `recovery_plan` 增加 `route={method, endpoint, command, requires_arm}`，手机端知道下一步该打哪个 API、是否需要 arm。 - `ee45e56 Gate remote control endpoints` `/api/nodes/probe` 和 `/api/nodes/tmux-status` 现在会先走 command gate；未授权时返回 403，不触碰 SSH/Tailscale/tmux。 验证： - `python3 -m unitte...
+
+### Turn 362
+
+Original user intent:
+
+- line `37877`: 现在为什么还不是24小时机器在工作，告诉我即可
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 因为刚才几次 24 小时 worker 被我们自己的治理规则卡住了： 1. 有几次是我给 worker 的 bounded read 行数写错了，比如 81 行超过 80 行上限。 2. 有一次 worker 自己偏了，开头跑了 `python3 scripts/a9_service.py ps`，被正确拦截。 3. 后面发现是 supervisor guard 本身不够成熟，不能正确处理批量 bounded read、`/bin/bash -lc` 里的转义引号、`file` 字段别名。 所以我临时接管主控修底座，不是忘了 24 小时机器。原则是：当 worker 被治理系统反复误伤或协议不兼容时，先由我修 supervisor/gate，再让 worker 继续跑。否则只是重复烧 token。 现在底座已经修完并通过测试，下一轮可以继续让 24 小时 worker 做，我监控介入。
+
+## Auto Close Reading: Turn 363-372
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-363-372.json`
+- approx JSONL lines: `37885-39205`
+- generated_at: `2026-06-01T09:57:42+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 363
+
+Original user intent:
+
+- line `37885`: 我说过了，不要被你工程学，影响了你德逻辑，业务优于极致工程学
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 你说得对。刚才我偏工程治理了，虽然修的是必要底座，但节奏上确实压过了主线业务目标。 正确优先级应该是： 业务主线：24 小时执行机器持续推进 A9 agent OS / 通讯稳定 / 多机器接入 / session governance。 工程治理：只在 worker 明确跑偏、无法继续、证据不可信时介入修，不应该变成主线本身。 所以后面我会按这个口径执行： - 默认让 24 小时 worker 干活。 - 我只做监控、纠偏、验收、必要小修。 - 不再因为 gate 小问题连续自己深挖，除非它阻塞业务推进。 - 每轮结束告诉你：worker 做了什么、质量如何、业务进度到多少、下一步干什么。 当前通讯治理约 78%。下一步让 worker 继续做“recovery action 审计回执”，我监控。
+
+### Turn 364
+
+Original user intent:
+
+- line `37893`: 做呀
+
+Execution evidence:
+
+- assistant_messages: `11`
+- tool_calls: `21` (exec_command, exec_command, exec_command, write_stdin, exec_command, write_stdin, write_stdin, exec_command, exec_command, exec_command)
+- tool_outputs: `21`
+
+Assistant preview:
+
+- 100 行上限验证通过，刚才被拦的命令现在会放行。跑 supervisor 测试后提交，再让 worker 继续同一业务任务。
+
+### Turn 365
+
+Original user intent:
+
+- line `37991`: 我认为，你做这么多门禁 ，固定数额德，确实有大问题，这个怎么用数字来控制呢，你调试的准吗，有标准吗，凭什么是100还是80，这个应该放行，观测区间，如果太大应该用机制来出来，token数额限制可能直接影响到质量
+
+Execution evidence:
+
+- assistant_messages: `40`
+- tool_calls: `143` (write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `143`
+
+Assistant preview:
+
+- 做完并提交了。 这次按你的判断改了方向：不再用固定行数这种数字硬门禁控质量，改成“放行 + 观测 + 证据 + repair”。真正硬挡的是危险命令、错误路径、状态探针、无证据动作，不是 80 行还是 100 行。 已提交： - `6c2650f`：bounded read 行数改成观测，不做硬挡 - `aa7af13`：允许 `rg ... | head` 这种输出限流 - `bf2caed`：远程 POST 动作加 `audit_receipt` - `2597637`：新增 `/api/nodes/connection-summary` - `7376c62`：记录 worker 读胖无产出的问题 24 小时 worker 质量观察： - 它尝试做 `remote-connection-summary`，但失败为 `retryable-worker-budget` - 不是方向错，是读上下文太胖、最终没输出 patch - 我按监控职责介入，把最小实现落地，并把失败证据写进错题本 验证： - `python3 -m unittest tests/test_control_api.py`：112 tests OK - `python3 -m py_compile scripts/a9_control_api.py scripts/a9_supervisor.py`：OK - `git diff --check`：OK - 当前工作区干净，后台无 running task 当前通讯治理进度我估算约 `65%-70%`：控制入口、远程动作 gate、审计回执、连接汇总已经...
+
+### Turn 366
+
+Original user intent:
+
+- line `38603`: 继续做
+
+Execution evidence:
+
+- assistant_messages: `17`
+- tool_calls: `72` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `72`
+
+Assistant preview:
+
+- 继续做了一刀，重点修的是 24h worker 的执行质量。 已完成： - `0bef796 Require strict envelopes for worker phases` - AI-worker 阶段默认要求 `strict_worker_envelope: true` - `session_refresh/session_close_reading` 不受影响 - fake-worker 测试也升级为真实 JSON envelope - 真实 24h worker smoke task 跑通： - `worker_envelope: pass` - `patch_apply: pass` - `patch_source: worker_envelope.output.search_replace_blocks` - smoke worker 的产物已 cherry-pick 到主分支： - `faff250 a9 worker: worker-strict-envelope-smoke-20260529 attempt snapshot` 验证： - `python3 -m unittest tests/test_supervisor.py`：136 tests OK - `python3 -m unittest tests/test_control_api.py`：112 tests OK - `python3 -m py_compile scripts/a9_supervisor.py`：OK - 当前工作区干净，后台无 running task 观测结论...
+
+### Turn 367
+
+Original user intent:
+
+- line `38899`: 继续做
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `34` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `34`
+
+Assistant preview:
+
+- 继续做完了一刀关键治理：worker 通过后，现在可以自动集成到 main，不再停在 `.a9/worktrees` 里等人工 cherry-pick。 已提交： - `a1f21c2 Integrate accepted worker commits to main` - pass 的 worker commit 会在安全条件下自动 `git cherry-pick` 到主分支 - 仅允许 supervisor 创建的 `.a9/worktrees` - 要求 root 工作区干净 - 要求 root HEAD 等于 worker base HEAD - 否则记录 `main_integration` 跳过原因，不覆盖用户改动 - `0614e43 a9 worker: worker-main-integration-smoke-20260529 attempt snapshot` - 真实 24h worker smoke 验证通过 - `worker_envelope=pass` - `patch_apply=pass` - `main_integration.status=integrated` 验证： - `python3 -m unittest tests/test_supervisor.py`：137 tests OK - `python3 -m unittest tests/test_control_api.py`：112 tests OK - `python3 -m py_compile scripts/a9_supervisor.py scripts/...
+
+### Turn 368
+
+Original user intent:
+
+- line `39046`: 现在为什么还不能24h，请你告诉我
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 现在“还不能真正 24h”的核心原因不是功能完全不能跑，而是还缺生产级连续运行治理。 已经具备： - worker 能接任务 - strict envelope 能约束输出 - SEARCH/REPLACE 能 deterministic apply - guard/test/git governance 能跑 - pass 后能自动集成 main - 失败能留下 summary/evidence - mobile/control API 已有基础状态入口 还不能放心 24h 的原因： 1. **worker 仍会预算失败** 前面多次出现 `retryable-worker-budget`。说明任务一复杂，worker 可能读胖、无 final、无 patch。现在只是更容易发现，不代表完全治好了。 2. **任务路由还不够强** 现在能执行单任务，但“下一步该做什么、任务怎么拆小、失败后怎么自动收缩”还不够稳定。容易出现大任务被 worker 吃爆。 3. **通讯治理还没闭环** SSH/Tailscale/tmux/Redis 的状态已经在做，但还没有形成强决策链： `连接状态 -> 是否可继续 rollout -> 自动修复/等待人工 -> 再验证`。 4. **主控监控还依赖我** 现在我还能看 summary、判断偏没偏、介入修。真正 24h 需要把这部分变成自动 supervisor decision，而不是靠我盯窗口。 5. **长周期异常还没压测** 断网、worker 卡死、Redis 不可用、Git 冲突、模型返回坏 envelope、测试长时间无...
+
+### Turn 369
+
+Original user intent:
+
+- line `39054`: 有没有真的好好参考项目呢
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 有参考，但我必须实话说：**最近这几刀没有做到你要求的“充分抄顶级项目再做”**。 已经参考/借鉴过的主要是： - **Codex**：session/compact、上下文预算、worker loop、工具边界、sandbox/approval 思路 - **Aider**：repo map、diff/edit 纪律、atomic commit、失败后 repair prompt - **LangGraph**：checkpoint、parent lineage、状态可恢复 - **mem0**：memory add/search/history 语义 - **OpenClaw/Lobster**：worker envelope、结构化工具输出 - **Barter-rs**：typed reconnect decision、backoff、连接状态证据 - **Hermes/context router**：上下文路由和噪音隔离思路 但最近我为了把 24h runtime 跑起来，更多是在修 A9 自己的 supervisor 链路： `strict envelope -> deterministic apply -> guard/test -> git governance -> main integration` 这部分是参考了 Aider/OpenClaw/Codex 的机制，但**没有在每一刀前继续深入翻参考项目源码**。你提醒是对的，这会慢慢滑向“自己瞎搞”。 后面必须改回你的核心流程： 1. 每个大模块先 `reference_scan` 2. 明确抄哪个...
+
+### Turn 370
+
+Original user intent:
+
+- line `39062`: 对，我觉得2个点 我们现在可能有偏差，首先我们并没有做检查和评审，项目你还少了hermes，codex 本来已经有了24小时goal，这些你也没有好好看，我们做一次评审，看看哪些我们走偏了直接推翻，重构，第二，门禁问题token问题，现在可以观测，不能限制死，这是优化，你是流程通路，解决问题数据第一，性能第二。数据第一是业务建模的体现，性能可以把所有的搞到最好，其实这里面就会有成本的优化，成本token优化不是数量优化，而是架构层面的优化。还有一个事情，我之前让你观测的session的思维链路的考虑执行链 你都忘在脑后的
+
+Execution evidence:
+
+- assistant_messages: `6`
+- tool_calls: `33` (exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `33`
+
+Assistant preview:
+
+- 你说得对，这次评审结论是：我们确实有偏差。 我已经落了一份正式评审文档并提交： - [docs/runtime-governance-review-2026-05-29.md](/root/a9/docs/runtime-governance-review-2026-05-29.md) - commit: `a8bbc34 Review A9 runtime governance drift` 核心结论： 1. **参考项目没有形成硬流程** Hermes 在本地，Codex goal 也在本地，但最近几刀没有把它们变成每刀必过的 review gate。这个要改。 2. **A9 现在只有 task queue，不是 Codex 式 goal runtime** Codex goal 有 objective、status、token/wall-clock accounting、idle continuation、budget steering、completion audit。A9 现在还缺这一层。 3. **token 问题不能靠固定数字门禁** 固定数字只能做观测和熔断。真正优化要抄 Hermes/Codex：context engine、prompt cache、compression feasibility、tool output pruning、goal-level accounting、trajectory/eval。 4. **“思维链路”应转成外显执行链治理** 不读取隐藏 CoT。我们要治理的是：prompt、参考文件、命令、读文件窗口、event s...
+
+### Turn 371
+
+Original user intent:
+
+- line `39185`: 我让你参考hemes 是因为他有自我进化，但是我觉得，我们moe+精读session 和他有异曲同工，甚至比他牛逼，但是我们还没有真正自动化，我们的监控+24小时模式比他要牛逼，goal我是让你看他为什么能够24小时
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `3` (exec_command, exec_command, exec_command)
+- tool_outputs: `3`
+
+Assistant preview:
+
+- 我理解你的点：Hermes 不是因为“context 压缩”才重要，而是它有自我进化/trajectory/curator 这条线；Codex goal 不是普通目标管理，而是解释它为什么能跨 turn 持续推进。我要补一次针对这两个机制的精读，不急着改代码。
+
+### Turn 372
+
+Original user intent:
+
+- line `39205`: 继续做
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `50` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `50`
+
+Assistant preview:
+
+- worker 还在跑，暂时没有输出。这个阶段我不打断，等它产出 summary 后检查三件事：是否真的读了参考项目、是否实现了 execution_chain 数据结构、测试是不是只验证了核心行为。
+
+## Auto Close Reading: Turn 373-382
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-373-382.json`
+- approx JSONL lines: `39376-40316`
+- generated_at: `2026-06-01T09:57:47+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 373
+
+Original user intent:
+
+- line `39376`: 继续做
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `41` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `41`
+
+Assistant preview:
+
+- 继续做完了一刀，并且把 worker 失败原因修掉了。 这轮情况： - 24h worker 跑 `goal-execution-chain-v1` 失败，原因不是方向错，而是隔离 worktree 里的参考项目切片缺少 `Codex goal` 和 `Hermes self-evolution` 文件，导致它反复找路径，event bytes 爆掉。 - 我接管修复了 supervisor： - 新增 `execution_chain.json` 产物。 - 写入 `summary.execution_chain_path`。 - 纳入 `evidence.jsonl`，kind 为 `execution_chain`。 - 纳入 `state.channels.execution_chains`。 - 补齐 worker reference slices：Codex `goals.rs/templates/goals/thread_goal`，Hermes `background_review/curator/trajectory/batch_runner/trajectory_compression`。 - 已提交：`62505af Add execution chain artifacts to supervisor` 验证： - `test_execution_chain_artifact_records_prompt_references_commands_checks_and_tokens` pass - `test_supervisor_applies_w...
+
+### Turn 374
+
+Original user intent:
+
+- line `39535`: 继续做
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `24` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `24`
+
+Assistant preview:
+
+- 继续完成了一刀，并已提交。 本轮新增： - `memory_commit.json`：每个普通 supervisor run 会自动生成确定性的 self-evolution memory commit。 - 它会从 `execution_chain.json`、worker failure、guard/monitor findings、checks、next_slice 里归因出： - `doctrine_updates` - `rules` - `eval_samples` - `next_tasks` - 已接入： - `summary.memory_commit_path` - `summary.memory_commit_stats` - `evidence.jsonl`，kind=`memory_commit` - `state.channels.memory_commits` - Redis session payload 的路径和统计字段 验证： - 新增 memory commit 单测 pass - execution chain 单测 pass - supervisor fake worker end-to-end pass - search/replace apply end-to-end pass - `git diff --check` pass - 工作区干净 提交： - `27f565c Add deterministic memory commit artifacts` 当前进度：我们已经有了 `execution_chain -> me...
+
+### Turn 375
+
+Original user intent:
+
+- line `39634`: hermes和codex的你有看了吗
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 看了，而且这轮就是基于它们改的。 我看的重点： - Codex： - `reference-projects/codex/codex-rs/core/src/goals.rs` - `reference-projects/codex/codex-rs/core/templates/goals/continuation.md` - `reference-projects/codex/codex-rs/state/src/runtime/goals.rs` - `reference-projects/codex/codex-rs/state/src/model/thread_goal.rs` - 结论：Codex goal 的核心是 persisted objective、status lifecycle、token/wall-clock accounting、idle continuation、completion/block audit，不是普通 while-loop。 - Hermes： - `reference-projects/hermes-agent/agent/background_review.py` - `reference-projects/hermes-agent/agent/curator.py` - `reference-projects/hermes-agent/batch_runner.py` - `reference-projects/hermes-agent/agent/trajectory.py` - `reference-projects...
+
+### Turn 376
+
+Original user intent:
+
+- line `39643`: 继续做
+
+Execution evidence:
+
+- assistant_messages: `6`
+- tool_calls: `23` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `23`
+
+Assistant preview:
+
+- 继续完成了一刀，已提交。 这次做的是 `reference gate`，直接修掉上轮 worker 空转烧 token 的根因： - worker 启动前先检查 task prompt 里声明的 `reference-projects/...` / `vendor-src/...` 路径是否存在于隔离 worktree。 - 如果缺失，直接写 `reference_gate.json`，状态变成 `monitor-blocked`，不启动 Codex worker。 - 正常任务也会留下 `reference_gate.json`，并进入： - `evidence.jsonl` - `state.channels.reference_gates` - 后续 `memory_commit` 规则归因 验证： - reference gate 缺失路径 preflight 单测 pass - memory commit 单测 pass - hydrate reference slices 单测 pass - supervisor fake worker end-to-end pass - search/replace apply end-to-end pass - `git diff --check` pass 提交： - `c03569a Gate worker runs on declared references` 当前状态：工作区干净，后台没有任务在跑。下一刀可以开始抄 Codex goal runtime 的最小数据模型，把 A9 从 “queue 连续跑任务” 升...
+
+### Turn 377
+
+Original user intent:
+
+- line `39758`: 做
+
+Execution evidence:
+
+- assistant_messages: `14`
+- tool_calls: `43` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `43`
+
+Assistant preview:
+
+- 已完成并提交：`5a0cc5f Add minimal A9 goal runtime` 这刀抄的是 Codex goal 机制的核心形状：长期目标持久化、状态流转、token/time 记账、continuation prompt、完成必须带 `goal_completion_audit`，避免 worker 把长期目标缩成一个小任务就说完成。 改动： - [scripts/a9_supervisor.py](/root/a9/scripts/a9_supervisor.py)：新增 `.a9/goals`、`goal_state.json`、summary/evidence/state/Redis payload 接入、next task goal continuation。 - [tests/test_supervisor.py](/root/a9/tests/test_supervisor.py)：补 goal 创建记账、完成审计、next prompt continuation 测试。 验证已跑： - `python3 -m unittest ...` 5 条关键测试通过 - `python3 -m py_compile scripts/a9_supervisor.py` - `git diff --check` - `python3 scripts/a9_supervisor.py status` 当前工作区干净。最新 selftest run 已写入 `goal_state` 证据通道：`.a9/runs/selftest-search-replace-ap...
+
+### Turn 378
+
+Original user intent:
+
+- line `39963`: 做
+
+Execution evidence:
+
+- assistant_messages: `9`
+- tool_calls: `38` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `38`
+
+Assistant preview:
+
+- 已完成并提交：`b1854e1 Continue active goals when supervisor is idle` 这刀把 Codex goal 的 idle continuation 抄进 A9 了：当 `run-loop --auto-next` 发现队列为空时，会检查 `.a9/goals/*.json`，如果有 `active` goal，就自动排一个 `reference_scan` continuation task，继续走原来的 queue/supervisor/guard/test/git 治理链路。若 goal 已到 token budget，会改成 `budget_limited`，不继续烧。 验证已跑： - goal idle continuation 两条新测试通过 - goal runtime / next prompt / progress 相关测试通过 - 两条 supervisor 端到端 selftest 通过 - `python3 -m py_compile scripts/a9_supervisor.py` - `git diff --check` - `python3 scripts/a9_supervisor.py status` 当前工作区干净。现在 A9 已具备最小长期目标闭环：`goal_state 持久化 -> idle 自动恢复 -> reference-first continuation -> worker 执行 -> evidence/memory/goal 更新`。
+
+### Turn 379
+
+Original user intent:
+
+- line `40122`: 下一步呢
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 下一步应该做“真实跑一轮 active goal”，不是继续抽象架构。 具体顺序： 1. 创建一个真实 goal 目标建议设成：`继续完善 A9 24h agent runtime，优先参考 Codex/Hermes/OpenClaw/Aider，围绕 session governance、goal continuation、multi-machine communication 做可测试切片。` 2. 用 `run-loop --auto-next` 跑起来 验证空队列时是否自动从 `.a9/goals` 拉 active goal，排 continuation task，并启动 worker。 3. 你我做监控 重点看 5 件事： - worker prompt 是否真的 reference-first - 是否乱扩散到页面/量化 - token/context 是否爆炸 - `goal_state / execution_chain / memory_commit` 是否记录完整 - next_slice 是否能持续推进，而不是空转 4. 记录问题并修 如果发现 worker 质量差、next_slice 偏、goal 完成审计虚、budget 处理不合理，就直接修 supervisor。 我建议下一刀直接执行这个 smoke test：建一个 active goal，然后让 A9 自己跑 1-2 个 task，我在旁边看证据并介入。
+
+### Turn 380
+
+Original user intent:
+
+- line `40130`: 我们之前的moe 角色一套逻辑，现在到底是怎么样的
+
+Execution evidence:
+
+- assistant_messages: `3`
+- tool_calls: `9` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `9`
+
+Assistant preview:
+
+- 现在这套 MoE 不是“多个大模型投票”，而是一个 **需求评审委员会式 monitor_score**，目前是确定性规则 + 证据扫描，已经接进 supervisor。 核心文件： - 方法论：[docs/moe-review-methodology.md](/root/a9/docs/moe-review-methodology.md) - 实现：[scripts/a9_monitor.py](/root/a9/scripts/a9_monitor.py) - supervisor 接入：[scripts/a9_supervisor.py](/root/a9/scripts/a9_supervisor.py) - 测试：[tests/test_supervisor.py](/root/a9/tests/test_supervisor.py) 现在角色是这些： 1. `why_expert`：看真实问题/目标是否清楚。 2. `scope_dependency_expert`：看范围、依赖、allowed_paths。 3. `system_requirement_expert`：看需求是否翻译成输入/输出/状态/错误。 4. `tradeoff_architecture_expert`：看方案权衡，防止直接上复杂方案。 5. `role_boundary_expert`：看人类/monitor/worker/runtime 边界。 6. `test_verifiability_expert`：看测试、声明检查、数据结构验收。 7. `quality_expert`：看...
+
+### Turn 381
+
+Original user intent:
+
+- line `40168`: 做
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `32` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `32`
+
+Assistant preview:
+
+- 已完成并提交：`12b25c4 Add MoE evaluator contract artifacts` 这刀把 MoE 从“规则评分”升级成了标准两层结构： - 第一层：确定性 rule monitor，继续输出 `experts / gates / findings / recommended_action` - 第二层：预留 LLM / 多模型 evaluator，但默认 `not_configured` - 每轮 run 现在会生成 `moe_eval_contract.json` - `monitor_score` 和 `moe_eval_contract` 已进入 `evidence.jsonl` 和 `state.channels` - 文档 [docs/moe-review-methodology.md](/root/a9/docs/moe-review-methodology.md) 已同步当前状态和下一步 验证已跑： - `python3 -m unittest tests.test_monitor ...` 共 22 条相关测试通过 - supervisor fake worker 端到端通过 - `python3 -m py_compile scripts/a9_monitor.py scripts/a9_supervisor.py` - `git diff --check` - `python3 scripts/a9_supervisor.py status` 当前工作区干净。 下一步应该做 `eval_store`：把每轮 `moe_eval...
+
+### Turn 382
+
+Original user intent:
+
+- line `40316`: 做
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `31` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `31`
+
+Assistant preview:
+
+- 已完成并提交：`6f8fe5c Persist MoE eval store records` 这刀把 `eval_store` 落地了： - 每轮普通 worker run 生成 `eval_store_record.json` - 同步写入 `.a9/eval_store/runs/<run_id>.json` - 追加索引 `.a9/eval_store/index.jsonl` - failed expert 会展开成可回放 `eval_samples` - `eval_store_record` 已进入 `evidence.jsonl` 和 `state.channels` - Redis session payload 也带上 `eval_store_record` - 文档 [docs/moe-review-methodology.md](/root/a9/docs/moe-review-methodology.md) 已同步 验证已跑： - eval store 单测通过 - supervisor fake worker 端到端通过 - monitor contract 测试通过 - `python3 -m py_compile scripts/a9_supervisor.py scripts/a9_monitor.py` - `git diff --check` - `python3 scripts/a9_supervisor.py status` 当前工作区干净。 现在 MoE 链路是：`monitor_score -> moe_eval_contra...
+
+## Auto Close Reading: Turn 383-392
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-383-392.json`
+- approx JSONL lines: `40470-41224`
+- generated_at: `2026-06-01T09:57:56+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 383
+
+Original user intent:
+
+- line `40470`: 做
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `22` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `22`
+
+Assistant preview:
+
+- 已完成并提交：`93e9a62 Add eval store manual overrides` 这刀做了人工 override，但保持证据不可变： - 新增 CLI：`python3 scripts/a9_supervisor.py eval-override <run_id> --action ... --reason ...` - override 写到 `.a9/eval_store/overrides/<override_id>.json` - 同步追加 `.a9/eval_store/overrides.jsonl` - override 记录 actor、action、reason、evidence_refs、原始 gate、原始 failed_experts、原始 record_hash - 不修改 run-local `eval_store_record.json`，避免破坏原 evidence hash - 生成 `training_label`，后续可用于 LLM evaluator/训练纠偏 - 文档已同步 [docs/moe-review-methodology.md](/root/a9/docs/moe-review-methodology.md) 验证已跑： - override 单测通过 - eval_store 单测通过 - progress capability 测试通过 - supervisor fake worker 端到端通过 - `python3 -m py_compile scripts/a9_supervisor.py` -...
+
+### Turn 384
+
+Original user intent:
+
+- line `40582`: 做
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `26` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `26`
+
+Assistant preview:
+
+- 已完成并提交：`49ea7d2 Expose eval overrides through control API` 这刀把人工 MoE 纠偏接到 control API： - 新增 `POST /api/eval/override` - discovery 里暴露 `eval_override` - phone-control `runtime` 组新增命令：`eval.override` - 接口要求： - `operator.admin` - phone-control 已 arm 到 `runtime` - 调用后写入 `.a9/eval_store/overrides/<override_id>.json` - 不修改原 `eval_store_record.json`，保持 evidence hash 不变 - 文档已同步 [docs/moe-review-methodology.md](/root/a9/docs/moe-review-methodology.md) 请求示例： ```bash curl -X POST http://127.0.0.1:8787/api/eval/override \ -H 'Content-Type: application/json' \ -d '{ "run_id": "selftest-supervisor-...", "action": "continue", "reason": "monitor false positive; state evidence is sufficient", "actor": "mo...
+
+### Turn 385
+
+Original user intent:
+
+- line `40717`: 做
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `36` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `36`
+
+Assistant preview:
+
+- 已做完 mobile 侧最小接入。 改动在 `/mnt/d/root/a9_mobile`： - [profile.tsx](/mnt/d/root/a9_mobile/app/(tabs)/profile.tsx)：新增 `A9 Governance / MoE Eval Override` 面板 - 可填 Control API 地址 - 可先点 `Arm Runtime Control` - 可填 `run_id` - 可选 `continue / repair / block` - 可填 reason - 提交到 `POST /api/eval/override` - [OrderBook.tsx](/mnt/d/root/a9_mobile/components/OrderBook.tsx)：顺手修了既有 TypeScript 类型错误。 - 安装了缺失依赖：`@expo/vector-icons` 验证： - `/root/a9` 后端工作区干净 - `python3 scripts/a9_supervisor.py status` 正常 - `/mnt/d/root/a9_mobile` 里 `npx tsc --noEmit` 已通过 注意：`a9_mobile` 这个仓库本来就是大量未提交/未跟踪文件状态，我没有在里面提交，避免把既有未整理内容一次性混进提交。
+
+### Turn 386
+
+Original user intent:
+
+- line `40856`: 下一步做什么 还有汇报一下进度
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 现在主线进度： - **24h supervisor 执行机器**：MVP 已成型，能 queue/run-loop/auto-next/worker worktree/guard/test/git/evidence。 - **Goal 长期目标**：已落地，能持久化 goal，空队列时自动 continuation。 - **MoE 评审链路**：已落地到可用闭环。 - `monitor_score` - `moe_eval_contract` - `eval_store_record` - `manual override` - control API override - mobile UI override - **session governance**：已有 session refresh / close reading / causal memory 文档，但“长期不丢因果细节”的深度治理还没完全自动化。 - **mobile/control plane**：能远程看和部分控制，刚接上 MoE override；但还不是完整 Agent OS 控制台。 - **通信/多机器/SSH/Tailscale/tmux/Redis/Rust gateway**：有骨架和部分治理，约中段，还没到生产级稳定。 - **私有金融模型/量化业务**：还没进入主实现阶段，仍是后续目标。 我估整体： - 24h 自动化脚手架：**75%-80% 可用** - 质量治理/MoE/eval 数据闭环：**55%-60%** - 手机控制台：**35%-45%** - 多机器稳定通信...
+
+### Turn 387
+
+Original user intent:
+
+- line `40864`: 继续
+
+Execution evidence:
+
+- assistant_messages: `18`
+- tool_calls: `52` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin, write_stdin, exec_command)
+- tool_outputs: `52`
+
+Assistant preview:
+
+- 这轮 worker 质量明显好转：它先读被拦截证据，再看 Codex/OpenClaw 参考切片，然后做了一个小修复并跑了声明检查，supervisor 已提交 `62a1f04`。但我还看到状态里 queue/running 没完全清掉，我继续等 run-loop 收口，避免留下半运行状态。
+
+### Turn 388
+
+Original user intent:
+
+- line `41100`: 我们几个角色 做评神
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `6` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `6`
+
+Assistant preview:
+
+- 我先按“几个角色做评审”处理：产品主线、架构、测试/数据、运行治理、参考项目复制五个视角一起评。当前 run-loop 已经连续两次被同一类 session raw 读取拦住，我会先暂停自动继续，避免继续烧 token，然后给出评审结论和下一刀。
+
+### Turn 389
+
+Original user intent:
+
+- line `41124`: 不是 我只是问你
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 可以，应该做“多角色评审”，而且这是现在最该补的治理层。 我建议固定 5 个角色，不搞空泛打分： 1. **产品/主线评审** 看有没有偏离 A9 主线：抄成熟项目、24h runtime、session governance、通讯稳定、数据第一性能第二。 2. **架构评审** 看方案是否可长期运行：状态机、队列、Redis/MySQL、SSH/Tailscale/tmux、恢复、并发、幂等、失败隔离。 3. **测试/数据评审** 看有没有真实证据：测试是否跑了、数据结构是否对、状态是否可复现、summary 是否能追溯 raw evidence。 4. **参考项目评审** 专门看“有没有真抄”：Codex、Aider、OpenClaw、Hermes、LangGraph、mem0、Barter-rs 等是否被精读并抽机制，不允许自己瞎发明。 5. **运行治理评审** 看 24h worker 是否能稳定继续：token/cache、session 读取边界、自动续跑、monitor-blocked、repair、git commit、人工 override。 当前观察结果：这个 MoE 评审很必要。刚才 24h worker 连续两次都想读 `session-raw-*`，说明“执行机器”会被旧 AGENTS 启动流程带偏；产品/主线评审和运行治理评审应该直接判定：**非 session_refresh 任务禁止读 raw session，必须从任务边界、reference projects、run evidence 开始。** 所以答案是：**要做，而且要成为每...
+
+### Turn 390
+
+Original user intent:
+
+- line `41132`: 继续把 你自己抓好优先级
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `14` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `14`
+
+Assistant preview:
+
+- 第一刀已提交：`b61d488`。现在我处理运行态垃圾：刚才为了停自动烧 token，留下了一个已经产生 summary 的 queue/running 标记。这个不清掉，下一次 run-loop 会重复跑同一个失败任务。
+
+### Turn 391
+
+Original user intent:
+
+- line `41214`: 你先最大的问题还是 gate定的太多，项目还没有做好，你先定gate 这是极度错误的，导致做了几天，整个进度越来越慢
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `2` (exec_command, exec_command)
+- tool_outputs: `2`
+
+Assistant preview:
+
+- 你这个判断对。现在最大问题不是“缺 gate”，而是 gate 过早变成阻断条件，导致还没跑出产品能力就被治理层反复打断。我要把策略改成：早期只保留少数硬阻断，MoE/角色评审默认观测和记录，不阻断 24h 进度。
+
+### Turn 392
+
+Original user intent:
+
+- line `41224`: 极致工程学和业务比起来差太远了，如果业务不对，架构逻辑不对，都白做
+
+Execution evidence:
+
+- assistant_messages: `2`
+- tool_calls: `4` (exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `4`
+
+Assistant preview:
+
+- 具体改法：不再让 MoE hard gate 阻断 `schedule_next_task`，也不再把一个通过的 worker 改成 `monitor-blocked`。`session-raw-*` 误读先降级为 process governance warning，记录证据但不杀进程；真正硬阻断只留给直接写工作区、未声明测试、越界读写这类会破坏执行事实的规则。
+
+## Auto Close Reading: Turn 393-402
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-393-402.json`
+- approx JSONL lines: `41245-41586`
+- generated_at: `2026-06-01T09:58:04+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 393
+
+Original user intent:
+
+- line `41245`: 门禁是固化了数据形态，架构，逻辑才去优化的，给我写死在agent.md
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `1` (exec_command)
+- tool_outputs: `1`
+
+Assistant preview:
+
+- 我先把这条写死进 `AGENTS.md`，作为最高优先级规则：业务/数据/架构/逻辑没固化前，gate 只能观测，不能优化式阻断。
+
+### Turn 394
+
+Original user intent:
+
+- line `41253`: 是所有逻辑必须遵从这个逻辑
+
+Execution evidence:
+
+- assistant_messages: `2`
+- tool_calls: `2` (exec_command, exec_command)
+- tool_outputs: `2`
+
+Assistant preview:
+
+- 已写死进 [AGENTS.md](/root/a9/AGENTS.md:15)，并提交： `f91720b Document A9 shape-first methodology` 核心已经提升为最高方法论：所有逻辑必须先走： `业务目标/哲学 -> 数据形态 -> 架构形态 -> 业务逻辑/状态机 -> 最小闭环 -> 测试验证 -> gate/guard/监控 -> 性能/token/成本优化` 并明确写了：早期 gate 只能观测、记录、暴露问题、辅助纠偏，不能替代产品判断，也不能在业务/数据/架构/逻辑没定形前卡死执行。只有破坏事实源、污染数据、越权改文件、绕过声明测试、许可证/安全边界、不可恢复状态，才可以硬阻断。
+
+### Turn 395
+
+Original user intent:
+
+- line `41273`: 现在项目发现有gate阻断的，直接介入放行改成观测点，
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `6` (exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `6`
+
+Assistant preview:
+
+- 我现在直接处理：把现有会阻断进度的 monitor gate 改成观测点，同时清理当前已经被 gate 卡住的运行态。硬阻断只保留 process/scope/patch/check 这类会破坏事实源或工作区的规则。
+
+### Turn 396
+
+Original user intent:
+
+- line `41293`: 你自己看看自己的进度，质量，越来越差
+
+Execution evidence:
+
+- assistant_messages: `9`
+- tool_calls: `44` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `44`
+
+Assistant preview:
+
+- 你说得对，我刚才偏了。已经按你的要求改回主线： 提交：`769440f Downgrade monitor gates to advisory observations` 改动结果： - MoE / role / monitor gate 不再阻断 auto-next。 - `monitor_hard_gate_failed` 会被 supervisor 介入放行，改成 `monitor_hard_gate_advisory`。 - 非 session 任务读 `session-raw-*` 不再 live kill worker，只记录 warning。 - 真正硬阻断只保留会破坏事实源/工作区/声明测试/安全边界的规则。 - 清掉了旧的 queue/running 卡死状态，现在 `queued=0`、`running=0`。 验证： - `python3 -m unittest tests.test_supervisor` - 结果：`149 tests OK` 当前仓库干净。下一步应该恢复 24h worker，让它继续做主线能力，不再被这些早期 gate 卡住。
+
+### Turn 397
+
+Original user intent:
+
+- line `41494`: ok，做起来，你要观测介入，特别主线 ，质量，思维模式，执行链路，session
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `14` (exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, write_stdin, exec_command, exec_command)
+- tool_outputs: `14`
+
+Assistant preview:
+
+- repair 轮质量也不合格：它先正确识别“不是代码缺陷，是流程违规”，但随后跑偏，做了 web_search，又准备改错题/monitor 逻辑，偏离“先做主线能力”。这说明当前 active goal 的自动续跑 prompt 还不够约束“不要把 repair 变成治理堆叠”。我先等 run-loop 收口，然后我会介入改下一任务口径。
+
+### Turn 398
+
+Original user intent:
+
+- line `41551`: 为什么老是在这个点上有问题，是否你没有办法控制，大模型的输出
+
+Execution evidence:
+
+- assistant_messages: `0`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+### Turn 399
+
+Original user intent:
+
+- line `41553`: 那就应该接收，要想其他办法，流程架构优化
+
+Execution evidence:
+
+- assistant_messages: `2`
+- tool_calls: `2` (exec_command, exec_command)
+- tool_outputs: `2`
+
+Assistant preview:
+
+- 对，根因就是：**我们没法稳定控制大模型的过程输出**。它会理解规则，但执行中会漂移：跑未声明命令、扩大范围、把 repair 变成治理讨论、把参考扫描变成自我发挥。这不是单靠 prompt 能根治的。 正确架构应该改成： 1. **LLM 只负责提案，不直接执行** worker 输出 `intent / plan / SEARCH-REPLACE / requested_commands`，A9 决定哪些能跑。 2. **命令不让 worker 自己随便跑** 先输出命令申请： ```json {"command":"python3 -m unittest tests/test_monitor.py", "reason":"verify monitor tests"} ``` A9 根据任务 phase、允许路径、声明 checks 决定：放行、改写、拒绝、降级为观测。 3. **把自由 worker 拆成两层** - `thinker`：自由分析、找参考、提出方案。 - `executor`：只执行 A9 给定的确定性动作。 也就是别试图“控制大模型每句话”，而是让它只能把不确定性输出到受控接口。 4. **未声明命令不要直接失败** 现在它一跑未声明命令就被卡住。更合理是： - 记录为 `requested_unplanned_command` - 不执行或转人工/monitor 决策 - 继续让它产出 patch/next_slice 这样不会因为一个命令漂移整轮报废。 5. **下一刀应该做 command proposal / deterministic e...
+
+### Turn 400
+
+Original user intent:
+
+- line `41570`: 我说了，你怎么老是不听我的，我们所有的操作都在讨论评审环节都做完了，怎么可能后面有问题呢
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 你说得对，我刚才又把问题归因到“控制模型输出”，这还是工程视角。 真正的问题应该前移：**不是后面靠 gate 管住 worker，而是在讨论/评审/任务成形阶段就把业务、数据形态、架构逻辑、执行边界、允许动作都定清楚。** 如果前面定形足够好，后面 worker 只是执行，不应该频繁撞 gate。 所以修正后的理解是： - **评审前置**：任务进入 24h worker 前，必须先完成业务/架构/数据/执行链路评审。 - **任务成形**：给 worker 的不是开放目标，而是已经定形的小切片。 - **gate 后置降级**：gate 只记录异常和事实，不作为主要控制手段。 - **出问题说明前置任务没做好**：不是 worker “不听话”，而是任务没有被产品/架构/测试/参考项目评审压实。 - **主控责任在我**：我应该先把任务定清楚，再让 24h 机器执行，而不是让它边想边跑。 下一步应该先补一个“任务进入 worker 前的评审/定形模板”，并且所有 24h 任务必须先过这个模板：目标、数据结构、架构位置、参考项目、允许路径、允许命令、验收证据、下一步边界。
+
+### Turn 401
+
+Original user intent:
+
+- line `41578`: 我之前的总结的需求分析你到底理解没有
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 理解了，但我刚才执行时没有贯彻好。 你的需求分析核心不是“多加 gate”，而是： 1. **先把问题定义对** 先问为什么、边界是什么、真实业务结构是什么，而不是直接执行。 2. **数据第一** 数据结构、状态、事件、表结构代表真实业务。数据形态错了，业务 99% 会错。 3. **业务/哲学/逻辑优先于工程** 极致工程学、性能、token、gate 都是后面的东西。前面没定形，后面优化越多越偏。 4. **评审前置** 产品、架构、测试、参考项目、运行治理这些评审，应该在任务进入 worker 之前完成。后面出问题，说明前置评审没压实。 5. **抄抄抄是方法论** 不是自己设计流程，而是先看 Codex、Aider、OpenClaw、Hermes、Barter-rs、mem0、LangGraph 等成熟项目，把机制抽出来，再魔改。 6. **24h worker 是执行机器** 它不是产品经理，也不是业务分析师。它只能执行已经成形的小任务。我和你才是主控/监控/评审。 7. **gate 不能替代需求分析** gate 是观察、记录、兜底，不是主线控制。主线控制应该发生在需求分析和任务定形阶段。 我之前的问题是：把“后置治理”做重了，把“前置需求分析和任务成形”做轻了。这和你的核心逻辑冲突。
+
+### Turn 402
+
+Original user intent:
+
+- line `41586`: 还有我的金融的需求分析总结的内容，你到底理解吗没有
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 理解。你的金融需求分析核心是： - **交易哲学先于策略代码**：先定义什么钱能赚、什么钱不能赚，什么风险必须拒绝。 - **交易逻辑先于工程架构**：先把市场假设、入场/出场、风险边界、无效条件说清楚。 - **数据验证第一**：行情数据、成交数据、回测数据、状态表、事件流必须先对；没有数据验证，不谈模型和策略。 - **压测第二**：策略逻辑和数据真实性成立后，再看延迟、吞吐、稳定性、成本。 - **小闭环优先**：交易哲学 → 交易逻辑 → 风险边界 → 数据验证 → 最小策略闭环 → 工程架构 → TDD/压测/监控 → 小资金实盘 → 归因优化 → AI 辅助迭代。 - **不能先做量化模型**：先做类 Codex/OpenClaw 的 agent runtime，让它能持续抄项目、写代码、验证数据、记录证据，再沉淀金融数据和训练私有金融 Codex。 - **金融系统验收看表结构和数据流**：测试人员不仅验接口，还要验数据结构是否反映真实业务结构。 - **PUA/压榨式产品思维**：产品角色必须能推翻弱方案、压缩范围、逼近真实问题，而不是顺着工程实现走。 我之前的问题是把“24h runtime 的工程治理”做成了主角，忘了它只是为了服务这个更大的金融 ResearchOps/Agent OS 闭环。
+
+## Auto Close Reading: Turn 403-412
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-403-412.json`
+- approx JSONL lines: `41594-43444`
+- generated_at: `2026-06-01T09:58:10+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 403
+
+Original user intent:
+
+- line `41594`: 不是，我给的文档，需求分析的
+
+Execution evidence:
+
+- assistant_messages: `2`
+- tool_calls: `3` (exec_command, exec_command, exec_command)
+- tool_outputs: `3`
+
+Assistant preview:
+
+- 你说得对，我刚才答偏了。你说的是 `/root/a9/需求管理及分析工作指南.doc` 这份方法论文档，不是“金融项目需求”。 我现在重新按文档理解，核心是： **它不是讲金融业务，而是讲需求分析怎么做，尤其是金融系统里怎么避免做错需求。** 这份文档的底层逻辑是： `沟通准备 -> 搞清楚是什么/为什么 -> 用户需求翻译成系统需求 -> 方案比较 -> 写成可评审可测试规格 -> 覆盖异常/安全/性能/环境 -> 沟通确认和变更留痕` 关键点我理解为： - 用户说的经常是“方案”，不是“真实需求”。 - 需求分析最重要的是先问 **为什么**，再问 **是什么**，最后才问 **怎么做**。 - 要区分：必须做、应该做、可以做。 - 系统需求不是照抄用户话，而是需求人员、用户、开发共同确认后的系统行为。 - 方案要比较耦合、复杂度、风险、扩展性，不是选一个看起来高级的技术。 - 测试点要来自业务关注点，不是只看代码覆盖。 - 非功能、异常、安全、环境不是后补，是需求接受条件。 - 沟通后必须总结、确认、留痕，否则后面一定扯皮和返工。 映射到 A9，就是： **24h worker 不应该拿一句“继续抄抄抄”直接执行。** 必须先由主控把需求分析做完：真实问题、背景、边界、系统需求、数据形态、方案取舍、验收点、异常点、允许范围。然后 worker 只执行已经成形的小任务。 我之前一直在后置 gate、后置修 worker，确实违背了这份文档的方法论。
+
+### Turn 404
+
+Original user intent:
+
+- line `41612`: 产品的职责很好，但是需求分析方法，更重要
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 对。产品职责是“抓方向”，但需求分析方法是“把方向变成不会做偏的系统任务”。 A9 现在应该把这套方法放在产品职责前面，作为任务入口： `原始想法/一句话目标 -> 需求分析 -> 系统需求 -> 任务切片 -> worker 执行` 需求分析必须先回答： - 背景和目的是什么？ - 用户真正要解决的问题是什么？ - 用户说的是需求，还是实现方案？ - 必须做、应该做、可以做分别是什么？ - 系统应该表现成什么行为？ - 数据、状态、事件、表结构是什么？ - 有哪些方案，各自复杂度/耦合/风险是什么？ - 正常流、异常流、安全、性能、环境是什么？ - 怎么验收，测试点来自哪个业务关注点？ - 哪些本次不做，为什么不做？ 所以之后不能再直接把“继续做通讯治理/继续抄抄抄”丢给 worker。我要先按需求分析方法把任务压实，再让 24h 机器执行。
+
+### Turn 405
+
+Original user intent:
+
+- line `41617`: 执行工程，可以抄抄抄
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 对，分层应该是这样： - **需求分析方法**：不能抄代码替代，必须先把问题、为什么、边界、系统需求、数据形态、验收点讲清楚。 - **产品职责**：抓主线、取舍、压榨方案、决定做什么和不做什么。 - **执行工程**：这里才是“抄抄抄”的主场。 也就是： `需求分析定问题 -> 产品定取舍 -> 架构定形态 -> 工程抄成熟机制实现` A9 后续 worker 只能进入最后一层：执行工程。 它可以抄 Codex、Aider、OpenClaw、Hermes、Barter-rs、LangGraph、mem0，但前面三层不能让 worker 自己脑补。
+
+### Turn 406
+
+Original user intent:
+
+- line `41625`: 现在知道怎么做了吗，
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 知道了。现在正确做法是： 1. **先不让 24h worker 自由跑** 不能再把“继续抄抄抄”直接丢进去。 2. **我先做需求分析定形** 按你给的《需求管理及分析工作指南》先写清： - 真实问题是什么 - 为什么要做 - 用户说的是需求还是方案 - 必须/应该/可以 - 系统需求是什么 - 数据/状态/事件结构是什么 - 正常流/异常流 - 验收点和不做什么 3. **再做产品/架构取舍** 确认当前最小闭环，不被工程治理、gate、UI、token 优化带偏。 4. **最后才交给 24h worker 执行** worker 只做执行工程： - 找参考项目 - 抽机制 - 魔改实现 - 跑声明测试 - 留证据 - 输出下一步 5. **gate 降级** 除了破坏事实源、越权写文件、绕过测试、安全/许可证问题，其余都只记录观察，不阻断。 下一步我应该先写一个当前任务的“需求分析定形卡”，然后再让 24h worker 执行。
+
+### Turn 407
+
+Original user intent:
+
+- line `41634`: 需求管理及分析工作指南 这个你在精读一下，看看有没有遗留核心问题，你的流程我觉得没问题
+
+Execution evidence:
+
+- assistant_messages: `4`
+- tool_calls: `6` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `6`
+
+Assistant preview:
+
+- 我二次精读后确认：流程大方向没问题，但之前还漏了 7 个核心点，已补进 [docs/requirements-guide-close-reading.md](/root/a9/docs/requirements-guide-close-reading.md:361)，并提交： `5ef16a0 Add requirements analysis residual gaps` 遗留核心问题是： 1. **需求调整/变更留痕不足** 每次任务口径变化，要记录为什么变、旧判断哪里失效、影响哪些任务和测试。 2. **“本次不做什么”必须显式确认** 否则 worker 会把 mobile、MoE、session、通讯、金融模型混在一起。 3. **术语表缺失** worker / automation、monitor / supervisor、gate / guard / MoE 等混用会污染任务。 4. **没有按方案类型成形任务** 页面、接口、批处理、ETL、数据维护、通知、编码规则的需求细化字段不同。 5. **历史数据/历史状态维护没有前置** `.a9/runs`、goal state、Redis/MySQL schema、旧 API 兼容，都要在需求阶段说明。 6. **可验证性要量化，但不能过早数字化 gate** 先定义接受条件，再观测分布，最后稳定后才升级 gate。 7. **A9 里的用户确认等价于监控者确认** 任务成形卡、变更记录、不做项、worker 产物进入下一轮，都需要主控确认。 我还补了一版“任务进入 worker 前的最小需求分析卡”，后续...
+
+### Turn 408
+
+Original user intent:
+
+- line `41670`: 继续
+
+Execution evidence:
+
+- assistant_messages: `32`
+- tool_calls: `148` (exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `148`
+
+Assistant preview:
+
+- 已继续跑并监控了 2 轮 24h worker。 本轮完成： - `8423ba8`：把 worker 默认模型改成 `gpt-5.3-codex-spark`，事件预算默认从硬杀改成观测。 - `88f387a`：24h worker 自己完成 `/api/events` 通信 handler 测试切片并提交。 - `7bbf674`：第二轮 worker 方向正确但 envelope JSON 无效被回滚，我作为监控介入，从 run artifact 恢复 patch，修测试并提交 `/api/gateway/reconnect-governance` 聚合端点。 - 更新 [docs/mistakes.md](/root/a9/docs/mistakes.md)，记录这轮问题：固定预算硬杀、worker 不跑测试、final JSON 非法、监控救回有效 patch。 验证： - `python3 -m unittest tests.test_supervisor`：150 tests OK - `python3 -m unittest tests.test_control_api`：118 tests OK - targeted gateway/control tests：13 tests OK - `python3 -m py_compile scripts/a9_supervisor.py scripts/a9_control_api.py` 已过 当前状态： - 后台没有 worker 在跑。 - git 工作区干净。 - 24h supervisor MV...
+
+### Turn 409
+
+Original user intent:
+
+- line `42245`: 继续
+
+Execution evidence:
+
+- assistant_messages: `24`
+- tool_calls: `76` (exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `76`
+
+Assistant preview:
+
+- 继续跑了两组，共 4 个 worker slice。 结果： - 3 个有效合入： - `122301e`：补 reconnect governance schema/state 字段与测试。 - `f2d9ace`：我修正 worker 漏掉的失败断言。 - `f601a6d`：补 `/api/gateway/reconnect-governance` handler contract shape 测试。 - 1 个拒绝合入： - `...115514Z` 因模型容量失败中断，遗留 patch 想新增 hard gate，我判断方向不对，没救回。 - `fa08cf1`：把这次“monitor gate drift”写进错题本，明确后续不能再把观察项随便做成 hard gate。 验证： - `python3 -m unittest tests.test_control_api tests.test_monitor`：139 tests OK - `python3 -m py_compile scripts/a9_control_api.py scripts/a9_monitor.py scripts/a9_supervisor.py`：OK - 当前队列：0 - running：0 - 工作区干净 监控结论：worker 质量有进步，开始会跑 targeted test；但仍有两个问题很明显：一是会读太宽，二是会把“需求/数据模型要求”后置做成 hard gate。这个必须继续由我监控纠偏。当前通信治理进度我估算到 `70%` 左右，下一步应该继续做多机器 SSH/T...
+
+### Turn 410
+
+Original user intent:
+
+- line `42529`: 继续
+
+Execution evidence:
+
+- assistant_messages: `22`
+- tool_calls: `133` (exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `133`
+
+Assistant preview:
+
+- 已继续跑了两轮 24h 机器，并完成监控介入。 本轮结果： - 修复并提交 worker 上一轮坏测试： - `3c4675d Fix worker API status test repair` - `5bc2795 Record worker pass verification repair` - 24h 机器完成多机器连接治理切片，我救回一次有效 patch： - `ffd41b2 Add remote connection readiness summary` - 新增 SSH/Tailscale/tmux readiness 的 `connection_summary` 数据结构。 - 24h 机器第二轮自动通过并提交： - `2213f98 a9 worker: connection-summary-control-api-20260529T1233 attempt snapshot` - 把 `connection_summary` 接入 control API 的 node evidence / node status / connection summary。 验证： - `python3 -m unittest tests.test_control_api tests.test_monitor tests.test_remote` - 结果：`163 tests OK` 当前状态： - 队列：0 - running：0 - 最新 24h run：`pass` - git：干净，`main` ahead `origin/main` 240 commits...
+
+### Turn 411
+
+Original user intent:
+
+- line `43007`: 继续
+
+Execution evidence:
+
+- assistant_messages: `25`
+- tool_calls: `127` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `127`
+
+Assistant preview:
+
+- 继续推进了一轮，当前没有后台 worker 在跑。 本轮完成： - `e458aef`：control API 增加 `/api/nodes/command` / `/api/nodes/command-submit`，可以把节点命令写入 Redis Stream `a9:tasks`。 - `479dfa2`：记录错题本，明确 `reference-projects` 未物化到 worker worktree 会导致 reference gate 假阻断。 - `7e0e7fe`：节点侧增加 claim/ack 非执行计划 helper： - [scripts/a9_node.py](/root/a9/scripts/a9_node.py:155) `node_command_consumer_name` - [scripts/a9_node.py](/root/a9/scripts/a9_node.py:160) `node_command_claim_plan` - [scripts/a9_node.py](/root/a9/scripts/a9_node.py:219) `node_command_ack_plan` 验证： - `python3 -m unittest tests.test_remote tests.test_control_api tests.test_monitor`：173 tests OK - `python3 -m py_compile scripts/a9_node.py scripts/a9_control_api.py`：OK -...
+
+### Turn 412
+
+Original user intent:
+
+- line `43444`: 继续
+
+Execution evidence:
+
+- assistant_messages: `15`
+- tool_calls: `72` (exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `72`
+
+Assistant preview:
+
+- 继续完成了一轮，当前没有后台任务在跑。 这轮做了两件关键事： 1. 修了“参考项目读不到”的基础问题 提交 `6d5bbb8`：worker worktree 现在会带上 Barter-rs 的两个关键窄切片： - `barter-data/src/streams/consumer.rs` - `barter/src/engine/command.rs` 2. 让节点 helper 能直接输出 claim/ack 计划 提交 `33a7109`，新增： - `python3 scripts/a9_node.py --node-id node-01 command-claim-plan --count 2 --block-ms 100` - `python3 scripts/a9_node.py --node-id node-01 command-ack-plan 1740000200-0` 它们只打印 deterministic JSON plan，不执行 Redis，符合“先数据结构/计划，再真实执行”的节奏。 验证： - `python3 -m unittest tests.test_control_api tests.test_remote tests.test_node tests.test_monitor`：185 tests OK - `python3 -m py_compile scripts/a9_node.py scripts/a9_supervisor.py scripts/a9_control_api.py`：OK - CLI smoke 已跑，能输...
+
+## Auto Close Reading: Turn 413-422
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-413-422.json`
+- approx JSONL lines: `43694-45779`
+- generated_at: `2026-06-01T09:58:17+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 413
+
+Original user intent:
+
+- line `43694`: 继续
+
+Execution evidence:
+
+- assistant_messages: `14`
+- tool_calls: `57` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command)
+- tool_outputs: `57`
+
+Assistant preview:
+
+- 继续完成了一轮，当前没有后台任务在跑。 本轮完成： - `3e4e4ad`：节点侧新增真实 Redis `command-claim-once` - `XGROUP CREATE ... MKSTREAM` - `XREADGROUP ... >` - 默认不执行任务、不 ack - `--ack` 才会只 ack 已 claim 的 stream ids - `366110a`：修复实测发现的数据错位问题 - 入队时 `stream_id` 不能写空字符串，否则 `redis-cli --raw` 读取会吞空值，导致 `stream_id=error_code` - 现在入队写 `stream_id=pending`，API 返回时再覆盖成真实 Redis stream id 验证： - `python3 -m unittest tests.test_control_api tests.test_node tests.test_remote tests.test_monitor`：191 tests OK - `python3 -m py_compile scripts/a9_control_api.py scripts/a9_node.py`：OK - 真实 Redis smoke 已通过： - API 成功 XADD 到 `a9:tasks` - 节点 `command-claim-once` 成功 XREADGROUP 读到命令 - 解析字段正确：`stream_id=pending`，`error_code=none` - 未 ack：`acked_ids=[]...
+
+### Turn 414
+
+Original user intent:
+
+- line `43895`: 继续
+
+Execution evidence:
+
+- assistant_messages: `20`
+- tool_calls: `108` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command)
+- tool_outputs: `108`
+
+Assistant preview:
+
+- 继续跑了一轮，结果如下： 24h worker 已经跑完并 pass。当前通信链路进度我估算到 **84%左右**：已经有 Redis command plane 的最小闭环了。 这轮完成的能力： - `command-claim-once`：节点从 `a9:tasks` 取一条命令，不执行、不自动 ACK。 - `command-ack-once`：节点对指定 stream id 做一次 bounded `XACK`。 - `command-work-once`：节点取一条命令，只允许执行内置安全动作 `status`，写 `a9:events` 结果事件，成功后再 ACK。 - 真实 Redis smoke 已验证： - enqueue 到 `a9:tasks` - `command-work-once` claim - 写入 `a9:events` - ACK 成功 验证结果： - `python3 -m unittest tests.test_node tests.test_control_api tests.test_remote`：183 tests OK - `python3 -m py_compile scripts/a9_node.py`：OK - 真实 Redis smoke：OK 提交： - `253b831 Add node command ack-once` - `167c72b a9 worker: node-command-work-once-20260529T1358 attempt snapshot` - `f39c380 Record ...
+
+### Turn 415
+
+Original user intent:
+
+- line `44282`: 继续
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `37` (exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command)
+- tool_outputs: `37`
+
+Assistant preview:
+
+- 审查发现一个实际问题：`parse_node_command_result_event()` 里 `error_code` 字段重复，导致缺省情况下返回空字符串而不是 `ok`。这属于 worker pass 后仍需监控介入修的质量问题，我现在直接修并补一个断言。
+
+### Turn 416
+
+Original user intent:
+
+- line `44409`: 继续
+
+Execution evidence:
+
+- assistant_messages: `4`
+- tool_calls: `11` (exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `11`
+
+Assistant preview:
+
+- 继续完成了一刀，并做了监控介入修复。 本轮 24h worker 完成： - 新增 `parse_node_command_result_event()` - 新增 `node_command_result_read_once()` - 新增 CLI：`command-result-read-once` - `command-work-once` 写入的事件增加 `event_stream` 字段，方便后续稳定解析 我审查后发现一个问题：worker pass 后，`error_code` 有重复 key，缺省时会返回空字符串而不是 `ok`。我已修复并补了回归测试。 验证： - `python3 -m py_compile scripts/a9_node.py`：OK - `python3 -m unittest tests.test_node tests.test_control_api tests.test_remote`：192 tests OK - 真实 Redis smoke：OK `command-work-once` 产生结果事件 `1780066510627-0`，再用 `command-result-read-once` 成功读回，`status=ok`、`error_code=ok`、`command_id` 正确。 质量记录已写入 `docs/communication-observation-log.md`。 当前工作区干净，最新提交： - `c24fb08 Fix result event default error code` - `33cd...
+
+### Turn 417
+
+Original user intent:
+
+- line `44460`: 继续
+
+Execution evidence:
+
+- assistant_messages: `22`
+- tool_calls: `110` (exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command)
+- tool_outputs: `110`
+
+Assistant preview:
+
+- 已继续推进并验证完一轮。 - 新增 control API 结果查询闭环：`/api/node-command-results/{result_event_id}` 和 `/api/node-command-results/by-command/{command_id}`，手机/控制端现在可以按 `command_id` 查 worker 执行结果。 - 发现 24h worker 连续失败的根因：默认用了 `gpt-5.3-codex-spark`，它和当前 Codex exec 注入的 `image_generation` tool 不兼容。已把默认 worker 模型改回稳定 `gpt-5.3-codex`。 - 真实 24h worker smoke 已跑通：`worker-stable-default-smoke-20260529T1520: pass`，能启动、改文档、跑检查、自动提交。 - 提交了 3 个关键 commit：`e4d4ac4`、`3b26a9a`、`bce3f3a`，最后 worker 自己又提交了 `a47a8b4`。 - 验证：`python3 -m unittest tests.test_supervisor tests.test_control_api tests.test_node tests.test_remote` 通过，349 tests OK；Redis 真实查询也通过。 当前进度：24h supervisor MVP 显示 100%；通讯主链路我评估约 75%。下一步主线是把这个命令提交/结果查询闭环接进 mobile/c...
+
+### Turn 418
+
+Original user intent:
+
+- line `44883`: 继续
+
+Execution evidence:
+
+- assistant_messages: `13`
+- tool_calls: `61` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command)
+- tool_outputs: `61`
+
+Assistant preview:
+
+- 继续推进了一刀通讯闭环。 已完成： - 移动端 `/mnt/d/root/a9_mobile_agent_lab` 增加 `Node status command`：手机端可向 `/api/nodes/command-submit` 写入 Redis node command。 - 增加结果轮询：按 `command_id` 调 `/api/node-command-results/by-command/{command_id}`，在 Agent 聊天区显示 queued/noop/ok。 - 没把普通 `/api/submit` 误接到 node-command result，这两个通道已明确区分。 - control-api 和 mobile-web 都已重启并稳定运行。 验证： - `npx tsc --noEmit` 通过。 - `npm run smoke:mobile` 通过。 - Playwright 手机端点击 `Node status command` 通过。 - Redis 真链路通过：手机提交的 `mobile-node-status-*` 被 `python3 scripts/a9_node.py command-work-once --block-ms 1000` 消费，并查回 `status_ok`。 - 已记录到 `docs/communication-observation-log.md`，并提交 `6d21a55 Record mobile node command polling smoke`。 当前进度：通讯主链路约 80%。下一步是...
+
+### Turn 419
+
+Original user intent:
+
+- line `45108`: 继续
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `53` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `53`
+
+Assistant preview:
+
+- 继续推进完成。 这轮核心结果：手机发 node command 后，不再需要我手动消费了。现在 `scripts/a9_stack.sh start/restart` 会同时启动： - `control-api` - `node-worker` - `mobile-web` 新增能力： - `scripts/a9_node.py command-work-loop` - `infra/systemd/a9-node-worker.service` - `scripts/a9_service.py unit/install-hint/status` 已识别 node worker - `scripts/a9_stack.sh` 已接入 node-worker 后台日志和进程管理 实测发现并修掉一个关键问题：`block-ms=5000` 但 timeout 只有 3 秒，会误报 Redis 超时。现在 loop 会自动保证 timeout 大于 block 时间，stack/systemd 也显式用 `--timeout 10`。 验证通过： - `python3 -m unittest tests.test_node tests.test_service tests.test_control_api tests.test_remote`，211 tests OK - 真实 stack smoke：提交 `stack-node-worker-smoke-1780069227` 后，后台 node-worker 自动消费、写 result event、ACK，by-comma...
+
+### Turn 420
+
+Original user intent:
+
+- line `45343`: 继续
+
+Execution evidence:
+
+- assistant_messages: `9`
+- tool_calls: `44` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `44`
+
+Assistant preview:
+
+- 已完成这一刀：Redis Stream pending 恢复机制已经接进 node-worker，并提交。 提交：`5ecb71b Add node command pending recovery` 改动核心： - [scripts/a9_node.py](/root/a9/scripts/a9_node.py)：新增 `XAUTOCLAIM` 恢复旧 pending，worker 先读新消息，没新消息再领回断链/重启遗留任务。 - [scripts/a9_stack.sh](/root/a9/scripts/a9_stack.sh)、[a9-node-worker.service](/root/a9/infra/systemd/a9-node-worker.service)：后台 node-worker 默认开启 pending 恢复。 - [tests/test_node.py](/root/a9/tests/test_node.py)：补了 XAUTOCLAIM 解析、stale claim、worker recover pending 的单测。 - [docs/communication-observation-log.md](/root/a9/docs/communication-observation-log.md)：记录第 50 条观测证据。 验证结果： - `python3 -m py_compile scripts/a9_node.py scripts/a9_service.py` 通过 - `bash -n scripts/a9_stack.sh` ...
+
+### Turn 421
+
+Original user intent:
+
+- line `45582`: 继续
+
+Execution evidence:
+
+- assistant_messages: `11`
+- tool_calls: `45` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `45`
+
+Assistant preview:
+
+- 已继续完成一刀，并提交。 提交：`3b9a78d Add node recovery cycle API` 这次做的是多机器接入治理的“恢复路由”： - 新增 `GET/POST /api/nodes/recovery-cycle` - 后端根据 `node_status()` 和每个节点的 `recovery_plan` 自动生成下一步修复计划 - 默认只计划和落证据，不执行远端命令 - `execute=true` 时仍走现有 phone-control / remote gate - 离线节点现在明确返回 `manual_required`，不会再伪装成 noop 验证： - `python3 -m py_compile scripts/a9_control_api.py` 通过 - `python3 -m unittest tests.test_control_api tests.test_remote tests.test_node tests.test_service` 通过，`219 tests` - 重启 stack 后真实 API smoke 通过 - 当前后台服务正常： - `control-api running` - `node-worker running` - `mobile-web running` - Redis `XPENDING a9:tasks a9-worker = 0` 当前通讯治理进度约 **75%**。下一步最自然的是把 `/api/nodes/recovery-cycle` 接进手机端和/或 24h worker 调度，让手...
+
+### Turn 422
+
+Original user intent:
+
+- line `45779`: 继续
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `33` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `33`
+
+Assistant preview:
+
+- 继续完成了手机端接线。 本次改动： - `/mnt/d/root/a9_mobile_agent_lab/store/useA9ControlStore.ts` - 新增 `A9NodeRecoveryCycle` / `A9NodeRecoveryStep` - `refresh()` 自动读取 `/api/nodes/recovery-cycle` - 新增 `refreshNodeRecoveryCycle(execute?: boolean)`，支持刷新和执行恢复循环 - `/mnt/d/root/a9_mobile_agent_lab/app/(tabs)/agent.tsx` - 手机 Remote 卡增加 Recovery 摘要 - 聊天区增加 Node recovery cycle 卡片 - 提供 refresh / arm remote / run recovery cycle - `/mnt/d/root/a9_mobile_agent_lab/scripts/mobile-ui-smoke.js` - 加入 recovery summary/card/buttons 的页面验证 验证： - `npx tsc --noEmit` 通过 - `npm run smoke:mobile` 通过 - 后台仍正常： - `control-api running` - `node-worker running` - `mobile-web running` - Redis pending = `0` 主仓库提交了观测记录： `ec0ddf9 Record mob...
+
+## Auto Close Reading: Turn 423-432
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-423-432.json`
+- approx JSONL lines: `45948-48163`
+- generated_at: `2026-06-01T09:58:27+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 423
+
+Original user intent:
+
+- line `45948`: 继续
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `33` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `33`
+
+Assistant preview:
+
+- 继续完成一刀：把 recovery-cycle 的执行入口补成真正的顶层门禁。 提交：`03fe98d Gate node recovery cycle execution` 这次修正了一个实测发现的问题： - 之前 `execute=true` 时，probe/tmux 子动作有 gate，但 recovery-cycle 本身没有先检查 `nodes.recovery.cycle` - 现在 disarmed 时直接返回： - `status=blocked` - `step_count=0` - `gate.reason=phone_control_disarmed` - 不会进入 probe/tmux/heartbeat 分支 - armed remote 后才会进入实际恢复分支；当前离线节点场景返回 `manual_required` 验证： - 后端：`python3 -m unittest tests.test_control_api tests.test_remote tests.test_node tests.test_service` 通过，`220 tests` - 真实 API smoke： - disarmed execute 被顶层 gate 拦住 - armed execute 返回 `needs_attention/manual_required` - smoke 后已 disarm - 手机端同步显示 recovery gate 状态： - `npx tsc --noEmit` 通过 - `npm run smoke:mobile` 通过...
+
+### Turn 424
+
+Original user intent:
+
+- line `46087`: 现在还不是自动化的对吧
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 对，现在还不是全自动化。 当前状态是： - `node-worker` 是后台自动跑的：自动消费 `a9:tasks`、写 result、ACK、恢复 Redis pending。 - `control-api/mobile-web` 是后台服务：手机可以看状态、发命令、触发 recovery-cycle。 - `recovery-cycle` 是半自动：它能自动判断下一步、生成证据、在 `execute=true` 且 remote gate armed 时执行允许的修复分支。 - 但还没有“定时/持续自动调用 recovery-cycle”的 daemon，也没有让 24h worker 自动接管它。 也就是说，现在是 **后台服务已稳定，自动恢复逻辑已成型，但触发仍由人/手机/API 调用**。 下一步如果要进入真正自动化，我建议先做： 1. 清理/归档旧 smoke 节点，避免自动循环一直处理无效 quarantine。 2. 加一个 `a9-recovery-loop` 后台服务，定时只跑 planning mode。 3. planning 连续发现可自动修复项时，记录建议，不直接 execute。 4. execute 仍需要短时 `phone-control arm remote`，直到我们对误触风险有足够观测数据。 这样是从“半自动控制台”进入“自动观测 + 人类授权执行”。完全无人执行要再晚一点。
+
+### Turn 425
+
+Original user intent:
+
+- line `46095`: 继续
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `56` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, exec_command)
+- tool_outputs: `56`
+
+Assistant preview:
+
+- 现在已经不是纯手动了，已经进入“后台自动观测”阶段，但还不是“无人自动修机器”。 这轮完成并提交了：`45a3467 Add recovery planning loop service` 做了这些： - 新增 `scripts/a9_recovery_loop.py`：后台定时调用 `/api/nodes/recovery-cycle`，只做 planning/观测，不执行恢复。 - 新增 `infra/systemd/a9-recovery-loop.service`。 - `scripts/a9_stack.sh` 现在会一起启动：`control-api`、`node-worker`、`recovery-loop`、`mobile-web`。 - 修了 GET `/api/nodes/recovery-cycle?max_actions=2`，现在查询预算真的生效。 - 观测证据写到 `.a9/services/recovery-loop-latest.json`。 - 更新了 `docs/communication-observation-log.md` 第 54 条。 验证结果： - `224` 个单测通过。 - `py_compile` 通过。 - `bash -n scripts/a9_stack.sh` 通过。 - 实测后台状态正常： - `control-api running` - `node-worker running` - `recovery-loop running` - `mobile-web running` - phone-contro...
+
+### Turn 426
+
+Original user intent:
+
+- line `46335`: 继续
+
+Execution evidence:
+
+- assistant_messages: `3`
+- tool_calls: `16` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `16`
+
+Assistant preview:
+
+- 我会把处理做成“分类 + 默认跳过测试噪音”，但不删除任何节点文件。真实远端仍然进入 recovery-cycle，测试 smoke 节点会在结果里作为 skipped noise 留痕，这符合数据第一：先把数据形态分清楚，再考虑归档。
+
+### Turn 427
+
+Original user intent:
+
+- line `46392`: 继续
+
+Execution evidence:
+
+- assistant_messages: `7`
+- tool_calls: `38` (exec_command, exec_command, write_stdin, write_stdin, write_stdin, exec_command, exec_command, exec_command, write_stdin, write_stdin)
+- tool_outputs: `38`
+
+Assistant preview:
+
+- 继续完成一刀，已提交：`96ec2fc Classify node hygiene in recovery planning` 这刀解决 recovery-loop 的噪音问题： - `local-service-smoke` 现在被识别为 `test_smoke / noise`。 - 两个 Tailscale 节点被识别为 `remote_candidate / operational`。 - 默认 `/api/nodes/recovery-cycle` 不再追 smoke 噪音，只处理真实远端风险。 - `include_noise=true` 仍可查看全部节点，不隐藏事实。 - `communication_followup` 也去噪了，主监控不会再被 smoke 节点牵偏。 验证： - `227` 个测试通过。 - 实测 summary：`test_smoke: 1`，`remote_candidate: 2`，`risk_count=2`，`skipped_noise_count=1`。 - 默认 recovery `step_count=2`；带 `include_noise=true` 时 `step_count=3`。 - 后台仍在跑：`control-api`、`node-worker`、`recovery-loop`、`mobile-web`。 - phone-control 仍是 `disarmed`，Redis pending 是 `0`。 当前进度我评估到 `88%`。下一步应该做真实远端恢复链路：对这两个 Tailscale 节点做去重/合并...
+
+### Turn 428
+
+Original user intent:
+
+- line `46557`: 继续
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `27` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin, exec_command)
+- tool_outputs: `27`
+
+Assistant preview:
+
+- 继续完成一刀，已提交：`061bb88 Deduplicate recovery nodes by SSH target` 这刀解决同一台远端机器被两个 node id 重复恢复的问题： - 新增 `canonical_ssh_target()`，按真实 SSH 目标生成 `target_key`。 - `node_connection_summary` 现在暴露： - `duplicate_target_groups` - `duplicate_node_count` - `duplicate_nodes` - 默认 `/api/nodes/recovery-cycle` 只对一个 primary 节点生成恢复步骤。 - `include_duplicates=true` 仍可查看完整别名节点，不丢原始证据。 - `communication_followup` 也按同一 `target_key` 去重，主监控现在只盯真实资源。 验证： - `230` 个测试通过。 - 实测默认 recovery： - `step_count=1` - `skipped_duplicate_count=1` - primary 是 `root-100.74.166.86-2200` - `target_key=root@100.74.166.86:2200` - 后台四个服务仍在跑。 - phone-control 仍是 `disarmed`。 - Redis pending 是 `0`。 当前进度约 `90%`。下一步应该进入真实恢复链路：对 primary Tailscale 节点...
+
+### Turn 429
+
+Original user intent:
+
+- line `46687`: 继续
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `16` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin, exec_command)
+- tool_outputs: `16`
+
+Assistant preview:
+
+- 继续完成一刀，已提交：`8f0f875 Route offline remote recovery to probe` 这刀把远端恢复链路往前推进了： - 之前：primary Tailscale 节点 offline 后直接 `manual_required/quarantine`。 - 现在：offline 的 `remote_candidate` 会先生成 gated probe 计划： - endpoint: `/api/nodes/probe` - command: `nodes.probe.execute` - requires_arm: `true` - smoke/noise 和非远端节点仍然走人工 quarantine。 - 默认仍是 planning-only，不会偷偷执行 SSH。 验证： - `231` 个测试通过。 - 实测默认 recovery： - `status=ok` - `step_count=1` - `skipped_duplicate_count=1` - step 是 `recovery_action=probe` - `execute=false` - 后台四个服务仍在跑。 - phone-control 仍是 `disarmed`。 - Redis pending 是 `0`。 当前进度约 `91%`。下一步应该把这个 probe 计划接到手机/控制端的一键授权执行流程：手机看到 probe 计划，arm remote 后执行 probe，再根据 probe 结果进入 tmux/heartbeat 修复。
+
+### Turn 430
+
+Original user intent:
+
+- line `46762`: 继续
+
+Execution evidence:
+
+- assistant_messages: `37`
+- tool_calls: `151` (exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin, exec_command, exec_command, write_stdin, write_stdin)
+- tool_outputs: `151`
+
+Assistant preview:
+
+- 继续完成一大刀，已提交：`60eb17e Complete gated remote heartbeat recovery` 这轮是真实跑通远端恢复闭环： - recovery 从 `probe` 开始，确认 SSH 可达。 - 发现 `heartbeat_start` 返回 ok 但 tmux session 消失。 - 跑 `tmux-status` 定位到 `a9-heartbeat` session missing。 - 发现全量 bootstrap 太重会 timeout。 - 新增轻量 `/api/nodes/heartbeat-repair`，只修 heartbeat 配置和脚本，不跑 git pull。 - 修了 `heartbeat.sh` 生成 bug：之前 here-doc 少闭合，脚本语法错误。 - 修了 `~/a9-worker` 远端路径展开，避免写到字面 `$HOME`/`~` 路径。 - repair 后重新 start，远端 heartbeat 成功回传，最终 recovery 进入 `observe`。 验证： - `243` 个测试通过。 - 真实 gated smoke 完成： - `nodes.probe.execute` -> `probe_ok` - `nodes.remote.repair` -> `heartbeat_repair_ok` - `nodes.heartbeat.tmux.start` -> `heartbeat_tmux_start_ok` - `/api/nodes/status` 显示 `last_he...
+
+### Turn 431
+
+Original user intent:
+
+- line `47520`: 继续
+
+Execution evidence:
+
+- assistant_messages: `26`
+- tool_calls: `176` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `176`
+
+Assistant preview:
+
+- 已继续推进并跑通实测。 本轮完成： 1. 后端观测能力 - 新增 `/api/nodes/recovery-loop/latest` - 增强 `/api/nodes/evidence`，现在能看到 compact timeline：`kind/status/action/reason/return_code/timed_out` - 手机端接入 `Loop latest` 和 `Evidence timeline` 2. 24h 本地栈 - `scripts/a9_stack.sh` 已接入 `supervisor-loop` - 当前服务状态： - `control-api` running - `supervisor-loop` running - `node-worker` running - `recovery-loop` running - `mobile-web` running 3. 实测 24h worker - worker 确实自动消费任务了。 - `comm-gateway-reference-scan-20260530` 跑完并 pass。 - 已集成 worker commit：`a152f37` - 但也发现真实问题：idle goal continuation 会插队并烧大上下文。 4. 监控介入修正 - 本地 stack 默认设置 `A9_IDLE_GOAL_CONTINUATION=0` - 现在 supervisor-loop 会消费已有队列，但空闲时不会自己生成 goal continuation。 - 20 秒观察后仍为：`que...
+
+### Turn 432
+
+Original user intent:
+
+- line `48163`: 继续
+
+Execution evidence:
+
+- assistant_messages: `13`
+- tool_calls: `56` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin)
+- tool_outputs: `56`
+
+Assistant preview:
+
+- 继续完成了一刀核心通讯治理。 这次做的是统一恢复转录链： - 后端新增：`GET /api/nodes/recovery-transcript` - 统一输出 schema：`a9.node_recovery_transcript.v1` - 串起来的来源： - node evidence - gateway reconnect decision - Redis tasks stream health - communication followup - recovery-loop latest - 当前状态不再被历史 repair 污染：历史保留，但当前判断看最新 followup/stream/loop。 真实结果： ```text status=ok conclusion=converging current_action=continue current_reason=tasks_stream:none ``` 移动端也接上了 unified timeline，`npm run smoke:mobile` 通过。 验证： ```text python3 -m py_compile ... -> pass python3 -m unittest tests.test_control_api tests.test_recovery_loop tests.test_service tests.test_remote tests.test_node -> 250 tests OK npx tsc --noEmit -> pass npm run smoke:mobile ...
+
+## Auto Close Reading: Turn 433-442
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-433-442.json`
+- approx JSONL lines: `48397-50365`
+- generated_at: `2026-06-01T09:58:32+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 433
+
+Original user intent:
+
+- line `48397`: 继续，你现在是24小时吗
+
+Execution evidence:
+
+- assistant_messages: `8`
+- tool_calls: `49` (exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `49`
+
+Assistant preview:
+
+- 是，现在是“受控 24 小时”。 当前事实： ```text control-api running supervisor-loop running node-worker running recovery-loop running mobile-web running queued 0 running 0 done 258 ``` 含义： - `supervisor-loop` 常驻，会自动消费队列里的任务。 - `node-worker` 常驻，会处理 Redis/task stream 的节点命令。 - `recovery-loop` 常驻，会持续观测远端恢复状态。 - 但本地默认关闭了 idle goal 自发生成：`A9_IDLE_GOAL_CONTINUATION=0`，所以没任务时不会自己烧 token。 我刚继续补了一刀模型治理： - 默认 worker 模型仍是稳定 `gpt-5.3-codex` - 可用 `A9_SUPERVISOR_REFERENCE_MODEL=gpt-5.3-codex-spark` 只给 `reference_scan` 低风险任务试 Spark - 每次 worker run 会记录： - `worker_model` - `worker_model_source` - 当前最新记录： - `gpt-5.3-codex` - `DEFAULT_WORKER_MODEL` 验证通过： ```text python3 -m py_compile scripts/a9_supervisor.py scripts/a9_contro...
+
+### Turn 434
+
+Original user intent:
+
+- line `48605`: ok
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `0`
+- tool_outputs: `0`
+
+Assistant preview:
+
+- 当前保持运行即可。 你现在可以通过手机/浏览器看： ```text http://Tailscale-IP:8199 http://Tailscale-IP:8787/api/status ``` 本机是： ```text http://127.0.0.1:8199 http://127.0.0.1:8787/api/status ``` 下一步我会继续按这个节奏推进：小任务入队 -> 24h worker 执行 -> 我监控质量/主线/token -> 通过后集成。
+
+### Turn 435
+
+Original user intent:
+
+- line `48613`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `21`
+- tool_calls: `169` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin)
+- tool_outputs: `169`
+
+Assistant preview:
+
+- 已按“24小时机器做，我监控介入”的模式跑完两刀，并集成到主分支。 完成内容： - `cd8f72f`：抽取并文档化 `Transcript-Backed Intervention Policy (v1)`。 - `d3f57a2`：把 `intervention_decision` 接进 `/api/nodes/recovery-transcript`。 - 新字段现在可用： ```json { "action": "observe", "reason": "healthy", "evidence_refs": ["tasks_stream:none"] } ``` - control-api 已重启为后台服务，8787 正常。 - 当前状态：`queued=0`，`running=0`，`done=260`。 - 工作区干净。 验证： - `python3 -m py_compile scripts/a9_control_api.py` 通过。 - `python3 -m unittest tests.test_control_api` 通过，178 tests。 - API 实测 `/api/nodes/recovery-transcript?limit=1` 返回了 `intervention_decision`。 监控结论： - worker 质量可用，但不是一次到位。它第一次测试失败 3 个边界，第二次剩 1 个，第三次修好。 - 主要问题是 `repair` / `intervene` 语义容易混，说明后续要加强策略口径。 - 另一个大问题是 prompt/...
+
+### Turn 436
+
+Original user intent:
+
+- line `49104`: 我之前讲过不要为了极致工程，把业务逻辑该块，上下文token ，是观测，如果你确定可以明显可以修掉也可以做，
+
+Execution evidence:
+
+- assistant_messages: `10`
+- tool_calls: `69` (exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin, exec_command, exec_command, exec_command)
+- tool_outputs: `69`
+
+Assistant preview:
+
+- 明白，你这个纠偏是对的：**token/context 是观测项，不是主线门禁**。以后除非是明显低风险噪音清理，否则不会因为工程洁癖去打断业务逻辑。 这轮我按这个口径做了： - 24h worker 先跑，但它只输出了 malformed `search_replace_blocks`，A9 apply 没吃进去，状态是 `needs-followup`。 - 我作为监控介入，把正确方案手动落地了。 - 提交：`69f7e72 Wire followup intervention decision` - 改动： - `communication_followup_intent()` 保持原 action 域不变。 - 额外挂同口径 `intervention_decision={action, reason, evidence_refs}`。 - `recovery_transcript()` 优先复用 followup 内嵌 decision，缺失才重算。 - observation log 写清：这是业务路由一致性修复，不是 token 工程优化。 验证通过： - `python3 -m py_compile scripts/a9_control_api.py` - `python3 -m unittest tests.test_control_api` - 179 tests OK - 8787 已重启，API 实测正常。 当前状态： - 队列：`queued=0` - 运行：`running=0` - done：`261` - git 工作区干净 - 注意：A9...
+
+### Turn 437
+
+Original user intent:
+
+- line `49329`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `68` (exec_command, exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin, exec_command, exec_command, exec_command)
+- tool_outputs: `68`
+
+Assistant preview:
+
+- 已完成并提交：`f614cb0 Accept nested worker search replace blocks` 这刀是按你的模式跑的：先让 24h worker 做，我监控。worker 方向对，但失败点很典型：它输出了 strict JSON envelope 里的 `output.search_replace_blocks`，而当前 supervisor 还吃不进去这种嵌套格式，所以没有真实落盘。我介入修了执行链路。 改动： - [scripts/a9_supervisor.py](/root/a9/scripts/a9_supervisor.py)：支持 `file + blocks[]` 嵌套 SEARCH/REPLACE，同时保留原来的纯文本和扁平 envelope 格式。 - [tests/test_supervisor.py](/root/a9/tests/test_supervisor.py)：补了嵌套 envelope apply 成功、malformed nested block 可机器读 warning 两个测试。 - [docs/communication-observation-log.md](/root/a9/docs/communication-observation-log.md)：记录第 67 条观察。 验证： - `python3 -m py_compile scripts/a9_supervisor.py` 通过 - `python3 -m unittest tests.test_supervisor` 通过，154 test...
+
+### Turn 438
+
+Original user intent:
+
+- line `49567`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `11`
+- tool_calls: `30` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `30`
+
+Assistant preview:
+
+- 做完了，24h worker 这轮真实跑通。 结果： - 第一轮暴露了一个监控问题：我给的检查命令大小写不匹配，`grep` 失败，supervisor 正确回滚。 - 第二轮重跑成功：worker 没直接改文件，只输出 strict JSON envelope 的嵌套 `output.search_replace_blocks`。 - A9 supervisor 自动完成：提取补丁 -> deterministic apply -> check -> git governance -> cherry-pick 回主线。 证据： - `patch_apply.status=pass` - `patch_source=worker_envelope.output.search_replace_blocks` - `checks=pass` - `git_status=committed` - 主线提交：`e479430 a9 worker: selftest-nested-envelope-apply-pass-20260601 attempt snapshot` - 工作区干净，后台状态：`queued=0 running=0 done=264` 更新文件： - [docs/communication-observation-log.md](/root/a9/docs/communication-observation-log.md)：新增 entry 68，记录 nested envelope SEARCH/REPLACE selftest。 这说明现在 24h 机器已...
+
+### Turn 439
+
+Original user intent:
+
+- line `49683`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `15`
+- tool_calls: `44` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `44`
+
+Assistant preview:
+
+- 做完了，24h worker 已经跑通并集成。 本刀完成： - `scripts/a9_control_api.py` 增加 `node_command_recovery_hint(...)` - node command submit / result lookup / by-command lookup 都带上 `recovery_hint` - 手机端可以直接看到结构化动作：`action`、`reason`、`evidence_refs`、`next_endpoint` - 覆盖场景：Redis 不可用、回执缺失、心跳 stale/timeout、结果已找到 - `docs/communication-observation-log.md` 追加 entry 69 验证： - worker 跑过：`python3 -m py_compile scripts/a9_control_api.py` - worker 跑过：`python3 -m unittest tests.test_control_api`，182 tests OK - 我在主线又跑了 py_compile 和 3 个新增关键测试，OK - 已提交：`38adb37 a9 worker: node-command-receipt-recovery-20260601 attempt snapshot` - 当前后台状态：`queued=0 running=0 done=265` - 工作区干净 监控评价： - 质量：可接受，最终功能和测试都过。 - 问题：worker 没按要求用 `search_re...
+
+### Turn 440
+
+Original user intent:
+
+- line `49844`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `25`
+- tool_calls: `87` (exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `87`
+
+Assistant preview:
+
+- 已按“24h 机器做、我监控介入”的方式跑了 3 轮。 本轮完成： - 修复并接通 `node_command recovery_hint -> recovery_transcript -> intervention_decision.evidence_refs` - commit: `5b0ae15` - 让 HTTP 层证明手机/远程控制端能消费 typed recovery hint - commit: `172783e` - 让 discovery -> recovery-transcript 形成端到端 typed contract 证明 - commit: `6607e89` 验证： - `python3 -m unittest tests.test_control_api` 已由 worker 跑通 - 我本地补验 3 个关键 HTTP contract 测试，全部通过 - `8787` control API 已稳定运行 - supervisor loop、recovery loop 仍在后台 - 当前队列：`queued=0 running=0 done=268` 监控质量： - 第一轮 worker 代码对，但 envelope 不合格，我介入手动落地并记录为 observation。 - 第二、三轮明显更好：走了 search/replace deterministic apply，scope/test/git 都过，没有乱加 gate。 - 当前通信链路进度我估计约 `60%`：控制 API、discovery、transcript、typed r...
+
+### Turn 441
+
+Original user intent:
+
+- line `50167`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `15`
+- tool_calls: `58` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `58`
+
+Assistant preview:
+
+- 已继续做完一轮，并做了监控介入。 完成内容： - 24h worker 做了 `node-command-lifecycle-recovery-contract-20260601` - pass，已集成：`780a34d` - 补了 `discovery -> command-submit -> by-command missing -> recovery_hint.next_endpoint` 的闭环测试。 - 我发现一个真实语义问题： - `/api/nodes/command-submit` 只是入队成功，却返回 `command_result_found`，这会误导控制端。 - 24h worker 修复思路对，但输出补丁用了绝对路径，supervisor 拒绝 apply。 - 我手动介入落地相同修复。 - commit：`afca6e4 Fix node command submit recovery hint semantics` 现在语义已经正确： ```json { "action": "wait", "reason": "await_result", "next_endpoint": "/api/node-command-results/by-command/smoke-await-result-20260601" } ``` 验证： - `python3 -m unittest tests.test_control_api` 通过，`187 tests OK` - 4 个重点 contract 测试通过 - 8787 control API 已重启 ...
+
+### Turn 442
+
+Original user intent:
+
+- line `50365`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `31`
+- tool_calls: `104` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `104`
+
+Assistant preview:
+
+- 已经做完并跑通两轮 24h worker。 完成内容： - 真实 Redis/API 冒烟：`command-submit -> background node-worker 消费 -> by-command 查回结果` 跑通，`XPENDING=0`。 - 修复 by-command recovery hint：优先使用实际消费节点 `result node_id`，不是请求里的 `node_id`。 - 新增顶层字段： - `requested_node_id`：请求/路由意图 - `result_node_id`：真实执行节点 - 记录到 `docs/communication-observation-log.md` 第 76-78 条。 - 提交： - `df8d187 Prefer actual node identity in command result hints` - `0da0b10 a9 worker: node-command-intent-fact-fields-20260601 attempt snapshot` 验证： - `python3 -m unittest tests.test_node tests.test_control_api` 通过，230 tests。 - `python3 -m unittest tests.test_control_api` 通过，188 tests。 - control API / supervisor / node-worker / recovery-loop 都还在跑。 - 当前状态干净：`queu...
+
+## Auto Close Reading: Turn 443-452
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-443-452.json`
+- approx JSONL lines: `50757-53280`
+- generated_at: `2026-06-01T09:58:43+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 443
+
+Original user intent:
+
+- line `50757`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `35`
+- tool_calls: `178` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `178`
+
+Assistant preview:
+
+- 已完成这一轮，且 24h worker 真实跑通了一次。 完成内容： - 修复本机代理导致 `127.0.0.1:8787` 访问走 `HTTP_PROXY=7890` 的问题。 - `a9_node.py` / `a9_recovery_loop.py` 对本地 controller 请求强制绕过环境代理。 - `a9_service.py start` 增加稳定后台启动能力，并返回 `command_status`，区分 `planned / already_running / running / start_timeout`。 - 24h worker 自动完成 `/api/status` 服务观测接入，手机端现在能看到： - `control-api` - `node-worker` - `recovery-loop` - `supervisor` 的实际进程状态、缺失服务、下一步动作。 当前状态： - 后台服务都在跑。 - `/api/health` 正常。 - `/api/status` 正常，并已包含 `service_observation`。 - 最新 24h worker 任务：`control-api-service-process-status-20260601 pass` - 工作区干净。 提交： - `f13dabe` 修复本地控制面 HTTP 客户端代理问题 - `c9be235` 增加 service start 观测状态 - `fdb1c26` 记录 monitor 介入 - `6aeed54` 24h worker 完成 `/api/s...
+
+### Turn 444
+
+Original user intent:
+
+- line `51468`: 做吧
+
+Execution evidence:
+
+- assistant_messages: `28`
+- tool_calls: `120` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `120`
+
+Assistant preview:
+
+- 已做完这一刀：手机端现在不只是看 A9 服务状态，可以触发缺失服务恢复。 改动： - `/mnt/d/root/a9_mobile_agent_lab/store/useA9ControlStore.ts` - 新增 `startMissingServices()` - 调用 `/api/services/start` - 只发送当前观测到的 `missing_services` - `/mnt/d/root/a9_mobile_agent_lab/app/(tabs)/agent.tsx` - A9 services 卡片新增 `Start missing` - 全健康时显示 `All services observed` - 展示最近一次启动结果 - `/root/a9/docs/communication-observation-log.md` - 记录第 87 条观测证据 - 已提交：`eda3cbf Record mobile service recovery control` 验证： - `npx tsc --noEmit` 通过 - `npm run smoke:mobile` 通过 - 真实 API 闭环通过： - arm runtime - `/api/services/start` - 当前无缺失服务，返回 `noop / no_missing_services` - disarm - 后台服务还在： - `control-api` - `node-worker` - `recovery-loop` - `supervisor` 当前通讯/手机控制进度...
+
+### Turn 445
+
+Original user intent:
+
+- line `51957`: 继续
+
+Execution evidence:
+
+- assistant_messages: `17`
+- tool_calls: `69` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `69`
+
+Assistant preview:
+
+- 继续做完两刀。 第一刀后端： - 新增 `/api/communication/status` - 统一聚合 `tailscale / services / nodes / tasks_stream / recovery_loop` - 输出统一 `status / action / reason / priority_source` - discovery 已暴露 `communication_status` - 提交：`d32deac Add unified communication status read model` 第二刀手机端： - 手机端 refresh 接入 `/api/communication/status` - 首屏新增 `Communication` 卡片 - smoke 增加 `a9-communication-status-card` 断言 - Expo web 已重启在 `8199` - 文档证据提交：`af62588 Record mobile communication status card` 验证： - `python3 -m unittest tests.test_control_api`：196 tests passed - `npx tsc --noEmit`：passed - `npm run smoke:mobile`：passed - live `/api/communication/status`：`ok / continue / tailscale:ok` - 后台服务还在跑：`control-api / node-...
+
+### Turn 446
+
+Original user intent:
+
+- line `52307`: 继续
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `10` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command)
+- tool_outputs: `10`
+
+Assistant preview:
+
+- live 验证通过：当前健康时 action-plan 是 `noop`，repair-one 也返回 `noop`，没有乱执行恢复。现在补文档证据，再提交。
+
+### Turn 447
+
+Original user intent:
+
+- line `52376`: 继续
+
+Execution evidence:
+
+- assistant_messages: `18`
+- tool_calls: `55` (write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `55`
+
+Assistant preview:
+
+- 继续推进完了三块： 1. 后端通信恢复路由 - 新增 `GET /api/communication/action-plan` - 新增 `POST /api/communication/repair-one` - 映射规则： - 服务缺失 -> `services.start` / runtime gate - 节点或 recovery-loop 问题 -> `nodes.recovery.cycle` / remote gate - tasks stream 问题 -> gateway health refresh - Tailscale install/login/reconnect -> manual_required - 提交：`5c7b1ed Route communication actions to bounded recovery` 2. 手机端控制入口 - Communication 卡片显示 action plan - 增加 `Arm <group>` 和 `Repair one` - loading 状态也保留控制位，避免慢请求导致首屏空洞 - `npx tsc --noEmit` 通过 - `npm run smoke:mobile` 通过 - 证据提交：`e850c93 Record mobile communication repair entry` 3. 24h recovery-loop 接入同一套计划 - `scripts/a9_recovery_loop.py` 每轮先读 `/api/communication/action-plan...
+
+### Turn 448
+
+Original user intent:
+
+- line `52669`: 继续
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `27` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `27`
+
+Assistant preview:
+
+- 继续完成了“观测区间”闭环。 已做： - `recovery-loop` 增加 observe-only 通信 action streak - 写入 `.a9/services/communication-observation.json` - 记录 `current_key / streak / first_seen_at / last_seen_at / recommendation / route / auto_execute=false` - 重复非健康 ready 状态会变成 `candidate_for_repair_one`，但仍不自动执行 - 提交：`ce8fa88 Track communication observation streaks` - control API 暴露 observation - `GET /api/nodes/recovery-loop/latest` 现在返回 `communication_observation` - live 返回：`tailscale:continue:noop`, `streak=8`, `recommendation=continue_observation`, `auto_execute=false` - 提交：`4277726 Expose communication observation streak` - 手机端显示 observation streak - recovery 卡展示 key、streak、recommendation、auto_execute、route - `npx t...
+
+### Turn 449
+
+Original user intent:
+
+- line `52816`: 继续
+
+Execution evidence:
+
+- assistant_messages: `12`
+- tool_calls: `21` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command)
+- tool_outputs: `21`
+
+Assistant preview:
+
+- 继续完成了“只读审计队列”。 已做： - `recovery-loop` 现在每轮写： - `.a9/services/communication-observation.json` - `.a9/services/communication-repair-suggestions.json` - 当状态是健康/非候选时： - `pending_count=0` - 保留 `last_observation` - 当状态进入 `candidate_for_repair_one` 时： - 写 pending suggestion - 包含 `suggestion_id / route / streak / evidence / operator_action` - 明确 `auto_execute=false` API： - 新增 `GET /api/communication/repair-suggestions` - `GET /api/nodes/recovery-loop/latest` 也内嵌 `communication_repair_suggestions` 手机端： - recovery 卡显示 suggestion count 和 first suggestion id - `npx tsc --noEmit` 通过 - `npm run smoke:mobile` 通过 验证： - `python3 -m unittest tests.test_control_api tests.test_recovery_loop`：207 tests passed ...
+
+### Turn 450
+
+Original user intent:
+
+- line `52961`: 继续
+
+Execution evidence:
+
+- assistant_messages: `1`
+- tool_calls: `4` (exec_command, exec_command, write_stdin, exec_command)
+- tool_outputs: `4`
+
+Assistant preview:
+
+- 我继续补 suggestion 的人工状态流：pending 之后要能 approve / ignore / resolve，但仍然不自动执行。先做后端确定性状态更新和审计记录，再接手机。
+
+### Turn 451
+
+Original user intent:
+
+- line `52977`: 记得审核要异步旁路，不要影响主性能
+
+Execution evidence:
+
+- assistant_messages: `17`
+- tool_calls: `58` (exec_command, exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `58`
+
+Assistant preview:
+
+- 已处理：审核/评审现在是异步旁路，不阻塞主通讯性能。 这刀完成了： - 后端新增 `POST /api/communication/repair-suggestions/review` - 支持 `approve / ignore / resolve` - 需要 `operator.admin` - 只改变 suggestion review 状态 - 保持 `auto_execute=false` - audit 用 daemon thread 异步写入，不进入主链路等待 - 手机端新增三类 review 控件： - `Approve` - `Ignore` - `Resolve` - 控件稳定显示，数据未到时也不会让恢复卡结构抖动 - 文档已记录到 `docs/communication-observation-log.md` 第 96 条 - 主仓库已提交： - `b54a15b Add async communication suggestion review` 验证结果： - 后端：`python3 -m unittest tests.test_control_api tests.test_recovery_loop` 通过，209 tests - 移动端：`npx tsc --noEmit` 通过 - 移动端 smoke：`npm run smoke:mobile` 通过 - `control-api` 已重启，端口 `8787` 在线 - Expo mobile web 端口 `8199` 在线 - 当前通讯状态：`tailscale:continue:no...
+
+### Turn 452
+
+Original user intent:
+
+- line `53280`: 还有多少，做完，我们马上要总结了
+
+Execution evidence:
+
+- assistant_messages: `3`
+- tool_calls: `3` (exec_command, exec_command, exec_command)
+- tool_outputs: `3`
+
+Assistant preview:
+
+- 还剩很少，可以认为这一阶段已经收口了。 当前完成度我给 **96%**： - 24h 机器基础链路：完成 - control-api：完成 - recovery-loop 观测：完成 - 通讯状态统一读模型：完成 - 手机端控制入口：完成 - suggestion 队列：完成 - 审核异步旁路：完成 - 服务在线：完成 - 测试通过：完成 - git 主仓库：干净 剩下的 **4%** 不是代码主功能，而是总结前的收尾： 1. 把当前阶段能力、边界、下一阶段路线写成最终总结。 2. 明确哪些是“已可用”，哪些是“观察中”，哪些不要再做 gate。 3. 给 24h worker 下一阶段任务包：继续抄顶级项目，但主线转到通讯稳定治理和 session governance。 4. 记录当前架构原则：审核/评审异步旁路，不影响主性能；数据第一，性能第二；gate 先观察后阻断。 现在可以开始总结。
+
+## Auto Close Reading: Turn 453-454
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-453-454.json`
+- approx JSONL lines: `53301-53365`
+- generated_at: `2026-06-01T09:58:54+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 453
+
+Original user intent:
+
+- line `53301`: 你先做这个做完，下一轮我们需要做session增量 精读，因果链想法迭代细节，观测出来的问题问题分析总结，噪音去除
+
+Execution evidence:
+
+- assistant_messages: `6`
+- tool_calls: `10` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `10`
+
+Assistant preview:
+
+- 做完了，已提交： `719ae28 Record communication stage handoff` 这次补了收口材料： - 新增 [docs/stage-handoff-2026-06-01.md](/root/a9/docs/stage-handoff-2026-06-01.md) - 更新 [AGENTS.md](/root/a9/AGENTS.md)，把下一刀明确改成：先做 session 增量精读、因果链统筹、想法迭代细节、观测问题分析、噪音去除 - 更新 [docs/project.md](/root/a9/docs/project.md)，记录通讯/control 阶段已收口 - 更新 [docs/README.md](/root/a9/docs/README.md)，把 handoff 文档加入入口索引 当前状态： - `/root/a9` 工作区干净 - 24h 队列：`queued=0 running=0` - 服务还在跑 - 下一轮不要继续堆功能，先按 handoff 做 session 增量精读和因果统筹。
+
+### Turn 454
+
+Original user intent:
+
+- line `53365`: 对的，先做，做完我们要讨论一下如何像hermes旁路自动化，而且我有个大问题，就是我们精读出来的东西我们的 各个角色是否知道呢
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `13` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, write_stdin, write_stdin, write_stdin)
+- tool_outputs: `13`
+
+Assistant preview:
+
+- 已从 293 推到 392 附近，过程中出现一个值得记录的问题：队列里同段 close-reading 任务有重复，这说明 auto-next/session mini-flow 仍有并发/重复调度瑕疵。先让本轮跑到 max-tasks 结束，再做去重和因果记录。
