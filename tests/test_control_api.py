@@ -894,6 +894,103 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["status"], "ok")
         self.assertEqual(captured["payload"]["risk_count"], 0)
 
+    def test_communication_status_prioritizes_missing_services_over_observe(self):
+        mod = load_control_api()
+        originals = {
+            "tailscale_status": mod.tailscale_status,
+            "service_observation_status": mod.service_observation_status,
+            "node_connection_summary": mod.node_connection_summary,
+            "recovery_loop_latest": mod.recovery_loop_latest,
+        }
+        try:
+            mod.tailscale_status = lambda: {"status": "ok"}
+            mod.service_observation_status = lambda root=mod.ROOT: {
+                "status": "ok",
+                "observed": {
+                    "missing_count": 1,
+                    "missing_services": ["node-worker"],
+                    "next_action": "start_missing_services",
+                },
+            }
+            mod.node_connection_summary = lambda root=mod.ROOT: {
+                "status": "ok",
+                "risk_count": 0,
+                "tasks_stream": {"stream_action": "continue", "stream_action_reason": "none"},
+                "communication_followup": {"action": "continue", "reason": "healthy"},
+            }
+            mod.recovery_loop_latest = lambda *, root=mod.ROOT: {"status": "ok"}
+
+            status = mod.communication_status()
+        finally:
+            mod.tailscale_status = originals["tailscale_status"]
+            mod.service_observation_status = originals["service_observation_status"]
+            mod.node_connection_summary = originals["node_connection_summary"]
+            mod.recovery_loop_latest = originals["recovery_loop_latest"]
+
+        self.assertEqual(status["status"], "degraded")
+        self.assertEqual(status["action"], "start_missing_services")
+        self.assertEqual(status["priority_source"], "services")
+        self.assertEqual(status["layers"]["services"]["observed"]["missing_services"], ["node-worker"])
+
+    def test_communication_status_prioritizes_recovery_loop_attention(self):
+        mod = load_control_api()
+        originals = {
+            "tailscale_status": mod.tailscale_status,
+            "service_observation_status": mod.service_observation_status,
+            "node_connection_summary": mod.node_connection_summary,
+            "recovery_loop_latest": mod.recovery_loop_latest,
+        }
+        try:
+            mod.tailscale_status = lambda: {"status": "ok"}
+            mod.service_observation_status = lambda root=mod.ROOT: {
+                "status": "ok",
+                "observed": {"missing_count": 0, "missing_services": [], "next_action": "observe"},
+            }
+            mod.node_connection_summary = lambda root=mod.ROOT: {
+                "status": "ok",
+                "risk_count": 0,
+                "tasks_stream": {"stream_action": "continue", "stream_action_reason": "none"},
+                "communication_followup": {"action": "continue", "reason": "healthy"},
+            }
+            mod.recovery_loop_latest = lambda *, root=mod.ROOT: {"status": "needs_attention", "risk_count": 2}
+
+            status = mod.communication_status()
+        finally:
+            mod.tailscale_status = originals["tailscale_status"]
+            mod.service_observation_status = originals["service_observation_status"]
+            mod.node_connection_summary = originals["node_connection_summary"]
+            mod.recovery_loop_latest = originals["recovery_loop_latest"]
+
+        self.assertEqual(status["status"], "needs_attention")
+        self.assertEqual(status["action"], "intervene")
+        self.assertEqual(status["priority_source"], "recovery_loop")
+
+    def test_api_communication_status_endpoint_uses_status_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+
+        class DummyCommunicationStatusHandler:
+            path = "/api/communication/status"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for /api/communication/status")
+
+        original_status = mod.communication_status
+        try:
+            mod.communication_status = lambda: {"status": "needs_attention", "action": "intervene"}
+            mod.ControlHandler.do_GET(DummyCommunicationStatusHandler())
+        finally:
+            mod.communication_status = original_status
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["status"], "needs_attention")
+        self.assertEqual(captured["payload"]["action"], "intervene")
+
     def test_node_recovery_cycle_plans_tmux_repair_and_writes_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -6989,6 +7086,7 @@ class ControlApiTests(unittest.TestCase):
         mod = load_control_api()
         discovery = mod.controller_discovery()
         self.assertEqual(discovery["service"], "a9-controller")
+        self.assertEqual(discovery["endpoints"]["communication_status"], "/api/communication/status")
         self.assertEqual(discovery["endpoints"]["register_node"], "/api/nodes/register")
         self.assertEqual(discovery["endpoints"]["gateway_transport_contract"], "/api/gateway/transport-contract")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")

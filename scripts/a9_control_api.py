@@ -1703,6 +1703,7 @@ def controller_discovery() -> dict[str, Any]:
         "endpoints": {
             "health": "/api/health",
             "status": "/api/status",
+            "communication_status": "/api/communication/status",
             "register_node": "/api/nodes/register",
             "heartbeat_node": "/api/nodes/heartbeat",
             "phone_control_status": "/api/phone-control/status",
@@ -2110,7 +2111,117 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
         "skipped_noise_count": len(skipped_noise_nodes),
         "skipped_noise_nodes": skipped_noise_nodes,
         "latest_evidence_paths": evidence_paths[-20:],
+        "redis": status.get("redis"),
+        "tasks_stream": status.get("tasks_stream"),
         "communication_followup": status.get("communication_followup"),
+    }
+
+
+def communication_status(root: Path = ROOT) -> dict[str, Any]:
+    tailscale = tailscale_status()
+    services = service_observation_status(root)
+    nodes = node_connection_summary(root)
+    tasks_stream = nodes.get("tasks_stream") if isinstance(nodes.get("tasks_stream"), dict) else {}
+    recovery = recovery_loop_latest(root=root)
+
+    actions = {
+        "continue": 1,
+        "observe": 1,
+        "watch": 2,
+        "start_missing_services": 3,
+        "reconnect": 3,
+        "login": 3,
+        "install": 3,
+        "intervene": 4,
+        "quarantine": 5,
+    }
+    status_by_action = {
+        "continue": "ok",
+        "observe": "ok",
+        "watch": "degraded",
+        "start_missing_services": "degraded",
+        "reconnect": "degraded",
+        "login": "needs_attention",
+        "install": "needs_attention",
+        "intervene": "needs_attention",
+        "quarantine": "needs_attention",
+    }
+
+    candidates: list[dict[str, Any]] = []
+    tail_status = str(tailscale.get("status") or "")
+    tail_action = "continue"
+    tail_reason = tail_status or "unknown"
+    if tail_status == "missing":
+        tail_action = "install"
+    elif tail_status == "needs_login":
+        tail_action = "login"
+    elif tail_status in {"timeout", "unavailable", "stopped"}:
+        tail_action = "reconnect"
+    elif tail_status != "ok":
+        tail_action = "watch"
+    candidates.append({"source": "tailscale", "action": tail_action, "reason": tail_reason})
+
+    service_observed = services.get("observed") if isinstance(services.get("observed"), dict) else {}
+    service_action = str(service_observed.get("next_action") or "observe")
+    candidates.append(
+        {
+            "source": "services",
+            "action": service_action,
+            "reason": f"missing:{service_observed.get('missing_count', 0)}",
+            "missing_services": service_observed.get("missing_services") or [],
+        }
+    )
+
+    node_followup = nodes.get("communication_followup") if isinstance(nodes.get("communication_followup"), dict) else {}
+    candidates.append(
+        {
+            "source": "nodes",
+            "action": str(node_followup.get("action") or "continue"),
+            "reason": str(node_followup.get("reason") or "healthy"),
+            "risk_count": nodes.get("risk_count", 0),
+        }
+    )
+
+    candidates.append(
+        {
+            "source": "tasks_stream",
+            "action": str(tasks_stream.get("stream_action") or "continue"),
+            "reason": str(tasks_stream.get("stream_action_reason") or tasks_stream.get("reason") or "none"),
+            "lag": tasks_stream.get("lag"),
+            "pending": tasks_stream.get("pending"),
+        }
+    )
+    recovery_status = str(recovery.get("status") or recovery.get("cycle_status") or "")
+    recovery_action = "continue"
+    if recovery_status in {"needs_attention", "failed", "error"}:
+        recovery_action = "intervene"
+    elif recovery_status in {"degraded", "stale"}:
+        recovery_action = "watch"
+    candidates.append(
+        {
+            "source": "recovery_loop",
+            "action": recovery_action,
+            "reason": recovery_status or "unknown",
+            "risk_count": recovery.get("risk_count"),
+        }
+    )
+
+    best = max(candidates, key=lambda item: actions.get(str(item.get("action") or "watch"), actions["watch"]))
+    action = str(best.get("action") or "watch")
+    return {
+        "status": status_by_action.get(action, "degraded"),
+        "generated_at": utc_now(),
+        "action": action,
+        "reason": f"{best.get('source')}:{best.get('reason')}",
+        "priority_source": best.get("source"),
+        "candidates": candidates,
+        "layers": {
+            "tailscale": tailscale,
+            "services": services,
+            "nodes": nodes,
+            "tasks_stream": tasks_stream,
+            "recovery_loop": recovery,
+        },
     }
 
 
@@ -4783,6 +4894,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, node_status())
             elif parsed.path == "/api/nodes/connection-summary":
                 self.write_json(200, node_connection_summary())
+            elif parsed.path == "/api/communication/status":
+                self.write_json(200, communication_status())
             elif parsed.path == "/api/nodes/recovery-cycle":
                 self.write_json(
                     200,

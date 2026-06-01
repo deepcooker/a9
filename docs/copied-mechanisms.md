@@ -578,6 +578,12 @@ Mechanisms to adapt:
   same typed-state/read-model split used in the gateway and Barter-rs-inspired
   reconnect evidence: the phone/control plane reads a bounded decision view,
   while raw node/evidence files remain the source of truth.
+- `scripts/a9_control_api.py`: `/api/communication/status` now lifts the same
+  typed-state/read-model split one level higher. It ranks bounded layer actions
+  from Tailscale, service observation, node connection summary, Redis
+  tasks-stream lag, and recovery-loop status into one `action/reason/priority_source` while preserving
+  raw layer evidence. This copies the mature gateway pattern that observers
+  consume typed lifecycle decisions instead of scraping unrelated logs.
 
 ## Client Skeleton Reference Notes
 

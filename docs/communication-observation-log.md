@@ -1873,3 +1873,32 @@ Next monitoring target:
      phone control should close the smallest useful loop: observe canonical
      service truth, trigger the bounded deterministic recovery action, then
      reread canonical truth. It should not become its own service manager.
+
+88. Control API now exposes a unified communication status read model.
+   - Trigger:
+     node health, Redis tasks stream lag, Tailscale state, service process
+     observation, and recovery-loop transcript were readable, but clients and
+     workers had to stitch them together themselves. That makes phone control
+     and 24-hour worker intervention fragile.
+   - Mechanism copied:
+     Barter-rs-style typed lifecycle decisions and A9's existing
+     `communication_followup` pattern: each layer emits a bounded action, then
+     the read model picks the highest-priority action without performing the
+     mutation.
+   - Change:
+     `scripts/a9_control_api.py` adds `communication_status()` and
+     `GET /api/communication/status`. The payload includes candidates from
+     `tailscale`, `services`, `nodes`, `tasks_stream`, and `recovery_loop`, the selected
+     `action/reason/priority_source`, plus raw `layers` for evidence. Discovery
+     now advertises the endpoint as `communication_status`.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py`;
+     `python3 -m unittest tests.test_control_api` passed with 196 tests.
+     After restarting control-api, live `GET /api/discovery` returned
+     `/api/communication/status`, and live `GET /api/communication/status`
+     returned `status=ok`, `action=continue`, `priority_source=tailscale`, with
+     candidate sources `tailscale/services/nodes/tasks_stream/recovery_loop`.
+   - Governance lesson:
+     communication stability needs one canonical read model before adding more
+     buttons or recovery automations. The model observes and ranks; mutations
+     remain behind existing gated endpoints.
