@@ -57,7 +57,10 @@ DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
 DEFAULT_REDIS_DEEP_MARK_LIMIT = 80
 DEFAULT_IDLE_GOAL_CONTINUATION_ENABLED = True
 COMMUNICATION_GATE_HINTS = (
-    "gateway",
+    "gateway runtime",
+    "gateway transport",
+    "gateway communication",
+    "gateway evidence",
     "ws",
     "websocket",
     "ssh",
@@ -76,7 +79,6 @@ COMMUNICATION_GATE_HINTS = (
 )
 COMMUNICATION_GATE_COMBO_HINTS = (
     ("redis", "stream"),
-    ("redis", "gateway"),
     ("redis", "communication"),
     ("redis", "通讯"),
 )

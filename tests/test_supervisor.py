@@ -4679,6 +4679,21 @@ index 0000000..3e75765
 
         self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
 
+    def test_gateway_hint_filtering_note_does_not_trigger_gateway_gate(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="plan-lane-runtime",
+            prompt=(
+                "reference_basis: A9 goal/Redis flow/run evidence remain authority.\n"
+                "last_change_request: add deterministic verification after gateway hint filtering."
+            ),
+            phase="mechanism_extract",
+        )
+        summary = {"worker_envelope": {"envelope": {"output": {"next_slice": "repair idle goal continuation tests"}}}}
+
+        self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+
     def test_redis_stream_reference_triggers_gateway_gate(self):
         mod = load_supervisor()
         task = mod.Task(
