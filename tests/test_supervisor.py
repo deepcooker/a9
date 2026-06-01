@@ -5691,7 +5691,7 @@ index 0000000..3e75765
                 "findings": [
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_monitor_blocked_to_repair_takeover'",
+                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_test_slice_monitor_blocked_and_fallback_routing_regression'",
                     },
                     {"kind": "undeclared_check", "command": "rg -n monitor_blocked_repair_checks tests/test_supervisor.py"},
                     {"kind": "undeclared_check", "command": "python3 -m unittest tests/test_control_api.py"},
@@ -5705,7 +5705,7 @@ index 0000000..3e75765
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
-                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_monitor_blocked_to_repair_takeover",
+                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_test_slice_monitor_blocked_and_fallback_routing_regression",
             ],
         )
 
@@ -5724,7 +5724,7 @@ index 0000000..3e75765
                     {"kind": "undeclared_check", "command": "echo python3 -m unittest tests/test_supervisor.py"},
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_monitor_blocked_to_repair_takeover'",
+                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_test_slice_monitor_blocked_and_fallback_routing_regression'",
                     },
                 ]
             }
@@ -5736,7 +5736,7 @@ index 0000000..3e75765
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
-                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_monitor_blocked_to_repair_takeover",
+                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_test_slice_monitor_blocked_and_fallback_routing_regression",
             ],
         )
 
