@@ -6590,6 +6590,112 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertTrue(captured["payload"]["runtime"]["node_command_recovery_hint_contract"])
 
+    def test_api_discovery_to_recovery_transcript_typed_contract_for_handler(self):
+        mod = load_control_api()
+        discovery_capture = {"status": None, "payload": None}
+        transcript_capture = {"status": None, "payload": None}
+
+        class DummyDiscoveryGetHandler:
+            path = "/api/discovery"
+            headers = {}
+
+            def write_json(self, status, payload):
+                discovery_capture["status"] = status
+                discovery_capture["payload"] = payload
+
+        mod.ControlHandler.do_GET(DummyDiscoveryGetHandler())
+        self.assertEqual(discovery_capture["status"], 200)
+        self.assertTrue(discovery_capture["payload"]["runtime"]["node_command_recovery_hint_contract"])
+
+        transcript_endpoint = discovery_capture["payload"]["endpoints"]["node_recovery_transcript"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nodes_dir = root / ".a9" / "nodes"
+            nodes_dir.mkdir(parents=True)
+            node_path = nodes_dir / "node-a.json"
+            node_path.write_text(
+                json.dumps(
+                    {
+                        "node_id": "node-a",
+                        "status": "online",
+                        "connection_state": "stale",
+                        "connection_action": "reconnect",
+                        "connection_action_reason": "heartbeat_stale",
+                        "last_heartbeat_at": "2026-05-29T00:00:00+00:00",
+                        "updated_at": "2026-05-29T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            class DummyTranscriptGetHandler:
+                path = f"{transcript_endpoint}?node_id=node-a&limit=20"
+                headers = {}
+
+                def write_json(self, status, payload):
+                    transcript_capture["status"] = status
+                    transcript_capture["payload"] = payload
+
+            original_gateway = mod.latest_gateway_reconnect_decision_event
+            original_status = mod.node_status
+            original_latest = mod.recovery_loop_latest
+            original_transcript = mod.recovery_transcript
+            try:
+                mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+                mod.node_status = lambda root=mod.ROOT: {
+                    "nodes": [
+                        {
+                            "node_id": "node-a",
+                            "connection_state": "stale",
+                            "connection_action": "reconnect",
+                            "connection_action_reason": "heartbeat_stale",
+                        }
+                    ],
+                    "tasks_stream": {
+                        "status": "unavailable",
+                        "stream_action": "intervene",
+                        "stream_action_reason": "redis_unavailable",
+                        "sampled_at": "2026-05-30T00:00:00+00:00",
+                    },
+                    "communication_followup": {
+                        "status": "needs_attention",
+                        "action": "reconnect",
+                        "reason": "node:heartbeat_stale",
+                        "evidence": {"nodes": [{"node_id": "node-a"}]},
+                    },
+                }
+                mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "missing"}
+
+                def fake_transcript(node_id, *, limit=20):
+                    return original_transcript(node_id, root=root, limit=limit)
+
+                mod.recovery_transcript = fake_transcript
+                mod.ControlHandler.do_GET(DummyTranscriptGetHandler())
+            finally:
+                mod.latest_gateway_reconnect_decision_event = original_gateway
+                mod.node_status = original_status
+                mod.recovery_loop_latest = original_latest
+                mod.recovery_transcript = original_transcript
+
+        self.assertEqual(transcript_capture["status"], 200)
+        payload = transcript_capture["payload"]
+        self.assertEqual(payload["kind"], "node_recovery_transcript")
+
+        hint_items = [item for item in payload["items"] if item.get("source") == "node_command_recovery_hint"]
+        self.assertTrue(hint_items)
+        self.assertTrue(
+            any(
+                isinstance(item.get("details"), dict)
+                and isinstance(item.get("details", {}).get("recovery_hint"), dict)
+                for item in hint_items
+            )
+        )
+
+        refs = payload["intervention_decision"]["evidence_refs"]
+        self.assertIn("redis:ping", refs)
+        self.assertIn(str(node_path), refs)
+
     def test_read_evidence_file_allows_only_a9_evidence_roots(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

@@ -1466,3 +1466,30 @@ Next monitoring target:
      previous worker envelope over-heaviness is kept as an observation item and
      should not be promoted into a new hard gate that blocks data-model-first
      delivery.
+
+72. Queued communication handler now has discovery->transcript typed recovery contract proof.
+   - Trigger:
+     phone-control/queued handler path still lacked a single endpoint-chain proof
+     that recovery action routing can start from `/api/discovery` and consume
+     typed recovery transcript fields without prose parsing.
+   - Mechanism copied:
+     Codex handoff discipline (explicit action/scope/evidence contract),
+     OpenClaw/Lobster workflow boundary (typed envelope consumption only), and
+     Barter-rs recovery routing by state/action/reason/next endpoint.
+   - Change:
+     added `test_api_discovery_to_recovery_transcript_typed_contract_for_handler`
+     in `tests/test_control_api.py`. The test first calls `/api/discovery`, then
+     uses discovered `endpoints.node_recovery_transcript` to call
+     `/api/nodes/recovery-transcript?node_id=node-a&limit=20`, and asserts typed
+     contract payload: transcript includes `source=node_command_recovery_hint`
+     with `details.recovery_hint`, and
+     `intervention_decision.evidence_refs` contains redis and node evidence refs.
+   - Verification:
+     baseline related tests passed before patch apply:
+     `python3 -m unittest tests.test_control_api.ControlApiTests.test_api_recovery_transcript_endpoint_exposes_node_command_hint_contract tests.test_control_api.ControlApiTests.test_api_discovery_endpoint_exposes_runtime_recovery_hint_flag`.
+     run the new single test after apply:
+     `python3 -m unittest tests.test_control_api.ControlApiTests.test_api_discovery_to_recovery_transcript_typed_contract_for_handler`.
+   - Governance lesson:
+     keep mobile/control entry as typed contract consumer; do not add new hard
+     gate or token/line ceilings when data contract and recovery behavior are the
+     acceptance target.
