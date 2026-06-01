@@ -6270,7 +6270,7 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
-    def test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks(self):
+    def test_monitor_blocked_repair_checks_keeps_declared_checks_only(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -6298,13 +6298,7 @@ index 0000000..3e75765
 
         checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
-        self.assertEqual(
-            checks,
-            [
-                "python3 -m unittest tests/test_control_api.py",
-                f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}",
-            ],
-        )
+        self.assertEqual(checks, ["python3 -m unittest tests/test_control_api.py"])
 
     def test_monitor_blocked_repair_checks_skips_non_test_commands_with_unittest_text(self):
         mod = load_supervisor()
@@ -6333,15 +6327,9 @@ index 0000000..3e75765
 
         checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
-        self.assertEqual(
-            checks,
-            [
-                "python3 -m unittest tests/test_control_api.py",
-                f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}",
-            ],
-        )
+        self.assertEqual(checks, ["python3 -m unittest tests/test_control_api.py"])
 
-    def test_monitor_blocked_repair_unittest_promotion_uses_regression_target_constant(self):
+    def test_monitor_blocked_repair_does_not_promote_unittest_observation(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -6364,10 +6352,9 @@ index 0000000..3e75765
 
         checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
-        self.assertIn(deterministic_check, checks)
-        self.assertEqual(checks[-1], deterministic_check)
+        self.assertEqual(checks, ["python3 -m unittest tests/test_control_api.py"])
 
-    def test_monitor_blocked_repair_checks_promotes_python_m_pytest_undeclared_check(self):
+    def test_monitor_blocked_repair_checks_does_not_promote_python_m_pytest_undeclared_check(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -6395,15 +6382,9 @@ index 0000000..3e75765
         with mock.patch.object(mod, "python_module_available", return_value=True):
             checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
-        self.assertEqual(
-            checks,
-            [
-                "python3 -m unittest tests/test_control_api.py",
-                "python3 -m pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression",
-            ],
-        )
+        self.assertEqual(checks, ["python3 -m unittest tests/test_control_api.py"])
 
-    def test_monitor_blocked_repair_checks_promotes_bare_pytest_undeclared_check(self):
+    def test_monitor_blocked_repair_checks_does_not_promote_bare_pytest_undeclared_check(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -6430,13 +6411,7 @@ index 0000000..3e75765
         with mock.patch.object(mod, "python_module_available", return_value=True):
             checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
-        self.assertEqual(
-            checks,
-            [
-                "python3 -m unittest tests/test_control_api.py",
-                "pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q",
-            ],
-        )
+        self.assertEqual(checks, ["python3 -m unittest tests/test_control_api.py"])
 
     def test_monitor_blocked_repair_checks_skips_shell_wrapped_pytest_diagnostic_noise(self):
         mod = load_supervisor()
@@ -6472,15 +6447,9 @@ index 0000000..3e75765
         with mock.patch.object(mod, "python_module_available", return_value=True):
             checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
-        self.assertEqual(
-            checks,
-            [
-                "python3 -m unittest tests/test_control_api.py",
-                "pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q",
-            ],
-        )
+        self.assertEqual(checks, ["python3 -m unittest tests/test_control_api.py"])
 
-    def test_monitor_blocked_repair_checks_falls_back_to_unittest_when_pytest_unavailable(self):
+    def test_monitor_blocked_repair_checks_keeps_declared_checks_when_pytest_unavailable(self):
         mod = load_supervisor()
         task = mod.Task(
             path=Path("task.md"),
@@ -6506,13 +6475,7 @@ index 0000000..3e75765
         with mock.patch.object(mod, "python_module_available", return_value=False):
             checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
 
-        self.assertEqual(
-            checks,
-            [
-                "python3 -m unittest tests/test_control_api.py",
-                f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}",
-            ],
-        )
+        self.assertEqual(checks, ["python3 -m unittest tests/test_control_api.py"])
 
     def test_test_slice_monitor_blocked_and_fallback_routing_regression(self):
         suite = unittest.TestSuite()
@@ -6528,7 +6491,7 @@ index 0000000..3e75765
                     "test_run_one_auto_next_summary_next_task_path_uses_next_recommended_fallback_source"
                 ),
                 SupervisorTests(
-                    "test_monitor_blocked_repair_unittest_promotion_uses_regression_target_constant"
+                    "test_monitor_blocked_repair_does_not_promote_unittest_observation"
                 ),
             ]
         )

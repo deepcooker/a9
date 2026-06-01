@@ -6480,26 +6480,13 @@ def monitor_blocked_repair_checks(task: Task, summary: dict[str, Any], phase: st
         return checks
     process_governance = summary.get("process_governance", {})
     findings = process_governance.get("findings", []) if isinstance(process_governance, dict) else []
+    # Declared checks are the executable boundary; undeclared checks remain
+    # governance observations/proposals in process_governance findings.
     for finding in findings:
         if not isinstance(finding, dict) or finding.get("kind") != "undeclared_check":
             continue
-        command = normalize_shell_command(str(finding.get("command", "")))
-        command = shell_lc_inner_command(command).strip()
-        if re.match(r"^python\s+-m\s+pytest\b", command):
-            command = re.sub(r"^python\s+-m\s+pytest\b", "python3 -m pytest", command, count=1)
-        if re.match(r"^(python3?\s+-m\s+pytest|pytest)\b", command) and not python_module_available("pytest"):
-            fallback = pytest_command_to_unittest_command(command)
-            if fallback:
-                command = fallback
-        if not command or not command_looks_like_test(command):
-            continue
-        # Only promote runnable test commands; avoid non-test commands that merely
-        # mention test keywords in arguments or echoed strings.
-        if not monitor_blocked_repair_command_is_test_case(command):
-            continue
-        if any(command_matches_declared_check(command, [item]) for item in checks):
-            continue
-        checks.append(command)
+        # Keep undeclared-check details in process_governance findings only.
+        continue
     return checks
 
 
