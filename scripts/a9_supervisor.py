@@ -5270,6 +5270,55 @@ def tail_recovery_line(path: Path, *, max_chars: int = 260) -> str:
     return ""
 
 
+def append_plan_progress(plan_dir: Path, line: str) -> None:
+    path = plan_dir / "progress.md"
+    if not path.exists():
+        path.write_text("# Progress\n\n", encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    if line in text:
+        return
+    with path.open("a", encoding="utf-8") as handle:
+        if text and not text.endswith("\n"):
+            handle.write("\n")
+        handle.write(line + "\n")
+
+
+def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    plan = active_plan()
+    if not plan:
+        return {"status": "skipped", "reason": "no_active_plan"}
+    plan_id = str(plan.get("plan_id") or "")
+    if not plan_id:
+        return {"status": "skipped", "reason": "active_plan_missing_plan_id"}
+    run_id = Path(str(summary.get("run_dir") or run_dir)).name
+    run_ids = plan.setdefault("run_ids", [])
+    if isinstance(run_ids, list) and run_id not in run_ids:
+        run_ids.append(run_id)
+    evidence_refs = plan.setdefault("evidence_refs", [])
+    ref_values = [str(run_dir / "summary.json")]
+    ref_values.extend(str(summary.get(key) or "") for key in ("evidence_path", "state_path", "deep_marks_path", "context_path"))
+    for value in ref_values:
+        if isinstance(evidence_refs, list) and value and str(value) not in evidence_refs:
+            evidence_refs.append(str(value))
+    plan_dir = write_plan_files(plan, activate=True)
+    commit = summary.get("git_governance", {}).get("commit", "") if isinstance(summary.get("git_governance"), dict) else ""
+    next_task_path = str(summary.get("next_task_path") or "")
+    append_plan_progress(
+        plan_dir,
+        (
+            f"- {utc_now()} run={run_id} task={task.task_id} phase={task.phase} "
+            f"status={summary.get('status', '')} commit={str(commit)[:12]} next={next_task_path}"
+        ),
+    )
+    return {
+        "status": "updated",
+        "plan_id": plan_id,
+        "plan_dir": str(plan_dir),
+        "run_id": run_id,
+        "evidence_refs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
+    }
+
+
 def create_goal_payload(goal_id: str, objective: str, token_budget_value: int | None = None) -> dict[str, Any]:
     now = utc_now()
     return {
@@ -7177,6 +7226,7 @@ def run_one(*, auto_next: bool = False) -> int:
             )
         summary["flow_transition"] = flow_transition
         summary["auto_loop_guard"] = update_auto_loop_guard(summary)
+        summary["active_plan_update"] = update_active_plan_from_run(task, run_dir, summary)
         write_json(run_dir / "summary.json", summary)
 
         retryable = status.startswith("retryable-")

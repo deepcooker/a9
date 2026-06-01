@@ -1673,6 +1673,51 @@ Do the work.
         self.assertIn("last_change_request: - none", text)
         self.assertIn("happened_since_last_action", text)
 
+    def test_update_active_plan_from_run_records_refs_and_progress(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-run-refs",
+                    goal_id="goal-run-refs",
+                    contract={"problem": "Need run evidence refs."},
+                )
+                plan_dir = mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "run-1"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "pass",
+                    "phase": "implement",
+                    "run_dir": str(run_dir),
+                    "evidence_path": str(run_dir / "evidence.json"),
+                    "state_path": str(run_dir / "state.json"),
+                    "deep_marks_path": str(run_dir / "deep_marks.json"),
+                    "context_path": str(run_dir / "context.md"),
+                    "git_governance": {"commit": "abcdef1234567890"},
+                    "next_task_path": "/tmp/next.md",
+                }
+                task = mod.Task(path=Path("task.md"), task_id="run-ref-task", prompt="demo", phase="implement")
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                progress = (plan_dir / "progress.md").read_text(encoding="utf-8")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "updated")
+        self.assertIn("run-1", stored["run_ids"])
+        self.assertIn(str(run_dir / "summary.json"), stored["evidence_refs"])
+        self.assertIn(str(run_dir / "evidence.json"), stored["evidence_refs"])
+        self.assertIn("run=run-1", progress)
+        self.assertIn("status=pass", progress)
+        self.assertIn("commit=abcdef123456", progress)
+
     def test_idle_goal_continuation_schedules_reference_first_task(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
