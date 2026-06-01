@@ -2,6 +2,7 @@ import importlib.util
 import io
 import contextlib
 import json
+import sys
 import unittest
 from pathlib import Path
 
@@ -13,6 +14,15 @@ def load_module():
     spec = importlib.util.spec_from_file_location("a9_node_test", ROOT / "scripts" / "a9_node.py")
     module = importlib.util.module_from_spec(spec)
     assert spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_control_api_module():
+    spec = importlib.util.spec_from_file_location("a9_control_api_test", ROOT / "scripts" / "a9_control_api.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -1030,6 +1040,179 @@ class NodeHelperTests(unittest.TestCase):
         self.assertEqual(result["result_event_id"], "")
         self.assertEqual(calls[-1][0], "XADD")
         self.assertEqual(calls[-1][1], "a9:events")
+
+    def test_node_command_lifecycle_submit_worker_result_by_command_lookup(self):
+        node_mod = load_module()
+        control_mod = load_control_api_module()
+        enqueue_calls: list[list[str]] = []
+        work_calls: list[list[str]] = []
+        by_command_calls: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        original_control_redis = control_mod.redis_cli
+        try:
+            def fake_control_redis_enqueue(args, *, timeout=2):
+                enqueue_calls.append(args)
+                if args == ["PING"]:
+                    return FakeProc("PONG")
+                if args[:2] == ["XADD", "a9:tasks"]:
+                    return FakeProc("1740000200-0")
+                raise AssertionError(f"unexpected enqueue args: {args}")
+
+            control_mod.redis_cli = fake_control_redis_enqueue
+            enqueue_result = control_mod.enqueue_node_command(
+                {
+                    "command_id": "cmd-lifecycle-01",
+                    "node_id": "node-01",
+                    "action": "status",
+                    "action_reason": "operator_action",
+                    "target": "node-01",
+                    "expected_revision": 4,
+                    "ttl_seconds": 60,
+                    "created_at": "2026-06-01T00:00:00+00:00",
+                }
+            )
+        finally:
+            control_mod.redis_cli = original_control_redis
+
+        self.assertEqual(enqueue_result["status"], "ok")
+        enqueue_xadd = next(call for call in enqueue_calls if call[:2] == ["XADD", "a9:tasks"])
+        command_fields = dict(zip(enqueue_xadd[3::2], enqueue_xadd[4::2]))
+        self.assertEqual(command_fields["command_id"], "cmd-lifecycle-01")
+        self.assertEqual(command_fields["node_id"], "node-01")
+        self.assertEqual(command_fields["action"], "status")
+
+        original_node_redis = node_mod.redis_cli
+        try:
+            def fake_node_redis_work(args, *, timeout=2):
+                work_calls.append(args)
+                if args[:2] == ["XGROUP", "CREATE"]:
+                    return FakeProc("OK")
+                if args[:2] == ["--raw", "XREADGROUP"]:
+                    return FakeProc(
+                        "\n".join(
+                            [
+                                "1740000200-0",
+                                "command_id",
+                                "cmd-lifecycle-01",
+                                "node_id",
+                                "node-01",
+                                "action",
+                                "status",
+                            ]
+                        )
+                    )
+                if args[:2] == ["XADD", "a9:events"]:
+                    return FakeProc("1740000300-0")
+                if args[:1] == ["XACK"]:
+                    return FakeProc("1")
+                raise AssertionError(f"unexpected work args: {args}")
+
+            node_mod.redis_cli = fake_node_redis_work
+            work_result = node_mod.node_command_work_once(
+                "node-01",
+                stream="a9:tasks",
+                event_stream="a9:events",
+                block_ms=100,
+                timeout=3,
+            )
+        finally:
+            node_mod.redis_cli = original_node_redis
+
+        self.assertEqual(work_result["status"], "ok")
+        self.assertEqual(work_result["command_id"], "cmd-lifecycle-01")
+        self.assertEqual(work_result["result_event_id"], "1740000300-0")
+        self.assertEqual(work_result["acked_ids"], ["1740000200-0"])
+        self.assertEqual(work_calls[-1], ["XACK", "a9:tasks", "a9-worker", "1740000200-0"])
+
+        worker_xadd = next(call for call in work_calls if call[:2] == ["XADD", "a9:events"])
+        worker_fields = dict(zip(worker_xadd[3::2], worker_xadd[4::2]))
+        self.assertEqual(worker_fields["kind"], "node_command_result")
+        self.assertEqual(worker_fields["command_id"], "cmd-lifecycle-01")
+        self.assertEqual(worker_fields["node_id"], "node-01")
+        self.assertEqual(worker_fields["error_code"], "ok")
+        self.assertEqual(json.loads(worker_fields["result"])["status"], "ok")
+
+        original_control_redis = control_mod.redis_cli
+        original_control_node_loader = control_mod.a9_node
+        original_node_redis = node_mod.redis_cli
+        try:
+            def fake_control_redis_lookup(args, *, timeout=2):
+                by_command_calls.append(args)
+                if args[:2] == ["--raw", "XREVRANGE"]:
+                    return FakeProc(
+                        "\n".join(
+                            [
+                                "1740000300-0",
+                                "kind",
+                                "node_command_result",
+                                "command_id",
+                                "cmd-lifecycle-01",
+                            ]
+                        )
+                    )
+                raise AssertionError(f"unexpected lookup args: {args}")
+
+            def fake_node_redis_read(args, *, timeout=2):
+                if args[:3] == ["--raw", "XRANGE", "a9:events"]:
+                    return FakeProc(
+                        "\n".join(
+                            [
+                                "1740000300-0",
+                                "kind",
+                                "node_command_result",
+                                "action",
+                                "work_once",
+                                "node_id",
+                                "node-01",
+                                "claimed_id",
+                                "1740000200-0",
+                                "command_id",
+                                "cmd-lifecycle-01",
+                                "command_action",
+                                "status",
+                                "result_status",
+                                "ok",
+                                "error_code",
+                                "ok",
+                                "event_stream",
+                                "a9:events",
+                                "result",
+                                worker_fields["result"],
+                            ]
+                        )
+                    )
+                raise AssertionError(f"unexpected read args: {args}")
+
+            control_mod.redis_cli = fake_control_redis_lookup
+            control_mod.a9_node = lambda: node_mod
+            node_mod.redis_cli = fake_node_redis_read
+            by_command_result = control_mod.node_command_result_by_command_lookup(
+                "cmd-lifecycle-01",
+                event_stream="a9:events",
+                limit=5,
+                timeout=3,
+            )
+        finally:
+            control_mod.redis_cli = original_control_redis
+            control_mod.a9_node = original_control_node_loader
+            node_mod.redis_cli = original_node_redis
+
+        self.assertEqual(by_command_result["status"], "ok")
+        self.assertEqual(by_command_result["result_event_id"], "1740000300-0")
+        self.assertEqual(by_command_result["result"]["result"]["status"], "ok")
+        self.assertEqual(
+            by_command_result["result"]["result"]["result"]["command_id"],
+            "cmd-lifecycle-01",
+        )
+        self.assertEqual(
+            by_command_calls,
+            [["--raw", "XREVRANGE", "a9:events", "+", "-", "COUNT", "5"]],
+        )
 
     def test_command_work_once_cli_prints_payload(self):
         mod = load_module()

@@ -1545,3 +1545,32 @@ Next monitoring target:
    - Governance lesson:
      recovery hint reasons are contract fields, not presentation text; lifecycle
      stages must not be conflated at submit boundary.
+
+75. Node worker consume->result event->ack lifecycle now has control-plane by-command recovery proof.
+   - Trigger:
+     current contract had submit/by-command endpoint coverage, but lacked one
+     minimal test proving real lifecycle evidence continuity:
+     `command-submit fields -> worker work_once consume -> node_command_result
+     event -> by-command lookup parse`.
+   - Mechanism copied:
+     Codex command handoff facts (`command_id/result_event_id/action/reason/evidence`),
+     OpenClaw/Lobster typed worker/controller boundary, and Redis Streams
+     lifecycle (`claim -> process -> XADD result -> XACK`).
+   - Change:
+     added
+     `test_node_command_lifecycle_submit_worker_result_by_command_lookup` in
+     `tests/test_node.py`. The test uses `enqueue_node_command` to build tasks
+     stream fields, runs `node_command_work_once` to consume and emit
+     `kind=node_command_result`, asserts `XACK` after result emit, then calls
+     `node_command_result_by_command_lookup` to confirm by-command lookup
+     resolves the same `command_id` result via typed parser path.
+   - Verification:
+     `python3 -m unittest tests.test_node.NodeHelperTests.test_node_command_lifecycle_submit_worker_result_by_command_lookup`
+     and
+     `python3 -m unittest tests.test_node.NodeHelperTests.test_node_command_work_once_supported_status_executes_and_acks tests.test_control_api.ControlApiTests.test_node_command_result_by_command_lookup_finds_latest_result`
+     passed.
+   - Next:
+     run one real SSH/tmux node smoke: submit real command through
+     `/api/nodes/command-submit`, execute `scripts/a9_node.py command-work-once`,
+     then verify `/api/node-command-results/by-command/{command_id}` returns the
+     emitted `result_event_id` and status.
