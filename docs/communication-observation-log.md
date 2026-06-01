@@ -1660,3 +1660,33 @@ Next monitoring target:
    - Governance lesson:
      control-plane contracts should expose intent-vs-fact explicitly at top level
      to reduce UI ambiguity and prevent nested-field coupling across clients.
+
+79. Remote bootstrap/status contract now separates SSH setup from Redis/API runtime and exposes routable recovery actions.
+   - Trigger:
+     after local node-command lifecycle worked, the next multi-machine risk was
+     ambiguity between SSH/Tailscale/tmux bootstrap and the real runtime channel.
+     Remote machines should be reached by SSH for install/repair/tmux takeover,
+     while normal work and heartbeat flow through controller API and Redis
+     Streams.
+   - Mechanism copied:
+     existing A9 remote recovery lessons from entries 31-58, the production
+     daemon split in `docs/production-daemon.md`, and the local Hermes
+     daemon-style separation observed in
+     `reference-projects/hermes-agent/tui_gateway/event_publisher.py`.
+   - Change:
+     remote bootstrap config and `/api/nodes/bootstrap-plan` now expose
+     `bootstrap_mode=ssh_bootstrap_only`, `runtime_mode=redis_api_runtime`,
+     heartbeat script path, heartbeat tmux session, and controller heartbeat
+     endpoint. Bootstrap execution persists the same `runtime_contract` into
+     its evidence payload.
+     `node_command_recovery_hint` now prefers actionable `node_recovery_plan`
+     routes when available and includes `next_method`, `next_command`, and
+     `next_requires_arm`, so clients can route stale/tmux/repair cases without
+     prose parsing.
+   - Verification:
+     run `python3 -m py_compile scripts/a9_remote.py scripts/a9_control_api.py`
+     and `python3 -m unittest tests.test_remote tests.test_control_api`.
+   - Governance lesson:
+     remote control contracts must separate install transport from runtime
+     transport. SSH is bootstrap/repair/takeover; Redis/API is the steady-state
+     control plane.

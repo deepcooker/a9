@@ -3258,6 +3258,21 @@ def node_command_recovery_hint(
     connection_state = str(record.get("connection_state") or "")
     connection_reason = str(record.get("connection_action_reason") or "")
     evidence_refs.extend([str(record_path), f"node:{normalized_node_id}:state:{connection_state or 'unknown'}"])
+    recovery = node_recovery_plan(record)
+    route = recovery.get("route") if isinstance(recovery, dict) else {}
+    recovery_endpoint = str(route.get("endpoint") or "").strip()
+    recovery_action = str(recovery.get("action") or "wait")
+    recovery_reason = str(recovery.get("reason") or "result_missing_pending")
+    if recovery_endpoint and recovery_action not in {"observe", "none", "wait"}:
+        return {
+            "action": recovery_action,
+            "reason": recovery_reason,
+            "evidence_refs": evidence_refs,
+            "next_endpoint": recovery_endpoint,
+            "next_method": route.get("method"),
+            "next_command": route.get("command"),
+            "next_requires_arm": bool(route.get("requires_arm")),
+        }
     if connection_state in {"stale", "degraded"}:
         return {
             "action": "reconnect",
@@ -3272,11 +3287,9 @@ def node_command_recovery_hint(
             "evidence_refs": evidence_refs,
             "next_endpoint": "/api/nodes/probe",
         }
-    recovery = node_recovery_plan(record)
-    route = recovery.get("route") if isinstance(recovery, dict) else {}
-    endpoint = str(route.get("endpoint") or "/api/node-command-results/by-command/{command_id}")
-    action = str(recovery.get("action") or "wait")
-    reason = str(recovery.get("reason") or "result_missing_pending")
+    endpoint = recovery_endpoint or "/api/node-command-results/by-command/{command_id}"
+    action = recovery_action
+    reason = recovery_reason
     if action in {"observe", "none"}:
         action = "wait"
         reason = "result_missing_pending"
@@ -3728,6 +3741,14 @@ def bootstrap_plan_node(payload: dict[str, Any]) -> dict[str, Any]:
         },
     )()
     script = mod.build_bootstrap_script(args)
+    runtime_contract = {
+        "bootstrap_mode": "ssh_bootstrap_only",
+        "runtime_mode": "redis_api_runtime",
+        "transport": "tailscale+ssh+bootstrap",
+        "heartbeat_script": ".a9/remote-node/heartbeat.sh",
+        "heartbeat_tmux_session": "a9-heartbeat",
+        "controller_heartbeat_endpoint": f"{controller_url.rstrip('/')}/api/nodes/heartbeat",
+    }
     return {
         "status": "planned",
         "target": target,
@@ -3735,6 +3756,7 @@ def bootstrap_plan_node(payload: dict[str, Any]) -> dict[str, Any]:
         "repo": repo,
         "remote_dir": remote_dir,
         "worker_name": worker_name,
+        "runtime_contract": runtime_contract,
         "dry_run_script": script,
         "steps": [
             "ssh probe remote host",
@@ -3806,6 +3828,14 @@ def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dic
         "transport": "tailscale+ssh+bootstrap",
         "transport_quality": transport_quality(target),
         "node_id": safe_node_id(str(payload.get("node_id") or target)),
+        "runtime_contract": plan.get("runtime_contract") or {
+            "bootstrap_mode": "ssh_bootstrap_only",
+            "runtime_mode": "redis_api_runtime",
+            "transport": "tailscale+ssh+bootstrap",
+            "heartbeat_script": ".a9/remote-node/heartbeat.sh",
+            "heartbeat_tmux_session": "a9-heartbeat",
+            "controller_heartbeat_endpoint": f"{str(plan.get('controller_url') or '').rstrip('/')}/api/nodes/heartbeat",
+        },
         "target": target,
         "controller_url": plan.get("controller_url"),
         "repo": plan.get("repo"),

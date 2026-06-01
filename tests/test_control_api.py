@@ -5039,6 +5039,9 @@ class ControlApiTests(unittest.TestCase):
         self.assertIn("git@example.com:a9.git", result["repo"])
         self.assertIn("git clone", result["dry_run_script"])
         self.assertIn("CONTROLLER_URL=http://controller:8787", result["dry_run_script"])
+        self.assertEqual(result["runtime_contract"]["bootstrap_mode"], "ssh_bootstrap_only")
+        self.assertEqual(result["runtime_contract"]["runtime_mode"], "redis_api_runtime")
+        self.assertEqual(result["runtime_contract"]["heartbeat_tmux_session"], "a9-heartbeat")
 
     def test_bootstrap_dry_run_node_keeps_execution_disabled(self):
         mod = load_control_api()
@@ -5096,6 +5099,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["bootstrap_action"], "continue")
         self.assertTrue(evidence_path_exists)
+        self.assertEqual(result["runtime_contract"]["bootstrap_mode"], "ssh_bootstrap_only")
+        self.assertEqual(result["runtime_contract"]["runtime_mode"], "redis_api_runtime")
         self.assertEqual(calls[0][0][0], "ssh")
         self.assertIn("ConnectTimeout=3", calls[0][0])
         self.assertIn("cat > .a9/remote-node/heartbeat.sh", calls[0][0][-1])
@@ -6405,6 +6410,47 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(result["intervention_decision"]["action"], "observe")
         self.assertEqual(result["intervention_decision"]["reason"], "healthy")
+
+    def test_node_command_recovery_hint_prefers_tmux_route_for_stale_remote_heartbeat(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_id = "node-a"
+            node_file = root / ".a9" / "nodes" / f"{node_id}.json"
+            node_file.parent.mkdir(parents=True, exist_ok=True)
+            node_file.write_text(
+                json.dumps(
+                    {
+                        "node_id": node_id,
+                        "status": "online",
+                        "connection_state": "stale",
+                        "connection_action": "reconnect",
+                        "connection_action_reason": "heartbeat_stale",
+                        "probe_action": "continue",
+                        "heartbeat_start_action": "continue",
+                        "tmux_action": "repair",
+                        "tmux_session": "a9-heartbeat",
+                        "heartbeat_start_executed_at": "2026-05-30T00:00:00+00:00",
+                        "tmux_checked_at": "2026-05-30T00:01:00+00:00",
+                        "updated_at": "2026-05-30T00:01:00+00:00",
+                        "ssh_target": "root@100.64.0.1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            hint = mod.node_command_recovery_hint(
+                node_id=node_id,
+                result_status="noop",
+                result_error_code="no_result",
+                root=root,
+            )
+
+        self.assertEqual(hint["action"], "heartbeat_repair")
+        self.assertEqual(hint["reason"], "heartbeat_tmux_missing_after_start")
+        self.assertEqual(hint["next_endpoint"], "/api/nodes/heartbeat-repair")
+        self.assertEqual(hint["next_method"], "POST")
+        self.assertEqual(hint["next_command"], "nodes.remote.repair")
+        self.assertTrue(hint["next_requires_arm"])
 
     def test_recovery_transcript_includes_node_command_recovery_hint_and_evidence_refs(self):
         mod = load_control_api()
