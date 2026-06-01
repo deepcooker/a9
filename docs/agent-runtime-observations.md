@@ -94,3 +94,25 @@ Bounded implement next slice:
   - Stop promoting undeclared checks into active run `checks` in monitor-blocked repair scheduling.
   - Keep undeclared checks as findings/proposals in process governance evidence.
   - Update focused supervisor tests to assert observation-only behavior and prevent regression.
+
+## 2026-06-02: next-slice test suggestion and declared checks are still unsynchronized
+
+Bounded evidence reviewed:
+- `scripts/a9_supervisor.py::next_task_prompt`
+- `scripts/a9_supervisor.py::checks_for_next_phase`
+- `scripts/a9_supervisor.py::schedule_next_task`
+
+Observation:
+- Supervisor task execution boundary is `checks_for_next_phase(...)` (task-declared checks, with reference-scan override).
+- `next_task_prompt(...)` still injects prior `output.next_slice` text directly into the next worker prompt as informational context.
+- When `next_slice` contains a concrete test command, worker behavior can drift into executing that command ad hoc even if it is not present in task `checks`.
+
+Why this matters:
+- This recreates the same contract break in a new path: suggestion text can act like execution intent without task-level declared-check synchronization.
+
+Bounded implement next slice:
+- `implement` (only `scripts/a9_supervisor.py` and `tests/test_supervisor.py`):
+  - On next-task generation, if `next_slice` includes a concrete test command, either:
+  - add it explicitly into generated task `checks`; or
+  - rewrite prompt wording to mark it as proposal-only and explicitly non-executable unless declared in `checks`.
+  - Add focused tests to lock the chosen behavior and prevent undeclared test execution drift.
