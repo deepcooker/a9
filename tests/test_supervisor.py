@@ -2677,6 +2677,48 @@ Do the work.
         self.assertFalse((tmp_path / "plans" / ".active_plan").exists())
         self.assertFalse((tmp_path / "plans" / "plan_id").exists())
 
+    def test_update_active_plan_from_run_ignores_unknown_well_formed_contract_lines(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                run_dir = tmp_path / "runs" / "run-iso-unknown-field"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "pass",
+                    "phase": "record",
+                    "run_dir": str(run_dir),
+                }
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="record-iso-unknown-field",
+                    phase="record",
+                    prompt=(
+                        "Active plan contract:\n"
+                        "- plan_id: a9-plan-lane-runtime\n"
+                        "- goal_id: goal-A9-runtime\n"
+                        "- unknown_contract_field: should be ignored\n"
+                        "- must: keep required fields deterministic\n"
+                    ),
+                )
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                plan_dir = mod.plan_path("a9-plan-lane-runtime")
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(stored["plan_id"], "a9-plan-lane-runtime")
+        self.assertEqual(stored["goal_id"], "goal-A9-runtime")
+        self.assertEqual(stored["contract"]["must"], "keep required fields deterministic")
+        self.assertNotIn("unknown_contract_field", stored["contract"])
+
     def test_plan_change_request_appends_without_mutating_contract(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
