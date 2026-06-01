@@ -6200,6 +6200,9 @@ index 0000000..3e75765
                     "test_schedule_next_task_prefers_next_recommended_task_over_next_task_after_gateway_filtering"
                 ),
                 SupervisorTests(
+                    "test_run_one_auto_next_summary_next_task_path_uses_next_recommended_fallback_source"
+                ),
+                SupervisorTests(
                     "test_monitor_blocked_repair_unittest_promotion_uses_regression_target_constant"
                 ),
             ]
@@ -6207,7 +6210,7 @@ index 0000000..3e75765
         stream = io.StringIO()
         result = unittest.TextTestRunner(stream=stream, verbosity=0).run(suite)
         self.assertTrue(result.wasSuccessful(), stream.getvalue())
-        self.assertEqual(result.testsRun, 3)
+        self.assertEqual(result.testsRun, 4)
 
     def test_monitor_block_summary_projects_hard_gate_for_progress(self):
         mod = load_supervisor()
