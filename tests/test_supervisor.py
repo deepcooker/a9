@@ -2696,6 +2696,26 @@ Do the work.
         self.assertEqual(parsed["expected_flow_revision"], 12)
         self.assertEqual(parsed["contract"]["must"], "keep required fields deterministic")
 
+    def test_parse_active_plan_from_prompt_normalizes_expected_flow_revision_invalid_forms_to_none(self):
+        mod = load_supervisor()
+        cases = [
+            "- expected_flow_revision: \n",
+            "- expected_flow_revision:    \n",
+            "- expected_flow_revision: not-a-number\n",
+        ]
+        for expected_line in cases:
+            parsed = mod.parse_active_plan_from_prompt(
+                "Active plan contract:\n"
+                "- plan_id: a9-plan-lane-runtime\n"
+                "- goal_id: goal-A9-runtime\n"
+                f"{expected_line}"
+                "- must: keep required fields deterministic\n"
+            )
+            self.assertEqual(parsed["plan_id"], "a9-plan-lane-runtime")
+            self.assertEqual(parsed["goal_id"], "goal-A9-runtime")
+            self.assertIsNone(parsed["expected_flow_revision"])
+            self.assertEqual(parsed["contract"]["must"], "keep required fields deterministic")
+
     def test_update_active_plan_from_run_ignores_unknown_well_formed_contract_lines(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
