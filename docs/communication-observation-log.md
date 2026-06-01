@@ -1902,3 +1902,24 @@ Next monitoring target:
      communication stability needs one canonical read model before adding more
      buttons or recovery automations. The model observes and ranks; mutations
      remain behind existing gated endpoints.
+
+89. Mobile control now consumes the unified communication status.
+   - Trigger:
+     `/api/communication/status` was available, but phone control still showed
+     separate service/node/Tailscale cards without the ranked top-level action.
+   - Change:
+     `/mnt/d/root/a9_mobile_agent_lab/store/useA9ControlStore.ts` now fetches
+     `GET /api/communication/status` during refresh and stores
+     `communicationStatus`. `/mnt/d/root/a9_mobile_agent_lab/app/(tabs)/agent.tsx`
+     renders a first-viewport `Communication` card before remote control,
+     showing `action`, `reason`, selected `priority_source`, and each candidate
+     layer action. `/mnt/d/root/a9_mobile_agent_lab/scripts/mobile-ui-smoke.js`
+     now asserts the card is visible.
+   - Verification:
+     in `/mnt/d/root/a9_mobile_agent_lab`, `npx tsc --noEmit` passed. Expo web
+     was restarted on port `8199`, then `npm run smoke:mobile` passed with the
+     new `a9-communication-status-card` assertion.
+   - Governance lesson:
+     the phone should read the same canonical communication decision as the
+     worker. Layer-specific cards stay useful, but the operator needs the
+     highest-priority action first.
