@@ -4214,6 +4214,40 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_redis_flow_reference_does_not_trigger_gateway_gate(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="plan-lane-runtime",
+            prompt="reference_entry: planning-with-files; A9 goal/Redis flow/run evidence remain authority.",
+            phase="reference_scan",
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "next_recommended_task": "Add a change_request helper for plan contract proposals.",
+                    }
+                }
+            },
+        }
+
+        self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+
+    def test_redis_stream_reference_triggers_gateway_gate(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="gateway-stream",
+            prompt="Continue Redis stream gateway communication governance.",
+            phase="test",
+        )
+        summary = {"worker_envelope": {"envelope": {"output": {"next_slice": "test gateway stream runtime evidence"}}}}
+
+        self.assertTrue(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+
     def test_schedule_next_task_routes_monitor_blocked_to_repair_takeover(self):
         mod = load_supervisor()
         mod.ensure_dirs()

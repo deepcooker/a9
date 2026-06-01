@@ -57,8 +57,6 @@ DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
 DEFAULT_IDLE_GOAL_CONTINUATION_ENABLED = True
 COMMUNICATION_GATE_HINTS = (
     "gateway",
-    "redis",
-    "stream",
     "ws",
     "websocket",
     "ssh",
@@ -74,6 +72,12 @@ COMMUNICATION_GATE_HINTS = (
     "多机器",
     "手机",
     "远程",
+)
+COMMUNICATION_GATE_COMBO_HINTS = (
+    ("redis", "stream"),
+    ("redis", "gateway"),
+    ("redis", "communication"),
+    ("redis", "通讯"),
 )
 BLOCKED_WORKER_COMMAND_PATTERNS = [
     "codex exec",
@@ -6122,7 +6126,9 @@ def communication_task_requires_gateway_runtime_evidence(task: Task, summary: di
             json.dumps(worker_output.get("copied_mechanisms", []), ensure_ascii=False),
         ]
     ).lower()
-    return any(hint in haystack for hint in COMMUNICATION_GATE_HINTS)
+    if any(hint in haystack for hint in COMMUNICATION_GATE_HINTS):
+        return True
+    return any(all(part in haystack for part in combo) for combo in COMMUNICATION_GATE_COMBO_HINTS)
 
 
 def communication_acceptance_hints(task: Task, summary: dict[str, Any]) -> str:
