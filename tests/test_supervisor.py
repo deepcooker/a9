@@ -1772,6 +1772,70 @@ Do the work.
 
         self.assertEqual(worker["return_code"], 0)
 
+    def test_run_worker_event_budget_enforce_ignores_non_json_stdout_for_budget_accounting(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="event-budget-enforce-non-json-ignored",
+                prompt="Run one bounded command.",
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            old_bytes = os.environ.get("A9_WORKER_MAX_EVENT_BYTES")
+            old_mode = os.environ.get("A9_WORKER_EVENT_BUDGET_MODE")
+            os.environ["A9_WORKER_MAX_EVENT_BYTES"] = "1"
+            os.environ["A9_WORKER_EVENT_BUDGET_MODE"] = "enforce"
+            try:
+                cmd = [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import json; "
+                        "print('plain stdout line larger than one byte', flush=True); "
+                        "print(json.dumps({'type':'thread.started','thread_id':'typed-after-non-json'}), flush=True)"
+                    ),
+                ]
+                with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                    mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+                ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                    worker = mod.run_worker(task, worktree, run_dir)
+            finally:
+                if old_bytes is None:
+                    os.environ.pop("A9_WORKER_MAX_EVENT_BYTES", None)
+                else:
+                    os.environ["A9_WORKER_MAX_EVENT_BYTES"] = old_bytes
+                if old_mode is None:
+                    os.environ.pop("A9_WORKER_EVENT_BUDGET_MODE", None)
+                else:
+                    os.environ["A9_WORKER_EVENT_BUDGET_MODE"] = old_mode
+
+            self.assertEqual(worker["event_count"], 1)
+            self.assertEqual(worker["event_counts"], {"thread.started": 1})
+            self.assertTrue(worker["budget_stopped"])
+            self.assertEqual(worker["budget_stop_kind"], "event_bytes")
+            self.assertEqual(worker["budget_reason"], "worker event bytes exceeded 1")
+            self.assertEqual(worker["budget_observations"], [])
+            events_path = Path(worker["events_path"])
+            event_text = events_path.read_text(encoding="utf-8")
+            self.assertNotIn("plain stdout line larger than one byte", event_text)
+            expected_event_bytes = sum(len(line.encode("utf-8")) for line in event_text.splitlines(keepends=True))
+            self.assertEqual(worker["event_bytes"], expected_event_bytes)
+
+        self.assertEqual(worker["return_code"], 0)
+
     def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
