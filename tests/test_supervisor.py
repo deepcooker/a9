@@ -5621,6 +5621,11 @@ index 0000000..3e75765
                 "findings": [
                     {"kind": "undeclared_check", "message": "bad check", "command": "python3 -m pytest -q"},
                     {
+                        "kind": "undeclared_check",
+                        "message": "specific unittest command outside declared checks",
+                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_run_one_auto_next_writes_summary_next_task_path_with_diagnostic_noise_prompt'",
+                    },
+                    {
                         "kind": "command_window_exceeded",
                         "message": "too many lines",
                         "command": "/bin/bash -lc \"sed -n '1,240p' huge/file\"",
@@ -5658,6 +5663,10 @@ index 0000000..3e75765
             self.assertIn("Declared checks are authoritative", text)
             self.assertIn("prefer <=180 line", text)
             self.assertIn("python3 -m unittest tests/test_control_api.py", text)
+            self.assertIn(
+                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_run_one_auto_next_writes_summary_next_task_path_with_diagnostic_noise_prompt",
+                text,
+            )
             self.assertNotIn("rg -n other docs .", text)
         finally:
             next_path.unlink(missing_ok=True)

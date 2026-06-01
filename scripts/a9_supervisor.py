@@ -6352,6 +6352,25 @@ def checks_for_next_phase(phase: str, task: Task) -> list[str]:
     return list(DEFAULT_NEXT_CHECKS)
 
 
+def monitor_blocked_repair_checks(task: Task, summary: dict[str, Any], phase: str) -> list[str]:
+    checks = checks_for_next_phase(phase, task)
+    if phase != "repair":
+        return checks
+    process_governance = summary.get("process_governance", {})
+    findings = process_governance.get("findings", []) if isinstance(process_governance, dict) else []
+    for finding in findings:
+        if not isinstance(finding, dict) or finding.get("kind") != "undeclared_check":
+            continue
+        command = normalize_shell_command(str(finding.get("command", "")))
+        command = shell_lc_inner_command(command).strip()
+        if not command or not command_looks_like_test(command):
+            continue
+        if any(command_matches_declared_check(command, [item]) for item in checks):
+            continue
+        checks.append(command)
+    return checks
+
+
 def communication_task_requires_gateway_runtime_evidence(task: Task, summary: dict[str, Any]) -> bool:
     worker_output = worker_output_from_summary(summary)
     repo_map_noise = re.compile(r"^- .+ score=\d+\s*$")
@@ -6448,7 +6467,7 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         return schedule_next_session_close_reading_task(task, summary)
     if summary["status"] == "monitor-blocked":
         phase = next_phase_for(summary["status"], task.phase)
-        checks = checks_for_next_phase(phase, task)
+        checks = monitor_blocked_repair_checks(task, summary, phase)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         parent_ref = compact_task_ref(task.task_id)
         task_id = f"auto-{phase}-{parent_ref}-{timestamp}"
