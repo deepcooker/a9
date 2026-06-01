@@ -5152,6 +5152,30 @@ Do the work.
         self.assertIn("raw session logs", prompt)
         self.assertIn("Use `rg -n` first", prompt)
 
+    def test_next_task_prompt_marks_undeclared_test_command_as_proposal_only(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="proposal-only-test-command",
+            prompt="demo",
+            phase="implement",
+            checks=["python3 -m py_compile scripts/a9_supervisor.py"],
+        )
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {
+                "envelope": {"output": {"next_slice": "test: python3 -m unittest tests/test_supervisor.py"}}
+            },
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "test")
+
+        self.assertIn("Test command sync:", prompt)
+        self.assertIn("proposal-only", prompt)
+        self.assertIn("unless it is added to task.checks/frontmatter", prompt)
+
     def test_next_task_prompt_includes_requirements_method_packet(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="method-packet", prompt="demo", phase="implement")
@@ -7118,6 +7142,77 @@ index 0000000..3e75765
         self.assertEqual(worker_output.get("next_slice_source"), "")
         self.assertEqual(worker_output.get("next_slice_resolution_revision"), 1)
         self.assertEqual(summary["auto_next_block"]["reason"], "missing_worker_next_slice")
+
+    def test_schedule_next_task_keeps_frontmatter_allowed_paths_for_code_next_slice(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-code-scope.md",
+            task_id="auto-code-scope",
+            prompt="continue bounded code slice",
+            phase="implement",
+            checks=["python3 -m unittest tests/test_supervisor.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-code-scope-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-code-scope-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "implement: patch schedule_next_task check sync"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('  - "scripts/a9_supervisor.py"', text)
+            self.assertIn('  - "tests/test_supervisor.py"', text)
+            self.assertNotIn('  - "docs/', text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
+    def test_schedule_next_task_promotes_safe_test_command_from_next_slice_into_checks(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-test-sync.md",
+            task_id="auto-test-sync",
+            prompt="continue test slice",
+            phase="implement",
+            checks=["python3 -m py_compile scripts/a9_supervisor.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-test-sync-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-test-sync-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {
+                    "output": {
+                        "next_slice": "test: python3 -m unittest tests.test_supervisor.SupervisorTests.test_parse_task_frontmatter"
+                    }
+                },
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "test"', text)
+            self.assertIn(
+                '  - "python3 -m unittest tests.test_supervisor.SupervisorTests.test_parse_task_frontmatter"', text
+            )
+        finally:
+            next_path.unlink(missing_ok=True)
 
     def test_schedule_next_task_blocks_auto_next_when_operator_task_already_queued(self):
         mod = load_supervisor()

@@ -5473,6 +5473,7 @@ def active_plan_prompt_context() -> str:
         f"- acceptance: {bounded_inline(contract.get('acceptance', ''), 600)}",
         f"- out_of_scope: {bounded_inline(contract.get('out_of_scope', ''), 500)}",
         f"- allowed_execution: {bounded_inline(contract.get('allowed_execution', ''), 500)}",
+        "- write_scope_authority: task frontmatter allowed_paths is the only write-scope authority.",
         f"- reference_entry: {bounded_inline(contract.get('reference_entry', ''), 500)}",
         f"- change_record: {bounded_inline(contract.get('change_record', ''), 500)}",
         "- authority: plan is a task contract view; goal/flow/run/monitor remain runtime authority.",
@@ -6146,6 +6147,22 @@ def worker_output_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
     focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
     worker_output = worker_output_from_summary(summary)
+    test_slice_command = extracted_test_command_from_next_slice(worker_output.get("next_slice", ""))
+    check_scope_notice = ""
+    if test_slice_command:
+        declared_checks = checks_for_next_phase(phase, task)
+        if command_matches_declared_check(test_slice_command, declared_checks):
+            check_scope_notice = f"""
+Test command sync:
+- next_slice suggested executable test command: `{test_slice_command}`
+- command is declared in task checks and may be executed.
+"""
+        else:
+            check_scope_notice = f"""
+Test command sync:
+- next_slice suggested executable test command: `{test_slice_command}`
+- proposal-only: do not execute this command unless it is added to task.checks/frontmatter.
+"""
     previous_output_lines = ""
     if worker_output:
         previous_output_lines = f"""
@@ -6263,6 +6280,7 @@ Phase: {phase}
 
 {requirements_method_packet()}
 {plan_lines}
+{check_scope_notice}
 
 Requirement shaping card:
 - problem: continue the previous A9 runtime task without expanding into unrelated governance or product surfaces.
@@ -6287,6 +6305,7 @@ Core rule:
 - Implement one concrete, testable improvement only when the current phase calls for implementation or test hardening.
 - Run the declared checks.
 - Keep the task bounded; do not broaden beyond the task file's allowed paths.
+- Task frontmatter `allowed_paths` is the only write-scope authority. Prompt context (including active-plan `allowed_execution`) is advisory only.
 - Declared checks are authoritative. Do not add pytest or cargo unless they are explicitly declared in this task.
 - Do not use web search or browsing unless the task explicitly asks for internet research.
 - Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, raw session logs, or service/process status unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
@@ -6472,6 +6491,37 @@ def checks_for_next_phase(phase: str, task: Task) -> list[str]:
     if task.checks:
         return list(task.checks)
     return list(DEFAULT_NEXT_CHECKS)
+
+
+def extracted_test_command_from_next_slice(next_slice: Any) -> str:
+    text = str(next_slice or "").strip()
+    if not text.lower().startswith("test:"):
+        return ""
+    body = text.split(":", 1)[1].strip().strip("`").strip()
+    if not body:
+        return ""
+    candidates = [
+        r"(python3?\s+-m\s+unittest\b[^\n]*)",
+        r"(python3?\s+-m\s+pytest\b[^\n]*)",
+        r"(\bpytest\b[^\n]*)",
+        r"(\bcargo\s+test\b[^\n]*)",
+        r"(\bnpm\s+test\b[^\n]*)",
+        r"(\bpnpm\s+test\b[^\n]*)",
+        r"(\byarn\s+test\b[^\n]*)",
+    ]
+    for pattern in candidates:
+        match = re.search(pattern, body, flags=re.IGNORECASE)
+        if not match:
+            continue
+        command = normalize_shell_command(match.group(1).strip().strip("`").rstrip(".,;:"))
+        if not command:
+            continue
+        if re.search(r"[;&|><`$()]", command):
+            continue
+        if not command_looks_like_test(command):
+            continue
+        return command
+    return ""
 
 
 def monitor_blocked_repair_checks(task: Task, summary: dict[str, Any], phase: str) -> list[str]:
@@ -6669,8 +6719,8 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:
         return None
     phase = next_phase_for(summary["status"], task.phase)
+    worker_output = worker_output_from_summary(summary)
     if summary["status"] in {"pass", "needs-followup"}:
-        worker_output = worker_output_from_summary(summary)
         if "worker_envelope" in summary and not str(worker_output.get("next_slice", "")).strip():
             summary["auto_next_block"] = {
                 "reason": "missing_worker_next_slice",
@@ -6695,6 +6745,9 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         }
         return None
     checks = checks_for_next_phase(phase, task)
+    suggested_test_command = extracted_test_command_from_next_slice(worker_output.get("next_slice", ""))
+    if phase == "test" and suggested_test_command and not command_matches_declared_check(suggested_test_command, checks):
+        checks.append(suggested_test_command)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     parent_ref = compact_task_ref(task.task_id)
     task_id = f"auto-{phase}-{parent_ref}-{timestamp}"
