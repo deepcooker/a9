@@ -4236,6 +4236,30 @@ index 0000000..3e75765
 
         self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
 
+    def test_out_of_scope_mobile_does_not_trigger_gateway_gate(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="plan-lane-runtime",
+            prompt=(
+                "Continue plan lane recovery.\n"
+                "- out_of_scope: finance strategy, mobile UI polish, new hard gates.\n"
+                "- reference_entry: planning-with-files recovery context."
+            ),
+            phase="reference_scan",
+        )
+        summary = {
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "next_recommended_task": "Add a change_request helper for plan contract proposals.",
+                    }
+                }
+            }
+        }
+
+        self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+
     def test_redis_stream_reference_triggers_gateway_gate(self):
         mod = load_supervisor()
         task = mod.Task(
