@@ -2664,6 +2664,7 @@ Do the work.
                         "- plan_id\n"
                         "- goal_id: \n"
                         "- expected_flow_revision: not-a-number\n"
+                        "- unknown_contract_field: ignored-even-when-present\n"
                         "- must append refs without proper separator\n"
                     ),
                 )
@@ -2676,6 +2677,24 @@ Do the work.
         self.assertEqual(result, {"status": "skipped", "reason": "no_active_plan"})
         self.assertFalse((tmp_path / "plans" / ".active_plan").exists())
         self.assertFalse((tmp_path / "plans" / "plan_id").exists())
+
+    def test_parse_active_plan_from_prompt_keeps_expected_flow_revision_deterministic_with_unknown_lines(self):
+        mod = load_supervisor()
+        parsed = mod.parse_active_plan_from_prompt(
+            "Active plan contract:\n"
+            "- plan_id: a9-plan-lane-runtime\n"
+            "- goal_id: goal-A9-runtime\n"
+            "- expected_flow_revision: 12\n"
+            "- unknown_contract_field: should be ignored\n"
+            "- must: keep required fields deterministic\n"
+            "Outside contract section.\n"
+            "- expected_flow_revision: 99\n"
+        )
+
+        self.assertEqual(parsed["plan_id"], "a9-plan-lane-runtime")
+        self.assertEqual(parsed["goal_id"], "goal-A9-runtime")
+        self.assertEqual(parsed["expected_flow_revision"], 12)
+        self.assertEqual(parsed["contract"]["must"], "keep required fields deterministic")
 
     def test_update_active_plan_from_run_ignores_unknown_well_formed_contract_lines(self):
         mod = load_supervisor()
