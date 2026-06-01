@@ -3784,7 +3784,9 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["kind"], "node_command_result_by_command_lookup")
+        self.assertEqual(result["requested_node_id"], "")
         self.assertEqual(result["result_event_id"], "1740000500-0")
+        self.assertEqual(result["result_node_id"], "")
         self.assertEqual(result["result"]["result"]["command_id"], "cmd-find")
         self.assertEqual(calls, [["--raw", "XREVRANGE", "a9:test-events", "+", "-", "COUNT", "9"]])
 
@@ -3829,6 +3831,8 @@ class ControlApiTests(unittest.TestCase):
             mod.node_command_result_lookup = original_lookup
 
         self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["requested_node_id"], "smoke-node")
+        self.assertEqual(result["result_node_id"], "DESKTOP-92A9ATS-0")
         self.assertEqual(result["result"]["result"]["node_id"], "DESKTOP-92A9ATS-0")
         self.assertEqual(result["recovery_hint"]["action"], "observe")
         self.assertIn("redis:command:cmd-find", result["recovery_hint"]["evidence_refs"])

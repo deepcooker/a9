@@ -1633,3 +1633,30 @@ Next monitoring target:
      extend control API payload contract with explicit
      `requested_node_id`/`result_node_id` top-level fields so UI can render
      intent vs fact without parsing nested result payloads.
+
+78. By-command result payload now exposes requested vs actual node identity as top-level contract fields.
+   - Trigger:
+     entry 77 fixed `recovery_hint` semantics, but mobile/control consumers still
+     had to parse nested result payloads to render routing intent (`node_id`
+     request arg) versus execution fact (`node_command_result` event node_id).
+   - Mechanism copied:
+     Redis Streams multi-consumer fact model from entries 76-77: submitted
+     `node_id` is routing intent; result-event `node_id` is execution fact.
+     Keep typed contract explicit so clients do not infer semantics from nesting.
+   - Change:
+     `scripts/a9_control_api.py` now includes top-level
+     `requested_node_id` (from by-command lookup `node_id` argument) and
+     `result_node_id` (from parsed `lookup.result.result.node_id`) in
+     `node_command_result_by_command_lookup` payloads. Nested `result` shape is
+     unchanged.
+     `tests/test_control_api.py` extends
+     `test_node_command_result_by_command_lookup_finds_latest_result` and
+     `test_node_command_result_by_command_lookup_prefers_actual_result_node_id_over_requested_node`
+     to assert the explicit intent-vs-fact fields and preserved recovery hint behavior.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py`;
+     `python3 -m unittest tests.test_control_api.ControlApiTests.test_node_command_result_by_command_lookup_prefers_actual_result_node_id_over_requested_node tests.test_control_api.ControlApiTests.test_node_command_result_by_command_lookup_finds_latest_result`;
+     `python3 -m unittest tests.test_control_api`.
+   - Governance lesson:
+     control-plane contracts should expose intent-vs-fact explicitly at top level
+     to reduce UI ambiguity and prevent nested-field coupling across clients.

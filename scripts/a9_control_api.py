@@ -3375,9 +3375,11 @@ def node_command_result_by_command_lookup(
         "status": "degraded",
         "kind": "node_command_result_by_command_lookup",
         "command_id": safe_command_id,
+        "requested_node_id": str(node_id or ""),
         "event_stream": safe_event_stream,
         "limit": 0,
         "result_event_id": "",
+        "result_node_id": "",
         "result": {},
     }
     if not safe_command_id:
@@ -3428,6 +3430,7 @@ def node_command_result_by_command_lookup(
         if status != "ok":
             payload["reason"] = str(lookup.get("reason") or error_code)
         actual_node_id = str(lookup.get("result", {}).get("result", {}).get("node_id") or "").strip()
+        payload["result_node_id"] = actual_node_id
         payload["recovery_hint"] = node_command_recovery_hint(
             node_id=actual_node_id or str(node_id or ""),
             command_id=safe_command_id,
