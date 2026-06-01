@@ -1804,3 +1804,23 @@ Next monitoring target:
    - Governance lesson:
      control-plane API should publish runtime truth directly. Phone is an
      observer/dispatcher adapter; canonical state remains process evidence.
+
+85. Mobile control now renders A9 service observation before operator history.
+   - Trigger:
+     `/api/status` exposed `service_observation`, but the phone UI still only
+     showed node/recovery/runtime cards. Also, compact mode auto-scrolled to the
+     latest operator turns, pushing the remote control surface out of the first
+     viewport.
+   - Change:
+     `/mnt/d/root/a9_mobile_agent_lab/store/useA9ControlStore.ts` now types
+     `service_observation`. `/mnt/d/root/a9_mobile_agent_lab/app/(tabs)/agent.tsx`
+     renders an `A9 services` card showing each service's observed phase, pid,
+     uptime, missing count, and next action. In mobile compact mode the remote
+     control card and service observation render before operator history, and
+     compact mode no longer auto-scrolls to the bottom on content changes.
+   - Verification:
+     in `/mnt/d/root/a9_mobile_agent_lab`, `npx tsc --noEmit` and
+     `npm run smoke:mobile` passed.
+   - Governance lesson:
+     the phone is a control surface, not just a chat transcript. Runtime control
+     and service truth must be first-viewport signals on mobile.
