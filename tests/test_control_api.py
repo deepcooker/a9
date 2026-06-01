@@ -991,6 +991,109 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["status"], "needs_attention")
         self.assertEqual(captured["payload"]["action"], "intervene")
 
+    def test_communication_action_plan_routes_missing_services_to_runtime_gate(self):
+        mod = load_control_api()
+        plan = mod.communication_action_plan(
+            {
+                "status": "degraded",
+                "action": "start_missing_services",
+                "reason": "services:missing:1",
+                "priority_source": "services",
+                "layers": {
+                    "services": {
+                        "observed": {
+                            "missing_count": 1,
+                            "missing_services": ["node-worker"],
+                            "next_action": "start_missing_services",
+                        }
+                    }
+                },
+            }
+        )
+
+        self.assertEqual(plan["plan_status"], "ready")
+        self.assertEqual(plan["route"]["endpoint"], "/api/services/start")
+        self.assertEqual(plan["route"]["command"], "services.start")
+        self.assertEqual(plan["route"]["arm_group"], "runtime")
+        self.assertEqual(plan["payload"]["services"], ["node-worker"])
+
+    def test_communication_action_plan_routes_node_intervention_to_recovery_cycle(self):
+        mod = load_control_api()
+        plan = mod.communication_action_plan(
+            {
+                "status": "needs_attention",
+                "action": "intervene",
+                "reason": "recovery_loop:needs_attention",
+                "priority_source": "recovery_loop",
+            }
+        )
+
+        self.assertEqual(plan["plan_status"], "ready")
+        self.assertEqual(plan["route"]["endpoint"], "/api/nodes/recovery-cycle")
+        self.assertEqual(plan["route"]["command"], "nodes.recovery.cycle")
+        self.assertEqual(plan["route"]["arm_group"], "remote")
+        self.assertTrue(plan["payload"]["execute"])
+
+    def test_communication_repair_one_dispatches_missing_service_start(self):
+        mod = load_control_api()
+        originals = {
+            "communication_status": mod.communication_status,
+            "service_start_action": mod.service_start_action,
+        }
+        captured = {}
+        try:
+            mod.communication_status = lambda root=mod.ROOT: {
+                "status": "degraded",
+                "action": "start_missing_services",
+                "reason": "services:missing:1",
+                "priority_source": "services",
+                "layers": {"services": {"observed": {"missing_services": ["node-worker"]}}},
+            }
+
+            def fake_service_start_action(payload, *, root=mod.ROOT):
+                captured["payload"] = payload
+                return {"status": "ok", "command": "services.start"}
+
+            mod.service_start_action = fake_service_start_action
+            result = mod.communication_repair_one({"operator_scopes": ["operator.admin"]})
+        finally:
+            mod.communication_status = originals["communication_status"]
+            mod.service_start_action = originals["service_start_action"]
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["plan"]["route"]["endpoint"], "/api/services/start")
+        self.assertEqual(captured["payload"]["services"], ["node-worker"])
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
+    def test_api_communication_repair_one_endpoint_uses_payload(self):
+        mod = load_control_api()
+        captured = {}
+        original_repair = mod.communication_repair_one
+        try:
+            def fake_repair(payload):
+                captured["payload"] = payload
+                return {"status": "ok", "kind": "communication_repair_one"}
+
+            mod.communication_repair_one = fake_repair
+            body = json.dumps({"operator_scopes": ["operator.admin"]}).encode("utf-8")
+
+            class DummyCommunicationRepairPostHandler:
+                path = "/api/communication/repair-one"
+                headers = {"Content-Length": str(len(body))}
+                rfile = io.BytesIO(body)
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["response"] = payload
+
+            mod.ControlHandler.do_POST(DummyCommunicationRepairPostHandler())
+        finally:
+            mod.communication_repair_one = original_repair
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["kind"], "communication_repair_one")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
     def test_node_recovery_cycle_plans_tmux_repair_and_writes_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -7087,6 +7190,8 @@ class ControlApiTests(unittest.TestCase):
         discovery = mod.controller_discovery()
         self.assertEqual(discovery["service"], "a9-controller")
         self.assertEqual(discovery["endpoints"]["communication_status"], "/api/communication/status")
+        self.assertEqual(discovery["endpoints"]["communication_action_plan"], "/api/communication/action-plan")
+        self.assertEqual(discovery["endpoints"]["communication_repair_one"], "/api/communication/repair-one")
         self.assertEqual(discovery["endpoints"]["register_node"], "/api/nodes/register")
         self.assertEqual(discovery["endpoints"]["gateway_transport_contract"], "/api/gateway/transport-contract")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")

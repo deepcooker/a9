@@ -1704,6 +1704,8 @@ def controller_discovery() -> dict[str, Any]:
             "health": "/api/health",
             "status": "/api/status",
             "communication_status": "/api/communication/status",
+            "communication_action_plan": "/api/communication/action-plan",
+            "communication_repair_one": "/api/communication/repair-one",
             "register_node": "/api/nodes/register",
             "heartbeat_node": "/api/nodes/heartbeat",
             "phone_control_status": "/api/phone-control/status",
@@ -2223,6 +2225,122 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
             "recovery_loop": recovery,
         },
     }
+
+
+def communication_action_plan(status: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
+    status = status or communication_status(root)
+    action = str(status.get("action") or "continue")
+    source = str(status.get("priority_source") or "")
+    reason = str(status.get("reason") or "")
+    base = {
+        "status": "ok",
+        "kind": "communication_action_plan",
+        "generated_at": utc_now(),
+        "communication": {
+            "status": status.get("status"),
+            "action": action,
+            "reason": reason,
+            "priority_source": source,
+        },
+    }
+    if action in {"continue", "observe"}:
+        return {
+            **base,
+            "plan_status": "noop",
+            "route": {"method": None, "endpoint": None, "command": None, "requires_arm": False, "arm_group": None},
+            "reason": "communication_healthy",
+            "steps": ["continue_observation"],
+            "executable": False,
+        }
+    if source == "services" and action == "start_missing_services":
+        missing = []
+        layers = status.get("layers") if isinstance(status.get("layers"), dict) else {}
+        services = layers.get("services") if isinstance(layers.get("services"), dict) else {}
+        observed = services.get("observed") if isinstance(services.get("observed"), dict) else {}
+        if isinstance(observed.get("missing_services"), list):
+            missing = [str(item) for item in observed.get("missing_services", [])]
+        return {
+            **base,
+            "plan_status": "ready",
+            "route": {"method": "POST", "endpoint": "/api/services/start", "command": "services.start", "requires_arm": True, "arm_group": "runtime"},
+            "payload": {"services": missing},
+            "reason": "start_missing_services",
+            "steps": ["arm_runtime", "post_services_start", "refresh_communication_status"],
+            "executable": True,
+        }
+    if source in {"nodes", "recovery_loop"} and action in {"reconnect", "intervene", "quarantine", "watch"}:
+        return {
+            **base,
+            "plan_status": "ready",
+            "route": {
+                "method": "POST",
+                "endpoint": "/api/nodes/recovery-cycle",
+                "command": "nodes.recovery.cycle",
+                "requires_arm": True,
+                "arm_group": "remote",
+            },
+            "payload": {"execute": True, "max_actions": 1},
+            "reason": "run_node_recovery_cycle",
+            "steps": ["arm_remote", "post_nodes_recovery_cycle", "refresh_communication_status"],
+            "executable": True,
+        }
+    if source == "tasks_stream" and action in {"watch", "intervene"}:
+        return {
+            **base,
+            "plan_status": "observe_only",
+            "route": {"method": "GET", "endpoint": "/api/gateway/health-refresh", "command": None, "requires_arm": False, "arm_group": None},
+            "reason": "refresh_gateway_health_evidence",
+            "steps": ["get_gateway_health_refresh", "refresh_communication_status"],
+            "executable": True,
+        }
+    if source == "tailscale" and action in {"install", "login", "reconnect"}:
+        return {
+            **base,
+            "plan_status": "manual_required",
+            "route": {"method": None, "endpoint": None, "command": None, "requires_arm": False, "arm_group": None},
+            "reason": "tailscale_operator_action_required",
+            "steps": ["open_tailscale", "install_or_login_or_reconnect", "refresh_communication_status"],
+            "executable": False,
+        }
+    return {
+        **base,
+        "plan_status": "manual_required",
+        "route": {"method": None, "endpoint": None, "command": None, "requires_arm": False, "arm_group": None},
+        "reason": f"no_route_for_{source}_{action}",
+        "steps": ["inspect_communication_status"],
+        "executable": False,
+    }
+
+
+def communication_repair_one(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
+    payload = payload or {}
+    status = communication_status(root)
+    plan = communication_action_plan(status, root=root)
+    if not plan.get("executable"):
+        return {"status": "noop" if plan.get("plan_status") == "noop" else "manual_required", "kind": "communication_repair_one", "plan": plan}
+    route = plan.get("route") if isinstance(plan.get("route"), dict) else {}
+    endpoint = str(route.get("endpoint") or "")
+    if endpoint == "/api/services/start":
+        service_payload = {
+            **payload,
+            "services": plan.get("payload", {}).get("services", []),
+            "operator_scopes": payload.get("operator_scopes") or payload.get("scopes") or [],
+        }
+        result = service_start_action(service_payload, root=root)
+    elif endpoint == "/api/nodes/recovery-cycle":
+        cycle_payload = {
+            **payload,
+            "execute": True,
+            "max_actions": int(payload.get("max_actions") or 1),
+            "operator_scopes": payload.get("operator_scopes") or payload.get("scopes") or [],
+        }
+        result = node_recovery_cycle(cycle_payload, root=root)
+    elif endpoint == "/api/gateway/health-refresh":
+        result = gateway_health_refresh(root=root)
+    else:
+        return {"status": "manual_required", "kind": "communication_repair_one", "plan": plan, "reason": "unknown_route"}
+    refreshed = communication_status(root)
+    return {"status": "ok", "kind": "communication_repair_one", "plan": plan, "result": result, "communication_after": refreshed}
 
 
 def _node_recovery_action_payload(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
@@ -4896,6 +5014,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, node_connection_summary())
             elif parsed.path == "/api/communication/status":
                 self.write_json(200, communication_status())
+            elif parsed.path == "/api/communication/action-plan":
+                self.write_json(200, communication_action_plan())
             elif parsed.path == "/api/nodes/recovery-cycle":
                 self.write_json(
                     200,
@@ -5027,6 +5147,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_session_refresh_trial(payload))
             elif self.path == "/api/services/start":
                 self.write_json(200, service_start_action(payload))
+            elif self.path == "/api/communication/repair-one":
+                self.write_json(200, communication_repair_one(payload))
             elif self.path == "/api/eval/override":
                 self.write_json(200, eval_override(payload))
             elif self.path == "/api/nodes/register":

@@ -584,6 +584,13 @@ Mechanisms to adapt:
   tasks-stream lag, and recovery-loop status into one `action/reason/priority_source` while preserving
   raw layer evidence. This copies the mature gateway pattern that observers
   consume typed lifecycle decisions instead of scraping unrelated logs.
+- `scripts/a9_control_api.py`: `/api/communication/action-plan` and
+  `/api/communication/repair-one` adapt the OpenClaw/Lobster-style managed
+  flow idea to communication recovery: first emit a deterministic plan with
+  endpoint, command, arm group, and payload, then execute at most one bounded
+  step through an existing gated endpoint. The route layer does not invent new
+  effects; it dispatches to `services.start`, `nodes.recovery.cycle`, or
+  gateway health refresh.
 
 ## Client Skeleton Reference Notes
 

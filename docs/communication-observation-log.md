@@ -1923,3 +1923,30 @@ Next monitoring target:
      the phone should read the same canonical communication decision as the
      worker. Layer-specific cards stay useful, but the operator needs the
      highest-priority action first.
+
+90. Communication status now has deterministic action routing.
+   - Trigger:
+     `/api/communication/status` exposed the ranked action, but operators and
+     the 24-hour worker still needed to know which existing endpoint should
+     handle that action.
+   - Change:
+     `scripts/a9_control_api.py` adds `communication_action_plan()` with
+     `GET /api/communication/action-plan`, and `communication_repair_one()` with
+     `POST /api/communication/repair-one`. The plan maps
+     `services/start_missing_services` to `/api/services/start` under the
+     `runtime` arm group, maps node/recovery-loop `reconnect/intervene` actions
+     to `/api/nodes/recovery-cycle` under the `remote` arm group, maps
+     tasks-stream watch/intervene to `/api/gateway/health-refresh`, and marks
+     Tailscale install/login/reconnect as manual-required. The repair endpoint
+     dispatches only through these existing bounded endpoints.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py`;
+     `python3 -m unittest tests.test_control_api` passed with 200 tests.
+     After restarting control-api, live `GET /api/communication/action-plan`
+     returned `plan_status=noop` for healthy communication, and live
+     `POST /api/communication/repair-one` returned `status=noop` instead of
+     performing an unnecessary mutation.
+   - Governance lesson:
+     routing belongs between observation and mutation. The phone and worker can
+     share the same plan, while the actual effects remain behind the existing
+     phone-control gates.
