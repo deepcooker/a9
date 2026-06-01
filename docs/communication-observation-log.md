@@ -1437,3 +1437,32 @@ Next monitoring target:
    - Governance lesson:
      monitor contract should consume typed runtime evidence directly and route by
      explicit action/reason/evidence refs, not by natural-language interpretation.
+
+71. HTTP control-plane contract test now proves typed recovery hint consumption.
+   - Trigger:
+     node command recovery hint contract was implemented in transcript/discovery,
+     but HTTP `/api/nodes/recovery-transcript` needed a direct endpoint-level
+     proof that mobile/remote clients can consume typed hint entries and
+     `intervention_decision.evidence_refs` without parsing prose.
+   - Mechanism copied:
+     OpenClaw/Lobster typed control-plane boundary (HTTP machine-readable
+     action/reason/evidence refs), Barter-rs reconnect lifecycle typed next
+     action (no prose routing), and Codex handoff discipline (bounded evidence
+     over raw log dumping).
+   - Change:
+     added HTTP-layer tests in `tests/test_control_api.py`:
+     `test_api_recovery_transcript_endpoint_exposes_node_command_hint_contract`
+     validates `/api/nodes/recovery-transcript?node_id=node-a&limit=20` returns
+     `source=node_command_recovery_hint` items and
+     `intervention_decision.evidence_refs` contains redis and node evidence
+     refs; `test_api_discovery_endpoint_exposes_runtime_recovery_hint_flag`
+     validates discovery runtime contract flag remains visible at HTTP endpoint.
+   - Verification:
+     `python3 -m unittest tests.test_control_api.ControlApiTests.test_api_recovery_transcript_endpoint_exposes_node_command_hint_contract`
+     passed.
+     `python3 -m unittest tests.test_control_api.ControlApiTests.test_api_discovery_endpoint_exposes_runtime_recovery_hint_flag`
+     passed.
+   - Governance lesson:
+     previous worker envelope over-heaviness is kept as an observation item and
+     should not be promoted into a new hard gate that blocks data-model-first
+     delivery.
