@@ -5121,6 +5121,8 @@ index 0000000..3e75765
                 self.assertEqual(record["mode"], "deterministic_supervisor_record")
                 self.assertEqual(record["task_id"], "auto-test")
                 self.assertEqual(record["worker_output"]["next_slice"], "continue communication governance")
+                self.assertEqual(record["worker_output"]["next_slice_source"], "worker_envelope.output.next_slice")
+                self.assertEqual(record["worker_output"]["next_slice_resolution_revision"], 1)
                 self.assertEqual(record["git"]["commit"], "abc123")
             finally:
                 mod.RECORDS_DIR = old_records
@@ -5310,6 +5312,8 @@ index 0000000..3e75765
             self.assertIn('phase: "mechanism_extract"', text)
             self.assertNotIn("auto_next_block", summary)
             self.assertIn("Extend active-plan prompt hydration", text)
+            self.assertIn("next_slice_source: worker_envelope.output.next_recommended_task", text)
+            self.assertIn("next_slice_resolution_revision: 1", text)
         finally:
             next_path.unlink(missing_ok=True)
 

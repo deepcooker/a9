@@ -6024,6 +6024,8 @@ def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
         previous_output_lines = f"""
 Previous worker output:
 - next_slice: {bounded_inline(worker_output.get('next_slice', ''), 700)}
+- next_slice_source: {bounded_inline(str(worker_output.get('next_slice_source', '')), 200)}
+- next_slice_resolution_revision: {worker_output.get('next_slice_resolution_revision', '')}
 - copied_mechanisms: {bounded_inline(json.dumps(worker_output.get('copied_mechanisms', []), ensure_ascii=False), 1200)}
 - changed_files: {bounded_inline(json.dumps(worker_output.get('changed_files', []), ensure_ascii=False), 500)}
 """
@@ -6296,10 +6298,9 @@ def write_deterministic_record(task: Task, summary: dict[str, Any]) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = RECORDS_DIR / f"{timestamp}-{compact_task_ref(task.task_id)}.json"
     worker_envelope = summary.get("worker_envelope", {})
-    envelope = worker_envelope.get("envelope", {}) if isinstance(worker_envelope, dict) else {}
-    output = envelope.get("output", {}) if isinstance(envelope, dict) else {}
-    if not isinstance(output, dict):
-        output = {"raw_output": output}
+    worker_output = worker_output_from_summary(summary)
+    if not isinstance(worker_output, dict):
+        worker_output = {}
     record = {
         "recorded_at": utc_now(),
         "mode": "deterministic_supervisor_record",
@@ -6312,10 +6313,12 @@ def write_deterministic_record(task: Task, summary: dict[str, Any]) -> Path:
         "state_path": summary.get("state_path"),
         "deep_marks_path": summary.get("deep_marks_path"),
         "worker_output": {
-            "changed_files": output.get("changed_files", []),
-            "copied_mechanisms": output.get("copied_mechanisms", []),
-            "tests": output.get("tests", []),
-            "next_slice": output.get("next_slice", ""),
+            "changed_files": worker_output.get("changed_files", []),
+            "copied_mechanisms": worker_output.get("copied_mechanisms", []),
+            "tests": worker_output.get("tests", []),
+            "next_slice": worker_output.get("next_slice", ""),
+            "next_slice_source": worker_output.get("next_slice_source", ""),
+            "next_slice_resolution_revision": worker_output.get("next_slice_resolution_revision", 1),
         },
         "guards": {
             "worker_envelope": worker_envelope.get("status") if isinstance(worker_envelope, dict) else "",
