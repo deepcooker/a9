@@ -1365,3 +1365,22 @@ Next monitoring target:
    - Governance lesson:
      this is execution-chain reliability repair, not token/context policy work;
      existing plain-text SEARCH/REPLACE compatibility is preserved.
+
+68. Nested envelope SEARCH/REPLACE selftest.
+   - Trigger:
+     need a second end-to-end proof that deterministic apply accepts strict
+     worker envelope nested `output.search_replace_blocks` and supervisor can
+     auto-persist/govern without manual file edits.
+   - Mechanism copied:
+     Aider SEARCH/REPLACE anchor discipline, OpenClaw typed strict envelope,
+     and Codex worker handoff/apply boundary.
+   - Change:
+     this log entry is delivered through strict result JSON nested
+     `search_replace_blocks` (`file + blocks[]`) so supervisor deterministic
+     apply path, check path, and git governance path are exercised together.
+   - Verification:
+     selftest run prepared with stable tail-anchor search and append-only
+     replacement against `docs/communication-observation-log.md`.
+   - Governance lesson:
+     keep patch intent deterministic and typed at the worker boundary; do not
+     mix this execution reliability check with token/context gate changes.
