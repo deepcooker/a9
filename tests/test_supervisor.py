@@ -1136,7 +1136,7 @@ Do the work.
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
             "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_recommended_task':'test: verify fallback queue creation remains deterministic'}}) + '\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_recommended_task':'test: verify fallback queue creation remains deterministic','next_task':'implement: lower-priority fallback should not rewrite auto-next id routing'}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1197,8 +1197,10 @@ Do the work.
         self.assertTrue(done["next_task_path"])
         self.assertEqual(done["gateway_runtime_gate"]["status"], "skip")
         self.assertEqual(done["gateway_runtime_gate"]["reason"], "not_communication_task")
+        self.assertRegex(Path(done["next_task_path"]).name, r"^auto-test-selftest-auto-next-gateway-hint-filtering-\d{8}T\d{6}Z\.md$")
         self.assertIn('phase: "test"', next_task_text)
         self.assertIn("next_slice_source: worker_envelope.output.next_recommended_task", next_task_text)
+        self.assertNotIn("worker_envelope.output.next_task", next_task_text)
         self.assertIn("verify fallback queue creation remains deterministic", next_task_text)
 
     def test_execution_chain_artifact_records_prompt_references_commands_checks_and_tokens(self):
