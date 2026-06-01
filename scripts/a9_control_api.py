@@ -3427,8 +3427,9 @@ def node_command_result_by_command_lookup(
         }
         if status != "ok":
             payload["reason"] = str(lookup.get("reason") or error_code)
+        actual_node_id = str(lookup.get("result", {}).get("result", {}).get("node_id") or "").strip()
         payload["recovery_hint"] = node_command_recovery_hint(
-            node_id=str(node_id or lookup.get("result", {}).get("result", {}).get("node_id") or ""),
+            node_id=actual_node_id or str(node_id or ""),
             command_id=safe_command_id,
             result_event_id=result_event_id,
             result_status=status,

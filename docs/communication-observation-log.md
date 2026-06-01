@@ -1604,3 +1604,32 @@ Next monitoring target:
      `claimed_id`, and `result_event_id`, then render the actual consuming
      `node_id`. This matches Redis Streams consumer-group semantics and avoids
      fake certainty in mobile/operator views.
+
+77. By-command recovery hint now prefers actual result node identity over requested submit target.
+   - Trigger:
+     in `node_command_result_by_command_lookup`, `recovery_hint` used
+     `node_id or lookup.result.result.node_id`, which preferred request context
+     when a caller passed `node_id`. In multi-consumer Redis Streams this can
+     mask the actual consuming node observed in result events.
+   - Mechanism copied:
+     Redis Streams consumer-group fact model (claimed/result event node is source
+     of execution truth), plus Codex/OpenClaw typed handoff separation between
+     routing intent and execution fact.
+   - Change:
+     `scripts/a9_control_api.py` now computes `actual_node_id` from
+     `lookup.result.result.node_id` and passes `actual_node_id or requested_node`
+     into `node_command_recovery_hint`.
+     Added regression test
+     `test_node_command_result_by_command_lookup_prefers_actual_result_node_id_over_requested_node`
+     in `tests/test_control_api.py` to prove by-command lookup preserves actual
+     result node identity even when request uses a different submit target.
+   - Verification:
+     `python3 -m py_compile scripts/a9_node.py scripts/a9_control_api.py`
+     and
+     `python3 -m unittest tests.test_node tests.test_control_api`
+     passed in the worker worktree before timeout rollback; monitor reapplied the
+     bounded diff to main for final verification.
+   - Next:
+     extend control API payload contract with explicit
+     `requested_node_id`/`result_node_id` top-level fields so UI can render
+     intent vs fact without parsing nested result payloads.

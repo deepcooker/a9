@@ -3788,6 +3788,52 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["result"]["result"]["command_id"], "cmd-find")
         self.assertEqual(calls, [["--raw", "XREVRANGE", "a9:test-events", "+", "-", "COUNT", "9"]])
 
+    def test_node_command_result_by_command_lookup_prefers_actual_result_node_id_over_requested_node(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "1740000500-0\nkind\nnode_command_result\ncommand_id\ncmd-find\n"
+
+        def fake_redis(args, *, timeout=2):
+            return FakeProc()
+
+        def fake_lookup(result_event_id, *, event_stream="a9:events", timeout=3):
+            return {
+                "status": "ok",
+                "kind": "node_command_result_lookup",
+                "error_code": "ok",
+                "result_event_id": result_event_id,
+                "event_stream": event_stream,
+                "result": {
+                    "command_id": "cmd-find",
+                    "node_id": "DESKTOP-92A9ATS-0",
+                    "result": {"node_id": "DESKTOP-92A9ATS-0", "status": "ok"},
+                },
+            }
+
+        original_redis = mod.redis_cli
+        original_lookup = mod.node_command_result_lookup
+        mod.redis_cli = fake_redis
+        mod.node_command_result_lookup = fake_lookup
+        try:
+            result = mod.node_command_result_by_command_lookup(
+                "cmd-find",
+                event_stream="a9:test-events",
+                limit=9,
+                timeout=4,
+                node_id="smoke-node",
+            )
+        finally:
+            mod.redis_cli = original_redis
+            mod.node_command_result_lookup = original_lookup
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["result"]["result"]["node_id"], "DESKTOP-92A9ATS-0")
+        self.assertEqual(result["recovery_hint"]["action"], "observe")
+        self.assertIn("redis:command:cmd-find", result["recovery_hint"]["evidence_refs"])
+        self.assertIn("redis:event:1740000500-0", result["recovery_hint"]["evidence_refs"])
+
     def test_node_command_result_by_command_lookup_noops_when_missing(self):
         mod = load_control_api()
 
