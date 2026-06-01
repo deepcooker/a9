@@ -1595,7 +1595,8 @@ Do the work.
                 "-c",
                 (
                     "import json; "
-                    "print(json.dumps({'type':'thread.started','payload':{'ok':True}}), flush=True)"
+                    "print(json.dumps({'type':'thread.started','payload':{'ok':True}}), flush=True); "
+                    "print(json.dumps({'type':'thread.started','payload':{'ok':False}}), flush=True)"
                 ),
             ]
             with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
@@ -1605,15 +1606,22 @@ Do the work.
                     warnings.simplefilter("always", ResourceWarning)
                     worker = mod.run_worker(task, worktree, run_dir)
                     gc.collect()
-                self.assertGreater(worker["event_count"], 0)
-                self.assertGreater(worker["event_bytes"], 0)
+                self.assertEqual(worker["event_count"], 2)
+                self.assertEqual(worker["event_counts"].get("thread.started"), 2)
                 events_path = Path(worker["events_path"])
-                event_lines = events_path.read_text(encoding="utf-8").splitlines()
-                self.assertEqual(len(event_lines), 1)
+                event_text = events_path.read_text(encoding="utf-8")
+                event_lines = event_text.splitlines()
+                self.assertEqual(len(event_lines), 2)
                 self.assertEqual(
                     json.loads(event_lines[0]),
                     {"type": "thread.started", "payload": {"ok": True}},
                 )
+                self.assertEqual(
+                    json.loads(event_lines[1]),
+                    {"type": "thread.started", "payload": {"ok": False}},
+                )
+                expected_event_bytes = sum(len(line.encode("utf-8")) for line in event_text.splitlines(keepends=True))
+                self.assertEqual(worker["event_bytes"], expected_event_bytes)
 
         self.assertEqual(worker["return_code"], 0)
         resource_warnings = [item for item in caught if issubclass(item.category, ResourceWarning)]
