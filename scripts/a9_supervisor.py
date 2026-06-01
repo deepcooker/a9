@@ -6304,7 +6304,10 @@ def communication_task_requires_gateway_runtime_evidence(task: Task, summary: di
     prompt_lines = [
         line
         for line in task.prompt.splitlines()
-        if "out_of_scope" not in line.lower() and "not_doing_now" not in line.lower()
+        if "out_of_scope" not in line.lower()
+        and "not_doing_now" not in line.lower()
+        and "goal_objective" not in line.lower()
+        and "active goal" not in line.lower()
     ]
     prompt_for_detection = "\n".join(prompt_lines)
     haystack = " ".join(
@@ -6313,7 +6316,6 @@ def communication_task_requires_gateway_runtime_evidence(task: Task, summary: di
             task.phase,
             prompt_for_detection,
             str(worker_output.get("next_slice", "")),
-            json.dumps(worker_output.get("copied_mechanisms", []), ensure_ascii=False),
         ]
     ).lower()
     if any(hint in haystack for hint in COMMUNICATION_GATE_HINTS):

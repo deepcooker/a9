@@ -4638,6 +4638,35 @@ index 0000000..3e75765
 
         self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
 
+    def test_active_goal_communication_words_do_not_trigger_gateway_gate(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="plan-lane-runtime",
+            prompt=(
+                "Continue A9 24-hour automation.\n"
+                "Active goal:\n"
+                "- goal_objective: improve runtime around session governance and multi-machine control.\n"
+                "Previous worker output:\n"
+                "- next_slice: Add priority-based token capping inside active_plan_prompt_context."
+            ),
+            phase="mechanism_extract",
+        )
+        summary = {
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "next_slice": "document active plan priority capping failure modes",
+                        "copied_mechanisms": [
+                            {"source": "docs/stage-handoff-2026-06-01.md", "mechanism": "bounded continuation"}
+                        ],
+                    }
+                }
+            }
+        }
+
+        self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+
     def test_redis_stream_reference_triggers_gateway_gate(self):
         mod = load_supervisor()
         task = mod.Task(
