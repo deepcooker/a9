@@ -3617,6 +3617,94 @@ Do the work.
         self.assertEqual(result["touched_files"], ["docs/mistakes.md"])
         self.assertEqual(result["patch_source"], "worker_envelope.output.search_replace_blocks")
 
+    def test_apply_worker_search_replace_extracts_fenced_markdown_blocks_after_strict_envelope(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            root.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "docs").mkdir()
+            (root / "docs" / "mistakes.md").write_text("alpha\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-m", "base"],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            final = run_dir / "final.md"
+            final.write_text(
+                json.dumps(
+                    {
+                        "protocolVersion": 1,
+                        "ok": True,
+                        "status": "ok",
+                        "output": {"changed_files": ["docs/mistakes.md"]},
+                    }
+                )
+                + "\n\nSEARCH/REPLACE blocks:\n\n```text\n### File: docs/mistakes.md\nSEARCH\nalpha\nREPLACE\nbeta\n```\n",
+                encoding="utf-8",
+            )
+
+            result = mod.apply_worker_search_replace({"final_path": str(final)}, root, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["applied_count"], 1)
+        self.assertEqual(result["touched_files"], ["docs/mistakes.md"])
+        self.assertEqual(result["patch_source"], "final_message.markdown_search_replace_blocks")
+        self.assertTrue(
+            any(
+                item.get("code") == "final_message.markdown_search_replace_blocks.extracted"
+                for item in result["findings"]
+            )
+        )
+
+    def test_apply_worker_search_replace_envelope_blocks_precede_trailing_fenced_markdown_blocks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            root.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "docs").mkdir()
+            target = root / "docs" / "mistakes.md"
+            target.write_text("alpha\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-m", "base"],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            final = run_dir / "final.md"
+            final.write_text(
+                json.dumps(
+                    {
+                        "protocolVersion": 1,
+                        "ok": True,
+                        "status": "ok",
+                        "output": {
+                            "search_replace_blocks": [
+                                {"path": "docs/mistakes.md", "search": "alpha\n", "replace": "gamma\n"}
+                            ]
+                        },
+                    }
+                )
+                + "\n\n```text\n### File: docs/mistakes.md\nSEARCH\nalpha\nREPLACE\nbeta\n```\n",
+                encoding="utf-8",
+            )
+
+            result = mod.apply_worker_search_replace({"final_path": str(final)}, root, run_dir)
+
+            self.assertEqual(target.read_text(encoding="utf-8"), "gamma\n")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["patch_source"], "worker_envelope.output.search_replace_blocks")
+
     def test_apply_worker_search_replace_reports_machine_readable_malformed_nested_block(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

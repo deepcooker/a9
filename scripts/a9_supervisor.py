@@ -1854,6 +1854,58 @@ def extract_worker_search_replace_patch(text: str) -> tuple[str, str | None, lis
                 )
                 return "\n".join(parts), "worker_envelope.output.search_replace_blocks", findings
 
+    def _extract_markdown_file_blocks(raw_text: str) -> list[str]:
+        parts: list[str] = []
+        fence_re = re.compile(r"```[^\n`]*\n(.*?)\n```", re.DOTALL)
+        file_header_re = re.compile(r"^###\s*File:\s*(.+?)\s*$")
+        for fence in fence_re.finditer(raw_text):
+            lines = fence.group(1).splitlines()
+            index = 0
+            while index < len(lines):
+                header = file_header_re.match(lines[index].strip())
+                if not header:
+                    index += 1
+                    continue
+                path = header.group(1).strip()
+                if index + 1 >= len(lines) or lines[index + 1].strip() != "SEARCH":
+                    index += 1
+                    continue
+                index += 2
+                search_lines: list[str] = []
+                while index < len(lines) and lines[index].strip() != "REPLACE":
+                    search_lines.append(lines[index])
+                    index += 1
+                if index >= len(lines) or lines[index].strip() != "REPLACE":
+                    continue
+                index += 1
+                replace_lines: list[str] = []
+                while index < len(lines) and not file_header_re.match(lines[index].strip()):
+                    replace_lines.append(lines[index])
+                    index += 1
+                search_text = "\n".join(search_lines)
+                replace_text = "\n".join(replace_lines)
+                if not search_text.endswith("\n"):
+                    search_text = f"{search_text}\n"
+                if not replace_text.endswith("\n"):
+                    replace_text = f"{replace_text}\n"
+                parts.append(
+                    f"{path}\n<<<<<<< SEARCH\n{search_text}=======\n{replace_text}>>>>>>> REPLACE\n"
+                )
+        return parts
+
+    markdown_parts = _extract_markdown_file_blocks(text)
+    if markdown_parts:
+        findings.append(
+            {
+                "level": "info",
+                "code": "final_message.markdown_search_replace_blocks.extracted",
+                "scope": "final_message",
+                "message": "extracted fenced ### File SEARCH/REPLACE blocks from final message",
+                "count": len(markdown_parts),
+            }
+        )
+        return "\n".join(markdown_parts), "final_message.markdown_search_replace_blocks", findings
+
     if "<<<<<<< SEARCH" in text and ">>>>>>> REPLACE" in text:
         return text, "final_message", findings
     return "", None, findings
