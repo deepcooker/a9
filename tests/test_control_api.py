@@ -9,7 +9,7 @@ import contextlib
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -3689,12 +3689,13 @@ class ControlApiTests(unittest.TestCase):
         calls = []
         captured = {"status": None, "payload": None}
 
-        def fake_lookup(result_event_id, *, event_stream="a9:events", timeout=3):
+        def fake_lookup(result_event_id, *, event_stream="a9:events", timeout=3, node_id=""):
             calls.append(
                 {
                     "result_event_id": result_event_id,
                     "event_stream": event_stream,
                     "timeout": timeout,
+                    "node_id": node_id,
                 }
             )
             return {
@@ -3725,7 +3726,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["result"]["command_id"], "cmd-api")
         self.assertEqual(
             calls,
-            [{"result_event_id": "1740000400-0", "event_stream": "a9:test-events", "timeout": 7}],
+            [{"result_event_id": "1740000400-0", "event_stream": "a9:test-events", "timeout": 7, "node_id": ""}],
         )
 
     def test_node_command_result_by_command_lookup_finds_latest_result(self):
@@ -3816,13 +3817,14 @@ class ControlApiTests(unittest.TestCase):
         calls = []
         captured = {"status": None, "payload": None}
 
-        def fake_lookup(command_id, *, event_stream="a9:events", limit=100, timeout=3):
+        def fake_lookup(command_id, *, event_stream="a9:events", limit=100, timeout=3, node_id=""):
             calls.append(
                 {
                     "command_id": command_id,
                     "event_stream": event_stream,
                     "limit": limit,
                     "timeout": timeout,
+                    "node_id": node_id,
                 }
             )
             return {
@@ -3855,8 +3857,112 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["result_event_id"], "1740000600-0")
         self.assertEqual(
             calls,
-            [{"command_id": "cmd-api", "event_stream": "a9:test-events", "limit": "8", "timeout": "6"}],
+            [{"command_id": "cmd-api", "event_stream": "a9:test-events", "limit": "8", "timeout": "6", "node_id": ""}],
         )
+
+    def test_node_command_result_lookup_missing_with_stale_heartbeat_returns_reconnect_hint(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_file = root / ".a9" / "nodes" / "node-stale.json"
+            node_file.parent.mkdir(parents=True, exist_ok=True)
+            stale_at = (datetime.now(timezone.utc) - timedelta(seconds=120)).isoformat(timespec="seconds")
+            node_file.write_text(
+                json.dumps(
+                    {
+                        "node_id": "node-stale",
+                        "status": "online",
+                        "last_heartbeat_at": stale_at,
+                        "updated_at": stale_at,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            original_a9_node = mod.a9_node
+            try:
+                class FakeNode:
+                    @staticmethod
+                    def node_command_result_read_once(result_event_id, *, event_stream="a9:events", timeout=3):
+                        return {
+                            "status": "noop",
+                            "kind": "node_command_result",
+                            "error_code": "result_missing",
+                            "reason": "result_missing",
+                            "result_event_id": result_event_id,
+                            "command_id": "cmd-stale",
+                            "node_id": "node-stale",
+                        }
+
+                mod.a9_node = lambda: FakeNode
+                result = mod.node_command_result_lookup(
+                    "1740000300-0",
+                    event_stream="a9:test-events",
+                    timeout=3,
+                    node_id="node-stale",
+                    root=root,
+                )
+            finally:
+                mod.a9_node = original_a9_node
+
+        self.assertEqual(result["status"], "noop")
+        self.assertEqual(result["recovery_hint"]["action"], "reconnect")
+        self.assertIn(result["recovery_hint"]["reason"], {"heartbeat_stale", "heartbeat_reported_degraded"})
+        self.assertEqual(result["recovery_hint"]["next_endpoint"], "/api/nodes/probe")
+
+    def test_node_command_result_lookup_found_returns_observe_complete_hint(self):
+        mod = load_control_api()
+
+        class FakeNode:
+            @staticmethod
+            def node_command_result_read_once(result_event_id, *, event_stream="a9:events", timeout=3):
+                return {
+                    "status": "ok",
+                    "kind": "node_command_result",
+                    "error_code": "ok",
+                    "result_event_id": result_event_id,
+                    "command_id": "cmd-ok",
+                    "node_id": "node-a",
+                }
+
+        original_a9_node = mod.a9_node
+        mod.a9_node = lambda: FakeNode
+        try:
+            result = mod.node_command_result_lookup("1740000301-0", event_stream="a9:test-events", timeout=3)
+        finally:
+            mod.a9_node = original_a9_node
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["recovery_hint"]["action"], "observe")
+        self.assertEqual(result["recovery_hint"]["reason"], "command_result_found")
+
+    def test_enqueue_node_command_redis_unavailable_returns_degraded_recovery_hint(self):
+        mod = load_control_api()
+
+        def fake_redis(args, *, timeout=2):
+            raise OSError("redis unavailable")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.enqueue_node_command(
+                {
+                    "command_id": "cmd-redis-down",
+                    "node_id": "node-r",
+                    "action": "restart",
+                    "action_reason": "operator",
+                    "target": "node-r",
+                    "expected_revision": 1,
+                    "ttl_seconds": 60,
+                }
+            )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["recovery_hint"]["action"], "degraded")
+        self.assertEqual(result["recovery_hint"]["reason"], "redis_unavailable")
+        self.assertEqual(result["recovery_hint"]["next_endpoint"], "/api/nodes/status")
 
     def test_parse_xrange_events_accepts_raw_and_json_shapes(self):
         mod = load_control_api()

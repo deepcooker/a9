@@ -2991,11 +2991,18 @@ def enqueue_node_command(payload: dict[str, Any]) -> dict[str, Any]:
         command["status"] = "degraded"
         if not command["error_code"]:
             command["error_code"] = "redis_unavailable"
+        recovery_hint = node_command_recovery_hint(
+            node_id=str(command.get("node_id") or ""),
+            command_id=str(command.get("command_id") or ""),
+            result_status="degraded",
+            result_error_code=command["error_code"],
+        )
         return {
             "status": "degraded",
             "kind": "node_command_enqueue",
             "error_code": command["error_code"],
             "command": command,
+            "recovery_hint": recovery_hint,
         }
 
     fields = [
@@ -3046,6 +3053,12 @@ def enqueue_node_command(payload: dict[str, Any]) -> dict[str, Any]:
             "command": command,
             "error": proc.stdout.strip(),
             "return_code": proc.returncode,
+            "recovery_hint": node_command_recovery_hint(
+                node_id=str(command.get("node_id") or ""),
+                command_id=str(command.get("command_id") or ""),
+                result_status="degraded",
+                result_error_code=command["error_code"],
+            ),
         }
 
     stream_id = proc.stdout.strip()
@@ -3055,6 +3068,102 @@ def enqueue_node_command(payload: dict[str, Any]) -> dict[str, Any]:
         "status": "ok",
         "kind": "node_command_enqueue",
         "command": command,
+        "recovery_hint": node_command_recovery_hint(
+            node_id=str(command.get("node_id") or ""),
+            command_id=str(command.get("command_id") or ""),
+            result_status="ok",
+            result_error_code="ok",
+        ),
+    }
+
+
+def node_command_recovery_hint(
+    *,
+    node_id: str,
+    command_id: str = "",
+    result_event_id: str = "",
+    result_status: str = "",
+    result_error_code: str = "",
+    root: Path = ROOT,
+) -> dict[str, Any]:
+    normalized_node_id = safe_node_id(str(node_id or "").strip()) if str(node_id or "").strip() else ""
+    safe_command_id = str(command_id or "").strip()
+    safe_result_event_id = str(result_event_id or "").strip()
+    safe_result_status = str(result_status or "").strip()
+    safe_error_code = str(result_error_code or "").strip()
+    evidence_refs: list[str] = []
+    if safe_result_event_id:
+        evidence_refs.append(f"redis:event:{safe_result_event_id}")
+    if safe_command_id:
+        evidence_refs.append(f"redis:command:{safe_command_id}")
+    if safe_error_code == "redis_unavailable":
+        return {
+            "action": "degraded",
+            "reason": "redis_unavailable",
+            "evidence_refs": evidence_refs + ["redis:ping"],
+            "next_endpoint": "/api/nodes/status",
+        }
+    if safe_result_status == "ok":
+        return {
+            "action": "observe",
+            "reason": "command_result_found",
+            "evidence_refs": evidence_refs,
+            "next_endpoint": "/api/nodes/recovery-transcript",
+        }
+    if not normalized_node_id:
+        return {
+            "action": "probe",
+            "reason": "node_unknown",
+            "evidence_refs": evidence_refs + ["node:unknown"],
+            "next_endpoint": "/api/nodes/probe",
+        }
+    record_path = node_path(normalized_node_id, root)
+    if not record_path.exists():
+        return {
+            "action": "probe",
+            "reason": "node_unknown",
+            "evidence_refs": evidence_refs + [f"node:{normalized_node_id}:missing"],
+            "next_endpoint": "/api/nodes/probe",
+        }
+    try:
+        record = enrich_node_connection(read_json(record_path))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "action": "probe",
+            "reason": "node_state_unreadable",
+            "evidence_refs": evidence_refs + [str(record_path)],
+            "next_endpoint": "/api/nodes/probe",
+        }
+    connection_state = str(record.get("connection_state") or "")
+    connection_reason = str(record.get("connection_action_reason") or "")
+    evidence_refs.extend([str(record_path), f"node:{normalized_node_id}:state:{connection_state or 'unknown'}"])
+    if connection_state in {"stale", "degraded"}:
+        return {
+            "action": "reconnect",
+            "reason": connection_reason or "heartbeat_stale",
+            "evidence_refs": evidence_refs,
+            "next_endpoint": "/api/nodes/probe",
+        }
+    if connection_state in {"offline", "unknown"}:
+        return {
+            "action": "probe",
+            "reason": connection_reason or "heartbeat_timeout",
+            "evidence_refs": evidence_refs,
+            "next_endpoint": "/api/nodes/probe",
+        }
+    recovery = node_recovery_plan(record)
+    route = recovery.get("route") if isinstance(recovery, dict) else {}
+    endpoint = str(route.get("endpoint") or "/api/node-command-results/by-command/{command_id}")
+    action = str(recovery.get("action") or "wait")
+    reason = str(recovery.get("reason") or "result_missing_pending")
+    if action in {"observe", "none"}:
+        action = "wait"
+        reason = "result_missing_pending"
+    return {
+        "action": action,
+        "reason": reason,
+        "evidence_refs": evidence_refs,
+        "next_endpoint": endpoint,
     }
 
 
@@ -3063,6 +3172,8 @@ def node_command_result_lookup(
     *,
     event_stream: str = EVENTS_STREAM_KEY,
     timeout: int = 3,
+    node_id: str = "",
+    root: Path = ROOT,
 ) -> dict[str, Any]:
     safe_result_event_id = str(result_event_id or "").strip()
     safe_event_stream = str(event_stream or "").strip()
@@ -3116,6 +3227,15 @@ def node_command_result_lookup(
     }
     if status != "ok":
         payload["reason"] = str(result.get("reason") or error_code)
+    resolved_node_id = str(result.get("node_id") or node_id or "")
+    payload["recovery_hint"] = node_command_recovery_hint(
+        node_id=resolved_node_id,
+        command_id=str(result.get("command_id") or ""),
+        result_event_id=safe_result_event_id,
+        result_status=status,
+        result_error_code=error_code,
+        root=root,
+    )
     return payload
 
 
@@ -3125,6 +3245,8 @@ def node_command_result_by_command_lookup(
     event_stream: str = EVENTS_STREAM_KEY,
     limit: int = 100,
     timeout: int = 3,
+    node_id: str = "",
+    root: Path = ROOT,
 ) -> dict[str, Any]:
     safe_command_id = str(command_id or "").strip()
     safe_event_stream = str(event_stream or "").strip()
@@ -3184,9 +3306,17 @@ def node_command_result_by_command_lookup(
         }
         if status != "ok":
             payload["reason"] = str(lookup.get("reason") or error_code)
+        payload["recovery_hint"] = node_command_recovery_hint(
+            node_id=str(node_id or lookup.get("result", {}).get("result", {}).get("node_id") or ""),
+            command_id=safe_command_id,
+            result_event_id=result_event_id,
+            result_status=status,
+            result_error_code=error_code,
+            root=root,
+        )
         return payload
 
-    return {
+    return_payload = {
         **base,
         "status": "noop",
         "limit": requested,
@@ -3194,6 +3324,14 @@ def node_command_result_by_command_lookup(
         "reason": "node_command_result_not_found",
         "scanned_count": len(events),
     }
+    return_payload["recovery_hint"] = node_command_recovery_hint(
+        node_id=node_id,
+        command_id=safe_command_id,
+        result_status="noop",
+        result_error_code="no_result",
+        root=root,
+    )
+    return return_payload
 
 
 def register_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
@@ -4314,6 +4452,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                         event_stream=query.get("event_stream", [EVENTS_STREAM_KEY])[0],
                         limit=query.get("limit", ["100"])[0],
                         timeout=query.get("timeout", ["3"])[0],
+                        node_id=query.get("node_id", [""])[0],
                     ),
                 )
             elif parsed.path.startswith("/api/node-command-results/"):
@@ -4337,7 +4476,12 @@ class ControlHandler(BaseHTTPRequestHandler):
                     return
                 self.write_json(
                     200,
-                    node_command_result_lookup(result_event_id, event_stream=event_stream, timeout=timeout),
+                    node_command_result_lookup(
+                        result_event_id,
+                        event_stream=event_stream,
+                        timeout=timeout,
+                        node_id=query.get("node_id", [""])[0],
+                    ),
                 )
             elif parsed.path == "/api/events":
                 last_id = _resolve_event_last_id(query.get("last_id", [None])[0], self.headers.get("Last-Event-ID"))

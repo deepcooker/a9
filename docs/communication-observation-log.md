@@ -1384,3 +1384,26 @@ Next monitoring target:
    - Governance lesson:
      keep patch intent deterministic and typed at the worker boundary; do not
      mix this execution reliability check with token/context gate changes.
+
+69. Node command receipt lookup now returns typed recovery diagnostics.
+   - Trigger:
+     node command submit could return "submitted" while receipt was missing or
+     node heartbeat was stale, which left phone/control clients with no
+     machine-readable next step.
+   - Mechanism copied:
+     OpenClaw/Lobster control-plane boundary (typed envelope for state/action),
+     Barter-rs + Redis Streams typed status/receipt tracking, and Codex handoff
+     rule (structured state instead of natural-language guess).
+   - Change:
+     `scripts/a9_control_api.py` adds `recovery_hint` on
+     `enqueue_node_command`, `node_command_result_lookup`,
+     `node_command_result_by_command_lookup`. Hint shape is
+     `{action,reason,evidence_refs,next_endpoint}` and covers
+     `redis_unavailable`, `command_result_found`, `result_missing/pending`,
+     `heartbeat_stale/timeout`, and `node_unknown`.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py` passed.
+     `python3 -m unittest tests.test_control_api` passed.
+   - Governance lesson:
+     receipt and recovery become the same typed control-plane contract, so
+     mobile can drive `probe/wait/reconnect/tmux` routing without parsing free text.
