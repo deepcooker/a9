@@ -249,6 +249,7 @@ stricter role boundaries.
 
 ```text
 .a9/plans/<plan-id>/
+  plan.json
   plan.md
   findings.md
   progress.md
@@ -256,6 +257,10 @@ stricter role boundaries.
   change_request.md
   attestation.json
 ```
+
+`plan.json` is the deterministic contract metadata. `plan.md` is the readable
+view. Runtime truth still lives in A9 goal/flow/run evidence; plan files do not
+become an independent state machine.
 
 Ownership:
 
@@ -274,6 +279,10 @@ The initial `plan.md` should include:
 schema: a9.plan.v1
 plan_id:
 goal_id:
+flow_id:
+expected_flow_revision:
+run_ids:
+evidence_refs:
 source:
 problem:
 why_now:
@@ -313,7 +322,7 @@ Do not add another hard gate first.
 The next useful implementation should be a small plan-file lane:
 
 1. Add `.a9/plans/<plan-id>/` as the canonical isolated plan artifact location.
-2. Add a deterministic helper that creates `plan.md`, `findings.md`,
+2. Add a deterministic helper that creates `plan.json`, `plan.md`, `findings.md`,
    `progress.md`, and `mistakes.md` from a task-shaping card.
 3. Add a simple active-plan pointer for the supervisor, not for human memory
    only.
@@ -321,8 +330,10 @@ The next useful implementation should be a small plan-file lane:
 5. Keep missing fields as observation/warnings at first.
 6. Add a change-request path instead of letting workers rewrite plan contract
    fields.
-7. Run one 24h worker task from the plan directory and compare quality.
-8. Only later add attestation, hooks, and stop/compact enforcement after the
+7. Reconcile plan status with goal/flow/run evidence instead of trusting phase
+   text.
+8. Run one 24h worker task from the plan directory and compare quality.
+9. Only later add attestation, hooks, and stop/compact enforcement after the
    data shape proves useful.
 
 Only after multiple runs should missing fields become blocking policy.

@@ -128,6 +128,57 @@ complete only if:
 So the first A9 implementation should copy resolver/isolation/catchup style
 tests before it copies hook behavior.
 
+## Round 2.5: Is Plan A New State Machine?
+
+Answer: no.
+
+A9 already has runtime state:
+
+- Goal state: `.a9/goals/*.json` with objective, status, token accounting,
+  blocked audit, completion audit.
+- Managed flow: Redis JSON + Redis Functions with `expected_revision`,
+  wait/resume, policy attestation refs, and sequence.
+- Run evidence: `.a9/runs/<run>/summary.json`, `state.json`,
+  `evidence.json`, checks, patch, policy, monitor score.
+- Monitor review: `requirements_review_council_v1` with role review,
+  advisory gates, and eval contract.
+
+Therefore plan files must not become a parallel authority.
+
+Decision:
+
+- Plan is a task contract and prompt-hydration view.
+- Goal remains the persistent long-term objective.
+- Flow remains the concurrency/resume state machine.
+- Run evidence remains the execution fact source.
+- Monitor/supervisor remains the completion authority.
+
+Plan files may cite or project runtime state:
+
+```text
+plan_id
+goal_id
+flow_id
+expected_flow_revision
+run_ids
+evidence_refs
+completion_audit_ref
+```
+
+But plan files must not independently decide:
+
+- goal complete
+- flow transition
+- approval/resume
+- hard block
+- policy attestation
+- git acceptance
+
+This avoids a three-way conflict between plan, goal, and flow.
+
+A9 plan status is only a human/agent orientation field until it is reconciled
+with goal/flow/run evidence.
+
 ## Round 3: What Becomes Long-Term Memory?
 
 Winner: GBrain conceptually, with LLM-Wiki as the file/wiki implementation
@@ -213,7 +264,7 @@ Not enough:
 
 ```text
 requirements method
-  -> plan directory for current task
+  -> plan directory as task contract view
   -> role packets
   -> 24h worker execution
   -> run evidence
@@ -242,6 +293,17 @@ Derived views:
 - role packets
 
 Derived views can guide work, but they must cite canonical truth.
+
+Runtime authority split:
+
+| Concern | Authority |
+| --- | --- |
+| Long-term objective | A9 goal object |
+| Concurrency/resume/wait | Redis managed flow |
+| Task contract and prompt hydration | A9 plan directory |
+| Execution fact | run evidence/state/checks/git |
+| Completion decision | monitor/supervisor completion audit |
+| Long-term memory | memory commit/wiki/brain derived from evidence |
 
 ## Must Enter Now
 
@@ -282,16 +344,18 @@ Derived views can guide work, but they must cite canonical truth.
 
 Build the smallest plan lane:
 
-1. `.a9/plans/<plan-id>/plan.md`
-2. `.a9/plans/<plan-id>/findings.md`
-3. `.a9/plans/<plan-id>/progress.md`
-4. `.a9/plans/<plan-id>/mistakes.md`
-5. `.a9/plans/<plan-id>/change_request.md` only when worker proposes scope or
+1. `.a9/plans/<plan-id>/plan.json` as deterministic contract metadata.
+2. `.a9/plans/<plan-id>/plan.md` as readable task contract view.
+3. `.a9/plans/<plan-id>/findings.md`
+4. `.a9/plans/<plan-id>/progress.md`
+5. `.a9/plans/<plan-id>/mistakes.md`
+6. `.a9/plans/<plan-id>/change_request.md` only when worker proposes scope or
    acceptance changes.
-6. `.a9/plans/.active_plan`
-7. A deterministic `plan-create` helper.
-8. A deterministic `plan-status` helper that prints the recovery restatement.
-9. Supervisor prompt hydration from the active plan.
+7. `.a9/plans/.active_plan`
+8. A deterministic `plan-create` helper that requires `goal_id` or creates one.
+9. A deterministic `plan-status` helper that prints the recovery restatement
+   and reconciles plan with goal/flow/run refs.
+10. Supervisor prompt hydration from the active plan.
 
 The first real run should prove whether workers drift less and whether monitor
 intervention becomes easier.

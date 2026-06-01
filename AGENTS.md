@@ -83,6 +83,11 @@ A9 plan 的 contract 字段由人类监控者、product/mainline 和 requirement
 如果认为目标、范围、验收或不做项需要调整，必须写 change request，不许静默改 plan
 contract。
 
+Plan lane 不是新的状态机。A9 已有 goal object、Redis managed flow、run evidence、
+policy attestation 和 monitor review。plan 只是任务合同和 prompt hydration 视图；
+目标完成、flow transition、approval/resume、git acceptance 和 completion audit 必须
+回到现有 runtime 权威状态。
+
 ## 当前主线
 
 当前主线只看三个层级：
