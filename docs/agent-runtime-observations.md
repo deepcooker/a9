@@ -52,3 +52,25 @@ Exact next implement slice:
   - If present, suppress/defer auto-generated `next_slice` enqueue/dispatch in this cycle.
   - Emit explicit evidence/status field showing auto-next was skipped due to operator priority.
   - Add focused tests proving operator correction preempts auto-next and that auto-next resumes after correction lane is cleared.
+
+## 2026-06-02: declared checks context-cost observation (interrupted worker reproduction)
+
+Reference basis used (no re-scan):
+- `reference-projects/codex/codex-rs/core/src/context_manager/history.rs`
+- `reference-projects/codex/codex-rs/core/src/compact.rs`
+- `reference-projects/codex/codex-rs/core/templates/goals/budget_limit.md`
+- `reference-projects/aider/aider/history.py`
+- `reference-projects/aider/aider/repomap.py`
+- `reference-projects/aider/aider/prompts.py`
+
+Observation:
+- The interrupted worker reproduced the exact governance failure mode under repair: it executed undeclared `python3 -m unittest tests.test_supervisor`.
+- This confirms the issue is process-governance drift, not missing test coverage.
+
+Mechanism alignment to record:
+- Codex keeps explicit budget state and enters budget-limited wrap-up instead of continuing substantive work when limits are hit.
+- Codex/Aider build bounded context and summarization views rather than repeatedly replaying large raw history.
+- A9 should treat declared checks as the executable test plan for the current slice; undeclared tests should be logged as governance observations or proposed in the next task, not executed immediately in the active run.
+
+Bounded next slice:
+- `implement`: enforce declared-check execution boundary in `scripts/a9_supervisor.py` with focused behavior tests in `tests/test_supervisor.py`.
