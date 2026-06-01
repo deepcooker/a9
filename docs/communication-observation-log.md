@@ -1759,3 +1759,25 @@ Next monitoring target:
    - Governance lesson:
      data-first service contracts should expose observed state transitions and
      failure taxonomy explicitly before adding stricter start gates.
+
+83. Monitor salvaged the service-start contract after worker test drift.
+   - Trigger:
+     the worker produced the right service-start contract shape, but full
+     `tests.test_service` failed because its dry-run assertion assumed
+     `phase=planned`. In a live controller session the correct observed phase is
+     `already_running`.
+   - Intervention:
+     monitor applied the useful worker patch, changed the dry-run test to accept
+     the real observed phase set (`planned` or `already_running`), strengthened
+     the mocked running-state assertion, and reran the declared and broader
+     related checks.
+   - Verification:
+     `python3 -m py_compile scripts/a9_service.py`;
+     `python3 -m unittest tests.test_service`;
+     `python3 -m unittest tests.test_service tests.test_recovery_loop tests.test_node tests.test_control_api`;
+     live `scripts/a9_service.py start --dry-run --only control-api recovery-loop`
+     now reports `command_status.phase=already_running` for active services.
+   - Governance lesson:
+     tests for operational state must model real live-state branches. A worker
+     can build the mechanism, but monitor must reject tests that only pass in an
+     artificial stopped environment.
