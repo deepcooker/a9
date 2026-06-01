@@ -21,6 +21,7 @@ from urllib.request import Request, build_opener, ProxyHandler
 ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / ".a9" / "services"
 LATEST_PATH = STATE_DIR / "recovery-loop-latest.json"
+COMMUNICATION_OBSERVATION_PATH = STATE_DIR / "communication-observation.json"
 LOCAL_CONTROLLER_OPENER = build_opener(ProxyHandler({}))
 
 
@@ -32,6 +33,54 @@ def read_json_url(url: str, *, timeout: int = 10) -> dict[str, Any]:
     request = Request(url, headers={"Accept": "application/json"})
     with LOCAL_CONTROLLER_OPENER.open(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def read_json_file(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def communication_observation_update(result: dict[str, Any], *, path: Path | None = None) -> dict[str, Any]:
+    path = path or COMMUNICATION_OBSERVATION_PATH
+    now = str(result.get("checked_at") or utc_now())
+    action = str(result.get("communication_action") or "unknown")
+    source = str(result.get("communication_priority_source") or "unknown")
+    plan_status = str(result.get("communication_plan_status") or "unknown")
+    route = result.get("communication_route") if isinstance(result.get("communication_route"), dict) else {}
+    key = f"{source}:{action}:{plan_status}"
+    previous = read_json_file(path)
+    previous_key = str(previous.get("current_key") or "")
+    streak = int(previous.get("streak") or 0) + 1 if previous_key == key else 1
+    first_seen = str(previous.get("first_seen_at") or now) if previous_key == key else now
+    recommendation = "continue_observation"
+    if action not in {"continue", "observe"} and plan_status not in {"noop", "unknown"}:
+        recommendation = "operator_review"
+        if streak >= 2:
+            recommendation = "candidate_for_repair_one"
+    observation = {
+        "status": "ok",
+        "kind": "communication_observation",
+        "updated_at": now,
+        "current_key": key,
+        "action": action,
+        "priority_source": source,
+        "plan_status": plan_status,
+        "streak": streak,
+        "first_seen_at": first_seen,
+        "last_seen_at": now,
+        "recommendation": recommendation,
+        "route": route,
+        "auto_execute": False,
+        "policy": {
+            "mode": "observe_only",
+            "reason": "collect_stable_action_evidence_before_auto_repair",
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(observation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return observation
 
 
 def recovery_cycle_once(controller_url: str, *, timeout: int = 10, max_actions: int = 3) -> dict[str, Any]:
@@ -73,6 +122,8 @@ def recovery_cycle_once(controller_url: str, *, timeout: int = 10, max_actions: 
             "execute": False,
             "error": str(exc),
         }
+    communication_observation = communication_observation_update(result)
+    result["communication_observation"] = communication_observation
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LATEST_PATH.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return result

@@ -1998,3 +1998,27 @@ Next monitoring target:
      24-hour monitoring and phone control now share the same route-plan
      evidence. The loop observes the plan continuously; execution remains a
      separate gated action.
+
+93. Recovery loop now keeps an observe-only communication action streak.
+   - Trigger:
+     before enabling any automatic `repair-one`, A9 needs evidence that an
+     unhealthy communication action is stable across observations. A single
+     transient status must not trigger automation.
+   - Change:
+     `scripts/a9_recovery_loop.py` now writes
+     `.a9/services/communication-observation.json` on every iteration. The file
+     records `current_key = priority_source:action:plan_status`, `streak`,
+     `first_seen_at`, `last_seen_at`, `recommendation`, `route`, and
+     `auto_execute=false`. Healthy/noop states keep
+     `recommendation=continue_observation`; repeated non-healthy ready states
+     become `candidate_for_repair_one`, but still do not execute.
+   - Verification:
+     `python3 -m py_compile scripts/a9_recovery_loop.py`;
+     `python3 -m unittest tests.test_control_api tests.test_recovery_loop`
+     passed with 204 tests. A live two-iteration run wrote
+     `current_key=tailscale:continue:noop`, `streak=2`,
+     `recommendation=continue_observation`, `auto_execute=false`. The resident
+     `recovery-loop` service was restarted onto the new code.
+   - Governance lesson:
+     thresholds are evidence, not hard gates. The loop now builds a stable
+     observation trail before any future auto-repair policy is considered.
