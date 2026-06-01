@@ -15,12 +15,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener, ProxyHandler
 
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / ".a9" / "services"
 LATEST_PATH = STATE_DIR / "recovery-loop-latest.json"
+LOCAL_CONTROLLER_OPENER = build_opener(ProxyHandler({}))
 
 
 def utc_now() -> str:
@@ -29,7 +30,7 @@ def utc_now() -> str:
 
 def read_json_url(url: str, *, timeout: int = 10) -> dict[str, Any]:
     request = Request(url, headers={"Accept": "application/json"})
-    with urlopen(request, timeout=timeout) as response:
+    with LOCAL_CONTROLLER_OPENER.open(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

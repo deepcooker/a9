@@ -107,6 +107,23 @@ class ServiceTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertIn("processes", payload)
 
+    def test_service_start_dry_run_returns_detached_commands(self):
+        result = subprocess.run(
+            [str(SERVICE_PATH), "start", "--dry-run", "--only", "control-api", "recovery-loop"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["requested"], ["control-api", "recovery-loop"])
+        self.assertEqual(payload["started"][0]["kind"], "control-api")
+        self.assertEqual(payload["started"][0]["command"][:2], ["setsid", "-f"])
+        self.assertIn("a9_control_api.py serve", " ".join(payload["started"][0]["command"]))
+        self.assertIn("a9_recovery_loop.py", " ".join(payload["started"][1]["command"]))
+
     def test_service_stop_dry_run_returns_json(self):
         result = subprocess.run(
             [str(SERVICE_PATH), "stop", "--dry-run"],

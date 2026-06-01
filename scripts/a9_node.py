@@ -20,11 +20,12 @@ import time
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request, build_opener, ProxyHandler
 
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_CONFIG = ROOT / ".a9" / "node.json"
+LOCAL_CONTROLLER_OPENER = build_opener(ProxyHandler({}))
 
 
 def redis_cli(args: list[str], *, timeout: int = 2) -> subprocess.CompletedProcess[str]:
@@ -1440,7 +1441,7 @@ def node_command_result_read_once(
 def http_json(method: str, url: str, payload: dict[str, Any] | None = None, timeout: int = 10) -> dict[str, Any]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, method=method, headers={"Content-Type": "application/json"})
-    with urlopen(request, timeout=timeout) as response:
+    with LOCAL_CONTROLLER_OPENER.open(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

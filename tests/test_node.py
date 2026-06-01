@@ -2,8 +2,11 @@ import importlib.util
 import io
 import contextlib
 import json
+import os
 import sys
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -28,6 +31,41 @@ def load_control_api_module():
 
 
 class NodeHelperTests(unittest.TestCase):
+    def test_http_json_ignores_environment_proxy_for_local_controller(self):
+        mod = load_module()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok"}')
+
+            def log_message(self, *_args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        previous = {key: os.environ.get(key) for key in ("HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy")}
+        try:
+            os.environ["HTTP_PROXY"] = "http://127.0.0.1:9"
+            os.environ["http_proxy"] = "http://127.0.0.1:9"
+            os.environ["NO_PROXY"] = ""
+            os.environ["no_proxy"] = ""
+            thread.start()
+            payload = mod.http_json("GET", f"http://127.0.0.1:{server.server_port}/health", timeout=2)
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(payload, {"status": "ok"})
+
     def test_default_node_id_is_non_empty(self):
         mod = load_module()
         self.assertTrue(mod.default_node_id())

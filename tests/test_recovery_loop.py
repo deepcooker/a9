@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -23,6 +26,41 @@ def load_module():
 
 
 class RecoveryLoopTests(unittest.TestCase):
+    def test_read_json_url_ignores_environment_proxy_for_local_controller(self):
+        mod = load_module()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"status":"ok"}')
+
+            def log_message(self, *_args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        previous = {key: os.environ.get(key) for key in ("HTTP_PROXY", "http_proxy", "NO_PROXY", "no_proxy")}
+        try:
+            os.environ["HTTP_PROXY"] = "http://127.0.0.1:9"
+            os.environ["http_proxy"] = "http://127.0.0.1:9"
+            os.environ["NO_PROXY"] = ""
+            os.environ["no_proxy"] = ""
+            thread.start()
+            payload = mod.read_json_url(f"http://127.0.0.1:{server.server_port}/health", timeout=2)
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(payload, {"status": "ok"})
+
     def test_recovery_cycle_once_reads_planning_endpoint_and_writes_latest(self):
         mod = load_module()
         calls = []

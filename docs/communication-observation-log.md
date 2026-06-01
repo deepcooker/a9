@@ -1690,3 +1690,49 @@ Next monitoring target:
      remote control contracts must separate install transport from runtime
      transport. SSH is bootstrap/repair/takeover; Redis/API is the steady-state
      control plane.
+
+80. Local controller clients now bypass environment proxies for control-plane calls.
+   - Trigger:
+     after restarting the control API, direct API checks returned HTTP 502 even
+     though no local controller error was logged. The machine had
+     `HTTP_PROXY=http://127.0.0.1:7890`, and Python `urllib` did not reliably
+     honor the wildcard-style `no_proxy=127.*` value for `127.0.0.1:8787`.
+   - Mechanism copied:
+     production gateway/client practice: localhost control-plane calls should
+     use an explicit direct transport instead of ambient proxy settings.
+   - Change:
+     `scripts/a9_node.py` and `scripts/a9_recovery_loop.py` now use a
+     `ProxyHandler({})` opener for controller HTTP requests. Added regression
+     tests proving local controller calls still succeed when `HTTP_PROXY` points
+     at a dead local proxy and `NO_PROXY` is empty.
+   - Verification:
+     `python3 -m py_compile scripts/a9_node.py scripts/a9_recovery_loop.py scripts/a9_control_api.py`;
+     `python3 -m unittest tests.test_recovery_loop tests.test_node`.
+   - Governance lesson:
+     communication stability should remove hidden ambient dependencies first.
+     Proxy bypass is not a hard gate; it is a deterministic transport invariant
+     for local A9 control loops.
+
+81. Local service helper now has a detached start path for the A9 control stack.
+   - Trigger:
+     during recovery from the proxy issue, manual `nohup ... &` launches from
+     the current tool shell did not reliably keep `control-api`, `node-worker`,
+     and `recovery-loop` alive. The stable processes were those detached under
+     the parent service/session.
+   - Mechanism copied:
+     systemd-style daemon separation already documented in `infra/systemd/*`:
+     one stable entrypoint owns each long-running service, with logs written to
+     service-specific files.
+   - Change:
+     `scripts/a9_service.py start` now starts the local control stack through
+     `setsid -f`, with `--dry-run`, `--only`, and `--all` modes. The default
+     non-systemd start set is `control-api`, `node-worker`, and `recovery-loop`;
+     supervisor can be included with `--all` when needed.
+   - Verification:
+     `python3 scripts/a9_service.py start --dry-run --only control-api recovery-loop`;
+     `python3 -m py_compile scripts/a9_service.py scripts/a9_node.py scripts/a9_recovery_loop.py scripts/a9_control_api.py`;
+     `python3 -m unittest tests.test_service tests.test_recovery_loop tests.test_node tests.test_control_api`.
+   - Governance lesson:
+     phone/control reliability needs a single operational start contract. Manual
+     shell incantations are acceptable for diagnosis, not for the repeated 24h
+     runtime path.

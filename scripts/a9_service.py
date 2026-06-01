@@ -33,6 +33,29 @@ PROCESS_MARKERS = {
     "recovery-loop": "a9_recovery_loop.py",
     "worker": "codex exec --json",
 }
+SERVICE_COMMANDS = {
+    "supervisor": [
+        "bash",
+        "-lc",
+        "cd /root/a9 && while true; do A9_IDLE_GOAL_CONTINUATION=0 python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error; sleep 15; done",
+    ],
+    "control-api": [
+        "bash",
+        "-lc",
+        "cd /root/a9 && exec python3 scripts/a9_control_api.py serve --host 0.0.0.0 --port 8787 >> .a9/control-api.log 2>&1",
+    ],
+    "node-worker": [
+        "bash",
+        "-lc",
+        "cd /root/a9 && exec python3 scripts/a9_node.py command-work-loop --block-ms 5000 --timeout 10 --sleep-seconds 1 --min-idle-ms 30000 >> .a9/node-worker.log 2>&1",
+    ],
+    "recovery-loop": [
+        "bash",
+        "-lc",
+        "cd /root/a9 && exec python3 scripts/a9_recovery_loop.py --controller-url http://127.0.0.1:8787 --interval-seconds 60 --timeout 10 --max-actions 3 >> .a9/recovery-loop.log 2>&1",
+    ],
+}
+SERVICE_START_ORDER = ["control-api", "node-worker", "recovery-loop", "supervisor"]
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -78,6 +101,8 @@ def parse_process_table(text: str) -> list[dict[str, Any]]:
         if not kind:
             continue
         if "rg 'a9_supervisor.py run-loop|codex exec --json'" in cmd:
+            continue
+        if "setsid -f bash -lc" in cmd:
             continue
         processes.append({"pid": pid, "ppid": ppid, "etime": etime, "kind": kind, "cmd": cmd})
     return processes
@@ -203,6 +228,39 @@ def ps_cmd(_: argparse.Namespace) -> int:
     return 0
 
 
+def start_cmd(args: argparse.Namespace) -> int:
+    current = running_processes()
+    running_kinds = {item["kind"] for item in current if item["kind"] in SERVICE_COMMANDS}
+    requested = list(SERVICE_START_ORDER if args.all else args.only)
+    results: list[dict[str, Any]] = []
+    for kind in requested:
+        command = SERVICE_COMMANDS[kind]
+        result = {
+            "kind": kind,
+            "status": "already_running" if kind in running_kinds else "planned" if args.dry_run else "started",
+            "command": ["setsid", "-f", *command],
+            "pid": None,
+        }
+        if kind not in running_kinds and not args.dry_run:
+            proc = subprocess.Popen(
+                ["setsid", "-f", *command],
+                cwd=ROOT,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            result["pid"] = proc.pid
+        results.append(result)
+    payload = {
+        "checked_at": iso_now(),
+        "dry_run": args.dry_run,
+        "requested": requested,
+        "started": results,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
 def stop_cmd(args: argparse.Namespace) -> int:
     processes = running_processes()
     targets = [item for item in processes if args.all or item["kind"] == "supervisor"]
@@ -269,6 +327,16 @@ def main(argv: list[str]) -> int:
     sub.add_parser("status")
     sub.add_parser("readiness")
     sub.add_parser("ps")
+    start_parser = sub.add_parser("start")
+    start_parser.add_argument("--all", action="store_true", help="start the local A9 service set")
+    start_parser.add_argument(
+        "--only",
+        nargs="+",
+        choices=SERVICE_START_ORDER,
+        default=["control-api", "node-worker", "recovery-loop"],
+        help="service kinds to start when --all is not set",
+    )
+    start_parser.add_argument("--dry-run", action="store_true", help="show start commands without launching them")
     stop_parser = sub.add_parser("stop")
     stop_parser.add_argument("--all", action="store_true", help="also stop direct codex worker children")
     stop_parser.add_argument("--dry-run", action="store_true", help="show matched processes without signaling them")
@@ -281,6 +349,8 @@ def main(argv: list[str]) -> int:
         return readiness(args)
     if args.command == "ps":
         return ps_cmd(args)
+    if args.command == "start":
+        return start_cmd(args)
     if args.command == "stop":
         return stop_cmd(args)
     if args.command == "unit":
