@@ -27,3 +27,28 @@ Monitor decision:
 Next recommended slice:
 - `reference_scan`: inspect local Codex and Aider session/context mechanisms first, then compare with OpenHands/Continue event-stream adapters.
 - Goal: design a small, testable operator correction lane so monitor interventions are durable and do not get buried behind auto-generated local repair loops.
+
+## 2026-06-02: reference scan for operator priority correction lane
+
+Reference paths inspected:
+- `reference-projects/codex/codex-rs/core/src/goals.rs` (continuation candidate gating around queued input and mailbox triggers)
+- `reference-projects/codex/codex-rs/core/templates/goals/objective_updated.md` (user objective supersedes previous objective)
+- `reference-projects/openclaw/extensions/lobster/src/lobster-taskflow.ts` (revision-guarded waiting/resume flow mutation)
+
+Smallest mechanism to copy:
+- Copy Codex continuation gating rule: when any higher-priority input is queued, skip auto-continuation immediately.
+- In Codex terms this is `has_queued_response_items_for_next_turn` / `has_trigger_turn_mailbox_items` -> do not continue goal turn.
+- Adapt to A9 supervisor queueing: if an operator correction task exists (or is newly enqueued), auto-generated `next_slice` tasks must not be scheduled/selected until correction lane is drained or explicitly cleared.
+
+Why this fits A9:
+- It is a minimal deterministic rule, not a new planner/state machine.
+- It directly solves the observed failure mode: valid human correction being buried by self-expanding auto-next slices.
+- It composes with existing A9 managed-flow/revision work: queue ordering stays explicit and auditable, and can later add revision checks similar to Lobster flow mutations.
+
+Exact next implement slice:
+- `implement`: add deterministic operator priority lane behavior in `scripts/a9_supervisor.py` and `tests/test_supervisor.py` only.
+- Required behavior for that slice:
+  - Before auto-next scheduling/dispatch, check for pending operator correction lane items.
+  - If present, suppress/defer auto-generated `next_slice` enqueue/dispatch in this cycle.
+  - Emit explicit evidence/status field showing auto-next was skipped due to operator priority.
+  - Add focused tests proving operator correction preempts auto-next and that auto-next resumes after correction lane is cleared.
