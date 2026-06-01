@@ -1605,6 +1605,15 @@ Do the work.
                     warnings.simplefilter("always", ResourceWarning)
                     worker = mod.run_worker(task, worktree, run_dir)
                     gc.collect()
+                self.assertGreater(worker["event_count"], 0)
+                self.assertGreater(worker["event_bytes"], 0)
+                events_path = Path(worker["events_path"])
+                event_lines = events_path.read_text(encoding="utf-8").splitlines()
+                self.assertEqual(len(event_lines), 1)
+                self.assertEqual(
+                    json.loads(event_lines[0]),
+                    {"type": "thread.started", "payload": {"ok": True}},
+                )
 
         self.assertEqual(worker["return_code"], 0)
         resource_warnings = [item for item in caught if issubclass(item.category, ResourceWarning)]
