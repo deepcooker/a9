@@ -1063,6 +1063,65 @@ Do the work.
         ]
         self.assertIn("patch_apply", {item["kind"] for item in evidence})
 
+    def test_run_one_strict_envelope_changed_files_claim_without_patch_evidence_sets_needs_repair_summary(self):
+        env = os.environ.copy()
+        env["A9_SUPERVISOR_WORKER_CMD"] = (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "import json\n"
+            "print(json.dumps({'type':'fake.start'}))\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['README.md']}}) + '\\n')\n"
+            "print(json.dumps({'type':'fake.done'}))\n"
+            "PY"
+        )
+        task_id = "selftest-strict-envelope-changed-files-no-patch-evidence"
+        queue_path = ROOT / ".a9" / "tasks" / "queue" / f"{task_id}.md"
+        done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
+        queue_dir = ROOT / ".a9" / "tasks" / "queue"
+
+        with tempfile.TemporaryDirectory() as held_tmp:
+            held_dir = Path(held_tmp)
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            held_paths = []
+            for path in queue_dir.glob("*.md"):
+                held_path = held_dir / path.name
+                shutil.move(str(path), str(held_path))
+                held_paths.append((held_path, path))
+            try:
+                if done_path.exists():
+                    done_path.unlink()
+                subprocess.run(
+                    [
+                        str(SUPERVISOR_PATH),
+                        "enqueue",
+                        task_id,
+                        "fake strict envelope changed_files claim without patch evidence",
+                        "--timeout-seconds",
+                        "60",
+                        "--idle-timeout-seconds",
+                        "20",
+                        "--max-attempts",
+                        "1",
+                    ],
+                    cwd=ROOT,
+                    check=True,
+                )
+                subprocess.run([str(SUPERVISOR_PATH), "run-one"], cwd=ROOT, check=True, env=env)
+                done = json.loads(done_path.read_text(encoding="utf-8"))
+                run_summary = json.loads((Path(done["run_dir"]) / "summary.json").read_text(encoding="utf-8"))
+            finally:
+                queue_path.unlink(missing_ok=True)
+                for path in queue_dir.glob("auto-*-selftest-strict-envelope-changed-files-no-patch-evidence-*.md"):
+                    path.unlink()
+                for held_path, original_path in held_paths:
+                    if held_path.exists() and not original_path.exists():
+                        shutil.move(str(held_path), str(original_path))
+
+        self.assertEqual(done["status"], "needs-repair")
+        self.assertEqual(run_summary["status"], "needs-repair")
+        self.assertEqual(done["patch_apply"]["status"], "skip")
+        self.assertEqual(done["worker_envelope"]["status"], "pass")
+
     def test_run_one_auto_next_preserves_next_slice_metadata_in_done_and_run_summary(self):
         env = os.environ.copy()
         env["A9_SUPERVISOR_WORKER_CMD"] = (
