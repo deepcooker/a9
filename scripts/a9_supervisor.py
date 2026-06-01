@@ -5319,6 +5319,18 @@ def active_goal_for_idle_continuation() -> dict[str, Any] | None:
     return sorted(candidates, key=lambda item: str(item.get("updated_at") or ""), reverse=True)[0]
 
 
+def requirements_method_packet() -> str:
+    return """Requirements method packet:
+- Treat the user's words as business input, not automatically as the implementation plan.
+- First restate the real problem, then translate it into system behavior.
+- Data first: identify schema/state/event/object shape before polishing UI/API/code.
+- Performance second: latency, stability, budget, retry, recovery, and soak expectations matter after data shape is right.
+- Separate must/should/could and explicitly preserve out_of_scope.
+- Acceptance must be evidence-based: tests, run evidence, traces, diffs, and cited references.
+- Gates are observation-first unless the action corrupts facts, violates license/security, skips declared tests, or mutates authority state.
+"""
+
+
 def idle_goal_continuation_prompt(goal: dict[str, Any]) -> str:
     token_budget_value = goal.get("token_budget")
     token_budget_text = str(token_budget_value) if token_budget_value is not None else "none"
@@ -5333,6 +5345,8 @@ goal_objective: {goal.get('objective')}
 goal_token_budget: {token_budget_text}
 
 Continue working toward the active A9 goal.
+
+{requirements_method_packet()}
 
 Requirement shaping card:
 - problem: A9 needs reliable 24h runtime progress without losing the mainline.
@@ -5635,6 +5649,8 @@ Phase: {phase}
 {goal_lines}
 {phase_lines}
 {communication_acceptance_lines}
+
+{requirements_method_packet()}
 
 Requirement shaping card:
 - problem: continue the previous A9 runtime task without expanding into unrelated governance or product surfaces.

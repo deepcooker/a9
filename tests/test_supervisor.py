@@ -3204,6 +3204,23 @@ Do the work.
         self.assertIn("raw session logs", prompt)
         self.assertIn("Use `rg -n` first", prompt)
 
+    def test_next_task_prompt_includes_requirements_method_packet(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="method-packet", prompt="demo", phase="implement")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "implement: carry method packet"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "implement")
+
+        self.assertIn("Requirements method packet:", prompt)
+        self.assertIn("Data first", prompt)
+        self.assertIn("Performance second", prompt)
+        self.assertIn("Gates are observation-first", prompt)
+
     def test_next_task_prompt_carries_active_goal_continuation(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="goal-source", prompt="demo", phase="implement")
