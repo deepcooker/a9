@@ -4954,6 +4954,11 @@ index 0000000..3e75765
         try:
             worker_output = mod.worker_output_from_summary(summary)
             text = next_path.read_text(encoding="utf-8")
+            parsed_next = mod.parse_task(next_path)
+            self.assertEqual(next_path.parent, mod.QUEUE_DIR)
+            self.assertTrue(next_path.name.startswith("auto-vendor_import-plan-lane-runtime-fallback-"))
+            self.assertEqual(parsed_next.phase, "vendor_import")
+            self.assertEqual(parsed_next.task_id, next_path.stem)
             self.assertIn('phase: "vendor_import"', text)
             self.assertIn("repair idle goal continuation tests", text)
             self.assertEqual(worker_output.get("next_slice_source"), "worker_envelope.output.next_recommended_task")
