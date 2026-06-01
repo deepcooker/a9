@@ -47,7 +47,9 @@ Not enough:
 
 ## Round 2: What Keeps The Current Task Stable?
 
-Winner: A9-owned plan lane, inspired by `planning-with-files`.
+Winner: A9-owned plan lane.
+
+Mechanism donor: `planning-with-files`.
 
 Reason:
 
@@ -56,6 +58,19 @@ Reason:
 - PreCompact and Stop behavior directly address A9's interruption problem.
 - Parallel plan isolation matches A9's future multi-worker reality.
 - Attestation protects against unapproved plan mutation.
+
+Evidence from `planning-with-files` tests:
+
+- `test_resolve_plan_dir.py`: resolver order, invalid active-plan rejection,
+  newest valid plan fallback, safe slug checks.
+- `test_codex_session_isolation.py`: plan context should not leak across
+  sessions unless explicitly attached.
+- `test_plan_attestation.py`: SHA-256 attestation, tamper detection, concurrent
+  write safety.
+- `test_precompact_hook.py`: compaction reminder must fire before context
+  compression and surface plan hash when present.
+- `test_session_catchup.py`: after session reset, recover conversation after
+  the last planning-file update.
 
 Decision:
 
@@ -74,6 +89,14 @@ Not enough:
 - Do not copy its default role model. It assumes the same agent can freely shape
   plan phases and decisions. A9 cannot allow an execution worker to silently
   redefine product goals, requirements, scope, or acceptance.
+- Do not copy its completion model. Counting `Status: complete` phases is not
+  enough for A9. A9 completion must check acceptance, declared tests, evidence,
+  role review, and monitor confirmation.
+- Do not copy root fallback behavior. A9 should prefer explicit plan ids and
+  fail visibly when the expected plan is missing, because silent fallback can
+  bind a worker to the wrong task.
+- Do not use hooks as the authority. Hooks are reminders/interceptors; managed
+  flow and supervisor state are the authority.
 
 Role conflict resolution:
 
@@ -89,6 +112,21 @@ Role conflict resolution:
 This preserves A9's role boundary: the worker executes and reports; it does not
 become product manager, requirements analyst, or architect by editing the
 contract.
+
+A9-specific completion contract:
+
+```text
+complete only if:
+  plan acceptance is satisfied
+  declared checks pass or failures are documented
+  evidence refs exist
+  no unresolved hard blocker exists
+  worker did not change contract fields
+  monitor/supervisor records completion audit
+```
+
+So the first A9 implementation should copy resolver/isolation/catchup style
+tests before it copies hook behavior.
 
 ## Round 3: What Becomes Long-Term Memory?
 

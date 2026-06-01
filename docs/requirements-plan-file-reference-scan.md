@@ -101,6 +101,9 @@ A9 interpretation:
 
 - `planning-with-files` is closer to A9's need than a generic task plan. It is
   a context-governance mechanism, not only a planning template.
+- Its role model conflicts with A9 if copied directly: it lets the working
+  agent reshape plan phases and decisions, while A9 requires plan-contract
+  ownership by monitor/product/requirements roles.
 - A9 should not start with a single free-form worker prompt for complex tasks.
   It should start from a plan directory.
 - A9 needs separate files for:
@@ -128,6 +131,10 @@ What A9 should not copy blindly:
   understand the plan directory.
 - A9 should not make missing plan fields hard blockers immediately. First run
   them as observation and monitor drift.
+- A9 should not use phase-status counting as completion. Completion needs
+  acceptance, tests, evidence, role review, and monitor audit.
+- A9 should not allow workers to update contract fields; they must write
+  change requests.
 
 ## Secondary External References
 
