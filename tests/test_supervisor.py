@@ -5754,7 +5754,7 @@ index 0000000..3e75765
                 "findings": [
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'python -m pytest tests/test_supervisor.py::SupervisorTests::test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks'",
+                        "command": "/bin/bash -lc 'python -m pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression'",
                     },
                     {"kind": "undeclared_check", "command": "echo python -m pytest tests/test_supervisor.py"},
                 ]
@@ -5767,7 +5767,7 @@ index 0000000..3e75765
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
-                "python -m pytest tests/test_supervisor.py::SupervisorTests::test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks",
+                "python -m pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression",
             ],
         )
 
@@ -5785,7 +5785,7 @@ index 0000000..3e75765
                 "findings": [
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'pytest tests/test_supervisor.py::SupervisorTests::test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks -q'",
+                        "command": "/bin/bash -lc 'pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q'",
                     },
                     {"kind": "undeclared_check", "command": "echo pytest tests/test_supervisor.py"},
                 ]
@@ -5798,7 +5798,7 @@ index 0000000..3e75765
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
-                "pytest tests/test_supervisor.py::SupervisorTests::test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks -q",
+                "pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q",
             ],
         )
 
@@ -5824,7 +5824,7 @@ index 0000000..3e75765
                     },
                     {
                         "kind": "undeclared_check",
-                        "command": "/bin/bash -lc 'pytest tests/test_supervisor.py::SupervisorTests::test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks -q'",
+                        "command": "/bin/bash -lc 'pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q'",
                     },
                 ]
             }
@@ -5836,7 +5836,7 @@ index 0000000..3e75765
             checks,
             [
                 "python3 -m unittest tests/test_control_api.py",
-                "pytest tests/test_supervisor.py::SupervisorTests::test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks -q",
+                "pytest tests/test_supervisor.py::SupervisorTests::test_test_slice_monitor_blocked_and_fallback_routing_regression -q",
             ],
         )
 
