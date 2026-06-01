@@ -4010,6 +4010,28 @@ Do the work.
         self.assertEqual(output["next_slice_source"], "worker_envelope.output.next_task")
         self.assertEqual(output["next_slice_resolution_revision"], 1)
 
+    def test_worker_output_prefers_first_non_blank_candidate_in_priority_order(self):
+        mod = load_supervisor()
+        summary = {
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "next_slice": "   ",
+                        "next_recommended_task": " ",
+                        "next_task": "record: append findings lane evidence",
+                        "next": "test: should not win",
+                        "slice": "implement: should not win either",
+                    }
+                }
+            }
+        }
+
+        output = mod.worker_output_from_summary(summary)
+
+        self.assertEqual(output["next_slice"], "record: append findings lane evidence")
+        self.assertEqual(output["next_slice_source"], "worker_envelope.output.next_task")
+        self.assertEqual(output["next_slice_resolution_revision"], 1)
+
     def test_next_task_prompt_enforces_worker_prompt_discipline(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="test-discipline", prompt="demo", phase="test")
