@@ -2845,11 +2845,45 @@ def decide_status(
     failed_checks = [item for item in checks if item["return_code"] != 0]
     if failed_checks:
         return "needs-repair"
+    if changed_files_claim_without_patch_evidence(diff, patch_apply, worker_envelope):
+        return "needs-repair"
     if diff["diff_bytes"] == 0:
         if allow_no_diff:
             return "pass"
         return "needs-followup"
     return "pass"
+
+
+def changed_files_claim_without_patch_evidence(
+    diff: dict[str, Any],
+    patch_apply: dict[str, Any] | None,
+    worker_envelope: dict[str, Any] | None,
+) -> bool:
+    if not isinstance(worker_envelope, dict):
+        return False
+    envelope = worker_envelope.get("envelope")
+    if not isinstance(envelope, dict):
+        return False
+    output = envelope.get("output")
+    if not isinstance(output, dict):
+        return False
+    changed_files = output.get("changed_files")
+    if not isinstance(changed_files, list):
+        return False
+    declared = [str(item).strip() for item in changed_files if str(item).strip()]
+    if not declared:
+        return False
+    if int(diff.get("diff_bytes", 0) or 0) > 0:
+        return False
+    if not isinstance(patch_apply, dict):
+        return True
+    touched = patch_apply.get("touched_files")
+    if isinstance(touched, list) and any(str(item).strip() for item in touched):
+        return False
+    applied_count = int(patch_apply.get("applied_count", 0) or 0)
+    already_applied_count = int(patch_apply.get("already_applied_count", 0) or 0)
+    success_count = int(patch_apply.get("success_count", 0) or 0)
+    return applied_count <= 0 and already_applied_count <= 0 and success_count <= 0
 
 
 def reconcile_worker_envelope_check_conflict(

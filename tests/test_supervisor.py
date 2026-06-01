@@ -4586,6 +4586,50 @@ Do the work.
 
         self.assertEqual(status, "needs-followup")
 
+    def test_changed_files_claim_without_patch_evidence_requires_repair(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "budget_stopped": False, "return_code": 0}
+        worker_envelope = {
+            "status": "pass",
+            "envelope": {"protocolVersion": 1, "ok": True, "status": "ok", "output": {"changed_files": ["README.md"]}},
+        }
+
+        status = mod.decide_status(
+            worker,
+            {"diff_bytes": 0},
+            [{"command": "true", "return_code": 0}],
+            patch_apply={"status": "skip", "applied_count": 0, "already_applied_count": 0, "success_count": 0},
+            worker_envelope=worker_envelope,
+            allow_no_diff=True,
+        )
+
+        self.assertEqual(status, "needs-repair")
+
+    def test_changed_files_claim_with_patch_apply_evidence_can_pass_without_diff(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "budget_stopped": False, "return_code": 0}
+        worker_envelope = {
+            "status": "pass",
+            "envelope": {"protocolVersion": 1, "ok": True, "status": "ok", "output": {"changed_files": ["README.md"]}},
+        }
+
+        status = mod.decide_status(
+            worker,
+            {"diff_bytes": 0},
+            [{"command": "true", "return_code": 0}],
+            patch_apply={
+                "status": "pass",
+                "applied_count": 1,
+                "already_applied_count": 0,
+                "success_count": 1,
+                "touched_files": ["README.md"],
+            },
+            worker_envelope=worker_envelope,
+            allow_no_diff=True,
+        )
+
+        self.assertEqual(status, "pass")
+
     def test_task_allows_no_diff_from_explicit_field_and_smoke_text(self):
         mod = load_supervisor()
         explicit = mod.Task(
