@@ -7214,6 +7214,46 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_does_not_duplicate_equivalent_declared_test_check(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-test-sync-equiv.md",
+            task_id="auto-test-sync-equiv",
+            prompt="continue test slice",
+            phase="implement",
+            checks=[
+                "python3 -m py_compile scripts/a9_supervisor.py",
+                "python3 -m unittest tests/test_supervisor.py",
+            ],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-test-sync-equiv-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-test-sync-equiv-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {
+                    "output": {
+                        "next_slice": "test: python3 -m unittest tests.test_supervisor"
+                    }
+                },
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "test"', text)
+            self.assertEqual(text.count('  - "python3 -m unittest tests/test_supervisor.py"'), 1)
+            self.assertNotIn('  - "python3 -m unittest tests.test_supervisor"', text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
     def test_schedule_next_task_blocks_auto_next_when_operator_task_already_queued(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
