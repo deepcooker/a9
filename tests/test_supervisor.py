@@ -1675,6 +1675,45 @@ Do the work.
         self.assertIn("reference_scan -> implement -> test -> record", prompt)
         self.assertIn("goal/flow/run/monitor remain runtime authority", prompt)
 
+    def test_next_task_prompt_includes_active_plan_recovery_tails(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-active-tail",
+                    goal_id="goal-active-tail",
+                    contract={"problem": "Need recovery tail in hydration."},
+                )
+                plan_dir = mod.write_plan_files(plan)
+                (plan_dir / "progress.md").write_text("# Progress\n\n- ran declared checks\n", encoding="utf-8")
+                (plan_dir / "findings.md").write_text("# Findings\n\n- copied bounded tail mechanism\n", encoding="utf-8")
+                (plan_dir / "mistakes.md").write_text("# Mistakes\n\n- avoid broad scans\n", encoding="utf-8")
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n- proposal: update acceptance wording\n",
+                    encoding="utf-8",
+                )
+                task = mod.Task(path=Path("task.md"), task_id="plan-tail-prompt", prompt="demo", phase="implement")
+                summary = {
+                    "status": "pass",
+                    "run_dir": "/tmp/run",
+                    "context_path": "/tmp/run/context.md",
+                    "worker_envelope": {"envelope": {"output": {"next_slice": "record: keep tail bounded"}}},
+                }
+                prompt = mod.next_task_prompt(task, summary, "implement")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertIn("last_progress: - ran declared checks", prompt)
+        self.assertIn("last_findings: - copied bounded tail mechanism", prompt)
+        self.assertIn("last_mistake: - avoid broad scans", prompt)
+        self.assertIn("last_change_request: - proposal: update acceptance wording", prompt)
+
     def test_plan_status_prints_recovery_tail_fields(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

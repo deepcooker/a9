@@ -5303,6 +5303,14 @@ def active_plan_prompt_context() -> str:
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
     evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
+    plan_dir = plan_path(str(plan.get("plan_id", "")))
+    recovery_tail = {
+        "last_progress": tail_recovery_line(plan_dir / "progress.md"),
+        "last_findings": tail_recovery_line(plan_dir / "findings.md"),
+        "last_mistake": tail_recovery_line(plan_dir / "mistakes.md"),
+        "last_change_request": tail_change_request_line(plan_dir / "change_request.md"),
+    }
+    latest_run = plan_latest_run_snapshot(plan)
     return f"""Active plan contract:
 - plan_id: {plan.get('plan_id', '')}
 - goal_id: {plan.get('goal_id', '')}
@@ -5324,6 +5332,14 @@ def active_plan_prompt_context() -> str:
 - allowed_execution: {bounded_inline(contract.get('allowed_execution', ''), 500)}
 - reference_entry: {bounded_inline(contract.get('reference_entry', ''), 500)}
 - change_record: {bounded_inline(contract.get('change_record', ''), 500)}
+- last_progress: {recovery_tail['last_progress']}
+- last_findings: {recovery_tail['last_findings']}
+- last_mistake: {recovery_tail['last_mistake']}
+- last_change_request: {recovery_tail['last_change_request']}
+- latest_run_summary: {bounded_inline(latest_run.get('summary_path', ''), 500)}
+- latest_run_status: {bounded_inline(latest_run.get('status', ''), 200)}
+- latest_run_phase: {bounded_inline(latest_run.get('phase', ''), 200)}
+- latest_run_next_slice: {bounded_inline(latest_run.get('next_slice', ''), 500)}
 - authority: plan is a task contract view; goal/flow/run/monitor remain runtime authority.
 """
 
