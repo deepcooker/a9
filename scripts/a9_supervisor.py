@@ -7379,12 +7379,14 @@ def plan_status(args: argparse.Namespace) -> int:
     print("recovery_restatement:")
     print("- current_goal: read goal object, not plan status, for long-term completion.")
     print("- current_plan: use plan as task contract and prompt hydration view.")
+    print("- plan_evidence_source: active plan contract + latest run summary + findings/progress/mistakes/change_request tails.")
     print("- current_phase: derive from queued/running task or latest run evidence.")
     print(
         "- happened_since_last_action: reconcile latest progress/findings/mistakes/change_request "
         "before any new worker action."
     )
     print("- next_action: continue only after reconciling plan with goal/flow/run evidence.")
+    print("- why_next_action: keeps continuation/handoff based on durable runtime evidence instead of chat memory.")
     print("- out_of_scope: do not let worker mutate contract fields; use change_request.")
     return 0
 

@@ -1672,6 +1672,8 @@ Do the work.
         self.assertIn("last_mistake: - avoid broad search roots", text)
         self.assertIn("last_change_request: - none", text)
         self.assertIn("happened_since_last_action", text)
+        self.assertIn("plan_evidence_source", text)
+        self.assertIn("why_next_action", text)
 
     def test_update_active_plan_from_run_records_refs_and_progress(self):
         mod = load_supervisor()
