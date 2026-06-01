@@ -6558,6 +6558,13 @@ def gateway_runtime_blocks_next(task: Task, summary: dict[str, Any]) -> bool:
     return gate.get("action") != "continue"
 
 
+def queued_operator_task() -> Path | None:
+    for path in sorted(QUEUE_DIR.glob("*.md")):
+        if not path.stem.startswith("auto-"):
+            return path
+    return None
+
+
 def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if flow_transition_blocks_next(summary):
         return None
@@ -6607,6 +6614,14 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         record_path = write_deterministic_record(task, summary)
         summary["deterministic_record_path"] = str(record_path)
         phase = next_phase_for("pass", "record")
+    operator_task = queued_operator_task()
+    if operator_task is not None:
+        summary["auto_next_block"] = {
+            "reason": "operator_priority_queued_input",
+            "queued_task_id": operator_task.stem,
+            "queued_task_path": str(operator_task),
+        }
+        return None
     checks = checks_for_next_phase(phase, task)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     parent_ref = compact_task_ref(task.task_id)

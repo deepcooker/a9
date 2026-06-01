@@ -6831,6 +6831,68 @@ index 0000000..3e75765
         self.assertEqual(worker_output.get("next_slice_resolution_revision"), 1)
         self.assertEqual(summary["auto_next_block"]["reason"], "missing_worker_next_slice")
 
+    def test_schedule_next_task_blocks_auto_next_when_operator_task_already_queued(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            mod.QUEUE_DIR = Path(tmp) / "queue"
+            try:
+                mod.ensure_dirs()
+                (mod.QUEUE_DIR / "manual-followup.md").write_text("operator queued input\n", encoding="utf-8")
+                task = mod.Task(
+                    path=mod.DONE_DIR / "auto-source.md",
+                    task_id="auto-source",
+                    prompt="copy the next mature mechanism",
+                    phase="reference_scan",
+                    allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+                )
+                summary = {
+                    "task_id": task.task_id,
+                    "status": "pass",
+                    "run_dir": str(mod.RUNS_DIR / "auto-source-run"),
+                    "context_path": str(mod.RUNS_DIR / "auto-source-run" / "context.md"),
+                }
+
+                next_path = mod.schedule_next_task(task, summary)
+                self.assertIsNone(next_path)
+                self.assertEqual(summary["auto_next_block"]["reason"], "operator_priority_queued_input")
+                self.assertEqual(summary["auto_next_block"]["queued_task_id"], "manual-followup")
+                self.assertEqual(summary["auto_next_block"]["queued_task_path"], str(mod.QUEUE_DIR / "manual-followup.md"))
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+    def test_schedule_next_task_ignores_auto_only_queue_for_operator_priority(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            mod.QUEUE_DIR = Path(tmp) / "queue"
+            try:
+                mod.ensure_dirs()
+                (mod.QUEUE_DIR / "auto-implement-source-20260602T000000Z.md").write_text(
+                    "auto queued input\n", encoding="utf-8"
+                )
+                task = mod.Task(
+                    path=mod.DONE_DIR / "auto-source.md",
+                    task_id="auto-source",
+                    prompt="copy the next mature mechanism",
+                    phase="reference_scan",
+                    allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+                )
+                summary = {
+                    "task_id": task.task_id,
+                    "status": "pass",
+                    "run_dir": str(mod.RUNS_DIR / "auto-source-run"),
+                    "context_path": str(mod.RUNS_DIR / "auto-source-run" / "context.md"),
+                }
+
+                next_path = mod.schedule_next_task(task, summary)
+                self.assertIsNotNone(next_path)
+                assert next_path is not None
+                self.assertNotIn("auto_next_block", summary)
+                next_path.unlink(missing_ok=True)
+            finally:
+                mod.QUEUE_DIR = old_queue
+
     def test_auto_loop_guard_trips_after_consecutive_failures_and_resets_on_pass(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
