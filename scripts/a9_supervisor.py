@@ -6311,18 +6311,16 @@ def communication_task_requires_gateway_runtime_evidence(task: Task, summary: di
         and "goal_objective" not in line.lower()
         and "active goal" not in line.lower()
     ]
-    prompt_for_detection = "\n".join(prompt_lines)
-    haystack = " ".join(
-        [
-            task.task_id,
-            task.phase,
-            prompt_for_detection,
-            str(worker_output.get("next_slice", "")),
-        ]
-    ).lower()
+    detection_units = [task.task_id, task.phase, str(worker_output.get("next_slice", "")), *prompt_lines]
+    haystack = " ".join(detection_units).lower()
+    units = [str(unit).lower() for unit in detection_units if str(unit).strip()]
     if any(communication_hint_present(haystack, hint) for hint in COMMUNICATION_GATE_HINTS):
         return True
-    return any(all(communication_hint_present(haystack, part) for part in combo) for combo in COMMUNICATION_GATE_COMBO_HINTS)
+    return any(
+        all(communication_hint_present(unit, part) for part in combo)
+        for combo in COMMUNICATION_GATE_COMBO_HINTS
+        for unit in units
+    )
 
 
 def communication_hint_present(haystack: str, hint: str) -> bool:

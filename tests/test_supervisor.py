@@ -4758,6 +4758,21 @@ index 0000000..3e75765
 
         self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
 
+    def test_redis_and_stream_on_different_lines_do_not_trigger_gateway_gate(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="plan-lane-runtime",
+            prompt=(
+                "reference_basis: A9 goal/Redis flow/run evidence remain authority.\n"
+                "copied_mechanism: tail-preserving stream of context messages."
+            ),
+            phase="mechanism_extract",
+        )
+        summary = {"worker_envelope": {"envelope": {"output": {"next_slice": "implement Aider-style compaction"}}}}
+
+        self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+
     def test_schedule_next_task_uses_fallback_after_gateway_hint_filtering(self):
         mod = load_supervisor()
         mod.ensure_dirs()
