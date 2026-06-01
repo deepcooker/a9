@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 
@@ -1624,6 +1626,52 @@ Do the work.
         self.assertIn("goal_id: goal-active", prompt)
         self.assertIn("Workers drift without task contracts.", prompt)
         self.assertIn("goal/flow/run/monitor remain runtime authority", prompt)
+
+    def test_plan_status_prints_recovery_tail_fields(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-status-recovery",
+                    goal_id="goal-status-recovery",
+                    flow_id="flow-status-recovery",
+                    expected_flow_revision=9,
+                    contract={
+                        "problem": "Need stable resume restatement.",
+                        "system_requirement": "plan-status reports last plan lane updates.",
+                        "data_shape": "plan refs + append-only findings/progress/mistakes.",
+                        "acceptance": "operator sees happened-since and next action.",
+                    },
+                )
+                plan_dir = mod.write_plan_files(plan)
+                (plan_dir / "progress.md").write_text("# Progress\n\n- ran declared tests\n", encoding="utf-8")
+                (plan_dir / "findings.md").write_text("# Findings\n\n- copied Codex history ordering\n", encoding="utf-8")
+                (plan_dir / "mistakes.md").write_text("# Mistakes\n\n- avoid broad search roots\n", encoding="utf-8")
+                (plan_dir / "change_request.md").write_text("# Change Request\n\n- none\n", encoding="utf-8")
+
+                args = type("Args", (), {"plan_id": "plan-status-recovery"})()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_status(args)
+                text = buffer.getvalue()
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(code, 0)
+        self.assertIn("last_progress: - ran declared tests", text)
+        self.assertIn("last_findings: - copied Codex history ordering", text)
+        self.assertIn("last_mistake: - avoid broad search roots", text)
+        self.assertIn("last_change_request: - none", text)
+        self.assertIn("happened_since_last_action", text)
 
     def test_idle_goal_continuation_schedules_reference_first_task(self):
         mod = load_supervisor()

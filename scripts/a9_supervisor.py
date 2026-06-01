@@ -5236,11 +5236,15 @@ def active_plan_prompt_context() -> str:
     if not plan:
         return ""
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
+    evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
     return f"""Active plan contract:
 - plan_id: {plan.get('plan_id', '')}
 - goal_id: {plan.get('goal_id', '')}
 - flow_id: {plan.get('flow_id', '')}
 - expected_flow_revision: {plan.get('expected_flow_revision', '')}
+- run_ids: {bounded_inline(', '.join(str(item) for item in run_ids), 500)}
+- evidence_refs: {bounded_inline(', '.join(str(item) for item in evidence_refs), 700)}
 - problem: {bounded_inline(contract.get('problem', ''), 500)}
 - system_requirement: {bounded_inline(contract.get('system_requirement', ''), 700)}
 - data_shape: {bounded_inline(contract.get('data_shape', ''), 500)}
@@ -5249,6 +5253,21 @@ def active_plan_prompt_context() -> str:
 - reference_entry: {bounded_inline(contract.get('reference_entry', ''), 500)}
 - authority: plan is a task contract view; goal/flow/run/monitor remain runtime authority.
 """
+
+
+def tail_recovery_line(path: Path, *, max_chars: int = 260) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for raw in reversed(lines):
+        text = str(raw or "").strip()
+        if not text:
+            continue
+        if text.startswith("#"):
+            continue
+        return bounded_inline(text, max_chars)
+    return ""
 
 
 def create_goal_payload(goal_id: str, objective: str, token_budget_value: int | None = None) -> dict[str, Any]:
@@ -7293,15 +7312,28 @@ def plan_status(args: argparse.Namespace) -> int:
     print(f"goal_id: {plan.get('goal_id', '')}")
     print(f"flow_id: {plan.get('flow_id', '')}")
     print(f"expected_flow_revision: {plan.get('expected_flow_revision', '')}")
-    print(f"plan_dir: {plan_path(str(plan.get('plan_id', '')))}")
+    plan_dir = plan_path(str(plan.get("plan_id", "")))
+    print(f"plan_dir: {plan_dir}")
     print(f"problem: {bounded_inline(contract.get('problem', ''), 260)}")
     print(f"system_requirement: {bounded_inline(contract.get('system_requirement', ''), 260)}")
     print(f"data_shape: {bounded_inline(contract.get('data_shape', ''), 260)}")
     print(f"acceptance: {bounded_inline(contract.get('acceptance', ''), 260)}")
+    last_progress = tail_recovery_line(plan_dir / "progress.md")
+    last_findings = tail_recovery_line(plan_dir / "findings.md")
+    last_mistake = tail_recovery_line(plan_dir / "mistakes.md")
+    last_change_request = tail_recovery_line(plan_dir / "change_request.md")
+    print(f"last_progress: {last_progress}")
+    print(f"last_findings: {last_findings}")
+    print(f"last_mistake: {last_mistake}")
+    print(f"last_change_request: {last_change_request}")
     print("recovery_restatement:")
     print("- current_goal: read goal object, not plan status, for long-term completion.")
     print("- current_plan: use plan as task contract and prompt hydration view.")
     print("- current_phase: derive from queued/running task or latest run evidence.")
+    print(
+        "- happened_since_last_action: reconcile latest progress/findings/mistakes/change_request "
+        "before any new worker action."
+    )
     print("- next_action: continue only after reconciling plan with goal/flow/run evidence.")
     print("- out_of_scope: do not let worker mutate contract fields; use change_request.")
     return 0
