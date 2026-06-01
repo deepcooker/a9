@@ -298,12 +298,14 @@ Do not add more hard gates first.
 
 The next practical slice should be:
 
-1. Define a minimal `role_packet` artifact from existing docs and evidence.
-2. Generate packets for `operator`, `product_mainline`, `requirements`,
+1. Define a minimal plan/task artifact from
+   `docs/requirements-plan-file-reference-scan.md`.
+2. Generate `role_packet` artifacts from that plan, existing docs, and evidence.
+3. Generate packets for `operator`, `product_mainline`, `requirements`,
    `architecture`, `test`, `monitor`, and `execution_worker`.
-3. Keep sidecar review in observe/propose mode only.
-4. Run one 24h worker task using a generated execution packet.
-5. Let monitor inspect prompt, commands, output, tests, drift, and memory
+4. Keep sidecar review in observe/propose mode only.
+5. Run one 24h worker task using a generated execution packet.
+6. Let monitor inspect prompt, commands, output, tests, drift, and memory
    proposal quality.
 
 Only after that run should A9 decide which checks deserve to become hard

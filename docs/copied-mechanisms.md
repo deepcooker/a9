@@ -128,6 +128,46 @@ Failure modes to preserve:
 - Subagents can pollute parent context or shared memory unless toolsets and
   result channels are isolated.
 
+### Planning with Files
+
+Local reference:
+
+- `reference-projects/planning-with-files/`
+
+License status:
+
+- `reference-projects/planning-with-files` is MIT licensed, cloned from
+  `https://github.com/OthmanAdi/planning-with-files.git` at local commit
+  `6f94643`.
+- No source has been copied into A9 runtime yet. Current use is reference scan
+  and mechanism extraction only.
+
+Mechanisms to adapt:
+
+- File-based working memory: `task_plan.md`, `findings.md`, and `progress.md`.
+- Codex lifecycle hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`,
+  `PostToolUse`, `Stop`, and `PreCompact`.
+- Plan re-injection before decisions and tool use.
+- Progress reminders after tool/edit activity.
+- Stop-time incomplete phase detection.
+- PreCompact reminder to flush progress before context compression.
+- Parallel plan isolation under `.planning/<plan-id>/` plus an active-plan
+  pointer.
+- SHA-256 plan attestation to block injection of unapproved plan changes.
+- Session catchup from previous agent session stores.
+- `plan-goal` and `plan-loop` integration with long-running goal/loop behavior.
+
+A9 adaptation target:
+
+- `.a9/plans/<plan-id>/` isolated plan directories for 24h worker tasks.
+- A9 plan files derived from the financial requirements-analysis method, not
+  only generic phases.
+- Supervisor-owned active plan pointer, so mobile/control API and 24h worker
+  agree on the same task fact source.
+- Worker prompt generation from plan/finding/progress evidence instead of raw
+  chat tails.
+- Missing plan fields start as observation, not hard gates.
+
 ### Barter-rs
 
 Local reference:

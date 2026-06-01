@@ -10,6 +10,7 @@
 - `docs/stage-handoff-2026-06-01.md`: 当前通讯/control 阶段收口和下一轮 session 精读任务包。
 - `docs/role-memory-governance.md`: 主控窗口和各角色如何读取/接收精读记忆。
 - `docs/role-memory-reference-scan.md`: 角色记忆/旁路治理的参考项目证据和临时决策边界。
+- `docs/requirements-plan-file-reference-scan.md`: 需求分析方法论与 plan-file agent 工作流参考扫描。
 - `docs/collaboration.md`: 人类/监控者与 24 小时机器的协作方式。
 - `docs/communication-governance-framework.md`: 当前主线，通讯治理架构。
 - `docs/communication-governance-worker-task.md`: 下一刀 worker 任务模板。
