@@ -2639,6 +2639,44 @@ Do the work.
         self.assertIn("run=run-iso-1", progress)
         self.assertIn("status=needs-followup", progress)
 
+    def test_update_active_plan_from_run_skips_recovery_for_malformed_active_plan_contract(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                run_dir = tmp_path / "runs" / "run-iso-malformed"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "pass",
+                    "phase": "record",
+                    "run_dir": str(run_dir),
+                }
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="record-iso-malformed",
+                    phase="record",
+                    prompt=(
+                        "Active plan contract:\n"
+                        "- plan_id\n"
+                        "- goal_id: \n"
+                        "- expected_flow_revision: not-a-number\n"
+                        "- must append refs without proper separator\n"
+                    ),
+                )
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result, {"status": "skipped", "reason": "no_active_plan"})
+        self.assertFalse((tmp_path / "plans" / ".active_plan").exists())
+        self.assertFalse((tmp_path / "plans" / "plan_id").exists())
+
     def test_plan_change_request_appends_without_mutating_contract(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
