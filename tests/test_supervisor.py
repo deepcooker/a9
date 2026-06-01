@@ -3971,6 +3971,22 @@ Do the work.
         self.assertEqual(output["next_slice_source"], "worker_envelope.output.next_recommended_task")
         self.assertEqual(output["next_slice_resolution_revision"], 1)
 
+    def test_resolve_next_slice_contract_keeps_ordered_source_precedence(self):
+        mod = load_supervisor()
+        contract = mod.resolve_next_slice_contract(
+            {
+                "next_slice": " test: highest-priority candidate ",
+                "next_recommended_task": "test: should lose to next_slice",
+                "next_task": "test: should also lose",
+                "next": "test: lower-priority fallback",
+                "slice": "test: last fallback",
+            }
+        )
+
+        self.assertEqual(contract["next_slice"], "test: highest-priority candidate")
+        self.assertEqual(contract["next_slice_source"], "worker_envelope.output.next_slice")
+        self.assertEqual(contract["next_slice_resolution_revision"], 1)
+
     def test_worker_output_uses_slice_as_last_next_slice_fallback(self):
         mod = load_supervisor()
         summary = {
