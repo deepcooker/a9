@@ -73,6 +73,13 @@ class RecoveryLoopTests(unittest.TestCase):
             try:
                 def fake_read(url, *, timeout=10):
                     calls.append((url, timeout))
+                    if url.endswith("/api/communication/action-plan"):
+                        return {
+                            "status": "ok",
+                            "plan_status": "ready",
+                            "communication": {"action": "intervene", "priority_source": "recovery_loop"},
+                            "route": {"endpoint": "/api/nodes/recovery-cycle", "arm_group": "remote"},
+                        }
                     return {
                         "status": "needs_attention",
                         "step_count": 2,
@@ -90,11 +97,22 @@ class RecoveryLoopTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["cycle_status"], "needs_attention")
+        self.assertEqual(result["communication_plan_status"], "ready")
+        self.assertEqual(result["communication_action"], "intervene")
+        self.assertEqual(result["communication_priority_source"], "recovery_loop")
+        self.assertEqual(result["communication_route"]["endpoint"], "/api/nodes/recovery-cycle")
         self.assertEqual(result["step_count"], 2)
         self.assertEqual(result["risk_count"], 2)
         self.assertFalse(result["execute"])
-        self.assertEqual(calls, [("http://controller:8787/api/nodes/recovery-cycle?max_actions=2", 7)])
+        self.assertEqual(
+            calls,
+            [
+                ("http://controller:8787/api/communication/action-plan", 7),
+                ("http://controller:8787/api/nodes/recovery-cycle?max_actions=2", 7),
+            ],
+        )
         self.assertEqual(latest["cycle_status"], "needs_attention")
+        self.assertEqual(latest["communication_plan_status"], "ready")
 
     def test_recovery_loop_runs_bounded_iterations_without_execute(self):
         mod = load_module()

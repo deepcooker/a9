@@ -36,21 +36,29 @@ def read_json_url(url: str, *, timeout: int = 10) -> dict[str, Any]:
 
 def recovery_cycle_once(controller_url: str, *, timeout: int = 10, max_actions: int = 3) -> dict[str, Any]:
     base = controller_url.rstrip("/")
+    plan_url = f"{base}/api/communication/action-plan"
     url = f"{base}/api/nodes/recovery-cycle"
     if max_actions:
         url = f"{url}?max_actions={int(max_actions)}"
     try:
+        communication_plan = read_json_url(plan_url, timeout=timeout)
         cycle = read_json_url(url, timeout=timeout)
         status = str(cycle.get("status") or "unknown")
+        plan_status = str(communication_plan.get("plan_status") or "unknown")
         result = {
             "status": "ok" if status in {"ok", "needs_attention", "blocked"} else "degraded",
             "kind": "recovery_loop_observation",
             "checked_at": utc_now(),
             "controller_url": base,
+            "communication_plan_status": plan_status,
+            "communication_action": (communication_plan.get("communication") or {}).get("action"),
+            "communication_priority_source": (communication_plan.get("communication") or {}).get("priority_source"),
+            "communication_route": communication_plan.get("route") or {},
             "cycle_status": status,
             "step_count": int(cycle.get("step_count") or 0),
             "risk_count": int((cycle.get("summary") or {}).get("risk_count") or 0),
             "execute": bool(cycle.get("execute")),
+            "communication_plan": communication_plan,
             "cycle": cycle,
         }
     except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:

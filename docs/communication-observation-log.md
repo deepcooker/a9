@@ -1973,3 +1973,28 @@ Next monitoring target:
      the phone is now a dispatcher for the same route plan the worker sees. It
      still does not invent recovery logic; it arms the required group and calls
      the bounded backend repair endpoint.
+
+92. Recovery loop now records the unified communication action plan.
+   - Trigger:
+     the always-on recovery loop only observed `/api/nodes/recovery-cycle`.
+     That missed the new canonical communication plan for service recovery,
+     Tailscale/manual states, Redis stream health, and gateway refresh.
+   - Change:
+     `scripts/a9_recovery_loop.py` now reads
+     `/api/communication/action-plan` before `/api/nodes/recovery-cycle` on
+     each planning iteration, and writes `communication_plan_status`,
+     `communication_action`, `communication_priority_source`,
+     `communication_route`, and the raw plan into
+     `.a9/services/recovery-loop-latest.json`. It remains planning-only; no
+     mutation is executed by the loop.
+   - Verification:
+     `python3 -m py_compile scripts/a9_recovery_loop.py`;
+     `python3 -m unittest tests.test_recovery_loop` passed. A live one-shot
+     recovery loop wrote `communication_plan_status=noop`,
+     `communication_action=continue`, `communication_priority_source=tailscale`.
+     The resident `recovery-loop` service was restarted so future background
+     observations use the new code.
+   - Governance lesson:
+     24-hour monitoring and phone control now share the same route-plan
+     evidence. The loop observes the plan continuously; execution remains a
+     separate gated action.
