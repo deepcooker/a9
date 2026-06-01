@@ -5671,6 +5671,38 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_monitor_blocked_repair_checks_promotes_only_test_class_undeclared_checks(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="monitor-blocked-checks",
+            prompt="repair monitor blocked checks",
+            phase="repair",
+            checks=["python3 -m unittest tests/test_control_api.py"],
+        )
+        summary = {
+            "process_governance": {
+                "findings": [
+                    {
+                        "kind": "undeclared_check",
+                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_monitor_blocked_to_repair_takeover'",
+                    },
+                    {"kind": "undeclared_check", "command": "rg -n monitor_blocked_repair_checks tests/test_supervisor.py"},
+                    {"kind": "undeclared_check", "command": "python3 -m unittest tests/test_control_api.py"},
+                ]
+            }
+        }
+
+        checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
+
+        self.assertEqual(
+            checks,
+            [
+                "python3 -m unittest tests/test_control_api.py",
+                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_routes_monitor_blocked_to_repair_takeover",
+            ],
+        )
+
     def test_monitor_block_summary_projects_hard_gate_for_progress(self):
         mod = load_supervisor()
         monitor_score = {
