@@ -1734,20 +1734,69 @@ def extract_worker_search_replace_patch(text: str) -> tuple[str, str | None, lis
             for index, item in enumerate(blocks, start=1):
                 if not isinstance(item, dict):
                     findings.append(
-                        {"level": "warning", "message": "ignored non-object search_replace_blocks item", "index": index}
+                        {
+                            "level": "warning",
+                            "code": "search_replace_blocks.non_object_item",
+                            "scope": "envelope.output.search_replace_blocks",
+                            "message": "ignored non-object search_replace_blocks item",
+                            "index": index,
+                        }
                     )
                     continue
+
+                def _build_patch_block(raw: dict[str, Any]) -> str:
+                    block = str(raw.get("block") or "").strip()
+                    search = raw.get("search")
+                    replace = raw.get("replace")
+                    if not block and isinstance(search, str) and isinstance(replace, str):
+                        search_text = search if search.endswith("\n") else f"{search}\n"
+                        replace_text = replace if replace.endswith("\n") else f"{replace}\n"
+                        block = f"<<<<<<< SEARCH\n{search_text}=======\n{replace_text}>>>>>>> REPLACE"
+                    return block
+
                 path = str(item.get("path") or item.get("file") or "").strip()
-                block = str(item.get("block") or "").strip()
-                search = item.get("search")
-                replace = item.get("replace")
-                if not block and isinstance(search, str) and isinstance(replace, str):
-                    search_text = search if search.endswith("\n") else f"{search}\n"
-                    replace_text = replace if replace.endswith("\n") else f"{replace}\n"
-                    block = f"<<<<<<< SEARCH\n{search_text}=======\n{replace_text}>>>>>>> REPLACE"
+                nested_blocks = item.get("blocks")
+                if isinstance(nested_blocks, list):
+                    for sub_index, sub_item in enumerate(nested_blocks, start=1):
+                        if not isinstance(sub_item, dict):
+                            findings.append(
+                                {
+                                    "level": "warning",
+                                    "code": "search_replace_blocks.nested_non_object_block",
+                                    "scope": "envelope.output.search_replace_blocks.blocks",
+                                    "message": "ignored non-object nested block",
+                                    "index": index,
+                                    "block_index": sub_index,
+                                }
+                            )
+                            continue
+                        sub_path = str(sub_item.get("path") or sub_item.get("file") or path).strip()
+                        block = _build_patch_block(sub_item)
+                        if not sub_path or "<<<<<<< SEARCH" not in block or ">>>>>>> REPLACE" not in block:
+                            findings.append(
+                                {
+                                    "level": "warning",
+                                    "code": "search_replace_blocks.malformed_nested_block",
+                                    "scope": "envelope.output.search_replace_blocks.blocks",
+                                    "message": "ignored malformed nested block",
+                                    "index": index,
+                                    "block_index": sub_index,
+                                }
+                            )
+                            continue
+                        parts.append(f"{sub_path}\n{block}\n")
+                    continue
+
+                block = _build_patch_block(item)
                 if not path or "<<<<<<< SEARCH" not in block or ">>>>>>> REPLACE" not in block:
                     findings.append(
-                        {"level": "warning", "message": "ignored malformed search_replace_blocks item", "index": index}
+                        {
+                            "level": "warning",
+                            "code": "search_replace_blocks.malformed_item",
+                            "scope": "envelope.output.search_replace_blocks",
+                            "message": "ignored malformed search_replace_blocks item",
+                            "index": index,
+                        }
                     )
                     continue
                 parts.append(f"{path}\n{block}\n")
@@ -1755,6 +1804,8 @@ def extract_worker_search_replace_patch(text: str) -> tuple[str, str | None, lis
                 findings.append(
                     {
                         "level": "info",
+                        "code": "search_replace_blocks.extracted",
+                        "scope": "envelope.output.search_replace_blocks",
                         "message": "extracted SEARCH/REPLACE blocks from worker envelope output.search_replace_blocks",
                         "count": len(parts),
                     }

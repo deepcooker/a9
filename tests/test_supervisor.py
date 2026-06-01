@@ -1764,6 +1764,86 @@ Do the work.
         self.assertEqual(result["touched_files"], ["docs/mistakes.md"])
         self.assertEqual(result["patch_source"], "worker_envelope.output.search_replace_blocks")
 
+    def test_apply_worker_search_replace_extracts_envelope_nested_blocks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            root.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "docs").mkdir()
+            (root / "docs" / "mistakes.md").write_text("alpha\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-m", "base"],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            final = run_dir / "final.md"
+            final.write_text(
+                json.dumps(
+                    {
+                        "protocolVersion": 1,
+                        "ok": True,
+                        "status": "ok",
+                        "output": {
+                            "search_replace_blocks": [
+                                {
+                                    "file": "docs/mistakes.md",
+                                    "blocks": [{"search": "alpha\n", "replace": "zeta\n"}],
+                                }
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = mod.apply_worker_search_replace({"final_path": str(final)}, root, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["applied_count"], 1)
+        self.assertEqual(result["touched_files"], ["docs/mistakes.md"])
+        self.assertEqual(result["patch_source"], "worker_envelope.output.search_replace_blocks")
+
+    def test_apply_worker_search_replace_reports_machine_readable_malformed_nested_block(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            root = Path(tmp) / "repo"
+            root.mkdir()
+            run_dir.mkdir()
+            final = run_dir / "final.md"
+            final.write_text(
+                json.dumps(
+                    {
+                        "protocolVersion": 1,
+                        "ok": True,
+                        "status": "ok",
+                        "output": {
+                            "search_replace_blocks": [
+                                {"file": "docs/mistakes.md", "blocks": [{"replace": "only replace"}]}
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result = mod.apply_worker_search_replace({"final_path": str(final)}, root, run_dir)
+
+        self.assertEqual(result["status"], "skip")
+        warning = next(
+            item
+            for item in result["findings"]
+            if item.get("code") == "search_replace_blocks.malformed_nested_block"
+        )
+        self.assertEqual(warning.get("scope"), "envelope.output.search_replace_blocks.blocks")
+        self.assertEqual(warning.get("index"), 1)
+        self.assertEqual(warning.get("block_index"), 1)
+
     def test_previous_task_checkpoint_id_reads_done_state(self):
         mod = load_supervisor()
         mod.ensure_dirs()

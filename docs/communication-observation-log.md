@@ -1344,3 +1344,24 @@ Next monitoring target:
      this is a business-routing consistency fix, not token engineering. Token
      and context pressure remain observation signals unless a low-risk noise
      removal is obvious.
+
+67. Supervisor deterministic apply now accepts strict envelope nested search/replace blocks.
+   - Trigger:
+     worker strict JSON envelope carried `output.search_replace_blocks` in
+     nested shape (`file + blocks[]`), but supervisor only parsed flat
+     `path+block`/`path+search+replace`, so apply was skipped.
+   - Mechanism copied:
+     Aider SEARCH/REPLACE deterministic patch discipline, OpenClaw typed
+     envelope compatibility, and Codex deterministic handoff boundary between
+     worker output and patch apply.
+   - Change:
+     `scripts/a9_supervisor.py` now normalizes both flat and nested
+     `search_replace_blocks` into `model_patch.search_replace` text; malformed
+     items are no longer silent and emit machine-readable findings with
+     `code/scope/index/block_index`.
+   - Verification:
+     `python3 -m py_compile scripts/a9_supervisor.py` passed.
+     `python3 -m unittest tests.test_supervisor` passed with `154` tests.
+   - Governance lesson:
+     this is execution-chain reliability repair, not token/context policy work;
+     existing plain-text SEARCH/REPLACE compatibility is preserved.
