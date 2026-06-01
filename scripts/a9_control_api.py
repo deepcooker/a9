@@ -336,6 +336,147 @@ def event_replay_reset_decision(response: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def read_node_result_replay(
+    last_id: str | None = None,
+    *,
+    event_stream: str = EVENTS_STREAM_KEY,
+    count: int = 100,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    requested_raw = limit if limit is not None else count
+    requested = max(1, min(EVENTS_STREAM_LIMIT_MAX, int(requested_raw)))
+    safe_stream = str(event_stream or "").strip()
+    if not safe_stream:
+        return {
+            "status": "degraded",
+            "kind": "node_command_result_replay",
+            "stream": safe_stream,
+            "error_code": "invalid_payload",
+            "error": "event_stream_required",
+            "last_id": last_id,
+            "requested_count": requested,
+            "events": [],
+            "next_last_id": "",
+        }
+    if last_id is not None and not _looks_like_stream_id(last_id):
+        return {
+            "status": "degraded",
+            "kind": "node_command_result_replay",
+            "stream": safe_stream,
+            "error_code": "invalid_cursor",
+            "error": "invalid last_id format, expected stream-id like 1740000000-0",
+            "last_id": last_id,
+            "requested_count": requested,
+            "events": [],
+            "next_last_id": "",
+        }
+
+    start = "-" if not last_id else f"({last_id}"
+    try:
+        proc = redis_cli(["--raw", "XRANGE", safe_stream, start, "+", "COUNT", str(requested)])
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "degraded",
+            "kind": "node_command_result_replay",
+            "stream": safe_stream,
+            "error_code": "redis_unavailable",
+            "error": str(exc),
+            "last_id": last_id,
+            "requested_count": requested,
+            "events": [],
+            "next_last_id": "",
+        }
+    if proc.returncode != 0:
+        return {
+            "status": "degraded",
+            "kind": "node_command_result_replay",
+            "stream": safe_stream,
+            "error_code": "redis_command_failed",
+            "error": proc.stdout.strip() or "redis command failed",
+            "last_id": last_id,
+            "requested_count": requested,
+            "events": [],
+            "next_last_id": "",
+        }
+
+    events = [evt for evt in parse_xrange_events(proc.stdout) if str((evt.get("fields") or {}).get("kind") or "") == "node_command_result"]
+    if last_id and not events:
+        try:
+            oldest_proc = redis_cli(["--raw", "XRANGE", safe_stream, "-", "+", "COUNT", "1"])
+            newest_proc = redis_cli(["--raw", "XREVRANGE", safe_stream, "+", "-", "COUNT", "1"])
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return {
+                "status": "degraded",
+                "kind": "node_command_result_replay",
+                "stream": safe_stream,
+                "error_code": "redis_unavailable",
+                "error": str(exc),
+                "last_id": last_id,
+                "requested_count": requested,
+                "events": [],
+                "next_last_id": "",
+            }
+        if oldest_proc.returncode == 0 and newest_proc.returncode == 0:
+            oldest_events = parse_xrange_events(oldest_proc.stdout)
+            newest_events = parse_xrange_events(newest_proc.stdout)
+            if oldest_events and newest_events:
+                oldest_id = str(oldest_events[0].get("id") or "")
+                newest_id = str(newest_events[0].get("id") or "")
+                return {
+                    "status": "degraded",
+                    "kind": "node_command_result_replay",
+                    "stream": safe_stream,
+                    "error": "cursor_gap: last_id is outside current replay window",
+                    "error_code": "cursor_gap",
+                    "last_id": last_id,
+                    "requested_count": requested,
+                    "events": [],
+                    "stream_oldest_id": oldest_id,
+                    "stream_newest_id": newest_id,
+                    "next_last_id": newest_id,
+                }
+    return {
+        "status": "ok",
+        "kind": "node_command_result_replay",
+        "stream": safe_stream,
+        "count": len(events),
+        "requested_count": requested,
+        "last_id": last_id,
+        "events": events,
+        "next_last_id": str(events[-1].get("id") or "") if events else (last_id or ""),
+    }
+
+
+def result_replay_reset_decision(response: dict[str, Any]) -> dict[str, Any]:
+    """Return bounded client action for /api/node-command-results replay responses."""
+    if response.get("status") == "degraded":
+        error_code = str(response.get("error_code") or "")
+        if error_code == "cursor_gap":
+            next_last_id = str(response.get("next_last_id") or "")
+            if _looks_like_stream_id(next_last_id):
+                return {
+                    "action": "reset_cursor",
+                    "reason": "cursor_gap",
+                    "next_last_id": next_last_id,
+                }
+            return {
+                "action": "retry_without_cursor",
+                "reason": "cursor_gap_without_valid_next_last_id",
+                "next_last_id": "",
+            }
+        if error_code == "invalid_cursor":
+            return {
+                "action": "retry_without_cursor",
+                "reason": "invalid_cursor_format",
+                "next_last_id": "",
+            }
+    return {
+        "action": "keep_cursor",
+        "reason": "no_cursor_reset_needed",
+        "next_last_id": str(response.get("next_last_id") or ""),
+    }
+
+
 def events_to_sse(payload: dict[str, Any]) -> bytes:
     chunks = []
     for event in payload.get("events", []):
@@ -3904,6 +4045,7 @@ def node_command_result_by_command_lookup(
     event_stream: str = EVENTS_STREAM_KEY,
     limit: int = 100,
     timeout: int = 3,
+    result_last_id: str | None = None,
     node_id: str = "",
     root: Path = ROOT,
 ) -> dict[str, Any]:
@@ -3932,6 +4074,34 @@ def node_command_result_by_command_lookup(
         safe_timeout = max(1, int(timeout))
     except (TypeError, ValueError):
         return {**base, "limit": requested, "error_code": "invalid_payload", "reason": "timeout_must_be_integer"}
+
+    replay: dict[str, Any] | None = None
+    replay_reset = {"action": "keep_cursor", "reason": "no_cursor_reset_needed", "next_last_id": ""}
+    if result_last_id is not None:
+        replay = read_node_result_replay(
+            result_last_id,
+            event_stream=safe_event_stream,
+            limit=requested,
+        )
+        replay_reset = result_replay_reset_decision(replay)
+        if str(replay.get("status") or "") == "degraded":
+            return {
+                **base,
+                "status": "degraded",
+                "limit": requested,
+                "error_code": str(replay.get("error_code") or "result_replay_degraded"),
+                "reason": str(replay.get("error") or replay.get("error_code") or "result_replay_degraded"),
+                "scanned_count": 0,
+                "result_replay": replay,
+                "result_replay_reset": replay_reset,
+                "recovery_hint": node_command_recovery_hint(
+                    node_id=node_id,
+                    command_id=safe_command_id,
+                    result_status="degraded",
+                    result_error_code=str(replay.get("error_code") or "result_replay_degraded"),
+                    root=root,
+                ),
+            }
 
     try:
         proc = redis_cli(["--raw", "XREVRANGE", safe_event_stream, "+", "-", "COUNT", str(requested)])
@@ -3964,7 +4134,10 @@ def node_command_result_by_command_lookup(
             "result": lookup,
             "error_code": error_code,
             "scanned_count": len(events),
+            "result_replay_reset": replay_reset,
         }
+        if replay is not None:
+            payload["result_replay"] = replay
         if status != "ok":
             payload["reason"] = str(lookup.get("reason") or error_code)
         actual_node_id = str(lookup.get("result", {}).get("result", {}).get("node_id") or "").strip()
@@ -3986,7 +4159,10 @@ def node_command_result_by_command_lookup(
         "error_code": "no_result",
         "reason": "node_command_result_not_found",
         "scanned_count": len(events),
+        "result_replay_reset": replay_reset,
     }
+    if replay is not None:
+        return_payload["result_replay"] = replay
     return_payload["recovery_hint"] = node_command_recovery_hint(
         node_id=node_id,
         command_id=safe_command_id,
@@ -5237,6 +5413,10 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, operator_tail(source, limit=limit))
             elif parsed.path.startswith("/api/node-command-results/by-command/"):
                 command_id = unquote(parsed.path.removeprefix("/api/node-command-results/by-command/")).strip("/")
+                result_last_id = _resolve_event_last_id(
+                    query.get("result_last_id", [None])[0],
+                    self.headers.get("Last-Event-ID"),
+                )
                 self.write_json(
                     200,
                     node_command_result_by_command_lookup(
@@ -5244,6 +5424,7 @@ class ControlHandler(BaseHTTPRequestHandler):
                         event_stream=query.get("event_stream", [EVENTS_STREAM_KEY])[0],
                         limit=query.get("limit", ["100"])[0],
                         timeout=query.get("timeout", ["3"])[0],
+                        result_last_id=result_last_id,
                         node_id=query.get("node_id", [""])[0],
                     ),
                 )

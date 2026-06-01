@@ -167,6 +167,15 @@ Redis ecosystem:
    clients can use `scripts/a9_control_api.py:event_replay_reset_decision` to
    convert replay responses into bounded actions: `reset_cursor`,
    `retry_without_cursor`, or `keep_cursor`.
+   Command-result lookup follows the same typed cursor contract with
+   `scripts/a9_control_api.py:read_node_result_replay` and
+   `scripts/a9_control_api.py:result_replay_reset_decision`.
+   `/api/node-command-results/by-command/{command_id}` accepts `result_last_id`
+   (query first, then `Last-Event-ID`) and returns machine-readable
+   `result_replay_reset.action = keep_cursor|reset_cursor|retry_without_cursor`.
+   Invalid cursor is degraded without Redis calls; syntactically valid cursor
+   with empty replay and non-empty stream returns `error_code=cursor_gap` with
+   `next_last_id`.
 6. Backpressure:
    bounded stream reads, trim policy, dead-letter stream, retry budget, and
    error-class counters. Pending/lag evidence contract for Redis Streams

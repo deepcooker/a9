@@ -4117,13 +4117,14 @@ class ControlApiTests(unittest.TestCase):
         calls = []
         captured = {"status": None, "payload": None}
 
-        def fake_lookup(command_id, *, event_stream="a9:events", limit=100, timeout=3, node_id=""):
+        def fake_lookup(command_id, *, event_stream="a9:events", limit=100, timeout=3, result_last_id=None, node_id=""):
             calls.append(
                 {
                     "command_id": command_id,
                     "event_stream": event_stream,
                     "limit": limit,
                     "timeout": timeout,
+                    "result_last_id": result_last_id,
                     "node_id": node_id,
                 }
             )
@@ -4139,8 +4140,8 @@ class ControlApiTests(unittest.TestCase):
             }
 
         class DummyNodeCommandResultByCommandGetHandler:
-            path = "/api/node-command-results/by-command/cmd-api?event_stream=a9:test-events&limit=8&timeout=6"
-            headers = {}
+            path = "/api/node-command-results/by-command/cmd-api?event_stream=a9:test-events&limit=8&timeout=6&result_last_id=1740000600-0"
+            headers = {"Last-Event-ID": "1740000601-0"}
 
             def write_json(self, status, response_payload):
                 captured["status"] = status
@@ -4157,7 +4158,16 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["result_event_id"], "1740000600-0")
         self.assertEqual(
             calls,
-            [{"command_id": "cmd-api", "event_stream": "a9:test-events", "limit": "8", "timeout": "6", "node_id": ""}],
+            [
+                {
+                    "command_id": "cmd-api",
+                    "event_stream": "a9:test-events",
+                    "limit": "8",
+                    "timeout": "6",
+                    "result_last_id": "1740000600-0",
+                    "node_id": "",
+                }
+            ],
         )
 
     def test_node_command_result_lookup_missing_with_stale_heartbeat_returns_reconnect_hint(self):
@@ -4479,6 +4489,68 @@ class ControlApiTests(unittest.TestCase):
         decision = mod.event_replay_reset_decision(response)
         self.assertEqual(decision["action"], "reset_cursor")
         self.assertEqual(decision["next_last_id"], "1740000010-0")
+
+    def test_read_node_result_replay_rejects_invalid_last_id_without_redis(self):
+        mod = load_control_api()
+        calls = []
+
+        def fake_redis(*args, **kwargs):
+            calls.append(args)
+            raise AssertionError("redis_cli must not be called for invalid cursor")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.read_node_result_replay("bad-cursor", event_stream="a9:test-events", limit=5)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "invalid_cursor")
+        self.assertEqual(result["events"], [])
+        self.assertEqual(calls, [])
+
+    def test_read_node_result_replay_marks_cursor_gap_when_stream_non_empty_but_no_replay(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args[:3] == ["--raw", "XRANGE", "a9:test-events"] and args[3].startswith("("):
+                return FakeProc("")
+            if args == ["--raw", "XRANGE", "a9:test-events", "-", "+", "COUNT", "1"]:
+                return FakeProc("1740000005-0\nkind\nnode_command_result\n")
+            if args == ["--raw", "XREVRANGE", "a9:test-events", "+", "-", "COUNT", "1"]:
+                return FakeProc("1740000010-0\nkind\nnode_command_result\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            result = mod.read_node_result_replay("1740000004-0", event_stream="a9:test-events", limit=5)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["error_code"], "cursor_gap")
+        self.assertEqual(result["next_last_id"], "1740000010-0")
+
+    def test_result_replay_reset_decision_handles_cursor_gap_and_invalid_cursor(self):
+        mod = load_control_api()
+        decision_gap = mod.result_replay_reset_decision(
+            {"status": "degraded", "error_code": "cursor_gap", "next_last_id": "1740000010-0"}
+        )
+        self.assertEqual(decision_gap["action"], "reset_cursor")
+        self.assertEqual(decision_gap["next_last_id"], "1740000010-0")
+
+        decision_invalid = mod.result_replay_reset_decision(
+            {"status": "degraded", "error_code": "invalid_cursor", "next_last_id": "bad"}
+        )
+        self.assertEqual(decision_invalid["action"], "retry_without_cursor")
+        self.assertEqual(decision_invalid["reason"], "invalid_cursor_format")
 
     def test_probe_node_uses_remote_probe_and_registers_result(self):
         mod = load_control_api()
@@ -7262,12 +7334,21 @@ class ControlApiTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                def lookup_with_root(command_id, *, event_stream="a9:events", limit=100, timeout=3, node_id=""):
+                def lookup_with_root(
+                    command_id,
+                    *,
+                    event_stream="a9:events",
+                    limit=100,
+                    timeout=3,
+                    result_last_id=None,
+                    node_id="",
+                ):
                     return original_lookup(
                         command_id,
                         event_stream=event_stream,
                         limit=limit,
                         timeout=timeout,
+                        result_last_id=result_last_id,
                         node_id=node_id,
                         root=root,
                     )
