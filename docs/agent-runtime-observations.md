@@ -74,3 +74,23 @@ Mechanism alignment to record:
 
 Bounded next slice:
 - `implement`: enforce declared-check execution boundary in `scripts/a9_supervisor.py` with focused behavior tests in `tests/test_supervisor.py`.
+
+## 2026-06-02: compare result for declared-check execution boundary
+
+Bounded evidence reviewed:
+- `scripts/a9_supervisor.py` (`monitor_blocked_repair_checks` + `schedule_next_task` call site)
+- `tests/test_supervisor.py` (current monitor-blocked repair check promotion tests)
+
+Compare result:
+- Current `repair` auto-next path still promotes `process_governance.findings[kind=undeclared_check]` into runnable `checks` for the next task.
+- This behavior conflicts with the scoped requirement that undeclared checks remain governance observations/proposals and are not executed inside the active run.
+
+Why this matters:
+- It keeps reproducing the same contract violation pattern: undeclared checks move from observation into execution without an explicit task-level declared-check contract update.
+- It also increases context/test-cost noise in repair loops by expanding execution scope implicitly.
+
+Bounded implement next slice:
+- `implement` (only `scripts/a9_supervisor.py` and `tests/test_supervisor.py`):
+  - Stop promoting undeclared checks into active run `checks` in monitor-blocked repair scheduling.
+  - Keep undeclared checks as findings/proposals in process governance evidence.
+  - Update focused supervisor tests to assert observation-only behavior and prevent regression.
