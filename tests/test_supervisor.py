@@ -5835,6 +5835,23 @@ index 0000000..3e75765
             ],
         )
 
+    def test_test_slice_monitor_blocked_and_fallback_routing_regression(self):
+        suite = unittest.TestSuite()
+        suite.addTests(
+            [
+                SupervisorTests(
+                    "test_monitor_blocked_repair_checks_skips_shell_wrapped_pytest_diagnostic_noise"
+                ),
+                SupervisorTests(
+                    "test_schedule_next_task_prefers_next_recommended_task_over_next_task_after_gateway_filtering"
+                ),
+            ]
+        )
+        stream = io.StringIO()
+        result = unittest.TextTestRunner(stream=stream, verbosity=0).run(suite)
+        self.assertTrue(result.wasSuccessful(), stream.getvalue())
+        self.assertEqual(result.testsRun, 2)
+
     def test_monitor_block_summary_projects_hard_gate_for_progress(self):
         mod = load_supervisor()
         monitor_score = {
