@@ -5747,6 +5747,32 @@ index 0000000..3e75765
             ],
         )
 
+    def test_monitor_blocked_repair_unittest_promotion_uses_regression_target_constant(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="monitor-blocked-checks-constant-sync",
+            prompt="repair monitor blocked checks",
+            phase="repair",
+            checks=["python3 -m unittest tests/test_control_api.py"],
+        )
+        deterministic_check = f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}"
+        summary = {
+            "process_governance": {
+                "findings": [
+                    {
+                        "kind": "undeclared_check",
+                        "command": f"/bin/bash -lc '{deterministic_check}'",
+                    }
+                ]
+            }
+        }
+
+        checks = mod.monitor_blocked_repair_checks(task, summary, "repair")
+
+        self.assertIn(deterministic_check, checks)
+        self.assertEqual(checks[-1], deterministic_check)
+
     def test_monitor_blocked_repair_checks_promotes_python_m_pytest_undeclared_check(self):
         mod = load_supervisor()
         task = mod.Task(
@@ -5867,12 +5893,15 @@ index 0000000..3e75765
                 SupervisorTests(
                     "test_schedule_next_task_prefers_next_recommended_task_over_next_task_after_gateway_filtering"
                 ),
+                SupervisorTests(
+                    "test_monitor_blocked_repair_unittest_promotion_uses_regression_target_constant"
+                ),
             ]
         )
         stream = io.StringIO()
         result = unittest.TextTestRunner(stream=stream, verbosity=0).run(suite)
         self.assertTrue(result.wasSuccessful(), stream.getvalue())
-        self.assertEqual(result.testsRun, 2)
+        self.assertEqual(result.testsRun, 3)
 
     def test_monitor_block_summary_projects_hard_gate_for_progress(self):
         mod = load_supervisor()
