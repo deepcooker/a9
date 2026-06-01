@@ -251,9 +251,12 @@ Current status:
 - Problem discovered: the user asked whether the things extracted by close
   reading are actually known by the different roles. The answer is no: a role
   only knows what its prompt, repo map, task packet, memory retrieval, or control
-  API explicitly injects.
+  API explicitly injects. This also applies to a new interactive Codex control
+  window: it does not inherit project truth unless it reads the handoff order.
 - Resulting decision: close-reading output must become role-scoped memory, not
   just markdown. Roles need a memory distribution layer:
+  - operator/main Codex window reads the handoff order in
+    `docs/role-memory-governance.md` before deciding or dispatching work.
   - product/mainline role sees causal memory, original idea doctrine, current
     summary boundary, and expired branches.
   - architecture role sees data shape, runtime state, communication/session
@@ -270,6 +273,8 @@ Current status:
 - Not implemented as a routing layer yet.
 - Until this exists, the monitor must explicitly inject the needed summary and
   causal anchors into each worker task. Otherwise roles will repeat old errors.
+- For interactive takeover, `docs/role-memory-governance.md` is now the required
+  read protocol.
 
 ### 13. Resident Goal Continuation Can Fight Session Governance
 

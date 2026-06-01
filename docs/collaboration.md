@@ -211,7 +211,12 @@ python3 scripts/a9_supervisor.py status
 tail -n 180 docs/session-raw-summary.md
 tail -n 220 docs/session-raw-close-reading.md
 sed -n '1,240p' docs/session-causal-memory.md
+sed -n '1,260p' docs/role-memory-governance.md
 ```
+
+主控 Codex 窗口本身也是一个角色。新窗口不会自动知道精读结果，必须按
+`docs/role-memory-governance.md` 的 Operator / Main Codex Window 接手顺序读。
+读完以后才能决定是继续讨论、跑 session mini-flow，还是给 24h worker 下任务。
 
 如果发现 raw session 已经落后当前聊天，就先跑外部 session mini-flow：
 

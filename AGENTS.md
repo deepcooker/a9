@@ -79,10 +79,12 @@ Session 分两类：
 两者要链接，不要混存。raw session 不进 mem0；mem0 只存带 evidence 引用的抽取记忆。
 
 精读结果不会自动变成所有角色的知识。任何 product、architecture、test、
-execution worker、monitor 角色，只知道它的 task prompt、repo map、memory
-retrieval、control API 或 role packet 明确注入的内容。把 close-reading 写进
-markdown 只是事实索引，不等于角色已经理解。给 worker 派任务前，监控者必须把
-本次任务需要的因果记忆、过期支线、当前边界和验收标准裁剪进任务包。
+execution worker、monitor 角色，甚至新的主控 Codex 窗口，只知道它的 task
+prompt、repo map、memory retrieval、control API、handoff read order 或 role
+packet 明确注入的内容。把 close-reading 写进 markdown 只是事实索引，不等于
+角色已经理解。给 worker 派任务前，监控者必须把本次任务需要的因果记忆、过期
+支线、当前边界和验收标准裁剪进任务包。新主控窗口必须先按
+`docs/role-memory-governance.md` 的 Operator / Main Codex Window 顺序接手。
 
 Mobile/control plane 必须同时覆盖这两类 session。它不是只给 worker 做审批入口，
 也不是只看 queue/runs；它必须把当前人类和主监控 Codex 的交互窗口也接进去：
