@@ -1520,3 +1520,28 @@ Next monitoring target:
    - Governance lesson:
      keep recovery orchestration in typed contract/action routing; do not move
      fallback logic into page parsing or prose heuristics.
+
+74. Node command submit recovery_hint now encodes submitted/await_result instead of result_found.
+   - Trigger:
+     `/api/nodes/command-submit` success path returned
+     `recovery_hint.reason=command_result_found` right after XADD enqueue, which
+     mismatched actual lifecycle state and could misroute mobile/control clients.
+   - Mechanism copied:
+     Codex state naming discipline (`submitted` vs `result_found`),
+     OpenClaw/Lobster typed envelope routing stability (`action/reason/next_endpoint`),
+     and Redis Streams command lifecycle semantics (enqueue means queued/submitted,
+     next step is by-command wait/observe).
+   - Change:
+     `enqueue_node_command` success now calls `node_command_recovery_hint` with
+     `result_status=submitted`; `node_command_recovery_hint` maps
+     `{submitted,queued} -> action=wait, reason=await_result,
+     next_endpoint=/api/node-command-results/by-command/{command_id}`.
+     Existing result lookup found path keeps `reason=command_result_found`.
+     Added test assertions for submit success hints and preserved found semantics.
+   - Verification:
+     worker attempt produced the right patch idea but used absolute paths in
+     `search_replace_blocks`, so supervisor rejected apply. Monitor intervention
+     applied the bounded relative-path patch and ran targeted tests.
+   - Governance lesson:
+     recovery hint reasons are contract fields, not presentation text; lifecycle
+     stages must not be conflated at submit boundary.

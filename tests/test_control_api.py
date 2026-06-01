@@ -3510,6 +3510,11 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(xadd_call[stream_id_index + 1], "pending")
         error_code_index = xadd_call.index("error_code")
         self.assertEqual(xadd_call[error_code_index + 1], "none")
+        hint = result["recovery_hint"]
+        self.assertEqual(hint["action"], "wait")
+        self.assertEqual(hint["reason"], "await_result")
+        self.assertEqual(hint["next_endpoint"], "/api/node-command-results/by-command/cmd-001")
+        self.assertNotEqual(hint["reason"], "command_result_found")
 
     def test_enqueue_node_command_returns_degraded_when_redis_unavailable(self):
         mod = load_control_api()
@@ -3628,6 +3633,11 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["command"]["command_id"], "cmd-004")
         self.assertEqual(captured["payload"]["command"]["status"], "queued")
         self.assertEqual(captured["payload"]["command"]["stream"], "a9:tasks")
+        hint = captured["payload"]["recovery_hint"]
+        self.assertEqual(hint["action"], "wait")
+        self.assertEqual(hint["reason"], "await_result")
+        self.assertEqual(hint["next_endpoint"], "/api/node-command-results/by-command/cmd-004")
+        self.assertNotEqual(hint["reason"], "command_result_found")
         self.assertTrue(any(call[:2] == ["XADD", "a9:tasks"] for call in calls))
 
     def test_node_command_result_lookup_delegates_to_node_reader(self):
@@ -6761,6 +6771,11 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(submit_capture["payload"]["status"], "ok")
             self.assertEqual(submit_capture["payload"]["command"]["command_id"], "cmd-lifecycle")
             self.assertIn("recovery_hint", submit_capture["payload"])
+            submit_hint = submit_capture["payload"]["recovery_hint"]
+            self.assertEqual(submit_hint["action"], "wait")
+            self.assertEqual(submit_hint["reason"], "await_result")
+            self.assertEqual(submit_hint["next_endpoint"], "/api/node-command-results/by-command/cmd-lifecycle")
+            self.assertNotEqual(submit_hint["reason"], "command_result_found")
 
             with tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)

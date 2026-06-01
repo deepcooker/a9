@@ -3181,8 +3181,8 @@ def enqueue_node_command(payload: dict[str, Any]) -> dict[str, Any]:
         "recovery_hint": node_command_recovery_hint(
             node_id=str(command.get("node_id") or ""),
             command_id=str(command.get("command_id") or ""),
-            result_status="ok",
-            result_error_code="ok",
+            result_status="submitted",
+            result_error_code="none",
         ),
     }
 
@@ -3212,6 +3212,17 @@ def node_command_recovery_hint(
             "reason": "redis_unavailable",
             "evidence_refs": evidence_refs + ["redis:ping"],
             "next_endpoint": "/api/nodes/status",
+        }
+    if safe_result_status in {"submitted", "queued"}:
+        return {
+            "action": "wait",
+            "reason": "await_result",
+            "evidence_refs": evidence_refs,
+            "next_endpoint": (
+                f"/api/node-command-results/by-command/{safe_command_id}"
+                if safe_command_id
+                else "/api/node-command-results/by-command/{command_id}"
+            ),
         }
     if safe_result_status == "ok":
         return {
