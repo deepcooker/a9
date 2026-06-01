@@ -1239,3 +1239,34 @@ Next monitoring target:
      this is the first real cross-surface recovery transcript. Next useful
      slice is not another UI card; it is priority/model governance for the
      24h worker and then a transcript-backed intervention policy.
+
+63. Worker model governance is now explicit and recorded.
+   - Trigger:
+     operator asked whether the system is truly 24h. Runtime was resident and
+     queue-consuming, but model choice was still easy to misunderstand because
+     previous Spark experiments had failed and the current worker command only
+     implied the resolved model at process launch.
+   - Mechanism copied:
+     Codex-style runtime configuration must be explicit and observable. Aider
+     style cost control should be policy-driven, not hidden by ad-hoc command
+     changes. OpenClaw-style envelopes should preserve the policy snapshot used
+     by each worker run.
+   - Change:
+     `scripts/a9_supervisor.py` now resolves worker model through a small
+     policy function: `A9_SUPERVISOR_MODEL` overrides all tasks,
+     `A9_SUPERVISOR_REFERENCE_MODEL` can override only `reference_scan`, and
+     otherwise the stable `DEFAULT_WORKER_MODEL` remains `gpt-5.3-codex`.
+     Worker outputs and policy attestations now record `worker_model` and
+     `worker_model_source`; service progress exposes the latest worker model.
+   - Verification:
+     `python3 -m py_compile scripts/a9_supervisor.py scripts/a9_control_api.py`
+     passed. Targeted model tests and `python3 -m unittest
+     tests.test_supervisor tests.test_service` passed with `163` tests. The
+     background stack stayed resident, and after test selftasks drained the
+     controller reported `queued=0`, `running=0`.
+   - Governance lesson:
+     current A9 is a controlled 24h executor: it consumes queued work
+     continuously, but local idle goal generation remains disabled to avoid
+     unbounded token spend. Spark can be tested by setting
+     `A9_SUPERVISOR_REFERENCE_MODEL=gpt-5.3-codex-spark` for low-risk
+     reference scans, while implementation keeps the stable default.

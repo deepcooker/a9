@@ -47,6 +47,7 @@ DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_WORKER_MODEL = "gpt-5.3-codex"
+DEFAULT_REFERENCE_SCAN_WORKER_MODEL = ""
 DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
 DEFAULT_WORKER_EVENT_BUDGET_MODE = "observe"
@@ -1230,7 +1231,7 @@ def build_worker_cmd(
             .replace("{worktree}", shlex.quote(str(worktree)))
         )
         return ["bash", "-lc", formatted]
-    model = os.getenv("A9_SUPERVISOR_MODEL", DEFAULT_WORKER_MODEL)
+    model, _source = resolved_worker_model(task)
     prepare_worker_codex_home()
     return [
         "env",
@@ -1249,6 +1250,17 @@ def build_worker_cmd(
         str(final_path),
         prompt_text,
     ]
+
+
+def resolved_worker_model(task: Task) -> tuple[str, str]:
+    global_model = os.getenv("A9_SUPERVISOR_MODEL", "").strip()
+    if global_model:
+        return global_model, "A9_SUPERVISOR_MODEL"
+    if task.phase == "reference_scan":
+        reference_model = os.getenv("A9_SUPERVISOR_REFERENCE_MODEL", DEFAULT_REFERENCE_SCAN_WORKER_MODEL).strip()
+        if reference_model:
+            return reference_model, "A9_SUPERVISOR_REFERENCE_MODEL"
+    return DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"
 
 
 def prepare_worker_codex_home() -> None:
@@ -1463,6 +1475,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     raw_task_path.write_text(task.prompt + "\n", encoding="utf-8")
     prompt_path.write_text(context_packet["prompt"], encoding="utf-8")
     reference_gate = validate_worker_reference_gate(task, worktree, run_dir)
+    worker_model, worker_model_source = resolved_worker_model(task)
 
     cmd = build_worker_cmd(task, worktree, run_dir, final_path, context_packet["prompt"])
     if reference_gate["status"] == "fail":
@@ -1483,6 +1496,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         stderr_path.write_text("reference gate failed before worker launch\n", encoding="utf-8")
         return {
             "command": cmd,
+            "worker_model": worker_model,
+            "worker_model_source": worker_model_source,
             "return_code": 0,
             "timed_out": False,
             "idle_timed_out": False,
@@ -1663,6 +1678,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     actual_token_usage = aggregate_token_usage(event_summaries)
     return {
         "command": cmd,
+        "worker_model": worker_model,
+        "worker_model_source": worker_model_source,
         "return_code": return_code,
         "timed_out": timed_out,
         "idle_timed_out": idle_timed_out,
@@ -3518,7 +3535,8 @@ def create_policy_attestation(task: Task, run_dir: Path, summary: dict[str, Any]
         "checks": task.checks,
         "phase": task.phase,
         "strict_worker_envelope": parse_bool_field(fields, "strict_worker_envelope", False),
-        "worker_model": os.getenv("A9_SUPERVISOR_MODEL", DEFAULT_WORKER_MODEL),
+        "worker_model": summary.get("worker", {}).get("worker_model") or resolved_worker_model(task)[0],
+        "worker_model_source": summary.get("worker", {}).get("worker_model_source") or resolved_worker_model(task)[1],
         "guards": ["worker_envelope", "patch_guard", "scope_guard", "checks", "git_governance"],
     }
     workspace = {
@@ -6187,6 +6205,8 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         ),
         "latest_git_governance": summary.get("git_governance", {}) if summary else {},
         "latest_worker_failure": summary.get("worker_failure", {}) if summary else {},
+        "latest_worker_model": summary.get("worker", {}).get("worker_model", "") if summary else "",
+        "latest_worker_model_source": summary.get("worker", {}).get("worker_model_source", "") if summary else "",
         "latest_monitor_block": summary.get("monitor_block", {}) if summary else {},
         "auto_loop_guard": summary.get("auto_loop_guard", read_json_file(AUTO_LOOP_GUARD_PATH)) if summary else read_json_file(AUTO_LOOP_GUARD_PATH),
         "next_task_path": str(next_task_path) if next_task_path else "",

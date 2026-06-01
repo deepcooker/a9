@@ -137,6 +137,7 @@ Do the work.
             run_dir = Path(tmp)
             final_path = run_dir / "final.md"
             old_model = os.environ.pop("A9_SUPERVISOR_MODEL", None)
+            old_reference_model = os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
             old_override = os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
             try:
                 cmd = mod.build_worker_cmd(task, Path("/tmp/worktree"), run_dir, final_path, "prompt")
@@ -156,10 +157,40 @@ Do the work.
                     os.environ["A9_SUPERVISOR_MODEL"] = old_model
                 else:
                     os.environ.pop("A9_SUPERVISOR_MODEL", None)
+                if old_reference_model is not None:
+                    os.environ["A9_SUPERVISOR_REFERENCE_MODEL"] = old_reference_model
+                else:
+                    os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
                 if old_override is not None:
                     os.environ["A9_SUPERVISOR_WORKER_CMD"] = old_override
                 else:
                     os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+
+    def test_reference_scan_model_can_be_overridden_without_changing_default(self):
+        mod = load_supervisor()
+        reference_task = mod.Task(path=Path("task.md"), task_id="reference-model", prompt="demo", phase="reference_scan")
+        implement_task = mod.Task(path=Path("task.md"), task_id="implement-model", prompt="demo", phase="implement")
+        old_model = os.environ.pop("A9_SUPERVISOR_MODEL", None)
+        old_reference_model = os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
+        try:
+            self.assertEqual(mod.resolved_worker_model(reference_task), (mod.DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"))
+            os.environ["A9_SUPERVISOR_REFERENCE_MODEL"] = "gpt-5.3-codex-spark"
+            self.assertEqual(
+                mod.resolved_worker_model(reference_task),
+                ("gpt-5.3-codex-spark", "A9_SUPERVISOR_REFERENCE_MODEL"),
+            )
+            self.assertEqual(mod.resolved_worker_model(implement_task), (mod.DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"))
+            os.environ["A9_SUPERVISOR_MODEL"] = "gpt-5.5"
+            self.assertEqual(mod.resolved_worker_model(reference_task), ("gpt-5.5", "A9_SUPERVISOR_MODEL"))
+        finally:
+            if old_model is not None:
+                os.environ["A9_SUPERVISOR_MODEL"] = old_model
+            else:
+                os.environ.pop("A9_SUPERVISOR_MODEL", None)
+            if old_reference_model is not None:
+                os.environ["A9_SUPERVISOR_REFERENCE_MODEL"] = old_reference_model
+            else:
+                os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
 
     def test_aider_style_compression_preserves_recent_tail_and_references(self):
         mod = load_supervisor()
@@ -772,6 +803,11 @@ Do the work.
         self.assertEqual(data["policy_attestation"]["status"], "pass")
         self.assertTrue(Path(data["policy_attestation"]["output_path"]).exists())
         self.assertEqual(data["monitor_score"]["decision_model"], "requirements_review_council_v1")
+        self.assertEqual(data["worker"]["worker_model"], "gpt-5.3-codex")
+        self.assertEqual(data["worker"]["worker_model_source"], "DEFAULT_WORKER_MODEL")
+        policy_attestation = json.loads(Path(data["policy_attestation"]["output_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(policy_attestation["policy"]["snapshot"]["worker_model"], "gpt-5.3-codex")
+        self.assertEqual(policy_attestation["policy"]["snapshot"]["worker_model_source"], "DEFAULT_WORKER_MODEL")
         self.assertTrue(Path(data["monitor_score"]["output_path"]).exists())
         self.assertTrue(Path(data["monitor_score"]["eval_contract_path"]).exists())
         self.assertEqual(data["monitor_score"]["layers"]["llm_evaluator"]["status"], "not_configured")
