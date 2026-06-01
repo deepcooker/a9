@@ -156,3 +156,39 @@ Governance lesson:
   task contract.
 - Empty/noop web actions should be blocked or downgraded into a visible
   process-governance finding.
+
+## 2026-06-02: watch endpoint worker produced useful design but no applicable patch
+
+Run evidence:
+- `.a9/runs/000-implement-node-command-result-watch-20260602-20260601T201318Z-a1`
+
+Observation:
+- Worker stayed on the communication mainline and selected the right mechanism:
+  cursor-aware bounded `node-command-results/watch`.
+- It again emitted an empty/noop web action and ran an undeclared targeted
+  unittest.
+- Declared supervisor checks passed because no patch was applied to the
+  worktree, but the run still ended `needs-repair`: patch apply and patch guard
+  both skipped with `no SEARCH/REPLACE patch in final message` /
+  `no recorded worker diff`.
+- The final response put a strict JSON envelope first, then SEARCH/REPLACE
+  blocks after it. The deterministic apply parser did not recognize those
+  blocks as the worker patch.
+
+Monitor intervention:
+- Manually applied the worker's useful design into:
+  `scripts/a9_control_api.py`, `tests/test_control_api.py`,
+  `docs/communication-governance-framework.md`.
+- Ran declared checks:
+  `python3 -m py_compile scripts/a9_control_api.py` and
+  `python3 -m unittest tests.test_control_api.ControlApiTests` (211 tests).
+- Committed the accepted patch as
+  `27572fc a9 control: add node command result watch endpoint`.
+
+Governance lesson:
+- A9 needs a stricter worker-output contract: either final envelope must carry
+  an explicit machine-readable patch field, or SEARCH/REPLACE blocks must be
+  emitted in the exact parser-recognized location.
+- Process governance should hard-block or repair empty/noop web actions and
+  undeclared checks, because repeated prompt-only warnings did not change the
+  behavior.

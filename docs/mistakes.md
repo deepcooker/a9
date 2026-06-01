@@ -1211,3 +1211,23 @@
 - 新增函数参数时，要搜索并更新所有 wrapper/fake/handler 测试路径。
 - 空 `web_search/noop` 是执行噪音，应记录并在后续 supervisor/process
   governance 中拦截或降噪。
+
+## 2026-06-02：strict envelope 后面的 SEARCH/REPLACE 不等于可应用补丁
+
+现象：
+
+- `000-implement-node-command-result-watch-20260602` 输出了有价值的
+  watch endpoint 设计和 SEARCH/REPLACE 块。
+- 但 final 先输出 strict JSON envelope，再在后面输出 SEARCH/REPLACE。
+- Supervisor 记录 `patch_apply=skip`，原因是
+  `no SEARCH/REPLACE patch in final message`，`patch_guard=skip`，没有
+  worker diff。
+- 这导致运行 `needs-repair`，虽然主控可以人工提取并应用设计。
+
+规则：
+
+- Worker 的最终产物必须被 deterministic apply 识别；“人能看懂的补丁”
+  不等于“系统能应用的补丁”。
+- 后续要么让 strict envelope 内包含显式 patch 字段，要么让
+  SEARCH/REPLACE 块使用 parser 认可的唯一位置和格式。
+- 对执行机器而言，不能只看设计是否对，要看是否能被流水线自动接上。
