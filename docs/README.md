@@ -7,6 +7,7 @@
 - `AGENTS.md`: 执行机器规则和当前主线。
 - `原始想法需求.md`: A9 原始哲学、产品脉络和需求源头。
 - `docs/project.md`: 项目状态和分层目标。
+- `docs/stage-handoff-2026-06-01.md`: 当前通讯/control 阶段收口和下一轮 session 精读任务包。
 - `docs/collaboration.md`: 人类/监控者与 24 小时机器的协作方式。
 - `docs/communication-governance-framework.md`: 当前主线，通讯治理架构。
 - `docs/communication-governance-worker-task.md`: 下一刀 worker 任务模板。
