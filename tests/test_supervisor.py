@@ -1714,6 +1714,54 @@ Do the work.
         self.assertIn("last_mistake: - avoid broad scans", prompt)
         self.assertIn("last_change_request: - proposal: update acceptance wording", prompt)
 
+    def test_next_task_prompt_prioritizes_contract_fields_before_recovery_tails_under_budget(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_budget = os.environ.get("A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET")
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            os.environ["A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET"] = "256"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-contract-priority",
+                    goal_id="goal-contract-priority",
+                    contract={
+                        "problem": "Keep contract fields visible.",
+                        "must": "Preserve must field first.",
+                        "acceptance": "Recovery tails are optional under low budget.",
+                    },
+                )
+                plan_dir = mod.write_plan_files(plan)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                stored["run_ids"] = [f"run-{i:03d}-" + ("x" * 32) for i in range(30)]
+                stored["evidence_refs"] = [f"/tmp/evidence/{i:03d}/summary.json" for i in range(30)]
+                (plan_dir / "plan.json").write_text(json.dumps(stored), encoding="utf-8")
+                (plan_dir / "progress.md").write_text("# Progress\n\n- long recovery tail line\n", encoding="utf-8")
+                (plan_dir / "findings.md").write_text("# Findings\n\n- long findings tail line\n", encoding="utf-8")
+                task = mod.Task(path=Path("task.md"), task_id="plan-priority-prompt", prompt="demo", phase="implement")
+                summary = {
+                    "status": "pass",
+                    "run_dir": "/tmp/run",
+                    "context_path": "/tmp/run/context.md",
+                    "worker_envelope": {"envelope": {"output": {"next_slice": "record"}}},
+                }
+                prompt = mod.next_task_prompt(task, summary, "implement")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                if old_budget is None:
+                    os.environ.pop("A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET", None)
+                else:
+                    os.environ["A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET"] = old_budget
+
+        self.assertIn("problem: Keep contract fields visible.", prompt)
+        self.assertIn("must: Preserve must field first.", prompt)
+        self.assertIn("acceptance: Recovery tails are optional under low budget.", prompt)
+        self.assertNotIn("latest_run_next_slice:", prompt)
+
     def test_plan_status_prints_recovery_tail_fields(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

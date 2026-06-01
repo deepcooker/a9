@@ -5300,6 +5300,11 @@ def active_plan_prompt_context() -> str:
     plan = active_plan()
     if not plan:
         return ""
+    budget_tokens_raw = os.getenv("A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET", "1200")
+    try:
+        budget_tokens = max(256, int(budget_tokens_raw))
+    except ValueError:
+        budget_tokens = 1200
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
     evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
@@ -5311,37 +5316,48 @@ def active_plan_prompt_context() -> str:
         "last_change_request": tail_change_request_line(plan_dir / "change_request.md"),
     }
     latest_run = plan_latest_run_snapshot(plan)
-    return f"""Active plan contract:
-- plan_id: {plan.get('plan_id', '')}
-- goal_id: {plan.get('goal_id', '')}
-- flow_id: {plan.get('flow_id', '')}
-- expected_flow_revision: {plan.get('expected_flow_revision', '')}
-- run_ids: {bounded_inline(', '.join(str(item) for item in run_ids), 500)}
-- evidence_refs: {bounded_inline(', '.join(str(item) for item in evidence_refs), 700)}
-- problem: {bounded_inline(contract.get('problem', ''), 500)}
-- why_now: {bounded_inline(contract.get('why_now', ''), 500)}
-- must: {bounded_inline(contract.get('must', ''), 500)}
-- should: {bounded_inline(contract.get('should', ''), 500)}
-- could: {bounded_inline(contract.get('could', ''), 500)}
-- system_requirement: {bounded_inline(contract.get('system_requirement', ''), 700)}
-- data_shape: {bounded_inline(contract.get('data_shape', ''), 500)}
-- normal_flow: {bounded_inline(contract.get('normal_flow', ''), 500)}
-- exception_flow: {bounded_inline(contract.get('exception_flow', ''), 500)}
-- acceptance: {bounded_inline(contract.get('acceptance', ''), 600)}
-- out_of_scope: {bounded_inline(contract.get('out_of_scope', ''), 500)}
-- allowed_execution: {bounded_inline(contract.get('allowed_execution', ''), 500)}
-- reference_entry: {bounded_inline(contract.get('reference_entry', ''), 500)}
-- change_record: {bounded_inline(contract.get('change_record', ''), 500)}
-- last_progress: {recovery_tail['last_progress']}
-- last_findings: {recovery_tail['last_findings']}
-- last_mistake: {recovery_tail['last_mistake']}
-- last_change_request: {recovery_tail['last_change_request']}
-- latest_run_summary: {bounded_inline(latest_run.get('summary_path', ''), 500)}
-- latest_run_status: {bounded_inline(latest_run.get('status', ''), 200)}
-- latest_run_phase: {bounded_inline(latest_run.get('phase', ''), 200)}
-- latest_run_next_slice: {bounded_inline(latest_run.get('next_slice', ''), 500)}
-- authority: plan is a task contract view; goal/flow/run/monitor remain runtime authority.
-"""
+    required_lines = [
+        "Active plan contract:",
+        f"- plan_id: {plan.get('plan_id', '')}",
+        f"- goal_id: {plan.get('goal_id', '')}",
+        f"- flow_id: {plan.get('flow_id', '')}",
+        f"- expected_flow_revision: {plan.get('expected_flow_revision', '')}",
+        f"- run_ids: {bounded_inline(', '.join(str(item) for item in run_ids), 500)}",
+        f"- evidence_refs: {bounded_inline(', '.join(str(item) for item in evidence_refs), 700)}",
+        f"- problem: {bounded_inline(contract.get('problem', ''), 500)}",
+        f"- why_now: {bounded_inline(contract.get('why_now', ''), 500)}",
+        f"- must: {bounded_inline(contract.get('must', ''), 500)}",
+        f"- should: {bounded_inline(contract.get('should', ''), 500)}",
+        f"- could: {bounded_inline(contract.get('could', ''), 500)}",
+        f"- system_requirement: {bounded_inline(contract.get('system_requirement', ''), 700)}",
+        f"- data_shape: {bounded_inline(contract.get('data_shape', ''), 500)}",
+        f"- normal_flow: {bounded_inline(contract.get('normal_flow', ''), 500)}",
+        f"- exception_flow: {bounded_inline(contract.get('exception_flow', ''), 500)}",
+        f"- acceptance: {bounded_inline(contract.get('acceptance', ''), 600)}",
+        f"- out_of_scope: {bounded_inline(contract.get('out_of_scope', ''), 500)}",
+        f"- allowed_execution: {bounded_inline(contract.get('allowed_execution', ''), 500)}",
+        f"- reference_entry: {bounded_inline(contract.get('reference_entry', ''), 500)}",
+        f"- change_record: {bounded_inline(contract.get('change_record', ''), 500)}",
+        "- authority: plan is a task contract view; goal/flow/run/monitor remain runtime authority.",
+    ]
+    optional_lines = [
+        f"- last_progress: {recovery_tail['last_progress']}",
+        f"- last_findings: {recovery_tail['last_findings']}",
+        f"- last_mistake: {recovery_tail['last_mistake']}",
+        f"- last_change_request: {recovery_tail['last_change_request']}",
+        f"- latest_run_summary: {bounded_inline(latest_run.get('summary_path', ''), 500)}",
+        f"- latest_run_status: {bounded_inline(latest_run.get('status', ''), 200)}",
+        f"- latest_run_phase: {bounded_inline(latest_run.get('phase', ''), 200)}",
+        f"- latest_run_next_slice: {bounded_inline(latest_run.get('next_slice', ''), 500)}",
+    ]
+    selected = list(required_lines)
+    for line in optional_lines:
+        candidate = "\n".join(selected + [line]) + "\n"
+        if approx_token_count(candidate) <= budget_tokens:
+            selected.append(line)
+        else:
+            break
+    return "\n".join(selected) + "\n"
 
 
 def tail_recovery_line(path: Path, *, max_chars: int = 260) -> str:
