@@ -1493,3 +1493,30 @@ Next monitoring target:
      keep mobile/control entry as typed contract consumer; do not add new hard
      gate or token/line ceilings when data contract and recovery behavior are the
      acceptance target.
+
+73. Node command lifecycle now has discovery->submit->by-command typed recovery routing proof.
+   - Trigger:
+     communication handler still lacked one minimal HTTP lifecycle proof that a
+     client can start from discovery, submit a node command, and on missing
+     result/stale node receive machine-routable recovery hints (`next_endpoint`).
+   - Mechanism copied:
+     Codex command/result handoff contract (`command_id + action/reason + evidence`),
+     OpenClaw/Lobster typed control boundary (consumer reads typed envelope only),
+     and Barter-rs/Redis recovery modeling for missing receipt and stale heartbeat.
+   - Change:
+     add endpoint-chain test
+     `test_api_discovery_submit_and_by_command_missing_result_exposes_routable_recovery_hint`
+     in `tests/test_control_api.py`:
+     discover `node_command_submit`/`node_command_result_by_command`/`node_recovery_transcript`,
+     submit `/api/nodes/command-submit`, then call
+     `/api/node-command-results/by-command/{command_id}` with stale node context;
+     assert typed `recovery_hint` and routable `next_endpoint` in
+     `{ /api/nodes/probe, /api/node-command-results/by-command/{command_id} }`.
+   - Verification:
+     pre-checks passed:
+     `python3 -m unittest tests.test_control_api.ControlApiTests.test_api_nodes_command_submit_writes_to_tasks_stream tests.test_control_api.ControlApiTests.test_api_node_command_results_by_command_endpoint_returns_lookup_payload tests.test_control_api.ControlApiTests.test_api_discovery_to_recovery_transcript_typed_contract_for_handler`.
+     runtime script proof passed for the full chain (discovery=200, submit=ok,
+     by-command=no_result with recovery_hint.next_endpoint routable).
+   - Governance lesson:
+     keep recovery orchestration in typed contract/action routing; do not move
+     fallback logic into page parsing or prose heuristics.

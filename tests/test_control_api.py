@@ -6696,6 +6696,131 @@ class ControlApiTests(unittest.TestCase):
         self.assertIn("redis:ping", refs)
         self.assertIn(str(node_path), refs)
 
+    def test_api_discovery_submit_and_by_command_missing_result_exposes_routable_recovery_hint(self):
+        mod = load_control_api()
+        discovery_capture = {"status": None, "payload": None}
+        submit_capture = {"status": None, "payload": None}
+        by_command_capture = {"status": None, "payload": None}
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n", 0)
+            if args[:2] == ["XADD", "a9:tasks"]:
+                return FakeProc("1740000900-0\n", 0)
+            if args[:3] == ["--raw", "XREVRANGE", "a9:test-events"]:
+                return FakeProc("1740000999-0\nkind\nnode_command_result\ncommand_id\nother-command\n", 0)
+            return FakeProc("", 0)
+
+        class DummyDiscoveryGetHandler:
+            path = "/api/discovery"
+            headers = {}
+
+            def write_json(self, status, payload):
+                discovery_capture["status"] = status
+                discovery_capture["payload"] = payload
+
+        original_redis = mod.redis_cli
+        original_lookup = mod.node_command_result_by_command_lookup
+        mod.redis_cli = fake_redis
+        try:
+            mod.ControlHandler.do_GET(DummyDiscoveryGetHandler())
+            self.assertEqual(discovery_capture["status"], 200)
+
+            endpoints = discovery_capture["payload"]["endpoints"]
+            self.assertEqual(endpoints["node_command_submit"], "/api/nodes/command-submit")
+            self.assertEqual(endpoints["node_command_result_by_command"], "/api/node-command-results/by-command/{command_id}")
+            self.assertEqual(endpoints["node_recovery_transcript"], "/api/nodes/recovery-transcript")
+
+            payload = {
+                "command_id": "cmd-lifecycle",
+                "node_id": "node-lifecycle",
+                "action": "probe",
+                "action_reason": "typed_contract_test",
+                "target": "node-lifecycle",
+                "expected_revision": 1,
+                "ttl_seconds": 30,
+            }
+            post_body = json.dumps(payload).encode("utf-8")
+
+            class DummyCommandSubmitPostHandler:
+                path = "/api/nodes/command-submit"
+                headers = {"Content-Length": str(len(post_body))}
+                rfile = io.BytesIO(post_body)
+
+                def write_json(self, status, response_payload):
+                    submit_capture["status"] = status
+                    submit_capture["payload"] = response_payload
+
+            mod.ControlHandler.do_POST(DummyCommandSubmitPostHandler())
+            self.assertEqual(submit_capture["status"], 200)
+            self.assertEqual(submit_capture["payload"]["status"], "ok")
+            self.assertEqual(submit_capture["payload"]["command"]["command_id"], "cmd-lifecycle")
+            self.assertIn("recovery_hint", submit_capture["payload"])
+
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                nodes_dir = root / ".a9" / "nodes"
+                nodes_dir.mkdir(parents=True)
+                node_path = nodes_dir / "node-lifecycle.json"
+                node_path.write_text(
+                    json.dumps(
+                        {
+                            "node_id": "node-lifecycle",
+                            "status": "online",
+                            "connection_state": "stale",
+                            "connection_action": "reconnect",
+                            "connection_action_reason": "heartbeat_stale",
+                            "last_heartbeat_at": "2026-05-29T00:00:00+00:00",
+                            "updated_at": "2026-05-29T00:00:00+00:00",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                def lookup_with_root(command_id, *, event_stream="a9:events", limit=100, timeout=3, node_id=""):
+                    return original_lookup(
+                        command_id,
+                        event_stream=event_stream,
+                        limit=limit,
+                        timeout=timeout,
+                        node_id=node_id,
+                        root=root,
+                    )
+
+                mod.node_command_result_by_command_lookup = lookup_with_root
+
+                class DummyByCommandGetHandler:
+                    path = (
+                        "/api/node-command-results/by-command/cmd-lifecycle"
+                        "?event_stream=a9:test-events&limit=8&timeout=6&node_id=node-lifecycle"
+                    )
+                    headers = {}
+
+                    def write_json(self, status, response_payload):
+                        by_command_capture["status"] = status
+                        by_command_capture["payload"] = response_payload
+
+                mod.ControlHandler.do_GET(DummyByCommandGetHandler())
+
+            self.assertEqual(by_command_capture["status"], 200)
+            self.assertEqual(by_command_capture["payload"]["status"], "noop")
+            self.assertEqual(by_command_capture["payload"]["error_code"], "no_result")
+            hint = by_command_capture["payload"]["recovery_hint"]
+            self.assertIsInstance(hint, dict)
+            self.assertIn(hint.get("action"), {"probe", "reconnect", "wait"})
+            self.assertIn(
+                hint.get("next_endpoint"),
+                {"/api/nodes/probe", "/api/node-command-results/by-command/{command_id}"},
+            )
+        finally:
+            mod.redis_cli = original_redis
+            mod.node_command_result_by_command_lookup = original_lookup
+
     def test_read_evidence_file_allows_only_a9_evidence_roots(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
