@@ -1846,3 +1846,30 @@ Next monitoring target:
    - Governance lesson:
      use existing soft gate semantics for remote control mutations; keep action
      runtime bounded and return raw service evidence instead of inferred labels.
+
+87. Mobile service card can now trigger gated missing-service recovery.
+   - Trigger:
+     `/api/services/start` existed, but the phone card was still observation-only.
+     That meant a remote operator could see a missing service yet still needed
+     SSH or shell access to perform the first recovery action.
+   - Mechanism copied:
+     the existing phone-control runtime group and service start contract are
+     reused instead of adding a separate mobile approval model. The phone sends
+     `operator.admin`, the control API checks `command_gate("services.start")`,
+     and `a9_service.py` remains the deterministic starter.
+   - Change:
+     `/mnt/d/root/a9_mobile_agent_lab/store/useA9ControlStore.ts` adds
+     `A9ServiceStartResult` and `startMissingServices()`. The mobile A9 services
+     card in `/mnt/d/root/a9_mobile_agent_lab/app/(tabs)/agent.tsx` now renders
+     a `Start missing` action when `missing_count > 0`, sends only the observed
+     missing service list, and shows the last start status/reason on the card.
+     Healthy services stay read-only with `All services observed`.
+   - Verification:
+     in `/mnt/d/root/a9_mobile_agent_lab`, `npx tsc --noEmit` and
+     `npm run smoke:mobile` passed. Live A9 service process observation still
+     reports `control-api`, `node-worker`, `recovery-loop`, and `supervisor`
+     running.
+   - Governance lesson:
+     phone control should close the smallest useful loop: observe canonical
+     service truth, trigger the bounded deterministic recovery action, then
+     reread canonical truth. It should not become its own service manager.
