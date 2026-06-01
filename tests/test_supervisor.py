@@ -4232,6 +4232,37 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "noop_web_search_event")
         self.assertTrue(result["findings"][0]["web_forbidden_by_prompt"])
 
+    def test_process_governance_observes_raw_web_search_event_path(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            raw_event = {
+                "type": "response.output_item.added",
+                "item": {
+                    "id": "item_1",
+                    "type": "web_search_call",
+                    "status": "noop",
+                    "arguments": {"query": ""},
+                },
+            }
+            summary = mod.summarize_thread_event(raw_event)
+            self.assertIsNotNone(summary)
+            assert summary is not None
+            with events.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(summary, ensure_ascii=False) + "\n")
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="web-search-roundtrip",
+                prompt="Boundaries:\n- Do not browse web.\n",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["kind"], "noop_web_search_event")
+        self.assertEqual(result["findings"][0]["level"], "warn")
+
     def test_process_governance_observes_direct_file_change_event_without_blocking(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
