@@ -1651,6 +1651,10 @@ Do the work.
                     },
                 )
                 plan_dir = mod.write_plan_files(plan)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                stored["run_ids"] = ["run-0", "run-1"]
+                stored["evidence_refs"] = ["/tmp/run-0/summary.json", "/tmp/run-1/evidence.jsonl"]
+                (plan_dir / "plan.json").write_text(json.dumps(stored), encoding="utf-8")
                 (plan_dir / "progress.md").write_text("# Progress\n\n- ran declared tests\n", encoding="utf-8")
                 (plan_dir / "findings.md").write_text("# Findings\n\n- copied Codex history ordering\n", encoding="utf-8")
                 (plan_dir / "mistakes.md").write_text("# Mistakes\n\n- avoid broad search roots\n", encoding="utf-8")
@@ -1671,6 +1675,10 @@ Do the work.
         self.assertIn("last_findings: - copied Codex history ordering", text)
         self.assertIn("last_mistake: - avoid broad search roots", text)
         self.assertIn("last_change_request: - none", text)
+        self.assertIn("run_ids_count: 2", text)
+        self.assertIn("latest_run_id: run-1", text)
+        self.assertIn("evidence_refs_count: 2", text)
+        self.assertIn("latest_evidence_ref: /tmp/run-1/evidence.jsonl", text)
         self.assertIn("happened_since_last_action", text)
         self.assertIn("plan_evidence_source", text)
         self.assertIn("why_next_action", text)

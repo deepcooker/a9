@@ -7370,6 +7370,14 @@ def plan_status(args: argparse.Namespace) -> int:
     print(f"goal_id: {plan.get('goal_id', '')}")
     print(f"flow_id: {plan.get('flow_id', '')}")
     print(f"expected_flow_revision: {plan.get('expected_flow_revision', '')}")
+    run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
+    evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
+    print(f"run_ids_count: {len(run_ids)}")
+    if run_ids:
+        print(f"latest_run_id: {bounded_inline(str(run_ids[-1]), 260)}")
+    print(f"evidence_refs_count: {len(evidence_refs)}")
+    if evidence_refs:
+        print(f"latest_evidence_ref: {bounded_inline(str(evidence_refs[-1]), 260)}")
     plan_dir = plan_path(str(plan.get("plan_id", "")))
     print(f"plan_dir: {plan_dir}")
     print(f"problem: {bounded_inline(contract.get('problem', ''), 260)}")
