@@ -168,6 +168,47 @@ A9 adaptation target:
   chat tails.
 - Missing plan fields start as observation, not hard gates.
 
+### GBrain / GraphRAG / Graphify / LLM-Wiki
+
+Local references:
+
+- `reference-projects/gbrain/`
+- `reference-projects/graphrag/`
+- `reference-projects/graphify/`
+- `reference-projects/llm-wiki/`
+
+License status:
+
+- `reference-projects/gbrain` is MIT licensed at local commit `eefe8b5`.
+- `reference-projects/graphrag` is MIT licensed at local commit `6d02c23`.
+- `reference-projects/graphify` is MIT licensed at local commit `4b17f19`.
+- `reference-projects/llm-wiki` is MIT licensed at local commit `7e9bd0a`.
+- No source has been copied into A9 runtime yet. Current use is reference scan
+  and mechanism extraction only.
+
+Mechanisms to adapt:
+
+- GBrain: synthesized answers with citations and gap analysis, self-wiring
+  typed graph edges, schema packs, contradiction/staleness maintenance, scoped
+  team/personal brain access, durable job queue.
+- GraphRAG: sidecar indexing pipeline that transforms unstructured private data
+  into structured graph memory, with cost awareness and prompt tuning.
+- Graphify: code/docs/media-to-graph outputs, query-first repo orientation,
+  confidence tags for extracted/inferred/ambiguous relationships.
+- LLM-Wiki: topic wikis, parallel research, collector catalogs, source
+  ingestion, truth-seeking audits, query resume, archives, lint repair, portable
+  hub resolution.
+
+A9 adaptation target:
+
+- Keep raw sessions/runs/git/tests as canonical fact source.
+- Compile selected evidence into wiki/brain topics with citations and known
+  gaps.
+- Build graph/search indexes as derived views, not truth.
+- Use sidecar lanes for contradiction, drift, stale topic, and missing-citation
+  reports.
+- Keep plan files for current work; use wiki/brain/graph for long-term memory.
+
 ### Barter-rs
 
 Local reference:

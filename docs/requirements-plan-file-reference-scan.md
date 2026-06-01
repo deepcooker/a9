@@ -4,6 +4,11 @@ This document records why A9 must treat the user's requirements-analysis guide
 as the root method, and why plan-file workflows are a better execution boundary
 than free-form chat instructions.
 
+Boundary note: `planning-with-files` solves current-task working memory and
+interruption recovery. It does not replace the requirements method or the
+durable graph/wiki/brain layer described in
+`docs/memory-graph-wiki-reference-scan.md`.
+
 ## Decision Boundary
 
 Do not let implementation mechanics replace requirements thinking.

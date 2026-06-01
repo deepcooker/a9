@@ -228,6 +228,7 @@ sidecar review
   - skill/doctrine proposal
   - drift report
   - curator promotion/archive/consolidation
+  - wiki/brain/graph compilation proposal
 ```
 
 ## Role Knowledge Distribution
