@@ -1601,11 +1601,19 @@ Do the work.
                     expected_flow_revision=3,
                     contract={
                         "problem": "Workers drift without task contracts.",
+                        "why_now": "Free-form continuation drifted before shaped tasks.",
+                        "must": "Advance one bounded runtime slice with tests and evidence.",
+                        "should": "Keep governance concerns advisory by default.",
+                        "could": "Record ideas without implementing them in this slice.",
                         "system_requirement": "Prompt includes active plan contract.",
                         "data_shape": "plan.json cites goal and flow refs.",
+                        "normal_flow": "reference_scan -> implement -> test -> record",
+                        "exception_flow": "hard violations create repair tasks",
                         "acceptance": "next task prompt includes active plan.",
                         "out_of_scope": "no plan-owned completion.",
+                        "allowed_execution": "declared checks only",
                         "reference_entry": "planning-with-files plan isolation.",
+                        "change_record": "Shape-first methodology precedes execution.",
                     },
                 )
                 mod.write_plan_files(plan)
@@ -1625,6 +1633,9 @@ Do the work.
         self.assertIn("plan_id: plan-active", prompt)
         self.assertIn("goal_id: goal-active", prompt)
         self.assertIn("Workers drift without task contracts.", prompt)
+        self.assertIn("Advance one bounded runtime slice with tests and evidence.", prompt)
+        self.assertIn("Keep governance concerns advisory by default.", prompt)
+        self.assertIn("reference_scan -> implement -> test -> record", prompt)
         self.assertIn("goal/flow/run/monitor remain runtime authority", prompt)
 
     def test_plan_status_prints_recovery_tail_fields(self):

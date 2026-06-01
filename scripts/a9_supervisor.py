@@ -5265,11 +5265,19 @@ def active_plan_prompt_context() -> str:
 - run_ids: {bounded_inline(', '.join(str(item) for item in run_ids), 500)}
 - evidence_refs: {bounded_inline(', '.join(str(item) for item in evidence_refs), 700)}
 - problem: {bounded_inline(contract.get('problem', ''), 500)}
+- why_now: {bounded_inline(contract.get('why_now', ''), 500)}
+- must: {bounded_inline(contract.get('must', ''), 500)}
+- should: {bounded_inline(contract.get('should', ''), 500)}
+- could: {bounded_inline(contract.get('could', ''), 500)}
 - system_requirement: {bounded_inline(contract.get('system_requirement', ''), 700)}
 - data_shape: {bounded_inline(contract.get('data_shape', ''), 500)}
+- normal_flow: {bounded_inline(contract.get('normal_flow', ''), 500)}
+- exception_flow: {bounded_inline(contract.get('exception_flow', ''), 500)}
 - acceptance: {bounded_inline(contract.get('acceptance', ''), 600)}
 - out_of_scope: {bounded_inline(contract.get('out_of_scope', ''), 500)}
+- allowed_execution: {bounded_inline(contract.get('allowed_execution', ''), 500)}
 - reference_entry: {bounded_inline(contract.get('reference_entry', ''), 500)}
+- change_record: {bounded_inline(contract.get('change_record', ''), 500)}
 - authority: plan is a task contract view; goal/flow/run/monitor remain runtime authority.
 """
 
