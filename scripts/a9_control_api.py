@@ -4600,7 +4600,18 @@ def runtime_session_refresh_trial(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
-    require_phone_admin(payload)
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        observation = service_observation_status(root)
+        missing_services = [str(item) for item in observation.get("observed", {}).get("missing_services", [])]
+        return {
+            "status": "blocked",
+            "command": "services.start",
+            "blocked_reason": str(exc),
+            "missing_services": missing_services,
+            "service_observation": observation,
+        }
     gate = command_gate("services.start", root=root)
     observation = service_observation_status(root)
     missing_services = [str(item) for item in observation.get("observed", {}).get("missing_services", [])]

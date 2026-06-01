@@ -7189,6 +7189,16 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(blocked["command"], "services.start")
             self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
 
+    def test_service_start_action_without_admin_returns_blocked_payload(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked = mod.service_start_action({}, root=root)
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertEqual(blocked["command"], "services.start")
+            self.assertIn("operator.admin", blocked["blocked_reason"])
+            self.assertIn("service_observation", blocked)
+
     def test_service_start_action_runs_helper_and_returns_start_json(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
