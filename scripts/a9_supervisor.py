@@ -54,6 +54,7 @@ DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
 DEFAULT_WORKER_EVENT_BUDGET_MODE = "observe"
 DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
+DEFAULT_REDIS_DEEP_MARK_LIMIT = 80
 DEFAULT_IDLE_GOAL_CONTINUATION_ENABLED = True
 COMMUNICATION_GATE_HINTS = (
     "gateway",
@@ -414,6 +415,20 @@ def parse_task(path: Path) -> Task:
 def next_task() -> Task | None:
     tasks = sorted(QUEUE_DIR.glob("*.md"))
     return parse_task(tasks[0]) if tasks else None
+
+
+def claim_next_task() -> Task | None:
+    ensure_dirs()
+    for path in sorted(QUEUE_DIR.glob("*.md")):
+        claimed = RUNNING_DIR / path.name
+        try:
+            os.replace(path, claimed)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+        return parse_task(claimed)
+    return None
 
 
 def git_head() -> str:
@@ -4256,6 +4271,14 @@ def redis_available() -> bool:
     return redis_cli(["PING"]).stdout.strip().endswith("PONG")
 
 
+def redis_deep_mark_limit() -> int:
+    value = os.getenv("A9_REDIS_DEEP_MARK_LIMIT", str(DEFAULT_REDIS_DEEP_MARK_LIMIT))
+    try:
+        return max(0, int(value))
+    except ValueError:
+        return DEFAULT_REDIS_DEEP_MARK_LIMIT
+
+
 def redis_flow_key(flow_id: str) -> str:
     return f"{FLOW_KEY_PREFIX}{flow_id}"
 
@@ -4636,7 +4659,10 @@ def persist_redis(
                 item["path"],
             ]
         )
-    for mark in deep_marks:
+    deep_mark_limit = redis_deep_mark_limit()
+    persisted_deep_marks = deep_marks[:deep_mark_limit]
+    skipped_deep_marks = max(0, len(deep_marks) - len(persisted_deep_marks))
+    for mark in persisted_deep_marks:
         call(
             [
                 "JSON.SET",
@@ -4664,6 +4690,24 @@ def persist_redis(
                 mark["value"][:1000],
             ]
         )
+    if skipped_deep_marks:
+        call(
+            [
+                "XADD",
+                "a9:deep_marks",
+                "*",
+                "task_id",
+                task.task_id,
+                "run_id",
+                run_id,
+                "kind",
+                "redis_deep_mark_limit",
+                "persisted",
+                str(len(persisted_deep_marks)),
+                "skipped",
+                str(skipped_deep_marks),
+            ]
+        )
     call(["TS.ADD", "a9:ts:tokens_in", "*", str(summary["worker"].get("prompt_approx_tokens", 0))])
     call(["TS.ADD", "a9:ts:task_latency_ms", "*", "0"])
     if summary["status"].startswith("retryable-"):
@@ -4674,7 +4718,9 @@ def persist_redis(
         "status": "ok" if not errors else "error",
         "errors": errors[-10:],
         "evidence_events": len(evidence),
-        "deep_mark_events": len(deep_marks),
+        "deep_mark_events": len(persisted_deep_marks),
+        "deep_mark_skipped": skipped_deep_marks,
+        "deep_mark_limit": deep_mark_limit,
     }
 
 
@@ -7245,7 +7291,7 @@ def run_session_close_reading_task(task: Task, *, auto_next: bool = False) -> in
 
 def run_one(*, auto_next: bool = False) -> int:
     ensure_dirs()
-    task = next_task()
+    task = claim_next_task()
     if not task:
         print("No queued tasks.")
         print_service_progress(service_progress())

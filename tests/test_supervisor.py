@@ -77,6 +77,43 @@ Do the work.
         self.assertEqual(task.allowed_paths, ["scripts/", "tests/*.py"])
         self.assertEqual(task.prompt, "Do the work.")
 
+    def test_claim_next_task_moves_queue_file_to_running_atomically(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp) / "queue"
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.QUEUE_DIR.mkdir(parents=True)
+                mod.RUNNING_DIR.mkdir(parents=True)
+                queued = mod.QUEUE_DIR / "sample.md"
+                queued.write_text(
+                    """---
+id: "sample"
+phase: "reference_scan"
+checks:
+allowed_paths:
+---
+Do the work.
+""",
+                    encoding="utf-8",
+                )
+
+                first = mod.claim_next_task()
+                second = mod.claim_next_task()
+
+                self.assertIsNotNone(first)
+                assert first is not None
+                self.assertEqual(first.task_id, "sample")
+                self.assertEqual(first.path, mod.RUNNING_DIR / "sample.md")
+                self.assertFalse(queued.exists())
+                self.assertTrue(first.path.exists())
+                self.assertIsNone(second)
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
+
     def test_effective_worker_idle_timeout_extends_supervisor_suite(self):
         mod = load_supervisor()
         task = mod.Task(
@@ -1899,6 +1936,72 @@ Do the work.
 
         self.assertEqual(result.returncode, 124)
         self.assertIn("redis-cli timeout", result.stdout)
+
+    def test_persist_redis_caps_deep_mark_sidecar_writes(self):
+        mod = load_supervisor()
+        original_available = mod.redis_available
+        original_cli = mod.redis_cli
+        old_limit = os.environ.get("A9_REDIS_DEEP_MARK_LIMIT")
+        calls = []
+
+        def fake_available():
+            return True
+
+        def fake_cli(args):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout="OK\n")
+
+        deep_marks = [
+            {
+                "mark_id": f"mark-{idx}",
+                "checkpoint_id": "checkpoint-1",
+                "evidence_id": "evidence-1",
+                "kind": "detail",
+                "label": "line",
+                "value": f"value-{idx}",
+                "weight": 1.0,
+                "metadata": {},
+            }
+            for idx in range(3)
+        ]
+        try:
+            mod.redis_available = fake_available
+            mod.redis_cli = fake_cli
+            os.environ["A9_REDIS_DEEP_MARK_LIMIT"] = "2"
+            result = mod.persist_redis(
+                mod.Task(path=Path("task.md"), task_id="task-1", prompt="demo"),
+                {
+                    "run_dir": "/tmp/run-1",
+                    "status": "pass",
+                    "finished_at": "2026-06-01T00:00:00+00:00",
+                    "attempt": 1,
+                    "worker": {"prompt_approx_tokens": 10, "actual_token_usage": {}},
+                },
+                [],
+                {
+                    "checkpoint_id": "checkpoint-1",
+                    "channels": {},
+                    "updated_channels": [],
+                    "evidence_ids": [],
+                },
+                deep_marks,
+            )
+        finally:
+            mod.redis_available = original_available
+            mod.redis_cli = original_cli
+            if old_limit is None:
+                os.environ.pop("A9_REDIS_DEEP_MARK_LIMIT", None)
+            else:
+                os.environ["A9_REDIS_DEEP_MARK_LIMIT"] = old_limit
+
+        deep_mark_sets = [
+            args for args in calls if args[:1] == ["JSON.SET"] and str(args[1]).startswith("a9:deep_mark:")
+        ]
+        limit_events = [args for args in calls if "redis_deep_mark_limit" in args]
+        self.assertEqual(len(deep_mark_sets), 2)
+        self.assertEqual(result["deep_mark_events"], 2)
+        self.assertEqual(result["deep_mark_skipped"], 1)
+        self.assertTrue(limit_events)
 
     def test_idle_goal_continuation_schedules_reference_first_task(self):
         mod = load_supervisor()
