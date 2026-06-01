@@ -1516,6 +1516,115 @@ Do the work.
         self.assertEqual(goal_state["goal"]["status"], "complete")
         self.assertEqual(goal_state["goal"]["completion_audit"][0]["audit"], "tests and evidence prove the requested slice is complete")
 
+    def test_plan_create_writes_contract_files_and_active_pointer(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "plan_id": "plan-runtime-contract",
+                        "goal_id": "",
+                        "goal_objective": "Build A9 plan lane",
+                        "goal_token_budget": 1000,
+                        "flow_id": "flow-1",
+                        "expected_flow_revision": 7,
+                        "problem": "Workers need a stable task contract.",
+                        "why_now": "Context drift makes handoff unstable.",
+                        "must": "Create plan files.",
+                        "should": "Hydrate prompts.",
+                        "could": "Add attestation later.",
+                        "system_requirement": "Supervisor can create and read an active plan.",
+                        "solution_type": "runtime_infra",
+                        "data_shape": "plan.json, plan.md, progress/findings/mistakes.",
+                        "normal_flow": "create -> hydrate -> execute -> record.",
+                        "exception_flow": "use change_request for contract mutation.",
+                        "acceptance": "plan-status prints recovery restatement.",
+                        "out_of_scope": "no new completion authority.",
+                        "reference_entry": "planning-with-files resolver/session isolation.",
+                        "change_record": "first slice.",
+                        "allowed_execution": "scripts/tests/docs only.",
+                        "no_activate": False,
+                    },
+                )()
+
+                code = mod.plan_create(args)
+                plan_dir = mod.plan_path("plan-runtime-contract")
+                plan = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                active = mod.ACTIVE_PLAN_PATH.read_text(encoding="utf-8").strip()
+                plan_md = (plan_dir / "plan.md").read_text(encoding="utf-8")
+                findings_exists = (plan_dir / "findings.md").exists()
+                progress_exists = (plan_dir / "progress.md").exists()
+                mistakes_exists = (plan_dir / "mistakes.md").exists()
+                change_request_exists = (plan_dir / "change_request.md").exists()
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(code, 0)
+        self.assertEqual(active, "plan-runtime-contract")
+        self.assertEqual(plan["schema"], "a9.plan.v1")
+        self.assertEqual(plan["goal_id"], mod.goal_id_for_objective("Build A9 plan lane"))
+        self.assertEqual(plan["flow_id"], "flow-1")
+        self.assertEqual(plan["expected_flow_revision"], 7)
+        self.assertEqual(plan["contract"]["problem"], "Workers need a stable task contract.")
+        self.assertIn("This plan is a task contract", plan_md)
+        self.assertTrue(findings_exists)
+        self.assertTrue(progress_exists)
+        self.assertTrue(mistakes_exists)
+        self.assertTrue(change_request_exists)
+
+    def test_next_task_prompt_includes_active_plan_contract(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-active",
+                    goal_id="goal-active",
+                    flow_id="flow-active",
+                    expected_flow_revision=3,
+                    contract={
+                        "problem": "Workers drift without task contracts.",
+                        "system_requirement": "Prompt includes active plan contract.",
+                        "data_shape": "plan.json cites goal and flow refs.",
+                        "acceptance": "next task prompt includes active plan.",
+                        "out_of_scope": "no plan-owned completion.",
+                        "reference_entry": "planning-with-files plan isolation.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                task = mod.Task(path=Path("task.md"), task_id="plan-prompt", prompt="demo", phase="implement")
+                summary = {
+                    "status": "pass",
+                    "run_dir": "/tmp/run",
+                    "context_path": "/tmp/run/context.md",
+                    "worker_envelope": {"envelope": {"output": {"next_slice": "implement: hydrate plan"}}},
+                }
+                prompt = mod.next_task_prompt(task, summary, "implement")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertIn("Active plan contract:", prompt)
+        self.assertIn("plan_id: plan-active", prompt)
+        self.assertIn("goal_id: goal-active", prompt)
+        self.assertIn("Workers drift without task contracts.", prompt)
+        self.assertIn("goal/flow/run/monitor remain runtime authority", prompt)
+
     def test_idle_goal_continuation_schedules_reference_first_task(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -39,6 +39,8 @@ WORKER_TMP_DIR = STATE_DIR / "tmp"
 EXTERNAL_SESSIONS_DIR = STATE_DIR / "external_sessions"
 RECORDS_DIR = STATE_DIR / "records"
 GOALS_DIR = STATE_DIR / "goals"
+PLANS_DIR = STATE_DIR / "plans"
+ACTIVE_PLAN_PATH = PLANS_DIR / ".active_plan"
 EVAL_STORE_DIR = STATE_DIR / "eval_store"
 EVAL_STORE_RUNS_DIR = EVAL_STORE_DIR / "runs"
 EVAL_STORE_OVERRIDES_DIR = EVAL_STORE_DIR / "overrides"
@@ -329,6 +331,7 @@ def ensure_dirs() -> None:
         EXTERNAL_SESSIONS_DIR,
         RECORDS_DIR,
         GOALS_DIR,
+        PLANS_DIR,
         EVAL_STORE_DIR,
         EVAL_STORE_RUNS_DIR,
         EVAL_STORE_OVERRIDES_DIR,
@@ -5107,6 +5110,147 @@ def write_goal(goal: dict[str, Any]) -> None:
     write_json(goal_path(str(goal["goal_id"])), goal)
 
 
+def plan_id_for_problem(problem: str) -> str:
+    digest = hashlib.sha256(problem.encode("utf-8")).hexdigest()[:10]
+    return f"plan-{slugify(problem)[:48]}-{digest}"
+
+
+def plan_path(plan_id: str) -> Path:
+    return PLANS_DIR / slugify(plan_id)
+
+
+def active_plan_id() -> str:
+    try:
+        return ACTIVE_PLAN_PATH.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def load_plan(plan_id: str) -> dict[str, Any]:
+    if not plan_id:
+        return {}
+    return read_json_file(plan_path(plan_id) / "plan.json")
+
+
+def active_plan() -> dict[str, Any]:
+    return load_plan(active_plan_id())
+
+
+def write_plan_markdown(plan: dict[str, Any]) -> str:
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    lines = [
+        f"# {plan.get('plan_id', '')}",
+        "",
+        "## Runtime Refs",
+        "",
+        f"- goal_id: {plan.get('goal_id', '')}",
+        f"- flow_id: {plan.get('flow_id', '')}",
+        f"- expected_flow_revision: {plan.get('expected_flow_revision', '')}",
+        f"- run_ids: {', '.join(plan.get('run_ids', [])) if isinstance(plan.get('run_ids'), list) else ''}",
+        f"- evidence_refs: {', '.join(plan.get('evidence_refs', [])) if isinstance(plan.get('evidence_refs'), list) else ''}",
+        "",
+        "## Contract",
+        "",
+    ]
+    for key in [
+        "problem",
+        "why_now",
+        "must",
+        "should",
+        "could",
+        "system_requirement",
+        "solution_type",
+        "data_shape",
+        "normal_flow",
+        "exception_flow",
+        "acceptance",
+        "out_of_scope",
+        "reference_entry",
+        "change_record",
+        "allowed_execution",
+    ]:
+        lines.extend([f"### {key}", "", str(contract.get(key) or "").strip() or "TBD", ""])
+    lines.extend(
+        [
+            "## Authority",
+            "",
+            "- This plan is a task contract and prompt hydration view.",
+            "- Goal completion, flow transition, approval/resume, git acceptance, and completion audit remain runtime authority.",
+            "- Workers may append findings/progress/mistakes and must use change_request for contract changes.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def create_plan_payload(
+    *,
+    plan_id: str,
+    goal_id: str,
+    flow_id: str = "",
+    expected_flow_revision: int | None = None,
+    source: str = "a9_supervisor_plan_create",
+    contract: dict[str, str],
+) -> dict[str, Any]:
+    now = utc_now()
+    return {
+        "schema": "a9.plan.v1",
+        "plan_id": plan_id,
+        "goal_id": goal_id,
+        "flow_id": flow_id,
+        "expected_flow_revision": expected_flow_revision,
+        "run_ids": [],
+        "evidence_refs": [],
+        "completion_audit_ref": "",
+        "source": source,
+        "status": "active",
+        "contract": contract,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def write_plan_files(plan: dict[str, Any], *, activate: bool = True) -> Path:
+    ensure_dirs()
+    plan_dir = plan_path(str(plan["plan_id"]))
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    plan["updated_at"] = utc_now()
+    write_json(plan_dir / "plan.json", plan)
+    (plan_dir / "plan.md").write_text(write_plan_markdown(plan), encoding="utf-8")
+    for name, heading in [
+        ("findings.md", "Findings"),
+        ("progress.md", "Progress"),
+        ("mistakes.md", "Mistakes"),
+        ("change_request.md", "Change Request"),
+    ]:
+        path = plan_dir / name
+        if not path.exists():
+            path.write_text(f"# {heading}\n\n", encoding="utf-8")
+    if activate:
+        ACTIVE_PLAN_PATH.write_text(str(plan["plan_id"]) + "\n", encoding="utf-8")
+    return plan_dir
+
+
+def active_plan_prompt_context() -> str:
+    plan = active_plan()
+    if not plan:
+        return ""
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    return f"""Active plan contract:
+- plan_id: {plan.get('plan_id', '')}
+- goal_id: {plan.get('goal_id', '')}
+- flow_id: {plan.get('flow_id', '')}
+- expected_flow_revision: {plan.get('expected_flow_revision', '')}
+- problem: {bounded_inline(contract.get('problem', ''), 500)}
+- system_requirement: {bounded_inline(contract.get('system_requirement', ''), 700)}
+- data_shape: {bounded_inline(contract.get('data_shape', ''), 500)}
+- acceptance: {bounded_inline(contract.get('acceptance', ''), 600)}
+- out_of_scope: {bounded_inline(contract.get('out_of_scope', ''), 500)}
+- reference_entry: {bounded_inline(contract.get('reference_entry', ''), 500)}
+- authority: plan is a task contract view; goal/flow/run/monitor remain runtime authority.
+"""
+
+
 def create_goal_payload(goal_id: str, objective: str, token_budget_value: int | None = None) -> dict[str, Any]:
     now = utc_now()
     return {
@@ -5339,6 +5483,7 @@ def idle_goal_continuation_prompt(goal: dict[str, Any]) -> str:
     remaining = "unbounded"
     if isinstance(token_budget_value, int):
         remaining = str(max(0, token_budget_value - tokens_used))
+    plan_lines = active_plan_prompt_context()
     return f"""strict_worker_envelope: true
 goal_id: {goal.get('goal_id')}
 goal_objective: {goal.get('objective')}
@@ -5347,6 +5492,7 @@ goal_token_budget: {token_budget_text}
 Continue working toward the active A9 goal.
 
 {requirements_method_packet()}
+{plan_lines}
 
 Requirement shaping card:
 - problem: A9 needs reliable 24h runtime progress without losing the mainline.
@@ -5632,6 +5778,7 @@ Codex-style goal continuation:
 - Use `goal_status: blocked` only when the same blocker repeats and no meaningful progress is possible.
 """
     communication_acceptance_lines = communication_acceptance_hints(task, summary)
+    plan_lines = active_plan_prompt_context()
     return f"""strict_worker_envelope: true
 
 Continue A9 24-hour automation.
@@ -5651,6 +5798,7 @@ Phase: {phase}
 {communication_acceptance_lines}
 
 {requirements_method_packet()}
+{plan_lines}
 
 Requirement shaping card:
 - problem: continue the previous A9 runtime task without expanding into unrelated governance or product surfaces.
@@ -7084,6 +7232,81 @@ def enqueue(args: argparse.Namespace) -> int:
     return 0
 
 
+def plan_create(args: argparse.Namespace) -> int:
+    ensure_dirs()
+    problem = str(args.problem or "").strip()
+    if not problem:
+        raise SystemExit("plan-create requires --problem")
+    goal_objective = str(args.goal_objective or problem).strip()
+    goal_id = str(args.goal_id or "").strip() or goal_id_for_objective(goal_objective)
+    goal = load_goal(goal_id)
+    if not goal:
+        goal = create_goal_payload(goal_id, goal_objective, args.goal_token_budget)
+        write_goal(goal)
+    elif args.goal_token_budget is not None:
+        goal["token_budget"] = args.goal_token_budget
+        write_goal(goal)
+    plan_id = str(args.plan_id or "").strip() or plan_id_for_problem(problem)
+    contract = {
+        "problem": problem,
+        "why_now": str(args.why_now or "").strip(),
+        "must": str(args.must or "").strip(),
+        "should": str(args.should or "").strip(),
+        "could": str(args.could or "").strip(),
+        "system_requirement": str(args.system_requirement or "").strip(),
+        "solution_type": str(args.solution_type or "runtime_infra").strip(),
+        "data_shape": str(args.data_shape or "").strip(),
+        "normal_flow": str(args.normal_flow or "").strip(),
+        "exception_flow": str(args.exception_flow or "").strip(),
+        "acceptance": str(args.acceptance or "").strip(),
+        "out_of_scope": str(args.out_of_scope or "").strip(),
+        "reference_entry": str(args.reference_entry or "").strip(),
+        "change_record": str(args.change_record or "").strip(),
+        "allowed_execution": str(args.allowed_execution or "").strip(),
+    }
+    plan = create_plan_payload(
+        plan_id=plan_id,
+        goal_id=goal_id,
+        flow_id=str(args.flow_id or "").strip(),
+        expected_flow_revision=args.expected_flow_revision,
+        source="a9_supervisor_plan_create",
+        contract=contract,
+    )
+    plan_dir = write_plan_files(plan, activate=not args.no_activate)
+    print(plan_dir)
+    return 0
+
+
+def plan_status(args: argparse.Namespace) -> int:
+    ensure_dirs()
+    plan_id = str(args.plan_id or "").strip() or active_plan_id()
+    if not plan_id:
+        print("No active plan.")
+        return 1
+    plan = load_plan(plan_id)
+    if not plan:
+        print(f"Plan not found: {plan_id}")
+        return 1
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    print(f"plan_id: {plan.get('plan_id', '')}")
+    print(f"status: {plan.get('status', '')}")
+    print(f"goal_id: {plan.get('goal_id', '')}")
+    print(f"flow_id: {plan.get('flow_id', '')}")
+    print(f"expected_flow_revision: {plan.get('expected_flow_revision', '')}")
+    print(f"plan_dir: {plan_path(str(plan.get('plan_id', '')))}")
+    print(f"problem: {bounded_inline(contract.get('problem', ''), 260)}")
+    print(f"system_requirement: {bounded_inline(contract.get('system_requirement', ''), 260)}")
+    print(f"data_shape: {bounded_inline(contract.get('data_shape', ''), 260)}")
+    print(f"acceptance: {bounded_inline(contract.get('acceptance', ''), 260)}")
+    print("recovery_restatement:")
+    print("- current_goal: read goal object, not plan status, for long-term completion.")
+    print("- current_plan: use plan as task contract and prompt hydration view.")
+    print("- current_phase: derive from queued/running task or latest run evidence.")
+    print("- next_action: continue only after reconciling plan with goal/flow/run evidence.")
+    print("- out_of_scope: do not let worker mutate contract fields; use change_request.")
+    return 0
+
+
 def status() -> int:
     ensure_dirs()
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
@@ -7131,6 +7354,11 @@ def status() -> int:
         if groups:
             rendered = " ".join(f"{name}={item.get('percent', 0)}%" for name, item in sorted(groups.items()))
             print(f"24h groups: {rendered}")
+    current_plan_id = active_plan_id()
+    if current_plan_id:
+        plan = load_plan(current_plan_id)
+        plan_status_text = plan.get("status", "missing") if plan else "missing"
+        print(f"active plan: {current_plan_id} status={plan_status_text}")
     return 0
 
 
@@ -7164,6 +7392,33 @@ def main(argv: list[str]) -> int:
     enqueue_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
     enqueue_parser.add_argument("--max-attempts", type=int, default=2)
 
+    plan_create_parser = sub.add_parser("plan-create")
+    plan_create_parser.add_argument("--plan-id", default="")
+    plan_create_parser.add_argument("--goal-id", default="")
+    plan_create_parser.add_argument("--goal-objective", default="")
+    plan_create_parser.add_argument("--goal-token-budget", type=int, default=None)
+    plan_create_parser.add_argument("--flow-id", default="")
+    plan_create_parser.add_argument("--expected-flow-revision", type=int, default=None)
+    plan_create_parser.add_argument("--problem", required=True)
+    plan_create_parser.add_argument("--why-now", default="")
+    plan_create_parser.add_argument("--must", default="")
+    plan_create_parser.add_argument("--should", default="")
+    plan_create_parser.add_argument("--could", default="")
+    plan_create_parser.add_argument("--system-requirement", default="")
+    plan_create_parser.add_argument("--solution-type", default="runtime_infra")
+    plan_create_parser.add_argument("--data-shape", default="")
+    plan_create_parser.add_argument("--normal-flow", default="")
+    plan_create_parser.add_argument("--exception-flow", default="")
+    plan_create_parser.add_argument("--acceptance", default="")
+    plan_create_parser.add_argument("--out-of-scope", default="")
+    plan_create_parser.add_argument("--reference-entry", default="")
+    plan_create_parser.add_argument("--change-record", default="")
+    plan_create_parser.add_argument("--allowed-execution", default="")
+    plan_create_parser.add_argument("--no-activate", action="store_true")
+
+    plan_status_parser = sub.add_parser("plan-status")
+    plan_status_parser.add_argument("--plan-id", default="")
+
     override_parser = sub.add_parser("eval-override")
     override_parser.add_argument("run_id")
     override_parser.add_argument("--action", required=True, choices=sorted(EVAL_OVERRIDE_ACTIONS))
@@ -7182,6 +7437,10 @@ def main(argv: list[str]) -> int:
         return status()
     if args.command == "enqueue":
         return enqueue(args)
+    if args.command == "plan-create":
+        return plan_create(args)
+    if args.command == "plan-status":
+        return plan_status(args)
     if args.command == "eval-override":
         return eval_override(args)
     raise AssertionError(args.command)
