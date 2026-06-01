@@ -1950,3 +1950,26 @@ Next monitoring target:
      routing belongs between observation and mutation. The phone and worker can
      share the same plan, while the actual effects remain behind the existing
      phone-control gates.
+
+91. Mobile control now shows communication action plan and repair-one entry.
+   - Trigger:
+     the backend could produce a deterministic communication action plan, but
+     the phone still displayed only the observed status.
+   - Change:
+     `/mnt/d/root/a9_mobile_agent_lab/store/useA9ControlStore.ts` now fetches
+     `GET /api/communication/action-plan` during refresh and adds
+     `repairCommunicationOne()` for `POST /api/communication/repair-one`.
+     `/mnt/d/root/a9_mobile_agent_lab/app/(tabs)/agent.tsx` extends the
+     `Communication` card with `Arm <group>` and `Repair one` controls, route
+     evidence, last repair status, and a loading placeholder so slow status
+     reads do not remove the first-viewport control surface.
+   - Verification:
+     in `/mnt/d/root/a9_mobile_agent_lab`, `npx tsc --noEmit` passed. Expo web
+     was restarted on port `8199`; `npm run smoke:mobile` passed. Live backend
+     checks returned `GET /api/communication/action-plan -> plan_status=noop`
+     and `POST /api/communication/repair-one -> status=noop` in the healthy
+     current state.
+   - Governance lesson:
+     the phone is now a dispatcher for the same route plan the worker sees. It
+     still does not invent recovery logic; it arms the required group and calls
+     the bounded backend repair endpoint.
