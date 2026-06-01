@@ -1762,6 +1762,58 @@ Do the work.
         self.assertIn("acceptance: Recovery tails are optional under low budget.", prompt)
         self.assertNotIn("latest_run_next_slice:", prompt)
 
+    def test_next_task_prompt_budget_tiers_include_optional_lines_deterministically(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_budget = os.environ.get("A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET")
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-budget-tiers",
+                    goal_id="goal-budget-tiers",
+                    contract={
+                        "problem": "Budget tier coverage for active plan context.",
+                        "must": "Keep contract lines before optional tails.",
+                        "acceptance": "Small budgets may drop optional lines.",
+                    },
+                )
+                plan_dir = mod.write_plan_files(plan)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                stored["run_ids"] = [f"run-{i:03d}-" + ("x" * 32) for i in range(30)]
+                stored["evidence_refs"] = [f"/tmp/evidence/{i:03d}/summary.json" for i in range(30)]
+                (plan_dir / "plan.json").write_text(json.dumps(stored), encoding="utf-8")
+                (plan_dir / "progress.md").write_text("# Progress\n\n- include recovery tail line\n", encoding="utf-8")
+                (plan_dir / "findings.md").write_text("# Findings\n\n- include findings tail line\n", encoding="utf-8")
+                task = mod.Task(path=Path("task.md"), task_id="plan-budget-prompt", prompt="demo", phase="implement")
+                summary = {
+                    "status": "pass",
+                    "run_dir": "/tmp/run",
+                    "context_path": "/tmp/run/context.md",
+                    "worker_envelope": {"envelope": {"output": {"next_slice": "record"}}},
+                }
+
+                os.environ["A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET"] = "512"
+                prompt_512 = mod.next_task_prompt(task, summary, "implement")
+                os.environ["A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET"] = "1200"
+                prompt_1200 = mod.next_task_prompt(task, summary, "implement")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                if old_budget is None:
+                    os.environ.pop("A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET", None)
+                else:
+                    os.environ["A9_ACTIVE_PLAN_PROMPT_TOKEN_BUDGET"] = old_budget
+
+        self.assertIn("problem: Budget tier coverage for active plan context.", prompt_512)
+        self.assertIn("must: Keep contract lines before optional tails.", prompt_512)
+        self.assertIn("acceptance: Small budgets may drop optional lines.", prompt_512)
+        self.assertIn("last_progress: - include recovery tail line", prompt_512)
+        self.assertIn("latest_run_next_slice:", prompt_1200)
+
     def test_plan_status_prints_recovery_tail_fields(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2092,6 +2144,7 @@ Do the work.
 
     def test_idle_goal_continuation_schedules_reference_first_task(self):
         mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             old_goals = mod.GOALS_DIR
@@ -2100,6 +2153,7 @@ Do the work.
             mod.GOALS_DIR = tmp_path / "goals"
             mod.QUEUE_DIR = tmp_path / "queue"
             mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
             try:
                 goal = mod.create_goal_payload("goal-a9-runtime", "Build A9 persistent goal runtime", 1000)
                 goal["tokens_used"] = 125
@@ -2114,6 +2168,10 @@ Do the work.
                 mod.GOALS_DIR = old_goals
                 mod.QUEUE_DIR = old_queue
                 mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
 
         self.assertIn('phase: "reference_scan"', text)
         self.assertIn("goal_id: goal-a9-runtime", text)
@@ -2128,6 +2186,7 @@ Do the work.
 
     def test_idle_goal_continuation_budget_limits_instead_of_scheduling(self):
         mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             old_goals = mod.GOALS_DIR
@@ -2136,6 +2195,7 @@ Do the work.
             mod.GOALS_DIR = tmp_path / "goals"
             mod.QUEUE_DIR = tmp_path / "queue"
             mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
             try:
                 goal = mod.create_goal_payload("goal-over-budget", "Do not continue past budget", 10)
                 goal["tokens_used"] = 10
@@ -2147,6 +2207,10 @@ Do the work.
                 mod.GOALS_DIR = old_goals
                 mod.QUEUE_DIR = old_queue
                 mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
 
         self.assertEqual(stored["status"], "budget_limited")
 
@@ -4693,6 +4757,43 @@ index 0000000..3e75765
         summary = {"worker_envelope": {"envelope": {"output": {"next_slice": "repair idle goal continuation tests"}}}}
 
         self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+
+    def test_schedule_next_task_uses_fallback_after_gateway_hint_filtering(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "plan-lane-runtime-fallback.md",
+            task_id="plan-lane-runtime-fallback",
+            prompt=(
+                "reference_basis: A9 goal/Redis flow/run evidence remain authority.\n"
+                "last_change_request: add deterministic verification after gateway hint filtering."
+            ),
+            phase="mechanism_extract",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "plan-lane-runtime-fallback-run"),
+            "context_path": str(mod.RUNS_DIR / "plan-lane-runtime-fallback-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_recommended_task": "repair idle goal continuation tests"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "vendor_import"', text)
+            self.assertIn("repair idle goal continuation tests", text)
+            self.assertEqual(summary["gateway_runtime_gate"]["status"], "skip")
+            self.assertEqual(summary["gateway_runtime_gate"]["reason"], "not_communication_task")
+            self.assertNotIn("auto_next_block", summary)
+        finally:
+            next_path.unlink(missing_ok=True)
 
     def test_redis_stream_reference_triggers_gateway_gate(self):
         mod = load_supervisor()
