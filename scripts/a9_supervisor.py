@@ -229,6 +229,8 @@ PHASE_SECTION_TOKEN_BUDGETS = {
 }
 SUMMARY_MIN_SPLIT = 4
 SUMMARY_MAX_DEPTH = 3
+SUMMARY_MIN_HEAD_BUDGET = 256
+SUMMARY_RESERVED_TAIL_TOKENS = 192
 NOISE_PATTERNS = [
     re.compile(r"^mysql: \[Warning\] Using a password on the command line interface", re.I),
     re.compile(r"^\.+$"),
@@ -455,6 +457,9 @@ def section_token_budgets_for_phase(phase: str, total_budget: int) -> dict[str, 
     """Route context budget by phase instead of sending every worker the same large packet."""
     phase_budget = PHASE_SECTION_TOKEN_BUDGETS.get(phase, PHASE_SECTION_TOKEN_BUDGETS["implement"])
     section_budgets = {**SECTION_TOKEN_BUDGETS, **phase_budget}
+    # Keep previous-context budget large enough for deterministic head-summary + tail reserve.
+    minimum_previous_context = SUMMARY_MIN_HEAD_BUDGET + SUMMARY_RESERVED_TAIL_TOKENS
+    section_budgets["previous_context"] = max(minimum_previous_context, section_budgets["previous_context"])
     scale = min(1.0, total_budget / sum(section_budgets.values()))
     if scale < 1.0:
         section_budgets = {
@@ -576,7 +581,9 @@ def summarize_messages_deterministic(messages: list[dict[str, str]], budget: int
         excerpt = "\n\n".join(f"{msg['role'].upper()}: {msg['content']}" for msg in messages)
         parts.append(truncate_to_token_budget(excerpt, max(256, budget - 128), keep="middle"))
     summary = "\n\n".join(parts)
-    return [{"role": "user", "content": truncate_to_token_budget(summary, budget, keep="middle")}]
+    render_overhead = approx_token_count("# USER\n\n")
+    content_budget = max(1, budget - render_overhead)
+    return [{"role": "user", "content": truncate_to_token_budget(summary, content_budget, keep="middle")}]
 
 
 def sanitize_messages_for_context(messages: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -610,12 +617,18 @@ def compress_messages_aider_style(
     if len(messages) <= SUMMARY_MIN_SPLIT or depth > SUMMARY_MAX_DEPTH:
         return summarize_messages_deterministic(messages, max_tokens)
 
+    target_tail_tokens = min(
+        max_tokens - SUMMARY_MIN_HEAD_BUDGET,
+        max(SUMMARY_RESERVED_TAIL_TOKENS, max_tokens // 2),
+    )
+    if target_tail_tokens <= 0:
+        return summarize_messages_deterministic(messages, max_tokens)
+
     tail_tokens = 0
     split_index = len(messages)
-    half_max_tokens = max_tokens // 2
     for index in range(len(sized) - 1, -1, -1):
         tokens, _message = sized[index]
-        if tail_tokens + tokens < half_max_tokens:
+        if tail_tokens + tokens <= target_tail_tokens:
             tail_tokens += tokens
             split_index = index
         else:
@@ -629,11 +642,11 @@ def compress_messages_aider_style(
 
     head = messages[:split_index]
     tail = messages[split_index:]
-    summary_budget = max(256, max_tokens - tail_tokens)
+    summary_budget = max(SUMMARY_MIN_HEAD_BUDGET, max_tokens - tail_tokens)
     summary = summarize_messages_deterministic(head, summary_budget)
     combined = summary + tail
     combined_tokens = sum(approx_token_count(message["content"]) for message in combined)
-    if combined_tokens <= max_tokens:
+    if combined_tokens <= max_tokens and approx_token_count(render_messages(combined)) <= max_tokens:
         return combined
     return compress_messages_aider_style(combined, max_tokens, depth=depth + 1)
 

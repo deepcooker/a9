@@ -294,6 +294,66 @@ Do the work.
         self.assertEqual(rendered.count("scripts/noise_filter.py"), 1)
         self.assertIn("RECENT_NOISE_SENTINEL keep this", rendered)
 
+    def test_aider_style_compression_split_starts_at_assistant_boundary(self):
+        mod = load_supervisor()
+        messages = []
+        for index in range(10):
+            messages.append({"role": "user", "content": f"user-{index} " * 30})
+            messages.append({"role": "assistant", "content": f"assistant-{index} " * 30})
+
+        compressed = mod.compress_messages_aider_style(messages, 700)
+        self.assertGreater(len(compressed), 1)
+        summary = compressed[0]
+        self.assertEqual(summary["role"], "user")
+        self.assertIn("deterministic", summary["content"])
+        self.assertEqual(compressed[1]["role"], "user")
+
+    def test_aider_style_compression_recursive_shrink_handles_summary_tail_overflow(self):
+        mod = load_supervisor()
+        messages = []
+        for index in range(28):
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"# step {index}\n"
+                        f"- file scripts/mod_{index}.py\n"
+                        f"- def symbol_{index}\n"
+                    )
+                    * 12,
+                }
+            )
+            messages.append({"role": "assistant", "content": (f"- tests/test_mod_{index}.py pass\n") * 10})
+
+        compressed = mod.compress_messages_aider_style(messages, 320)
+        rendered = mod.render_messages(compressed)
+        self.assertLessEqual(mod.approx_token_count(rendered), 320)
+        self.assertGreaterEqual(len(compressed), 1)
+
+    def test_deterministic_summary_keeps_reference_anchors_under_tight_budget(self):
+        mod = load_supervisor()
+        messages = [
+            {
+                "role": "user",
+                "content": (
+                    "edit scripts/a9_supervisor.py and tests/test_supervisor.py\n"
+                    "def compact_history changed\n"
+                    "using redis and pytest packages\n"
+                ),
+            },
+            {
+                "role": "assistant",
+                "content": "status pass but followup needed around function compact_history",
+            },
+        ]
+
+        summary_messages = mod.summarize_messages_deterministic(messages, 220)
+        self.assertEqual(len(summary_messages), 1)
+        text = summary_messages[0]["content"]
+        self.assertIn("scripts/a9_supervisor.py", text)
+        self.assertIn("tests/test_supervisor.py", text)
+        self.assertIn("def compact_history", text)
+
     def test_repo_map_is_ranked_bounded_and_excludes_vendor_noise(self):
         mod = load_supervisor()
         repo_map, meta = mod.build_repo_map("change a9_supervisor context repo map tests", 900)
