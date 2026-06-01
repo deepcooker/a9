@@ -192,3 +192,40 @@ Governance lesson:
 - Process governance should hard-block or repair empty/noop web actions and
   undeclared checks, because repeated prompt-only warnings did not change the
   behavior.
+
+## 2026-06-02: event-level worker discipline observation
+
+Run evidence:
+- `.a9/runs/000-implement-worker-event-discipline-observation-20260602-20260601T202957Z-a1`
+
+Observation:
+- Worker correctly identified the gap: `process_governance` inspected
+  `command_execution` summaries but did not explicitly observe `web_search`
+  or `file_change` event summaries.
+- It implemented useful warn-only event findings for empty/noop web search and
+  direct `file_change` under deterministic SEARCH/REPLACE tasks.
+- The run ended `needs-repair` because the worker invented different focused
+  unittest names from the task's declared checks. Patch and scope guards were
+  pass, but git governance rolled the worktree back.
+- The worker again used direct Codex `file_change` events, confirming this is
+  a default execution-path behavior that prompt wording alone does not stop.
+
+Monitor intervention:
+- Reverted an accidental selftest snapshot commit created during an operator
+  enqueue quoting mistake:
+  `3731f42 Revert "a9 worker: selftest-auto-next-gateway-hint-filtering attempt snapshot"`.
+- Manually accepted the useful patch with declared test names:
+  `test_process_governance_observes_empty_web_search_event` and
+  `test_process_governance_observes_direct_file_change_event_without_blocking`.
+- Ran:
+  `python3 -m py_compile scripts/a9_supervisor.py`,
+  `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_observes_empty_web_search_event tests.test_supervisor.SupervisorTests.test_process_governance_observes_direct_file_change_event_without_blocking`,
+  and related process-governance regressions.
+
+Governance lesson:
+- Event-level discipline must be first-class evidence, not inferred from final
+  status or command logs.
+- Warn-only observation is the correct current default: it improves monitor
+  visibility without turning prompt drift into a hard business blocker.
+- Declared checks remain the contract. Worker-renamed tests can be useful
+  debugging evidence, but cannot satisfy the task.

@@ -1398,8 +1398,38 @@ def summarize_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     elif item_type == "file_change":
         changes = item.get("changes") or item.get("details", {}).get("changes") or []
         summary["changes"] = changes[:50] if isinstance(changes, list) else changes
+    elif item_type in {"web_search_call", "web_search"}:
+        args = item.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
+        if not isinstance(args, dict):
+            args = {}
+        query = args.get("query")
+        if not isinstance(query, str):
+            query = item.get("query")
+        summary.update(
+            {
+                "tool": "web_search",
+                "query": str(query or ""),
+                "status": item.get("status"),
+            }
+        )
     elif item_type == "mcp_tool_call":
         result = item.get("result") or {}
+        arguments = item.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        query = arguments.get("query")
+        if not isinstance(query, str):
+            query = item.get("query")
         summary.update(
             {
                 "server": item.get("server"),
@@ -1407,6 +1437,7 @@ def summarize_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
                 "status": item.get("status"),
                 "duration_ms": item.get("duration_ms"),
                 "has_meta": isinstance(result, dict) and "_meta" in result,
+                "query": str(query or ""),
             }
         )
     elif item_type in {"agent_message", "reasoning"}:
@@ -2764,10 +2795,42 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     forbids_ls = prompt_forbids_ls(task.prompt)
     requires_targeted_rg = prompt_requires_targeted_rg(task.prompt)
     bounded_read_paths = bounded_read_paths_from_prompt(task.prompt)
+    prompt_lower = task.prompt.lower()
+    deterministic_output_required = (
+        "search/replace" in prompt_lower and "deterministic apply" in prompt_lower
+    ) or ("strict_worker_envelope: true" in prompt_lower)
+    forbids_web = ("do not browse web" in prompt_lower) or ("no web" in prompt_lower)
     last_agent_rationale = ""
     for event in read_jsonl_file(event_path):
         if event.get("item_type") in {"agent_message", "reasoning"}:
             last_agent_rationale = str(event.get("text_preview") or "")
+            continue
+        item_type = str(event.get("item_type") or "")
+        if item_type == "file_change" and deterministic_output_required:
+            findings.append(
+                {
+                    "level": "warn",
+                    "kind": "direct_file_change_event",
+                    "message": "worker emitted direct file_change events while task requires deterministic SEARCH/REPLACE final output",
+                }
+            )
+            continue
+        tool_name = str(event.get("tool") or "")
+        if item_type in {"web_search_call", "web_search"} or tool_name == "web_search":
+            query = str(event.get("query") or "")
+            query_empty = not query.strip()
+            status_text = str(event.get("status") or "").strip().lower()
+            if query_empty or (forbids_web and status_text in {"noop", "skipped", "ignored"}):
+                findings.append(
+                    {
+                        "level": "warn",
+                        "kind": "noop_web_search_event",
+                        "message": "worker emitted empty/noop web_search event despite task bounds",
+                        "query": query,
+                        "status_text": status_text,
+                        "web_forbidden_by_prompt": forbids_web,
+                    }
+                )
             continue
         if event.get("item_type") != "command_execution" or not isinstance(event.get("command"), str):
             continue

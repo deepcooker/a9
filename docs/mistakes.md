@@ -1231,3 +1231,44 @@
 - 后续要么让 strict envelope 内包含显式 patch 字段，要么让
   SEARCH/REPLACE 块使用 parser 认可的唯一位置和格式。
 - 对执行机器而言，不能只看设计是否对，要看是否能被流水线自动接上。
+
+## 2026-06-02：operator enqueue 也会污染 24h 队列
+
+现象：
+
+- 手工 enqueue 时，prompt 里包含反引号和 shell 特殊文本，使用双引号包裹后被
+  bash 展开。
+- 结果误触发了一批 supervisor selftest，产生了非主线 commit：
+  `62b3e8e a9 worker: selftest-auto-next-gateway-hint-filtering attempt snapshot`。
+- 随后主控用 `git revert --no-edit 62b3e8e...` 生成
+  `3731f42 Revert ...` 清理了事故提交。
+
+规则：
+
+- 手工 enqueue 长 prompt 时，不直接把 prompt 放进 shell 双引号。
+- 使用 Python `subprocess.run([...])` 参数数组、临时任务文件，或 supervisor
+  原生 structured enqueue，避免 shell 展开。
+- 发现 prompt 被污染后，不继续让 worker 跑。先中断、确认 git 状态，再重新
+  排干净任务。
+
+## 2026-06-02：worker 改了正确代码，但测试名漂移仍会导致回滚
+
+现象：
+
+- `000-implement-worker-event-discipline-observation-20260602` 补了有价值的
+  event-level process governance。
+- 但 worker 自己命名并运行了
+  `test_process_governance_warns_on_noop_web_search_without_hard_block` 和
+  `test_process_governance_warns_on_direct_file_change_for_deterministic_apply_tasks`。
+- 任务声明检查要求的是
+  `test_process_governance_observes_empty_web_search_event` 和
+  `test_process_governance_observes_direct_file_change_event_without_blocking`。
+- 因此 process governance 记录 `undeclared_check`，运行回滚。主控手动接收
+  patch，并按声明测试名落地。
+
+规则：
+
+- Worker 可以新增测试，但最终必须跑 task frontmatter 中声明的检查。
+- 测试名也是契约的一部分；不能用“语义相近”的新名字替代声明检查。
+- 后续可让 supervisor 对 final envelope 的 `tests/checks` 与 task checks 做
+  更直接的差异提示，减少这种无谓回滚。

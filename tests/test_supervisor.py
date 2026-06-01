@@ -4202,6 +4202,67 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "command_window_missing_rationale")
         self.assertEqual(result["findings"][0]["level"], "warning")
 
+    def test_process_governance_observes_empty_web_search_event(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "web_search_call",
+                        "tool": "web_search",
+                        "query": "",
+                        "status": "noop",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="no-web-search",
+                prompt="Boundaries:\n- Do not browse web.\n",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["level"], "warn")
+        self.assertEqual(result["findings"][0]["kind"], "noop_web_search_event")
+        self.assertTrue(result["findings"][0]["web_forbidden_by_prompt"])
+
+    def test_process_governance_observes_direct_file_change_event_without_blocking(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "file_change",
+                        "changes": [{"path": "README.md", "kind": "update"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="deterministic-apply-required",
+                prompt=(
+                    "Hard rules:\n"
+                    "- Do not edit repository files with shell redirection, tee, or sed -i; "
+                    "output SEARCH/REPLACE blocks in final and let A9 deterministic apply write files.\n"
+                ),
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["level"], "warn")
+        self.assertEqual(result["findings"][0]["kind"], "direct_file_change_event")
+
     def test_process_governance_failure_blocks_status_even_when_checks_pass(self):
         mod = load_supervisor()
         worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
