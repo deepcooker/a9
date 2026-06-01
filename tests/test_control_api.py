@@ -6506,6 +6506,70 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["pending"][0]["suggestion_id"], "recovery_loop-intervene-ready")
         self.assertFalse(result["pending"][0]["auto_execute"])
 
+    def test_communication_repair_suggestion_review_approves_and_audits_async(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            suggestions = root / ".a9" / "services" / "communication-repair-suggestions.json"
+            suggestions.parent.mkdir(parents=True)
+            suggestions.write_text(
+                json.dumps(
+                    {
+                        "status": "ok",
+                        "mode": "observe_only",
+                        "pending_count": 1,
+                        "pending": [
+                            {
+                                "suggestion_id": "recovery_loop-intervene-ready",
+                                "status": "pending",
+                                "route": {"endpoint": "/api/nodes/recovery-cycle", "arm_group": "remote"},
+                                "auto_execute": False,
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            audit_calls = []
+            original_audit = mod.enqueue_communication_suggestion_audit
+            try:
+                mod.enqueue_communication_suggestion_audit = lambda event, *, root=mod.ROOT: audit_calls.append((event, root))
+                result = mod.communication_repair_suggestion_review(
+                    {
+                        "suggestion_id": "recovery_loop-intervene-ready",
+                        "action": "approve",
+                        "reason": "operator accepted route",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+            finally:
+                mod.enqueue_communication_suggestion_audit = original_audit
+            saved = json.loads(suggestions.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "ok")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(result["pending_count"], 0)
+        self.assertEqual(result["approved_count"], 1)
+        self.assertEqual(saved["approved_count"], 1)
+        self.assertEqual(saved["pending"], [])
+        self.assertEqual(saved["approved"][0]["suggestion_id"], "recovery_loop-intervene-ready")
+        self.assertEqual(saved["approved"][0]["status"], "approved")
+        self.assertFalse(saved["approved"][0]["auto_execute"])
+        self.assertEqual(audit_calls[0][0]["action"], "approve")
+        self.assertFalse(audit_calls[0][0]["auto_execute"])
+
+    def test_communication_repair_suggestion_review_requires_admin(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(PermissionError):
+                mod.communication_repair_suggestion_review(
+                    {"suggestion_id": "x", "action": "ignore"},
+                    root=root,
+                )
+
     def test_api_recovery_loop_latest_endpoint(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None}
@@ -7258,6 +7322,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["communication_action_plan"], "/api/communication/action-plan")
         self.assertEqual(discovery["endpoints"]["communication_repair_one"], "/api/communication/repair-one")
         self.assertEqual(discovery["endpoints"]["communication_repair_suggestions"], "/api/communication/repair-suggestions")
+        self.assertEqual(discovery["endpoints"]["communication_repair_suggestion_review"], "/api/communication/repair-suggestions/review")
         self.assertEqual(discovery["endpoints"]["register_node"], "/api/nodes/register")
         self.assertEqual(discovery["endpoints"]["gateway_transport_contract"], "/api/gateway/transport-contract")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")

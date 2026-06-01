@@ -2074,3 +2074,30 @@ Next monitoring target:
      this is the handoff point between observation and action. A9 can now
      accumulate repair pressure as reviewable evidence without crossing into
      automatic mutation.
+
+96. Communication suggestion review is an async sidecar, not part of the hot path.
+   - Trigger:
+     operators need to approve, ignore, or resolve communication repair
+     suggestions from phone control, but review/audit must not slow down the
+     main communication status path or turn observation into execution.
+   - Change:
+     `scripts/a9_control_api.py` now exposes
+     `POST /api/communication/repair-suggestions/review`. It requires phone
+     admin scope, moves the selected pending suggestion into `approved` or
+     `closed`, preserves `auto_execute=false`, and enqueues the audit write on
+     a daemon thread. `GET /api/communication/repair-suggestions` returns
+     pending, approved, and closed lists. The mobile recovery card now exposes
+     `Approve`, `Ignore`, and `Resolve` controls for the first pending
+     suggestion; these controls only review the suggestion and refresh state.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py`;
+     `python3 -m unittest tests.test_control_api tests.test_recovery_loop`
+     passed with 209 tests. Live no-admin review was rejected; live admin
+     review for a missing suggestion returned `status=not_found` with
+     `audit_async=true`. In the mobile project, `npx tsc --noEmit` and
+     `npm run smoke:mobile` passed, including the three suggestion review
+     controls.
+   - Governance lesson:
+     audit and evaluation are sidecar paths. They produce evidence and
+     operator state, but the fast communication read/repair path remains
+     bounded and does not wait on audit I/O.

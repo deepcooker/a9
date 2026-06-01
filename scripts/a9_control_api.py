@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -40,6 +41,7 @@ PHONE_ADMIN_SCOPE = "operator.admin"
 RECOVERY_LOOP_LATEST_REL_PATH = Path(".a9") / "services" / "recovery-loop-latest.json"
 COMMUNICATION_OBSERVATION_REL_PATH = Path(".a9") / "services" / "communication-observation.json"
 COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestions.json"
+COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestion-audit.jsonl"
 PHONE_CONTROL_GROUPS = {
     "runtime": [
         "submit.run",
@@ -1332,6 +1334,8 @@ def communication_repair_suggestions(*, root: Path = ROOT) -> dict[str, Any]:
             "error": str(exc),
         }
     pending = payload.get("pending") if isinstance(payload.get("pending"), list) else []
+    approved = payload.get("approved") if isinstance(payload.get("approved"), list) else []
+    closed = payload.get("closed") if isinstance(payload.get("closed"), list) else []
     return {
         "status": str(payload.get("status") or "ok"),
         "kind": "communication_repair_suggestions",
@@ -1340,7 +1344,110 @@ def communication_repair_suggestions(*, root: Path = ROOT) -> dict[str, Any]:
         "mode": payload.get("mode"),
         "pending_count": int(payload.get("pending_count") or len(pending)),
         "pending": pending[:20],
+        "approved_count": int(payload.get("approved_count") or len(approved)),
+        "approved": approved[:20],
+        "closed_count": int(payload.get("closed_count") or len(closed)),
+        "closed": closed[:20],
         "last_observation": payload.get("last_observation") if isinstance(payload.get("last_observation"), dict) else {},
+    }
+
+
+def append_communication_suggestion_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    path = root / COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def enqueue_communication_suggestion_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    thread = threading.Thread(
+        target=append_communication_suggestion_audit,
+        kwargs={"event": event, "root": root},
+        daemon=True,
+    )
+    thread.start()
+
+
+def communication_repair_suggestion_review(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    suggestion_id = str(payload.get("suggestion_id") or "").strip()
+    action = str(payload.get("action") or payload.get("review_action") or "").strip().lower()
+    if not suggestion_id:
+        raise ValueError("suggestion_id is required")
+    if action not in {"approve", "ignore", "resolve"}:
+        raise ValueError("action must be approve, ignore, or resolve")
+    path = root / COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH
+    current = read_json(path) if path.exists() else {
+        "status": "ok",
+        "kind": "communication_repair_suggestions",
+        "mode": "observe_only",
+        "pending": [],
+    }
+    pending = current.get("pending") if isinstance(current.get("pending"), list) else []
+    approved = current.get("approved") if isinstance(current.get("approved"), list) else []
+    closed = current.get("closed") if isinstance(current.get("closed"), list) else []
+    target = next((item for item in pending if str(item.get("suggestion_id") or "") == suggestion_id), None)
+    if target is None:
+        return {
+            "status": "not_found",
+            "kind": "communication_repair_suggestion_review",
+            "suggestion_id": suggestion_id,
+            "action": action,
+            "pending_count": len(pending),
+            "audit_async": True,
+        }
+
+    reviewed_at = utc_now()
+    reviewed = {
+        **target,
+        "status": "approved" if action == "approve" else action,
+        "review_action": action,
+        "reviewed_at": reviewed_at,
+        "reviewer": str(payload.get("reviewer") or "mobile-operator"),
+        "review_reason": str(payload.get("reason") or ""),
+        "auto_execute": False,
+    }
+    pending = [item for item in pending if str(item.get("suggestion_id") or "") != suggestion_id]
+    if action == "approve":
+        approved = [reviewed, *approved][:50]
+    else:
+        closed = [reviewed, *closed][:50]
+    updated = {
+        **current,
+        "status": "ok",
+        "kind": "communication_repair_suggestions",
+        "updated_at": reviewed_at,
+        "pending_count": len(pending),
+        "pending": pending,
+        "approved_count": len(approved),
+        "approved": approved,
+        "closed_count": len(closed),
+        "closed": closed,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    audit_event = {
+        "kind": "communication_repair_suggestion_review",
+        "ts": reviewed_at,
+        "suggestion_id": suggestion_id,
+        "action": action,
+        "reviewer": reviewed["reviewer"],
+        "review_reason": reviewed["review_reason"],
+        "route": reviewed.get("route") or {},
+        "auto_execute": False,
+        "state_path": str(path),
+    }
+    enqueue_communication_suggestion_audit(audit_event, root=root)
+    return {
+        "status": "ok",
+        "kind": "communication_repair_suggestion_review",
+        "suggestion_id": suggestion_id,
+        "action": action,
+        "reviewed": reviewed,
+        "pending_count": len(pending),
+        "approved_count": len(approved),
+        "closed_count": len(closed),
+        "audit_async": True,
     }
 
 
@@ -1765,6 +1872,7 @@ def controller_discovery() -> dict[str, Any]:
             "communication_action_plan": "/api/communication/action-plan",
             "communication_repair_one": "/api/communication/repair-one",
             "communication_repair_suggestions": "/api/communication/repair-suggestions",
+            "communication_repair_suggestion_review": "/api/communication/repair-suggestions/review",
             "register_node": "/api/nodes/register",
             "heartbeat_node": "/api/nodes/heartbeat",
             "phone_control_status": "/api/phone-control/status",
@@ -5210,6 +5318,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, service_start_action(payload))
             elif self.path == "/api/communication/repair-one":
                 self.write_json(200, communication_repair_one(payload))
+            elif self.path == "/api/communication/repair-suggestions/review":
+                self.write_json(200, communication_repair_suggestion_review(payload))
             elif self.path == "/api/eval/override":
                 self.write_json(200, eval_override(payload))
             elif self.path == "/api/nodes/register":
