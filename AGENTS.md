@@ -73,6 +73,10 @@ attestation、防上下文丢失、并行 plan 隔离这些机制。
 发生了什么、下一步动作、为什么服务目标、本次明确不做什么。答不上来就先读
 plan/progress/causal memory，不许直接改文件或派发 worker。
 
+参考项目不是越多越好。哪些机制进入 A9 以
+`docs/reference-adoption-decision.md` 为准：现在先做最小 plan lane 和恢复复述；
+wiki/brain/graph 先作为旁路和派生索引预留，不进入 worker 热路径。
+
 ## 当前主线
 
 当前主线只看三个层级：
