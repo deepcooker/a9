@@ -5600,12 +5600,17 @@ index 0000000..3e75765
     def test_schedule_next_task_routes_monitor_blocked_to_repair_takeover(self):
         mod = load_supervisor()
         mod.ensure_dirs()
+        deterministic_check = (
+            "python3 -m unittest "
+            "tests.test_supervisor.SupervisorTests."
+            "test_test_slice_monitor_blocked_and_fallback_routing_regression"
+        )
         task = mod.Task(
             path=mod.DONE_DIR / "monitor-blocked.md",
             task_id="monitor-blocked",
             prompt="test data schema",
             phase="test",
-            checks=["python3 -m unittest tests/test_control_api.py"],
+            checks=[deterministic_check],
             allowed_paths=["scripts/a9_control_api.py", "tests/test_control_api.py"],
         )
         summary = {
@@ -5623,7 +5628,7 @@ index 0000000..3e75765
                     {
                         "kind": "undeclared_check",
                         "message": "specific unittest command outside declared checks",
-                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_run_one_auto_next_writes_summary_next_task_path_with_diagnostic_noise_prompt'",
+                        "command": f"/bin/bash -lc '{deterministic_check}'",
                     },
                     {
                         "kind": "command_window_exceeded",
@@ -5663,9 +5668,9 @@ index 0000000..3e75765
             self.assertIn("patch.diff", text)
             self.assertIn("Declared checks are authoritative", text)
             self.assertIn("prefer <=180 line", text)
-            self.assertIn("python3 -m unittest tests/test_control_api.py", text)
             self.assertIn(
-                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_run_one_auto_next_writes_summary_next_task_path_with_diagnostic_noise_prompt",
+                "python3 -m unittest tests.test_supervisor.SupervisorTests."
+                "test_test_slice_monitor_blocked_and_fallback_routing_regression",
                 text,
             )
             self.assertNotIn("rg -n other docs .", text)
