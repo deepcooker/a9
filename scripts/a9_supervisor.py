@@ -6354,6 +6354,7 @@ def checks_for_next_phase(phase: str, task: Task) -> list[str]:
 
 def communication_task_requires_gateway_runtime_evidence(task: Task, summary: dict[str, Any]) -> bool:
     worker_output = worker_output_from_summary(summary)
+    repo_map_noise = re.compile(r"^- .+ score=\d+\s*$")
     prompt_lines = [
         line
         for line in task.prompt.splitlines()
@@ -6361,8 +6362,10 @@ def communication_task_requires_gateway_runtime_evidence(task: Task, summary: di
         and "not_doing_now" not in line.lower()
         and "goal_objective" not in line.lower()
         and "active goal" not in line.lower()
+        and not repo_map_noise.match(line.strip())
+        and not line.strip().lower().startswith("symbols:")
     ]
-    detection_units = [task.task_id, task.phase, str(worker_output.get("next_slice", "")), *prompt_lines]
+    detection_units = [task.phase, str(worker_output.get("next_slice", "")), *prompt_lines]
     haystack = " ".join(detection_units).lower()
     units = [str(unit).lower() for unit in detection_units if str(unit).strip()]
     if any(communication_hint_present(haystack, hint) for hint in COMMUNICATION_GATE_HINTS):

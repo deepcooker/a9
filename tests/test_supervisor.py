@@ -5326,6 +5326,52 @@ index 0000000..3e75765
 
         self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
 
+    def test_repo_map_remote_filename_noise_does_not_trigger_gateway_gate_or_stop_auto_next(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-test-remote-noise.md",
+            task_id="auto-test-remote-noise",
+            prompt=(
+                "Continue A9 24-hour automation.\n"
+                "# Repository Map\n"
+                "- tests/test_remote.py score=194\n"
+                "  symbols: load_module, test_parse_probe_reads_key_values\n"
+                "- tests/test_supervisor.py score=148"
+            ),
+            phase="test",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-test-remote-noise-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-test-remote-noise-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {
+                    "output": {
+                        "next_slice": "test: add sibling schedule_next_task assertion for fallback key priority",
+                        "next_recommended_task": "test: lower-priority fallback should not drive queue id prefix",
+                        "next_task": "implement: this fallback key must stay lower priority",
+                    }
+                },
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertRegex(next_path.name, r"^auto-test-auto-test-remote-noise-\d{8}T\d{6}Z\.md$")
+            self.assertIn("next_slice_source: worker_envelope.output.next_slice", text)
+            self.assertNotIn("worker_envelope.output.next_task", text)
+            self.assertEqual(summary["gateway_runtime_gate"]["status"], "skip")
+            self.assertEqual(summary["gateway_runtime_gate"]["reason"], "not_communication_task")
+        finally:
+            next_path.unlink(missing_ok=True)
+
     def test_ws_hint_does_not_match_allowed_paths(self):
         mod = load_supervisor()
         task = mod.Task(
