@@ -1681,6 +1681,8 @@ Do the work.
         self.assertIn("latest_evidence_ref: /tmp/run-1/evidence.jsonl", text)
         self.assertIn("happened_since_last_action", text)
         self.assertIn("plan_evidence_source", text)
+        self.assertIn("reference_basis: ", text)
+        self.assertIn("not_doing_now: ", text)
         self.assertIn("why_next_action", text)
 
     def test_update_active_plan_from_run_records_refs_and_progress(self):

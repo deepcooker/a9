@@ -5270,6 +5270,32 @@ def tail_recovery_line(path: Path, *, max_chars: int = 260) -> str:
     return ""
 
 
+def plan_latest_run_snapshot(plan: dict[str, Any]) -> dict[str, str]:
+    evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
+    summary_path = ""
+    for value in reversed(evidence_refs):
+        text = str(value or "").strip()
+        if text.endswith("/summary.json"):
+            summary_path = text
+            break
+    if not summary_path:
+        run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
+        if run_ids:
+            candidate = RUNS_DIR / str(run_ids[-1]) / "summary.json"
+            if candidate.exists():
+                summary_path = str(candidate)
+    if not summary_path:
+        return {"summary_path": "", "phase": "", "status": ""}
+    data = read_json_file(Path(summary_path))
+    if not data:
+        return {"summary_path": summary_path, "phase": "", "status": ""}
+    return {
+        "summary_path": summary_path,
+        "phase": str(data.get("phase") or ""),
+        "status": str(data.get("status") or ""),
+    }
+
+
 def append_plan_progress(plan_dir: Path, line: str) -> None:
     path = plan_dir / "progress.md"
     if not path.exists():
@@ -7388,21 +7414,28 @@ def plan_status(args: argparse.Namespace) -> int:
     last_findings = tail_recovery_line(plan_dir / "findings.md")
     last_mistake = tail_recovery_line(plan_dir / "mistakes.md")
     last_change_request = tail_recovery_line(plan_dir / "change_request.md")
+    latest_run = plan_latest_run_snapshot(plan)
     print(f"last_progress: {last_progress}")
     print(f"last_findings: {last_findings}")
     print(f"last_mistake: {last_mistake}")
     print(f"last_change_request: {last_change_request}")
+    print(f"latest_run_summary: {latest_run.get('summary_path', '')}")
+    print(f"latest_run_phase: {latest_run.get('phase', '')}")
+    print(f"latest_run_status: {latest_run.get('status', '')}")
     print("recovery_restatement:")
     print("- current_goal: read goal object, not plan status, for long-term completion.")
     print("- current_plan: use plan as task contract and prompt hydration view.")
     print("- plan_evidence_source: active plan contract + latest run summary + findings/progress/mistakes/change_request tails.")
-    print("- current_phase: derive from queued/running task or latest run evidence.")
+    print(f"- reference_basis: {bounded_inline(contract.get('reference_entry', ''), 260)}")
+    current_phase = latest_run.get("phase", "") or "unknown"
+    print(f"- current_phase: {current_phase}")
     print(
         "- happened_since_last_action: reconcile latest progress/findings/mistakes/change_request "
         "before any new worker action."
     )
     print("- next_action: continue only after reconciling plan with goal/flow/run evidence.")
     print("- why_next_action: keeps continuation/handoff based on durable runtime evidence instead of chat memory.")
+    print(f"- not_doing_now: {bounded_inline(contract.get('out_of_scope', ''), 260)}")
     print("- out_of_scope: do not let worker mutate contract fields; use change_request.")
     return 0
 
