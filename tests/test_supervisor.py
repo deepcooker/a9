@@ -1247,6 +1247,8 @@ Do the work.
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
                 done = json.loads(done_path.read_text(encoding="utf-8"))
+                run_summary_path = Path(done["run_dir"]) / "summary.json"
+                run_summary = json.loads(run_summary_path.read_text(encoding="utf-8"))
                 next_task_text = Path(done["next_task_path"]).read_text(encoding="utf-8")
             finally:
                 queue_path.unlink(missing_ok=True)
@@ -1258,9 +1260,17 @@ Do the work.
 
         self.assertEqual(done["status"], "pass")
         self.assertTrue(done["next_task_path"])
+        self.assertEqual(done["next_task_path"], run_summary.get("next_task_path"))
         self.assertEqual(done["gateway_runtime_gate"]["status"], "skip")
         self.assertEqual(done["gateway_runtime_gate"]["reason"], "not_communication_task")
         self.assertRegex(Path(done["next_task_path"]).name, r"^auto-test-selftest-auto-next-gateway-hint-filtering-\d{8}T\d{6}Z\.md$")
+        self.assertEqual(
+            run_summary.get("worker_envelope", {})
+            .get("envelope", {})
+            .get("output", {})
+            .get("next_recommended_task"),
+            "test: verify fallback queue creation remains deterministic",
+        )
         self.assertIn('phase: "test"', next_task_text)
         self.assertIn("next_slice_source: worker_envelope.output.next_recommended_task", next_task_text)
         self.assertNotIn("worker_envelope.output.next_task", next_task_text)
