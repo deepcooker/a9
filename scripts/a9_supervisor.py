@@ -6378,8 +6378,10 @@ def communication_task_requires_gateway_runtime_evidence(task: Task, summary: di
 
 
 def communication_hint_present(haystack: str, hint: str) -> bool:
-    if len(hint) <= 3 and re.fullmatch(r"[a-z0-9]+", hint):
-        return re.search(rf"(?<![a-z0-9]){re.escape(hint)}(?![a-z0-9])", haystack) is not None
+    # Treat "*-like" wording as descriptive noise (e.g. "communication-like filenames"),
+    # not an actual communication-runtime intent signal.
+    if re.fullmatch(r"[a-z0-9]+", hint):
+        return re.search(rf"(?<![a-z0-9]){re.escape(hint)}(?![a-z0-9-])", haystack) is not None
     return hint in haystack
 
 

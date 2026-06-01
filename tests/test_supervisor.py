@@ -5251,6 +5251,51 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_ignores_out_of_scope_communication_like_noise(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "noise-next-slice.md",
+            task_id="noise-next-slice",
+            prompt=(
+                "Repair A9 auto-next runtime pre-gate false positive.\n"
+                "Out of scope:\n"
+                "- New hard gates.\n"
+                "- UI communication-like feature-surface wording must stay excluded.\n"
+            ),
+            phase="test",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "noise-next-slice-run"),
+            "context_path": str(mod.RUNS_DIR / "noise-next-slice-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {
+                    "output": {
+                        "next_slice": (
+                            "test: add a run-one --auto-next regression that proves "
+                            "summary.next_task_path is written when next_slice exists even if "
+                            "repo-map contains communication-like filenames."
+                        )
+                    }
+                },
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "test"', text)
+            self.assertEqual(summary["gateway_runtime_gate"]["status"], "skip")
+            self.assertEqual(summary["gateway_runtime_gate"]["reason"], "not_communication_task")
+        finally:
+            next_path.unlink(missing_ok=True)
+
     def test_redis_flow_reference_does_not_trigger_gateway_gate(self):
         mod = load_supervisor()
         task = mod.Task(
