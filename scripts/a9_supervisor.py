@@ -6318,9 +6318,15 @@ def communication_task_requires_gateway_runtime_evidence(task: Task, summary: di
             str(worker_output.get("next_slice", "")),
         ]
     ).lower()
-    if any(hint in haystack for hint in COMMUNICATION_GATE_HINTS):
+    if any(communication_hint_present(haystack, hint) for hint in COMMUNICATION_GATE_HINTS):
         return True
-    return any(all(part in haystack for part in combo) for combo in COMMUNICATION_GATE_COMBO_HINTS)
+    return any(all(communication_hint_present(haystack, part) for part in combo) for combo in COMMUNICATION_GATE_COMBO_HINTS)
+
+
+def communication_hint_present(haystack: str, hint: str) -> bool:
+    if len(hint) <= 3 and re.fullmatch(r"[a-z0-9]+", hint):
+        return re.search(rf"(?<![a-z0-9]){re.escape(hint)}(?![a-z0-9])", haystack) is not None
+    return hint in haystack
 
 
 def communication_acceptance_hints(task: Task, summary: dict[str, Any]) -> str:

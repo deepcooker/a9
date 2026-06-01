@@ -4667,6 +4667,18 @@ index 0000000..3e75765
 
         self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
 
+    def test_ws_hint_does_not_match_allowed_paths(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="plan-lane-runtime",
+            prompt="Keep the task bounded beyond the task file's allowed paths.",
+            phase="mechanism_extract",
+        )
+        summary = {"worker_envelope": {"envelope": {"output": {"next_slice": "continue plan token capping"}}}}
+
+        self.assertFalse(mod.communication_task_requires_gateway_runtime_evidence(task, summary))
+
     def test_redis_stream_reference_triggers_gateway_gate(self):
         mod = load_supervisor()
         task = mod.Task(
