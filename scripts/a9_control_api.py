@@ -39,6 +39,7 @@ NODE_STALE_TTL_SECONDS = 300
 PHONE_ADMIN_SCOPE = "operator.admin"
 RECOVERY_LOOP_LATEST_REL_PATH = Path(".a9") / "services" / "recovery-loop-latest.json"
 COMMUNICATION_OBSERVATION_REL_PATH = Path(".a9") / "services" / "communication-observation.json"
+COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestions.json"
 PHONE_CONTROL_GROUPS = {
     "runtime": [
         "submit.run",
@@ -1251,6 +1252,7 @@ def list_node_evidence(node_id: str | None = None, *, root: Path = ROOT, limit: 
 def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
     path = root / RECOVERY_LOOP_LATEST_REL_PATH
     observation_path = root / COMMUNICATION_OBSERVATION_REL_PATH
+    suggestions_path = root / COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH
     if not path.exists():
         return {
             "status": "missing",
@@ -1276,6 +1278,12 @@ def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
             communication_observation = read_json(observation_path)
         except (json.JSONDecodeError, OSError):
             communication_observation = None
+    suggestions = payload.get("communication_repair_suggestions") if isinstance(payload.get("communication_repair_suggestions"), dict) else None
+    if suggestions is None and suggestions_path.exists():
+        try:
+            suggestions = read_json(suggestions_path)
+        except (json.JSONDecodeError, OSError):
+            suggestions = None
     return {
         "status": "ok",
         "kind": "recovery_loop_latest",
@@ -1292,10 +1300,47 @@ def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
         "communication_priority_source": payload.get("communication_priority_source"),
         "communication_route": payload.get("communication_route") or {},
         "communication_observation": communication_observation or {},
+        "communication_repair_suggestions": suggestions or {},
         "summary": cycle.get("summary") if isinstance(cycle, dict) else None,
         "steps": cycle.get("steps", [])[:8] if isinstance(cycle, dict) else [],
         "raw_status": payload.get("status"),
         "error": payload.get("error"),
+    }
+
+
+def communication_repair_suggestions(*, root: Path = ROOT) -> dict[str, Any]:
+    path = root / COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH
+    if not path.exists():
+        return {
+            "status": "missing",
+            "kind": "communication_repair_suggestions",
+            "path": str(path),
+            "pending_count": 0,
+            "pending": [],
+            "reason": "communication_repair_suggestions_not_found",
+        }
+    try:
+        payload = read_json(path)
+    except (json.JSONDecodeError, OSError) as exc:
+        return {
+            "status": "degraded",
+            "kind": "communication_repair_suggestions",
+            "path": str(path),
+            "pending_count": 0,
+            "pending": [],
+            "reason": "communication_repair_suggestions_unreadable",
+            "error": str(exc),
+        }
+    pending = payload.get("pending") if isinstance(payload.get("pending"), list) else []
+    return {
+        "status": str(payload.get("status") or "ok"),
+        "kind": "communication_repair_suggestions",
+        "path": str(path),
+        "updated_at": payload.get("updated_at"),
+        "mode": payload.get("mode"),
+        "pending_count": int(payload.get("pending_count") or len(pending)),
+        "pending": pending[:20],
+        "last_observation": payload.get("last_observation") if isinstance(payload.get("last_observation"), dict) else {},
     }
 
 
@@ -1719,6 +1764,7 @@ def controller_discovery() -> dict[str, Any]:
             "communication_status": "/api/communication/status",
             "communication_action_plan": "/api/communication/action-plan",
             "communication_repair_one": "/api/communication/repair-one",
+            "communication_repair_suggestions": "/api/communication/repair-suggestions",
             "register_node": "/api/nodes/register",
             "heartbeat_node": "/api/nodes/heartbeat",
             "phone_control_status": "/api/phone-control/status",
@@ -5029,6 +5075,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, communication_status())
             elif parsed.path == "/api/communication/action-plan":
                 self.write_json(200, communication_action_plan())
+            elif parsed.path == "/api/communication/repair-suggestions":
+                self.write_json(200, communication_repair_suggestions())
             elif parsed.path == "/api/nodes/recovery-cycle":
                 self.write_json(
                     200,

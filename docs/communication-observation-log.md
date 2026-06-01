@@ -2048,3 +2048,29 @@ Next monitoring target:
      observe-only policy is now inspectable from the same control surface that
      can later execute repair. This keeps automation pressure visible before it
      becomes action.
+
+95. Candidate communication repairs now have a read-only suggestion queue.
+   - Trigger:
+     `candidate_for_repair_one` was visible as a streak recommendation, but
+     there was no bounded queue object for phone, worker, or monitor review.
+   - Change:
+     `scripts/a9_recovery_loop.py` writes
+     `.a9/services/communication-repair-suggestions.json` on every observation.
+     Healthy/currently non-candidate states clear pending suggestions while
+     preserving `last_observation`; candidate states write a pending suggestion
+     with `suggestion_id`, route, streak, evidence refs, operator action, and
+     `auto_execute=false`. `scripts/a9_control_api.py` exposes this through
+     `GET /api/communication/repair-suggestions` and embeds it inside
+     `GET /api/nodes/recovery-loop/latest`. The mobile recovery card now shows
+     suggestion count and first suggestion id when present.
+   - Verification:
+     `python3 -m py_compile scripts/a9_control_api.py scripts/a9_recovery_loop.py`;
+     `python3 -m unittest tests.test_control_api tests.test_recovery_loop`
+     passed with 207 tests. Live API returned `pending_count=0` for the current
+     healthy `tailscale:continue:noop` state, with `auto_execute=false`.
+     In the mobile project, `npx tsc --noEmit` and `npm run smoke:mobile`
+     passed.
+   - Governance lesson:
+     this is the handoff point between observation and action. A9 can now
+     accumulate repair pressure as reviewable evidence without crossing into
+     automatic mutation.

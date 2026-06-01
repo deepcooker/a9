@@ -68,10 +68,12 @@ class RecoveryLoopTests(unittest.TestCase):
             original_state = mod.STATE_DIR
             original_latest = mod.LATEST_PATH
             original_observation = mod.COMMUNICATION_OBSERVATION_PATH
+            original_suggestions = mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH
             original_read = mod.read_json_url
             mod.STATE_DIR = Path(tmp) / "services"
             mod.LATEST_PATH = mod.STATE_DIR / "recovery-loop-latest.json"
             mod.COMMUNICATION_OBSERVATION_PATH = mod.STATE_DIR / "communication-observation.json"
+            mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = mod.STATE_DIR / "communication-repair-suggestions.json"
             try:
                 def fake_read(url, *, timeout=10):
                     calls.append((url, timeout))
@@ -93,10 +95,12 @@ class RecoveryLoopTests(unittest.TestCase):
                 result = mod.recovery_cycle_once("http://controller:8787/", timeout=7, max_actions=2)
                 latest = json.loads(mod.LATEST_PATH.read_text(encoding="utf-8"))
                 observation = json.loads(mod.COMMUNICATION_OBSERVATION_PATH.read_text(encoding="utf-8"))
+                suggestions = json.loads(mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH.read_text(encoding="utf-8"))
             finally:
                 mod.STATE_DIR = original_state
                 mod.LATEST_PATH = original_latest
                 mod.COMMUNICATION_OBSERVATION_PATH = original_observation
+                mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = original_suggestions
                 mod.read_json_url = original_read
 
         self.assertEqual(result["status"], "ok")
@@ -121,6 +125,8 @@ class RecoveryLoopTests(unittest.TestCase):
         self.assertEqual(observation["streak"], 1)
         self.assertEqual(observation["recommendation"], "operator_review")
         self.assertFalse(observation["auto_execute"])
+        self.assertEqual(suggestions["pending_count"], 0)
+        self.assertEqual(suggestions["last_observation"]["recommendation"], "operator_review")
 
     def test_communication_observation_updates_streak_without_executing(self):
         mod = load_module()
@@ -152,6 +158,66 @@ class RecoveryLoopTests(unittest.TestCase):
         self.assertEqual(second["first_seen_at"], "2026-06-01T00:00:00+00:00")
         self.assertEqual(second["recommendation"], "candidate_for_repair_one")
         self.assertFalse(second["auto_execute"])
+
+    def test_communication_repair_suggestions_writes_pending_candidate_without_execution(self):
+        mod = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "communication-repair-suggestions.json"
+            queue = mod.communication_repair_suggestions_update(
+                {
+                    "current_key": "recovery_loop:intervene:ready",
+                    "action": "intervene",
+                    "priority_source": "recovery_loop",
+                    "plan_status": "ready",
+                    "streak": 2,
+                    "first_seen_at": "2026-06-01T00:00:00+00:00",
+                    "last_seen_at": "2026-06-01T00:01:00+00:00",
+                    "recommendation": "candidate_for_repair_one",
+                    "route": {"endpoint": "/api/nodes/recovery-cycle", "arm_group": "remote"},
+                },
+                {"cycle_status": "needs_attention", "risk_count": 1},
+                path=path,
+            )
+            saved = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(queue["pending_count"], 1)
+        self.assertEqual(saved["pending"][0]["suggestion_id"], "recovery_loop-intervene-ready")
+        self.assertEqual(saved["pending"][0]["route"]["endpoint"], "/api/nodes/recovery-cycle")
+        self.assertEqual(saved["pending"][0]["operator_action"], "review_then_arm_and_repair_one")
+        self.assertFalse(saved["pending"][0]["auto_execute"])
+
+    def test_recovery_cycle_once_classifies_controller_unavailable_for_observation(self):
+        mod = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            original_state = mod.STATE_DIR
+            original_latest = mod.LATEST_PATH
+            original_observation = mod.COMMUNICATION_OBSERVATION_PATH
+            original_suggestions = mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH
+            original_read = mod.read_json_url
+            mod.STATE_DIR = Path(tmp) / "services"
+            mod.LATEST_PATH = mod.STATE_DIR / "recovery-loop-latest.json"
+            mod.COMMUNICATION_OBSERVATION_PATH = mod.STATE_DIR / "communication-observation.json"
+            mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = mod.STATE_DIR / "communication-repair-suggestions.json"
+            try:
+                def fake_read(_url, *, timeout=10):
+                    raise OSError("controller down")
+
+                mod.read_json_url = fake_read
+                result = mod.recovery_cycle_once("http://controller:8787/", timeout=7, max_actions=2)
+                observation = json.loads(mod.COMMUNICATION_OBSERVATION_PATH.read_text(encoding="utf-8"))
+            finally:
+                mod.STATE_DIR = original_state
+                mod.LATEST_PATH = original_latest
+                mod.COMMUNICATION_OBSERVATION_PATH = original_observation
+                mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = original_suggestions
+                mod.read_json_url = original_read
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["communication_plan_status"], "unavailable")
+        self.assertEqual(result["communication_action"], "intervene")
+        self.assertEqual(result["communication_priority_source"], "controller")
+        self.assertEqual(observation["current_key"], "controller:intervene:unavailable")
+        self.assertEqual(observation["recommendation"], "operator_review")
 
     def test_recovery_loop_runs_bounded_iterations_without_execute(self):
         mod = load_module()

@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / ".a9" / "services"
 LATEST_PATH = STATE_DIR / "recovery-loop-latest.json"
 COMMUNICATION_OBSERVATION_PATH = STATE_DIR / "communication-observation.json"
+COMMUNICATION_REPAIR_SUGGESTIONS_PATH = STATE_DIR / "communication-repair-suggestions.json"
 LOCAL_CONTROLLER_OPENER = build_opener(ProxyHandler({}))
 
 
@@ -83,6 +84,56 @@ def communication_observation_update(result: dict[str, Any], *, path: Path | Non
     return observation
 
 
+def communication_repair_suggestions_update(
+    observation: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    path: Path | None = None,
+) -> dict[str, Any]:
+    path = path or COMMUNICATION_REPAIR_SUGGESTIONS_PATH
+    now = str(observation.get("last_seen_at") or utc_now())
+    route = observation.get("route") if isinstance(observation.get("route"), dict) else {}
+    is_candidate = observation.get("recommendation") == "candidate_for_repair_one"
+    suggestion = {
+        "suggestion_id": str(observation.get("current_key") or "unknown").replace(":", "-"),
+        "status": "pending",
+        "created_at": str(observation.get("first_seen_at") or now),
+        "updated_at": now,
+        "current_key": observation.get("current_key"),
+        "action": observation.get("action"),
+        "priority_source": observation.get("priority_source"),
+        "plan_status": observation.get("plan_status"),
+        "streak": observation.get("streak"),
+        "recommendation": observation.get("recommendation"),
+        "route": route,
+        "auto_execute": False,
+        "evidence": {
+            "recovery_loop_latest": str(LATEST_PATH),
+            "communication_observation": str(COMMUNICATION_OBSERVATION_PATH),
+            "cycle_status": result.get("cycle_status"),
+            "risk_count": result.get("risk_count"),
+        },
+        "operator_action": "review_then_arm_and_repair_one",
+    }
+    queue = {
+        "status": "ok",
+        "kind": "communication_repair_suggestions",
+        "updated_at": now,
+        "mode": "observe_only",
+        "pending_count": 1 if is_candidate else 0,
+        "pending": [suggestion] if is_candidate else [],
+        "last_observation": {
+            "current_key": observation.get("current_key"),
+            "streak": observation.get("streak"),
+            "recommendation": observation.get("recommendation"),
+            "auto_execute": False,
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(queue, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return queue
+
+
 def recovery_cycle_once(controller_url: str, *, timeout: int = 10, max_actions: int = 3) -> dict[str, Any]:
     base = controller_url.rstrip("/")
     plan_url = f"{base}/api/communication/action-plan"
@@ -116,6 +167,10 @@ def recovery_cycle_once(controller_url: str, *, timeout: int = 10, max_actions: 
             "kind": "recovery_loop_observation",
             "checked_at": utc_now(),
             "controller_url": base,
+            "communication_plan_status": "unavailable",
+            "communication_action": "intervene",
+            "communication_priority_source": "controller",
+            "communication_route": {},
             "cycle_status": "unavailable",
             "step_count": 0,
             "risk_count": 0,
@@ -123,7 +178,9 @@ def recovery_cycle_once(controller_url: str, *, timeout: int = 10, max_actions: 
             "error": str(exc),
         }
     communication_observation = communication_observation_update(result)
+    communication_repair_suggestions = communication_repair_suggestions_update(communication_observation, result)
     result["communication_observation"] = communication_observation
+    result["communication_repair_suggestions"] = communication_repair_suggestions
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     LATEST_PATH.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return result
