@@ -1,5 +1,18 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-02: missing bounded evidence plan is now observable
+
+- A 24h worker run for bounded evidence governance was rolled back after broad
+  reads, direct file-change events, and undeclared test names.
+- The useful mechanism was salvaged manually: `classify_process_governance()`
+  now records warn-only `missing_bounded_evidence_plan` when a task requiring an
+  Evidence-and-edit contract executes its first command before an agent message
+  states a bounded evidence plan.
+- `py_compile` is now treated as a check command so declared compile checks are
+  not misclassified as outside bounded-read scope.
+- This remains observation-first: the finding does not block status unless a
+  separate hard error is present.
+
 ## 2026-06-02: decision packet template added for analysis-to-execution handoff
 
 - Updated `scripts/a9_supervisor.py` with a reusable decision packet/template helper and injected it into AI-worker prompt surfaces (`Task Decision Packet` + `next_task_prompt`).

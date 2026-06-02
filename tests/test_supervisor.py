@@ -3959,6 +3959,81 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "undeclared_check")
         self.assertIn("pytest", result["findings"][0]["command"])
 
+    def test_process_governance_observes_missing_bounded_evidence_plan(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'sed -n \"1,20p\" scripts/a9_supervisor.py'",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "agent_message",
+                                "text_preview": "bounded evidence plan: read scripts/a9_supervisor.py lines 1-20",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="missing-bounded-plan",
+                prompt="Evidence-and-edit contract:\n- Before any reads, list a bounded evidence plan.",
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [finding["kind"] for finding in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertIn("missing_bounded_evidence_plan", kinds)
+        finding = next(item for item in result["findings"] if item["kind"] == "missing_bounded_evidence_plan")
+        self.assertEqual(finding["level"], "warn")
+        self.assertIn("before a bounded evidence plan", finding["message"])
+
+    def test_process_governance_accepts_bounded_evidence_plan_before_first_command(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "item_type": "agent_message",
+                                "text_preview": "bounded evidence plan: read scripts/a9_supervisor.py lines 1-20 before any reads",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'sed -n \"1,20p\" scripts/a9_supervisor.py'",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="present-bounded-plan",
+                prompt="Evidence-and-edit contract:\n- Before any reads, list a bounded evidence plan.",
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [finding["kind"] for finding in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("missing_bounded_evidence_plan", kinds)
+
     def test_process_governance_enforces_task_command_bounds(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

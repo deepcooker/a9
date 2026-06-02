@@ -94,7 +94,7 @@ DEFAULT_NEXT_CHECKS = [
 REFERENCE_SCAN_CHECKS = [
     "python3 -m py_compile scripts/a9_supervisor.py",
 ]
-TEST_COMMAND_HINTS = ("pytest", "unittest", "cargo test", "npm test", "pnpm test", "yarn test")
+TEST_COMMAND_HINTS = ("pytest", "unittest", "py_compile", "cargo test", "npm test", "pnpm test", "yarn test")
 SESSION_REFRESH_PHASE = "session_refresh"
 SESSION_CLOSE_READING_PHASE = "session_close_reading"
 SESSION_CONTEXT_READ_PHASES = {SESSION_REFRESH_PHASE, SESSION_CLOSE_READING_PHASE}
@@ -2570,6 +2570,20 @@ def bounded_read_paths_from_prompt(prompt: str) -> list[str]:
     return paths
 
 
+def prompt_requires_bounded_evidence_plan(prompt: str) -> bool:
+    lowered = str(prompt or "").lower()
+    return "evidence-and-edit contract" in lowered or (
+        "bounded evidence plan" in lowered and "before any reads" in lowered
+    )
+
+
+def evidence_plan_stated_in_text(text: str) -> bool:
+    lowered = str(text or "").lower()
+    if "bounded evidence plan" in lowered:
+        return True
+    return "before any reads" in lowered and "bounded" in lowered and "plan" in lowered
+
+
 def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> bool:
     if not paths:
         return True
@@ -2844,6 +2858,9 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     requires_targeted_rg = prompt_requires_targeted_rg(task.prompt)
     bounded_read_paths = bounded_read_paths_from_prompt(task.prompt)
     prompt_lower = task.prompt.lower()
+    requires_bounded_plan = prompt_requires_bounded_evidence_plan(task.prompt)
+    bounded_plan_stated = False
+    missing_plan_recorded = False
     deterministic_output_required = (
         "search/replace" in prompt_lower and "deterministic apply" in prompt_lower
     ) or ("strict_worker_envelope: true" in prompt_lower)
@@ -2852,6 +2869,8 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     for event in read_jsonl_file(event_path):
         if event.get("item_type") in {"agent_message", "reasoning"}:
             last_agent_rationale = str(event.get("text_preview") or "")
+            if not bounded_plan_stated and evidence_plan_stated_in_text(last_agent_rationale):
+                bounded_plan_stated = True
             continue
         item_type = str(event.get("item_type") or "")
         if item_type == "file_change" and deterministic_output_required:
@@ -2886,6 +2905,17 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         if not command or command in commands_seen:
             continue
         commands_seen.add(command)
+        if requires_bounded_plan and not bounded_plan_stated and not missing_plan_recorded:
+            findings.append(
+                {
+                    "level": "warn",
+                    "kind": "missing_bounded_evidence_plan",
+                    "message": "first command_execution happened before a bounded evidence plan was stated",
+                    "command": command,
+                    "evidence": "bounded evidence plan must be stated before source reads",
+                }
+            )
+            missing_plan_recorded = True
         if command_looks_like_test(command) and task.checks and not command_matches_declared_check(command, task.checks):
             findings.append(
                 {
