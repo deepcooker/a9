@@ -5552,6 +5552,23 @@ Do the work.
         self.assertIn("- change_record:", prompt)
         self.assertIn("- role_signoff:", prompt)
 
+    def test_next_task_prompt_includes_decision_template_for_reference_followups(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="reference-template", prompt="reference_scan one mechanism", phase="reference_scan")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "mechanism_extract: carry shaping template"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "mechanism_extract")
+
+        self.assertIn("Task decision packet:", prompt)
+        self.assertIn("Decision packet task-shaping template:", prompt)
+        self.assertIn("- exception_flow:", prompt)
+        self.assertIn("- role_signoff:", prompt)
+
     def test_build_context_packet_omits_worker_method_text_for_session_refresh(self):
         mod = load_supervisor()
         task = mod.Task(
