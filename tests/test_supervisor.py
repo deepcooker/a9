@@ -4324,6 +4324,75 @@ Do the work.
         self.assertEqual(len(findings), 1)
         self.assertIn("a9_service.py ps", findings[0]["command"])
 
+    def test_process_governance_fails_explicit_allowed_read_scope_violation(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc \"sed -n '1,120p' docs/communication-runtime-decision-packet.md\"",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc \"sed -n '1,120p' vendor-src/codex/codex-rs/core/src/compact.rs\"",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="allowed-read-scope",
+                phase="reference_scan",
+                prompt="Inspect only bounded slices from allowed_paths. Use bounded rg/sed reads only on allowed_paths.",
+                checks=[],
+                allowed_paths=["docs/communication-runtime-decision-packet.md"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        findings = [item for item in result["findings"] if item["kind"] == "read_outside_allowed_paths"]
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(findings[0]["level"], "error")
+        self.assertEqual(findings[0]["path"], "vendor-src/codex/codex-rs/core/src/compact.rs")
+
+    def test_process_governance_does_not_make_allowed_paths_global_read_scope(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc \"sed -n '1,120p' docs/communication-runtime-decision-packet.md\"",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="allowed-write-scope-only",
+                phase="implement",
+                prompt="Implement a bounded patch.",
+                checks=[],
+                allowed_paths=["scripts/a9_supervisor.py"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("read_outside_allowed_paths", kinds)
+
     def test_process_governance_observes_batched_sed_reads_with_rationale(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -1573,6 +1573,15 @@ def command_directly_writes_workspace(command: str) -> bool:
 
 def live_worker_command_violation(task: Task, command: str, *, rationale: str = "") -> dict[str, Any]:
     normalized = normalize_shell_command(command)
+    allowed_read_findings = allowed_read_path_findings(task, normalized)
+    if allowed_read_findings:
+        finding = allowed_read_findings[0]
+        return {
+            "kind": finding["kind"],
+            "reason": finding["message"],
+            "command": normalized,
+            "path": finding["path"],
+        }
     if command_directly_writes_workspace(normalized):
         return {
             "kind": "direct_workspace_write",
@@ -2745,6 +2754,76 @@ def bounded_read_path_matches(pattern: str, candidate: str) -> bool:
     return False
 
 
+def prompt_enforces_allowed_read_paths(prompt: str) -> bool:
+    lowered = str(prompt or "").lower()
+    if "allowed_paths" not in lowered:
+        return False
+    markers = (
+        "inspect only",
+        "read only",
+        "only bounded slices",
+        "bounded slices from allowed_paths",
+        "bounded rg/sed reads only on allowed_paths",
+        "bounded read",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def command_read_targets(command: str) -> list[str]:
+    normalized = normalize_shell_command(command)
+    inner = shell_lc_inner_command(normalized).strip()
+    fragments = [part.strip() for part in re.split(r"\s+(?:&&|;)\s+", inner) if part.strip()]
+    targets: list[str] = []
+    for fragment in fragments or [inner]:
+        pipe_head = re.split(r"\s+\|\s+", fragment, maxsplit=1)[0].strip()
+        try:
+            parts = shlex.split(pipe_head)
+        except ValueError:
+            continue
+        if not parts:
+            continue
+        name = parts[0]
+        if name == "sed" and len(parts) >= 4 and parts[1] == "-n":
+            targets.append(parts[3])
+        elif name in {"tail", "head"} and len(parts) >= 4 and parts[1] == "-n":
+            targets.append(parts[-1])
+        elif name == "wc" and len(parts) >= 3 and parts[1] in {"-l", "-c", "-w"}:
+            targets.extend(part for part in parts[2:] if not part.startswith("-"))
+        elif name == "rg":
+            index = 1
+            rg_files = False
+            while index < len(parts) and parts[index].startswith("-"):
+                if parts[index] == "--files":
+                    rg_files = True
+                index += 1
+            if rg_files:
+                targets.extend(part for part in parts[index:] if not part.startswith("-"))
+            elif index < len(parts):
+                targets.extend(part for part in parts[index + 1 :] if not part.startswith("-"))
+    return targets
+
+
+def allowed_read_path_findings(task: Task, command: str) -> list[dict[str, Any]]:
+    if not task.allowed_paths or not prompt_enforces_allowed_read_paths(task.prompt):
+        return []
+    findings: list[dict[str, Any]] = []
+    for target in command_read_targets(command):
+        normalized_target = target[2:] if target.startswith("./") else target
+        if any(bounded_read_path_matches(allowed, normalized_target) for allowed in task.allowed_paths):
+            continue
+        findings.append(
+            {
+                "level": "error",
+                "kind": "read_outside_allowed_paths",
+                "message": "worker read a path outside the task's explicit allowed read scope",
+                "command": command,
+                "path": normalized_target,
+                "allowed_paths": task.allowed_paths,
+            }
+        )
+    return findings
+
+
 def task_allows_session_context_reads(task: Task, command: str) -> bool:
     if task.phase in SESSION_CONTEXT_READ_PHASES:
         return True
@@ -3156,6 +3235,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "command": command,
                 }
             )
+        findings.extend(allowed_read_path_findings(task, command))
         session_read_finding = forbidden_session_context_read(task, command)
         if session_read_finding:
             findings.append(session_read_finding)

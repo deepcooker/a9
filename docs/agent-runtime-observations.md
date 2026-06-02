@@ -1,5 +1,47 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-02: explicit allowed read scope now blocks reference-scan drift
+
+Run evidence:
+- `.a9/runs/communication-runtime-model-validation-20260602-20260602T141549Z-a1`
+- monitor override:
+  `.a9/eval_store/overrides/override-communication-runtime-model-validatio-4df9f6fd4f-20260602T141725Z.json`
+
+Observation:
+- The worker produced useful model-validation output for the communication
+  runtime decision packet, but its execution discipline was not acceptable.
+- It read paths outside the task's explicit `allowed_paths`, including
+  `vendor-src/codex/codex-rs/core/src/compact.rs`,
+  `vendor-src/codex/codex-rs/core/src/context_manager/history.rs`, and
+  `reference-projects/openclaw/extensions/lobster/src/lobster-taskflow.ts`.
+- The run still ended `pass` because existing `allowed_paths` governance was
+  write-scope oriented; it did not treat explicit read-scope violations as hard
+  process failures.
+- Token cost was high for a model-validation slice:
+  about 1.57M input tokens, with 33 process findings.
+
+Monitor intervention:
+- Wrote an eval override with action `narrow_task`.
+- Added explicit allowed-read-scope governance in `scripts/a9_supervisor.py`:
+  when a task prompt says to inspect/read only `allowed_paths`, `sed`/`tail`/
+  `head`/`wc`/`rg` reads outside those paths become
+  `read_outside_allowed_paths` error findings.
+- Added live command interception for the same condition so future runs can be
+  stopped before consuming the full token budget.
+- Kept ordinary implementation `allowed_paths` as write-scope only unless the
+  prompt explicitly turns it into a read-scope contract.
+
+Checks:
+- `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+- `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_fails_explicit_allowed_read_scope_violation tests.test_supervisor.SupervisorTests.test_process_governance_does_not_make_allowed_paths_global_read_scope tests.test_supervisor.SupervisorTests.test_process_governance_blocks_commands_outside_bounded_read_scope`
+
+Governance lesson:
+- This is not an arbitrary numeric gate. It protects a task authority fact:
+  when the monitor says "inspect only these paths", reading other paths is
+  scope drift and should fail or stop.
+- The worker's analysis can still be salvaged as evidence, but the run quality
+  should not be accepted as clean.
+
 ## 2026-06-02: missing bounded evidence plan is now observable
 
 - A 24h worker run for bounded evidence governance was rolled back after broad
