@@ -1117,9 +1117,14 @@ class ControlApiTests(unittest.TestCase):
 
         fake_node = FakeNode()
         with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
             try:
                 mod.a9_node = lambda: fake_node
                 mod.redis_tasks_stream_probe = fake_probe
+                mod.phone_control_arm(
+                    {"group": "remote", "duration": "5m", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
                 result = mod.recover_stale_commands(
                     {
                         "node_id": "node-a",
@@ -1129,7 +1134,7 @@ class ControlApiTests(unittest.TestCase):
                         "stream": "a9:tasks",
                         "timeout": 5,
                     },
-                    root=Path(tmp),
+                    root=root,
                 )
                 evidence_path = str(result["evidence_path"])
                 self.assertFalse(evidence_path == "")

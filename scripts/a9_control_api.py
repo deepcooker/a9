@@ -55,6 +55,7 @@ PHONE_CONTROL_GROUPS = {
     "remote": [
         "nodes.bootstrap.execute",
         "nodes.probe.execute",
+        "nodes.recover.stale_commands",
         "nodes.recovery.cycle",
         "nodes.remote.install",
         "nodes.remote.repair",
@@ -2720,6 +2721,25 @@ def recover_stale_commands(payload: dict[str, Any] | None = None, *, root: Path 
 
     stream = str(payload.get("stream") or TASKS_STREAM_KEY).strip() or TASKS_STREAM_KEY
     group = str(payload.get("group") or TASKS_STREAM_GROUP).strip() or TASKS_STREAM_GROUP
+    recovery_gate = command_gate("nodes.recover.stale_commands", root=root)
+    if not recovery_gate.get("allowed"):
+        return {
+            "status": "blocked",
+            "kind": "recover_stale_commands",
+            "action": "recover_stale_commands",
+            "node_id": node_id,
+            "stream": stream,
+            "group": group,
+            "before": {},
+            "after": {},
+            "claim_result": {},
+            "recovered_count": 0,
+            "claimed_ids": [],
+            "reason": str(recovery_gate.get("reason") or "phone_control_disarmed"),
+            "gate": recovery_gate,
+            "started_at": started_at,
+            "finished_at": utc_now(),
+        }
     raw_count = payload.get("count")
     if raw_count is None:
         raw_count = payload.get("max_claim")
@@ -2856,6 +2876,7 @@ def recover_stale_commands(payload: dict[str, Any] | None = None, *, root: Path 
         "node_id": node_id,
         "stream": stream,
         "group": group,
+        "gate": recovery_gate,
         "before": {
             "status": before.get("status"),
             "stream": before.get("stream") or stream,

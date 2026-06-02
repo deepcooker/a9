@@ -252,3 +252,50 @@ Governance lesson:
 - The 24h loop must record `worker_model` and `worker_model_source` on every
   run, and startup failures from unsupported models should trigger model
   fallback or operator-visible repair rather than silent queue churn.
+
+## 2026-06-02: executable stale Redis Stream recovery worker pass needed monitor hardening
+
+Run evidence:
+- `.a9/runs/000-reference-scan-multinode-connection-stability-next-slice-retry-20260602-20260602T052457Z-a1`
+- `.a9/runs/000-implement-executable-stale-stream-recovery-action-20260602-20260602T053040Z-a1`
+
+Observation:
+- The reference scan picked the right next communication-runtime slice:
+  convert `pending_stuck` Redis Stream diagnosis into an executable
+  `recover_stale_commands` control action using the existing
+  `scripts/a9_node.py::node_command_claim_stale_once` XAUTOCLAIM helper.
+- The implementation worker completed and committed useful code/tests, but
+  process governance still recorded repeated direct `file_change` events under
+  a deterministic SEARCH/REPLACE task. This remains a worker behavior issue,
+  but warn-only observation is acceptable while the product lane is still
+  wiring core runtime capability.
+- Token cost was too high for this slice. The reference scan used about
+  1.39M input tokens, and the implementation run used about 5.74M input
+  tokens. The main cause is broad local reading and repeated failed patch
+  attempts, not business complexity.
+- The worker marked the route as requiring remote arm, but did not register
+  `nodes.recover.stale_commands` in the remote command group and did not
+  enforce the command gate inside the action. The monitor had to harden this
+  because it is an execution/safety fact, not an optimization gate.
+
+Monitor intervention:
+- Added `nodes.recover.stale_commands` to the remote phone-control command
+  group.
+- Added a `command_gate("nodes.recover.stale_commands")` check inside
+  `recover_stale_commands`.
+- Updated the test to arm the remote group before executing stale-command
+  recovery.
+- Ran:
+  `python3 -m py_compile scripts/a9_control_api.py scripts/a9_node.py tests/test_control_api.py tests/test_node.py`,
+  targeted recovery tests, and full
+  `python3 -m unittest tests.test_control_api.ControlApiTests`.
+
+Governance lesson:
+- The worker is now good enough to execute communication-runtime slices under
+  monitoring, but monitor review must still check route/command/gate
+  consistency.
+- Cost control should be architectural and observational first: smaller
+  source windows, fewer repeated patch attempts, and better task packets.
+  Do not solve this by arbitrary token/line gates that block useful work.
+- Direct `file_change` events should remain visible to the monitor until the
+  deterministic apply path is fully reliable.

@@ -1272,3 +1272,23 @@
 - 测试名也是契约的一部分；不能用“语义相近”的新名字替代声明检查。
 - 后续可让 supervisor 对 final envelope 的 `tests/checks` 与 task checks 做
   更直接的差异提示，减少这种无谓回滚。
+
+## 2026-06-02：执行路由标了 requires_arm，但 action 本身也必须校验 gate
+
+现象：
+
+- `000-implement-executable-stale-stream-recovery-action-20260602` 正确把
+  Redis Stream `pending_stuck` 接成了 `recover_stale_commands` 动作。
+- 但 worker 的首版实现只在 action plan 里写了 `requires_arm: true` 和
+  `command: nodes.recover.stale_commands`。
+- `recover_stale_commands` 函数本身没有检查 `command_gate`，并且
+  `nodes.recover.stale_commands` 没有加入 remote command group。
+- 这会让控制面展示上像是受控动作，实际执行函数却没有同等保护。
+
+规则：
+
+- 对会修改远端/Redis/运行状态的动作，route metadata 不是安全边界。
+- action 函数内部必须再次校验对应 `command_gate`，并且命令必须注册在正确
+  phone-control group。
+- 这类 gate 是执行事实和安全边界，不是为了工程洁癖设置的硬门禁。
+- 测试必须先 arm 对应 group，再验证执行结果。
