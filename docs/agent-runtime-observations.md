@@ -229,3 +229,26 @@ Governance lesson:
   visibility without turning prompt drift into a hard business blocker.
 - Declared checks remain the contract. Worker-renamed tests can be useful
   debugging evidence, but cannot satisfy the task.
+
+## 2026-06-02: default worker model availability changed
+
+Run evidence:
+- `.a9/runs/000-reference-scan-multinode-connection-stability-next-slice-20260602-20260602T051731Z-a1`
+
+Observation:
+- The queued multinode reference scan did not reach model reasoning.
+- Codex returned HTTP 400:
+  `The 'gpt-5.3-codex' model is not supported when using Codex with a ChatGPT account.`
+- A direct smoke with `gpt-5.3-codex-spark` succeeded and produced a valid
+  strict JSON envelope.
+
+Monitor intervention:
+- Changed `scripts/a9_supervisor.py::DEFAULT_WORKER_MODEL` to
+  `gpt-5.3-codex-spark`.
+- Updated the default-model policy attestation test expectation.
+
+Governance lesson:
+- Model availability is runtime state, not a stable architecture fact.
+- The 24h loop must record `worker_model` and `worker_model_source` on every
+  run, and startup failures from unsupported models should trigger model
+  fallback or operator-visible repair rather than silent queue churn.
