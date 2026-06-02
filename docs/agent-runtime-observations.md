@@ -698,3 +698,31 @@ Governance lesson:
   decided slices.
 - Product/mainline remains the pressure role: market/reference research,
   scenario pressure, solution overturning, and final product decision.
+
+## 2026-06-02: worker method packet injected into supervisor prompts
+
+Observation:
+- Adding `docs/worker-method-packet.md` was not enough. If the supervisor does
+  not inject the method packet into worker context, manually enqueued first
+  slices can still run as plain engineering tasks.
+
+Change:
+- `scripts/a9_supervisor.py::requirements_method_packet()` now includes the new
+  phase distinction: debate before decision, execute after decision.
+- `build_context_packet()` now adds an `A9 Worker Method Packet` policy section
+  for AI worker phases, with source `docs/worker-method-packet.md`.
+- Deterministic session phases do not receive the method text.
+
+Checks:
+- `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+- Focused method-packet prompt tests:
+  `test_next_task_prompt_includes_requirements_method_packet`,
+  `test_build_context_packet_injects_worker_method_packet_for_ai_worker`,
+  `test_build_context_packet_omits_worker_method_text_for_session_refresh`.
+- Prompt/context regression subset: 9 tests passed.
+
+Governance lesson:
+- Methodology must enter prompt construction, not only repository docs.
+- This is still advisory method injection, not a hard execution gate. The next
+  step is to route not-decided tasks into analysis worker packets before they
+  become execution backlog.

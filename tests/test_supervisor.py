@@ -5481,6 +5481,32 @@ Do the work.
         self.assertIn("Performance second", prompt)
         self.assertIn("Gates are observation-first", prompt)
 
+    def test_build_context_packet_injects_worker_method_packet_for_ai_worker(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="method-context", prompt="implement one decided slice", phase="implement")
+
+        packet = mod.build_context_packet(task)
+
+        self.assertIn("A9 Worker Method Packet", packet["prompt"])
+        self.assertIn("Canonical method source: docs/worker-method-packet.md", packet["prompt"])
+        self.assertIn("debate before decision, execute after decision", packet["prompt"])
+        self.assertIn("Execution worker may implement only decided slices", packet["prompt"])
+        self.assertIn("strict_worker_envelope: true", packet["prompt"])
+
+    def test_build_context_packet_omits_worker_method_text_for_session_refresh(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="session-refresh-method-context",
+            prompt="source_session_path: /tmp/session.jsonl\nfrom_turn: 1\nto_turn: 1",
+            phase=mod.SESSION_REFRESH_PHASE,
+        )
+
+        packet = mod.build_context_packet(task)
+
+        self.assertNotIn("Canonical method source: docs/worker-method-packet.md", packet["prompt"])
+        self.assertNotIn("debate before decision, execute after decision", packet["prompt"])
+
     def test_next_task_prompt_carries_active_goal_continuation(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="goal-source", prompt="demo", phase="implement")

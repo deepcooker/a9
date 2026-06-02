@@ -155,6 +155,7 @@ AI_WORKER_PHASES = {
 }
 SECTION_TOKEN_BUDGETS = {
     "doctrine": 5000,
+    "method": 1800,
     "task": 4000,
     "previous_context": 3000,
     "repo_map": 2500,
@@ -164,6 +165,7 @@ SECTION_TOKEN_BUDGETS = {
 PHASE_SECTION_TOKEN_BUDGETS = {
     "implement": {
         "doctrine": 1800,
+        "method": 1600,
         "task": 4000,
         "previous_context": 1800,
         "repo_map": 2500,
@@ -172,6 +174,7 @@ PHASE_SECTION_TOKEN_BUDGETS = {
     },
     "test": {
         "doctrine": 1200,
+        "method": 1400,
         "task": 4000,
         "previous_context": 2000,
         "repo_map": 3000,
@@ -180,6 +183,7 @@ PHASE_SECTION_TOKEN_BUDGETS = {
     },
     "repair": {
         "doctrine": 1000,
+        "method": 1600,
         "task": 4200,
         "previous_context": 2500,
         "repo_map": 2500,
@@ -188,6 +192,7 @@ PHASE_SECTION_TOKEN_BUDGETS = {
     },
     "reference_scan": {
         "doctrine": 2000,
+        "method": 1600,
         "task": 3600,
         "previous_context": 1000,
         "repo_map": 2500,
@@ -196,6 +201,7 @@ PHASE_SECTION_TOKEN_BUDGETS = {
     },
     "mechanism_extract": {
         "doctrine": 2200,
+        "method": 1800,
         "task": 3600,
         "previous_context": 1200,
         "repo_map": 2500,
@@ -204,6 +210,7 @@ PHASE_SECTION_TOKEN_BUDGETS = {
     },
     "vendor_import": {
         "doctrine": 1500,
+        "method": 1600,
         "task": 3800,
         "previous_context": 1200,
         "repo_map": 2600,
@@ -212,6 +219,7 @@ PHASE_SECTION_TOKEN_BUDGETS = {
     },
     SESSION_REFRESH_PHASE: {
         "doctrine": 1000,
+        "method": 0,
         "task": 4200,
         "previous_context": 800,
         "repo_map": 1600,
@@ -220,6 +228,7 @@ PHASE_SECTION_TOKEN_BUDGETS = {
     },
     SESSION_CLOSE_READING_PHASE: {
         "doctrine": 1300,
+        "method": 0,
         "task": 4200,
         "previous_context": 1200,
         "repo_map": 1800,
@@ -969,6 +978,12 @@ LangGraph/mem0/OpenHands/Continue complement persistence:
 """,
         section_budgets["reference_mechanisms"],
     )
+    method_packet = ""
+    if strict_worker_envelope_required_for_phase(task.phase):
+        method_packet = truncate_to_token_budget(
+            requirements_method_packet(),
+            section_budgets.get("method", 0),
+        )
 
     task_prompt = truncate_to_token_budget(worker_prompt_with_default_envelope(task), section_budgets["task"], keep="tail")
     contract = truncate_to_token_budget(
@@ -1017,6 +1032,14 @@ Hard rules:
                 "budget_tokens": section_budgets["contract"],
                 "reference_only": False,
                 "body": contract,
+            },
+            {
+                "name": "A9 Worker Method Packet",
+                "source": "docs/worker-method-packet.md",
+                "role": "policy",
+                "budget_tokens": section_budgets.get("method", 0),
+                "reference_only": False,
+                "body": method_packet,
             },
             {
                 "name": "Current Task",
@@ -6047,11 +6070,18 @@ def active_goal_for_idle_continuation() -> dict[str, Any] | None:
 
 def requirements_method_packet() -> str:
     return """Requirements method packet:
+- Canonical method source: docs/worker-method-packet.md.
+- Top-level rule: debate before decision, execute after decision.
+- debate_next means research/model/review/decision work only; do not implement production changes.
+- execution_next means a decided slice with data/state contract, reference mechanism, acceptance, and allowed execution.
+- Analysis worker may close-read, reverse-model, collect references, draft data/state flows, and produce review packets.
+- Execution worker may implement only decided slices; if the packet is not decided, return a change request.
 - Treat the user's words as business input, not automatically as the implementation plan.
 - First restate the real problem, then translate it into system behavior.
 - Data first: identify schema/state/event/object shape before polishing UI/API/code.
 - Performance second: latency, stability, budget, retry, recovery, and soak expectations matter after data shape is right.
 - Separate must/should/could and explicitly preserve out_of_scope.
+- Product/mainline is a pressure role: market/reference research, scenario pressure, solution overturning, and final product decision.
 - Acceptance must be evidence-based: tests, run evidence, traces, diffs, and cited references.
 - Gates are observation-first unless the action corrupts facts, violates license/security, skips declared tests, or mutates authority state.
 """
