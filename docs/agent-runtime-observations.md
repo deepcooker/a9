@@ -1267,6 +1267,8 @@ Change:
   `auto_next_block.reason = operator_handoff_next_slice_requires_monitor`.
 - Explicit phase-prefixed next slices such as `test: ...` and `implement: ...`
   remain actionable.
+- Auto-next now also blocks any non-empty next slice without a phase prefix and
+  records `auto_next_block.reason = next_slice_missing_phase_prefix`.
 
 Governance lesson:
 - `next_recommended_task` is advisory unless it is a concrete phase-prefixed

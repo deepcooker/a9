@@ -6596,6 +6596,10 @@ def next_slice_is_operator_handoff(next_slice: Any) -> bool:
     )
 
 
+def next_slice_is_actionable_for_auto_next(next_slice: Any) -> bool:
+    return phase_from_next_slice(next_slice) is not None
+
+
 def resolve_next_slice_contract(output: Any) -> dict[str, Any]:
     if not isinstance(output, dict):
         return {
@@ -7307,6 +7311,15 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         if next_slice_is_operator_handoff(worker_output.get("next_slice")):
             summary["auto_next_block"] = {
                 "reason": "operator_handoff_next_slice_requires_monitor",
+                "status": summary["status"],
+                "task_id": task.task_id,
+                "next_slice": worker_output.get("next_slice", ""),
+                "next_slice_source": worker_output.get("next_slice_source", ""),
+            }
+            return None
+        if not next_slice_is_actionable_for_auto_next(worker_output.get("next_slice")):
+            summary["auto_next_block"] = {
+                "reason": "next_slice_missing_phase_prefix",
                 "status": summary["status"],
                 "task_id": task.task_id,
                 "next_slice": worker_output.get("next_slice", ""),

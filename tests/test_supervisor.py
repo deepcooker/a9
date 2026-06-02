@@ -7948,6 +7948,43 @@ index 0000000..3e75765
             "worker_envelope.output.next_recommended_task",
         )
 
+    def test_schedule_next_task_blocks_unprefixed_next_recommended_task(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-unprefixed.md",
+            task_id="auto-unprefixed",
+            prompt="test one bounded verification slice",
+            phase="test",
+            checks=["python3 -m unittest tests/test_supervisor.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-unprefixed-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-unprefixed-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {
+                    "output": {
+                        "next_recommended_task": "Extend active-plan prompt hydration with progress tails."
+                    }
+                },
+            },
+        }
+
+        output = mod.worker_output_from_summary(summary)
+        next_path = mod.schedule_next_task(task, summary)
+
+        self.assertEqual(output["next_slice"], "Extend active-plan prompt hydration with progress tails.")
+        self.assertIsNone(next_path)
+        self.assertEqual(summary["auto_next_block"]["reason"], "next_slice_missing_phase_prefix")
+        self.assertEqual(
+            summary["auto_next_block"]["next_slice_source"],
+            "worker_envelope.output.next_recommended_task",
+        )
+
     def test_schedule_next_task_infers_direct_file_change_policy_for_durable_test_followup(self):
         mod = load_supervisor()
         mod.ensure_dirs()
