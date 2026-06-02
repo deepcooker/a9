@@ -182,6 +182,10 @@ No tmux/ssh command automation in this first slice.
 
 ## Reference Mechanisms Borrowed
 
-- Codex session continuity and compaction flow in `reference-projects/codex/codex-rs/core/src/tasks/mod.rs`.
-- OpenClaw/Lobster strict governance and revisioned waiting/approval envelope in `reference-projects/openclaw/extensions/lobster/src/lobster-runner.ts`.
-- Barter-rs reconnect taxonomy/action/backoff model in `reference-projects/barter-rs/barter-data/src/streams/reconnect/mod.rs`.
+This packet did not re-read reference repositories. It reuses mechanisms already
+captured in local decision documents:
+
+- Codex-style session continuity, compaction, and handoff-as-index governance.
+- OpenClaw/Lobster-style strict governance, revisioned waiting, and approval
+  envelopes.
+- Barter-rs-style reconnect taxonomy, action classification, and backoff model.

@@ -1440,3 +1440,31 @@ Governance lesson:
   quality was not. Declared checks must be shell-validated before enqueueing.
 - For debate/review tasks, process findings should guide the next prompt but
   should not discard valid business/data analysis.
+
+## 2026-06-03: communication model closure passed with narrower process findings
+
+Run evidence:
+- Worker run:
+  `.a9/runs/communication-runtime-model-closure-20260603-20260602T170212Z-a1`
+- Integrated commit:
+  `9b6bf0370aa33bca46f7cc57fd5a8672769fa782`
+
+Observation:
+- The worker produced `docs/communication-runtime-model-closure.md` and indexed
+  it in `docs/README.md`.
+- The doc closes the first model slice for `operator_session`, `event_cursor`,
+  and `reconnect_state`: fields, authority stores, Redis keys, transitions,
+  exception gates, acceptance, recommended execution slice, and open questions.
+- Declared section checks all passed.
+- Process findings improved from the prior readiness review: no broad `sed`
+  slice findings, but still three uncapped `rg` findings and four direct
+  file-change events.
+- Monitor corrected the reference wording after integration: the model closure
+  reuses mechanisms already captured in local decision docs; it did not re-read
+  reference repositories in this task.
+
+Governance lesson:
+- The data-first path is now ready for a very small `execution_next` slice, but
+  only after open questions are either answered or explicitly scoped out.
+- The next worker prompt should cap `rg` with `-m` and keep reference claims tied
+  to actually-read evidence.
