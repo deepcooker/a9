@@ -5543,6 +5543,18 @@ Do the work.
 
         self.assertEqual(status, "needs-followup")
 
+    def test_test_phase_allows_no_diff_by_default(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="test-no-diff", prompt="decision_status: decided", phase="test")
+
+        self.assertTrue(mod.task_allows_no_diff(task))
+
+    def test_repair_phase_does_not_allow_no_diff_by_default(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="repair-no-diff", prompt="decision_status: decided", phase="repair")
+
+        self.assertFalse(mod.task_allows_no_diff(task))
+
     def test_changed_files_claim_without_patch_evidence_requires_repair(self):
         mod = load_supervisor()
         worker = {"timed_out": False, "idle_timed_out": False, "budget_stopped": False, "return_code": 0}

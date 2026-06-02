@@ -1148,6 +1148,9 @@ Change:
   debate.
 - The contract now explicitly says strict worker envelopes must be valid JSON
   only, with paths/evidence as strings rather than Markdown links.
+- Pure `test` phase tasks may now pass with no repository diff when declared
+  checks, process governance, and the worker envelope pass; `repair` and
+  production implementation still do not get this default.
 
 Governance lesson:
 - The requirements method should protect production implementation, not create

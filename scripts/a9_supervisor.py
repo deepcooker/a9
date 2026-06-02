@@ -3300,6 +3300,8 @@ def task_allows_no_diff(task: Task) -> bool:
     fields = parse_key_value_prompt(task.prompt)
     if parse_bool_field(fields, "allow_no_diff", False):
         return True
+    if task.phase == "test":
+        return True
     if "expected_file_changes" in fields and not parse_bool_field(fields, "expected_file_changes", True):
         return True
     if "expect_file_changes" in fields and not parse_bool_field(fields, "expect_file_changes", True):
