@@ -376,3 +376,27 @@ Governance lesson:
 - This is not removing the strict envelope rule. It converts a known protocol
   failure into a recorded reconciliation when deterministic evidence proves the
   code patch is acceptable.
+
+## 2026-06-02: worker auto-committed recovery-loop priority tie-break
+
+Run evidence:
+- `.a9/runs/000-implement-communication-status-recovery-loop-priority-20260602-20260602T060229Z-a1`
+
+Observation:
+- The 24h worker produced a valid strict envelope and supervisor committed the
+  patch automatically.
+- It added a deterministic tie-break so `recovery_loop` with serious action
+  wins over `tasks_stream` when both are priority 4.
+- Direct `file_change` events still appeared as warn-only process-governance
+  findings, but patch/scope/checks all passed.
+
+Verification:
+- Worker declared checks passed.
+- Monitor reran full `python3 -m unittest tests.test_control_api.ControlApiTests`
+  and 218 tests passed.
+
+Governance lesson:
+- The 24h loop can now complete useful communication-runtime tasks end to end
+  without manual patch acceptance when the envelope is valid.
+- The remaining automation quality issue is worker event discipline, not this
+  specific routing capability.
