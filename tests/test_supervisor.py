@@ -6033,6 +6033,28 @@ Do the work.
         self.assertIn("decided: true", packet["prompt"])
         self.assertIn("missing_fields: none", packet["prompt"])
 
+    def test_build_context_packet_routes_compact_decided_test_task_to_execution_next(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="compact-test-decision",
+            prompt=(
+                "decision_status: decided\n"
+                "route: execution_next\n"
+                "direct_file_change_policy: repair\n"
+                "Goal: verify a focused supervisor behavior without production changes."
+            ),
+            phase="test",
+        )
+
+        packet = mod.build_context_packet(task)
+
+        self.assertIn("Task Decision Packet", packet["prompt"])
+        self.assertIn("route: execution_next", packet["prompt"])
+        self.assertIn("decided: true", packet["prompt"])
+        self.assertIn("missing_fields: none", packet["prompt"])
+        self.assertIn("- required_fields: decision_status", packet["prompt"])
+
     def test_task_decision_packet_ignores_embedded_template_fields(self):
         mod = load_supervisor()
         prompt = f"""strict_worker_envelope: true

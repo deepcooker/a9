@@ -5520,10 +5520,17 @@ EXECUTION_DECISION_REQUIRED_FIELDS = (
 )
 
 
+def decision_required_fields_for_task(task: Task) -> tuple[str, ...]:
+    if task.phase in {"test", "repair"}:
+        return ("decision_status",)
+    return EXECUTION_DECISION_REQUIRED_FIELDS
+
+
 def task_decision_packet(task: Task) -> dict[str, Any]:
     fields = parse_leading_key_value_prompt(task.prompt)
     decision_status = str(fields.get("decision_status", "")).strip().lower()
-    missing = [name for name in EXECUTION_DECISION_REQUIRED_FIELDS if not str(fields.get(name, "")).strip()]
+    required_fields = decision_required_fields_for_task(task)
+    missing = [name for name in required_fields if not str(fields.get(name, "")).strip()]
     decided = decision_status in DECIDED_STATUS_VALUES and not missing
     if decided:
         route = "execution_next"
@@ -5537,7 +5544,7 @@ def task_decision_packet(task: Task) -> dict[str, Any]:
         "decision_status": decision_status or "missing",
         "decided": decided,
         "missing_fields": missing,
-        "required_fields": list(EXECUTION_DECISION_REQUIRED_FIELDS),
+        "required_fields": list(required_fields),
     }
 
 
@@ -5560,11 +5567,13 @@ def decision_packet_template() -> str:
 def task_decision_packet_prompt(task: Task) -> str:
     packet = task_decision_packet(task)
     missing = ", ".join(packet["missing_fields"]) if packet["missing_fields"] else "none"
+    required = ", ".join(packet["required_fields"]) if packet["required_fields"] else "none"
     return f"""Task decision packet:
 - route: {packet['route']}
 - decision_status: {packet['decision_status']}
 - decided: {str(packet['decided']).lower()}
 - missing_fields: {missing}
+- required_fields: {required}
 - recommendation: {packet['recommendation']}
 - rule: if route is debate_next, do analysis/research/modeling/review output and change_request; do not implement production changes.
 {decision_packet_template()}
