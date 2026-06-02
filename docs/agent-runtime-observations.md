@@ -1,5 +1,12 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-02: recovery-loop exposes execute mode in monitor payload
+
+- Recovery-loop monitor now distinguishes observe-only and execute-enabled recovery runs via
+  `communication_execute_enabled` and `communication_route_execution` in
+  `/api/nodes/recovery-loop/latest`.
+- This stays visibility-only: recovery-loop remains default observe-only and service startup is unchanged.
+
 ## 2026-06-02: auto-next recovered, then entered a local repair loop
 
 Context:

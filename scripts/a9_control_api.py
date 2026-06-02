@@ -1428,6 +1428,11 @@ def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
             suggestions = read_json(suggestions_path)
         except (json.JSONDecodeError, OSError):
             suggestions = None
+    communication_execute_enabled = (
+        payload.get("communication_execute_enabled")
+        if "communication_execute_enabled" in payload
+        else payload.get("execute")
+    )
     return {
         "status": "ok",
         "kind": "recovery_loop_latest",
@@ -1439,6 +1444,8 @@ def recovery_loop_latest(*, root: Path = ROOT) -> dict[str, Any]:
         "step_count": payload.get("step_count"),
         "risk_count": payload.get("risk_count"),
         "execute": payload.get("execute"),
+        "communication_execute_enabled": communication_execute_enabled,
+        "communication_route_execution": payload.get("communication_route_execution"),
         "communication_plan_status": payload.get("communication_plan_status"),
         "communication_action": payload.get("communication_action"),
         "communication_priority_source": payload.get("communication_priority_source"),

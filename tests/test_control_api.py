@@ -7126,23 +7126,43 @@ class ControlApiTests(unittest.TestCase):
             latest.parent.mkdir(parents=True)
             latest.write_text(
                 json.dumps(
-                    {
-                        "status": "ok",
-                        "checked_at": "2026-05-29T19:02:55+00:00",
-                        "controller_url": "http://127.0.0.1:8787",
-                        "cycle_status": "ok",
-                        "step_count": 1,
-                        "risk_count": 0,
-                        "execute": False,
-                        "communication_plan_status": "ready",
-                        "communication_action": "intervene",
-                        "communication_priority_source": "recovery_loop",
-                        "communication_route": {"endpoint": "/api/nodes/recovery-cycle"},
-                        "communication_observation": {
-                            "current_key": "recovery_loop:intervene:ready",
-                            "streak": 2,
-                            "recommendation": "candidate_for_repair_one",
-                            "auto_execute": False,
+                        {
+                            "status": "ok",
+                            "checked_at": "2026-05-29T19:02:55+00:00",
+                            "controller_url": "http://127.0.0.1:8787",
+                            "cycle_status": "ok",
+                            "step_count": 1,
+                            "risk_count": 0,
+                            "execute": False,
+                            "communication_execute_enabled": False,
+                            "communication_plan_status": "ready",
+                            "communication_action": "intervene",
+                            "communication_priority_source": "recovery_loop",
+                            "communication_route": {"endpoint": "/api/nodes/recovery-cycle"},
+                            "communication_route_execution": {
+                                "status": "ok",
+                                "kind": "communication_route_execution",
+                                "reason": "observe_only",
+                                "route": {
+                                    "endpoint": "/api/nodes/recovery-cycle",
+                                    "command": "nodes.recovery.cycle",
+                                    "method": "POST",
+                                },
+                                "payload": {
+                                    "communication": {
+                                        "action": "intervene",
+                                        "priority_source": "recovery_loop",
+                                    },
+                                    "max_actions": 1,
+                                    "operator_scopes": ["operator.admin"],
+                                    "run_id": "run-2026-06-02",
+                                },
+                            },
+                            "communication_observation": {
+                                "current_key": "recovery_loop:intervene:ready",
+                                "streak": 2,
+                                "recommendation": "candidate_for_repair_one",
+                                "auto_execute": False,
                         },
                         "communication_repair_suggestions": {
                             "status": "ok",
@@ -7174,6 +7194,10 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(result["communication_plan_status"], "ready")
             self.assertEqual(result["communication_action"], "intervene")
             self.assertEqual(result["communication_priority_source"], "recovery_loop")
+            self.assertFalse(result["communication_execute_enabled"])
+            self.assertEqual(result["communication_route_execution"]["status"], "ok")
+            self.assertEqual(result["communication_route_execution"]["reason"], "observe_only")
+            self.assertEqual(result["communication_route_execution"]["payload"]["communication"]["action"], "intervene")
             self.assertEqual(result["communication_route"]["endpoint"], "/api/nodes/recovery-cycle")
             self.assertEqual(result["communication_observation"]["streak"], 2)
             self.assertEqual(result["communication_observation"]["recommendation"], "candidate_for_repair_one")
@@ -7296,13 +7320,20 @@ class ControlApiTests(unittest.TestCase):
 
         original_latest = mod.recovery_loop_latest
         try:
-            mod.recovery_loop_latest = lambda: {"status": "ok", "kind": "recovery_loop_latest"}
+            mod.recovery_loop_latest = lambda: {
+                "status": "ok",
+                "kind": "recovery_loop_latest",
+                "communication_execute_enabled": False,
+                "communication_route_execution": {"status": "ok", "kind": "communication_route_execution", "reason": "observe_only"},
+            }
             mod.ControlHandler.do_GET(DummyRecoveryLoopLatestGetHandler())
         finally:
             mod.recovery_loop_latest = original_latest
 
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "recovery_loop_latest")
+        self.assertFalse(captured["payload"]["communication_execute_enabled"])
+        self.assertEqual(captured["payload"]["communication_route_execution"]["kind"], "communication_route_execution")
 
     def test_recovery_transcript_joins_node_gateway_stream_and_loop_evidence(self):
         mod = load_control_api()
