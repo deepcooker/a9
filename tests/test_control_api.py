@@ -1149,6 +1149,68 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["status"], "needs_attention")
         self.assertEqual(captured["payload"]["action"], "intervene")
 
+    def test_communication_data_contract_report_lists_all_objects(self):
+        mod = load_control_api()
+        report = mod.communication_data_contract_report(root=mod.ROOT)
+
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(report["kind"], "communication_data_contract_report")
+        self.assertEqual(len(report["objects"]), len(mod.COMMUNICATION_DATA_CONTRACT_OBJECTS))
+        self.assertEqual(report["contract_version"], mod.COMMUNICATION_DATA_CONTRACT_VERSION)
+        for item in report["objects"]:
+            self.assertIn("object", item)
+            self.assertIn("status", item)
+            self.assertIn("current_surface", item)
+            self.assertIn("missing_fields_or_gap", item)
+            self.assertIn("evidence", item)
+            self.assertIn(item["status"], {"missing", "partial", "implemented"})
+
+    def test_communication_data_contract_report_filters_known_object(self):
+        mod = load_control_api()
+        report = mod.communication_data_contract_report(object_name="node", root=mod.ROOT)
+
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(len(report["objects"]), 1)
+        self.assertEqual(report["objects"][0]["object"], "node")
+        self.assertEqual(report["objects"][0]["status"], "partial")
+
+    def test_communication_data_contract_report_unknown_object_returns_missing(self):
+        mod = load_control_api()
+        report = mod.communication_data_contract_report(object_name="not-an-object", root=mod.ROOT)
+
+        self.assertEqual(report["status"], "ok")
+        self.assertEqual(len(report["objects"]), 1)
+        item = report["objects"][0]
+        self.assertEqual(item["object"], "not-an-object")
+        self.assertEqual(item["status"], "missing")
+
+    def test_api_communication_data_contract_report_endpoint_uses_report_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+
+        class DummyCommunicationDataContractHandler:
+            path = "/api/communication/data-contract-report?object=command"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        original_report = mod.communication_data_contract_report
+        try:
+            mod.communication_data_contract_report = lambda *, object_name=None, root=mod.ROOT: {
+                "status": "ok",
+                "kind": "communication_data_contract_report",
+                "objects": [{"object": object_name, "status": "partial"}],
+            }
+            mod.ControlHandler.do_GET(DummyCommunicationDataContractHandler())
+        finally:
+            mod.communication_data_contract_report = original_report
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "communication_data_contract_report")
+        self.assertEqual(captured["payload"]["objects"][0]["object"], "command")
+
     def test_communication_action_plan_routes_missing_services_to_runtime_gate(self):
         mod = load_control_api()
         plan = mod.communication_action_plan(

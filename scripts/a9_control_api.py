@@ -43,6 +43,297 @@ COMMUNICATION_OBSERVATION_REL_PATH = Path(".a9") / "services" / "communication-o
 COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestions.json"
 COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestion-audit.jsonl"
 SERVICE_CONTROL_AUDIT_REL_PATH = Path(".a9") / "services" / "service-control-audit.jsonl"
+COMMUNICATION_DATA_CONTRACT_VERSION = "v1_draft"
+COMMUNICATION_DATA_CONTRACT_OBJECTS = [
+    "operator_session",
+    "node",
+    "ssh_identity",
+    "tmux_session",
+    "command",
+    "command_result",
+    "event_cursor",
+    "heartbeat",
+    "reconnect_state",
+    "repair_action",
+    "audit_event",
+]
+COMMUNICATION_DATA_CONTRACT_FIELDS = {
+    "operator_session": [
+        "operator_id",
+        "client_kind",
+        "client_id",
+        "auth_scope",
+        "connected_at",
+        "last_seen_at",
+        "last_event_id",
+        "control_permissions",
+        "status",
+    ],
+    "node": [
+        "node_id",
+        "hostname",
+        "machine_id",
+        "tailscale_ip",
+        "ssh_target",
+        "capabilities",
+        "status",
+        "status_reason",
+        "revision",
+        "last_seen_at",
+    ],
+    "ssh_identity": [
+        "identity_id",
+        "node_id",
+        "user",
+        "host",
+        "port",
+        "key_ref",
+        "known_host_ref",
+        "state",
+        "last_probe_at",
+    ],
+    "tmux_session": [
+        "tmux_id",
+        "node_id",
+        "session_name",
+        "pane_id",
+        "attached",
+        "last_output_id",
+        "state",
+        "revision",
+    ],
+    "command": [
+        "command_id",
+        "node_id",
+        "tmux_id",
+        "created_by",
+        "expected_revision",
+        "ttl_ms",
+        "policy_attestation",
+        "status",
+        "created_at",
+        "started_at",
+        "finished_at",
+    ],
+    "command_result": [
+        "command_id",
+        "stream_id",
+        "status",
+        "exit_code",
+        "stdout_ref",
+        "stderr_ref",
+        "summary",
+        "next_last_id",
+    ],
+    "event_cursor": [
+        "stream",
+        "consumer",
+        "last_id",
+        "oldest_id",
+        "newest_id",
+        "cursor_status",
+        "updated_at",
+    ],
+    "heartbeat": [
+        "node_id",
+        "observed_at",
+        "latency_ms",
+        "runtime_pid",
+        "tmux_state",
+        "redis_state",
+        "tailnet_state",
+    ],
+    "reconnect_state": [
+        "node_id",
+        "phase",
+        "attempt",
+        "action",
+        "backoff_ms",
+        "error_class",
+        "budget_remaining",
+        "updated_at",
+    ],
+    "repair_action": [
+        "action_id",
+        "kind",
+        "target",
+        "reason",
+        "required_arm",
+        "status",
+        "evidence_path",
+        "created_at",
+    ],
+    "audit_event": [
+        "event_id",
+        "actor",
+        "command",
+        "target",
+        "gate",
+        "before",
+        "after",
+        "evidence",
+        "created_at",
+    ],
+}
+COMMUNICATION_DATA_CONTRACT_BASELINE = {
+    "operator_session": {
+        "status": "missing",
+        "current_surface": "No first-class operator_session entity in runtime",
+        "missing_fields_or_gap": [
+            "operator_session persistence",
+            "operator_session schema enforcement",
+            "operator object status transitions",
+        ],
+        "evidence": "docs/communication-runtime-data-contract-v1.md Current Code Mapping",
+    },
+    "node": {
+        "status": "partial",
+        "current_surface": "Node snapshot via control API node status + .a9/nodes fallback",
+        "missing_fields_or_gap": [
+            "mysql authority table a9_nodes",
+            "redisjson node snapshots",
+            "full transition audit for phase/state changes",
+        ],
+        "evidence": "scripts/a9_node.py, scripts/a9_control_api.py node_status()",
+    },
+    "ssh_identity": {
+        "status": "missing",
+        "current_surface": "No dedicated ssh_identity store or lifecycle",
+        "missing_fields_or_gap": [
+            "identity table and state transitions",
+            "host-key/auth failure handling for terminal states",
+            "identity snapshots/replay",
+        ],
+        "evidence": "docs/communication-runtime-data-contract-v1.md Current Code Mapping",
+    },
+    "tmux_session": {
+        "status": "missing",
+        "current_surface": "No tmux session persistence object in control/runtime schema",
+        "missing_fields_or_gap": [
+            "tmux session table and snapshots",
+            "attached/detached lifecycle state",
+            "session evidence join to command lifecycle",
+        ],
+        "evidence": "docs/communication-runtime-data-contract-v1.md Current Code Mapping",
+    },
+    "command": {
+        "status": "partial",
+        "current_surface": "Command planning/claim/ack path exists, but no durable schema contract",
+        "missing_fields_or_gap": [
+            "mysql a9_commands persistence",
+            "uniform expected_revision checks on all mutations",
+            "command object snapshot API",
+        ],
+        "evidence": "scripts/a9_node.py command claim/ack/work loop",
+    },
+    "command_result": {
+        "status": "partial",
+        "current_surface": "Events and watch path exist, missing canonical object persistence contract",
+        "missing_fields_or_gap": [
+            "mysql a9_command_results",
+            "canonical command_result snapshot/read APIs",
+        ],
+        "evidence": "scripts/a9_node.py command result emit path + scripts/a9_control_api.py node-command lookup/watch",
+    },
+    "event_cursor": {
+        "status": "partial",
+        "current_surface": "Replay cursor handling exists in API transport layer, no cursor object storage",
+        "missing_fields_or_gap": [
+            "redisjson a9_event_cursors table",
+            "cursor object lifecycle and timeout repair persistence",
+        ],
+        "evidence": "scripts/a9_control_api.py read_events/next_replay/reset helpers",
+    },
+    "heartbeat": {
+        "status": "partial",
+        "current_surface": "Heartbeat execution evidence exists, but runtime object/schema not canonical",
+        "missing_fields_or_gap": [
+            "mysql a9_heartbeats",
+            "redisjson a9:heartbeats snapshots",
+            "uniform heartbeat state transitions",
+        ],
+        "evidence": "scripts/a9_node.py heartbeat execution + scripts/a9_control_api.py heartbeat APIs",
+    },
+    "reconnect_state": {
+        "status": "partial",
+        "current_surface": "Gateway reconnect decision exists, but no centralized reconnect_state object",
+        "missing_fields_or_gap": [
+            "redisjson a9:reconnect:{node_id}",
+            "canonical reconnect action/state transitions",
+            "budget/backoff persistence schema",
+        ],
+        "evidence": "crates/a9-gateway (via contract acceptance), scripts/a9_control_api.py reconnect governance",
+    },
+    "repair_action": {
+        "status": "missing",
+        "current_surface": "Repair suggestions/payloads are advisory, not a first-class repair_action entity",
+        "missing_fields_or_gap": [
+            "mysql a9_repair_actions",
+            "repair_action lifecycle state persistence",
+            "audit before/after for repair_action mutations",
+        ],
+        "evidence": "docs/communication-runtime-data-contract-v1.md Current Code Mapping",
+    },
+    "audit_event": {
+        "status": "partial",
+        "current_surface": "Service-control audit and control logs exist, not full audit_event object table contract",
+        "missing_fields_or_gap": [
+            "mysql a9_audit_events",
+            "canonical runtime-audit event object",
+            "uniform actor/command/target before-after schema",
+        ],
+        "evidence": "scripts/a9_control_api.py service_control_audit_tail + a9_control_api action log paths",
+    },
+}
+
+
+def communication_data_contract_report(
+    *, object_name: str | None = None, root: Path = ROOT
+) -> dict[str, Any]:
+    requested = (object_name or "").strip()
+    if requested and requested not in COMMUNICATION_DATA_CONTRACT_OBJECTS:
+        return {
+            "status": "ok",
+            "kind": "communication_data_contract_report",
+            "contract_version": COMMUNICATION_DATA_CONTRACT_VERSION,
+            "generated_at": utc_now(),
+            "objects": [
+                {
+                    "object": requested,
+                    "status": "missing",
+                    "current_surface": "unsupported object name",
+                    "missing_fields_or_gap": [f"unsupported object {requested} not in v1 contract"],
+                    "evidence": "no_report_object",
+                }
+            ],
+            "runtime_root": str(root),
+        }
+
+    payload_objects = []
+    for item in COMMUNICATION_DATA_CONTRACT_OBJECTS:
+        baseline = COMMUNICATION_DATA_CONTRACT_BASELINE[item]
+        payload_objects.append(
+            {
+                "object": item,
+                "status": baseline["status"],
+                "current_surface": baseline["current_surface"],
+                "missing_fields_or_gap": baseline["missing_fields_or_gap"],
+                "evidence": baseline["evidence"],
+            }
+        )
+
+    if requested:
+        payload_objects = [item for item in payload_objects if item["object"] == requested]
+
+    return {
+        "status": "ok",
+        "kind": "communication_data_contract_report",
+        "contract_version": COMMUNICATION_DATA_CONTRACT_VERSION,
+        "generated_at": utc_now(),
+        "required_fields": COMMUNICATION_DATA_CONTRACT_FIELDS,
+        "objects": payload_objects,
+        "runtime_root": str(root),
+    }
 PHONE_CONTROL_GROUPS = {
     "runtime": [
         "submit.run",
@@ -6180,6 +6471,14 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, communication_status())
             elif parsed.path == "/api/communication/action-plan":
                 self.write_json(200, communication_action_plan())
+            elif parsed.path == "/api/communication/data-contract-report":
+                self.write_json(
+                    200,
+                    communication_data_contract_report(
+                        object_name=unquote(query.get("object", [""])[0]),
+                        root=ROOT,
+                    ),
+                )
             elif parsed.path == "/api/communication/repair-suggestions":
                 self.write_json(200, communication_repair_suggestions())
             elif parsed.path == "/api/services/control-audit":
