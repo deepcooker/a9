@@ -59,6 +59,34 @@ Governance lesson:
   the worker is told to read. Otherwise old doctrine can still enter the prompt
   as hidden default context and bury the active task.
 
+## 2026-06-02: direct file-change repair policy is opt-in
+
+- Repeated worker runs still emitted direct `file_change` events despite the
+  SEARCH/REPLACE-first contract. A global hard block would currently stall the
+  24h machine, so the first enforcement step is opt-in.
+- A 24h worker added `direct_file_change_policy: repair`. When a deterministic
+  edit task carries this field and emits direct file changes,
+  `process_governance` records `direct_file_change_event` as an error and the
+  run routes to repair.
+- Default behavior remains observation-first: without the policy, direct
+  `file_change` events stay warn/pass so legacy and exploratory tasks are not
+  globally blocked.
+- Monitor review found the worker made one routing change too broad: all
+  `process_governance.status=fail` was mapped to `needs-repair`. That would
+  erase existing `monitor-blocked` semantics for command-bound/process-bound
+  violations. The monitor narrowed it: only
+  `direct_file_change_policy=repair` plus an error-level
+  `direct_file_change_event` becomes `needs-repair`; other process-governance
+  failures remain `monitor-blocked`.
+- Verification passed:
+  `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+  and focused direct-file-change / monitor-blocked routing tests.
+
+Governance lesson:
+- Enforcement should be staged by explicit policy fields. Hard authority-path
+  repair is appropriate, but only when the task contract asks for it; otherwise
+  monitor-blocked remains the safer state for governance violations.
+
 ## 2026-06-02: dirty worktree deterministic-apply bypass now needs repair
 
 - Monitoring found worker runs that emitted `search_replace_blocks` but had

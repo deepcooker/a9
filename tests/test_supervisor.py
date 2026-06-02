@@ -4696,6 +4696,24 @@ Do the work.
             process_governance={"status": "fail", "findings": [{"kind": "undeclared_check"}]},
         )
 
+        self.assertEqual(status, "monitor-blocked")
+
+    def test_direct_file_change_repair_policy_failure_routes_to_needs_repair(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
+        status = mod.decide_status(
+            worker,
+            {"diff_bytes": 120},
+            [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+            patch_guard={"status": "pass"},
+            scope_guard={"status": "pass"},
+            process_governance={
+                "status": "fail",
+                "direct_file_change_policy": "repair",
+                "findings": [{"level": "error", "kind": "direct_file_change_event"}],
+            },
+        )
+
         self.assertEqual(status, "needs-repair")
 
     def test_live_worker_observes_task_bound_violations_without_blocking(self):

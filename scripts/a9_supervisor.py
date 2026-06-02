@@ -3142,7 +3142,14 @@ def decide_status(
     if scope_guard and scope_guard.get("status") == "fail":
         return "needs-repair"
     if process_governance and process_governance.get("status") == "fail":
-        return "needs-repair"
+        findings = process_governance.get("findings", [])
+        findings = findings if isinstance(findings, list) else []
+        direct_change_repair = process_governance.get("direct_file_change_policy") == "repair" and any(
+            item.get("level") == "error" and item.get("kind") == "direct_file_change_event"
+            for item in findings
+            if isinstance(item, dict)
+        )
+        return "needs-repair" if direct_change_repair else "monitor-blocked"
     failed_checks = [item for item in checks if item["return_code"] != 0]
     if failed_checks:
         return "needs-repair"
