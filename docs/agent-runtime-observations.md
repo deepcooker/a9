@@ -6,6 +6,11 @@
 - `restart --only <services>` now executes stop then start for each requested service set using existing start/stop governance rules and payload shape.
 - `restart` is conservative by default: `--all` is explicit; without flags it restarts `control-api`, `node-worker`, and `recovery-loop` (never supervisor by default).
 - `--dry-run` for restart never signals processes and never mutates pidfiles; it returns a single JSON envelope that includes `kind: service_restart`, `stop`, `start`, `requested`, `dry_run`, and `status`.
+- Live verification: `python3 scripts/a9_service.py restart --only recovery-loop`
+  stopped old recovery-loop pid `1583`, started pid `33642`, refreshed
+  `.a9/services/recovery-loop.pid`, and `/api/nodes/recovery-loop/latest`
+  still reported `communication_execute_enabled=false` with
+  `communication_route_execution.reason=observe_only`.
 
 ## 2026-06-02: service stop gains granular `--only` target mode with observed-PID cleanup
 
