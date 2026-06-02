@@ -7335,6 +7335,102 @@ class ControlApiTests(unittest.TestCase):
         self.assertFalse(captured["payload"]["communication_execute_enabled"])
         self.assertEqual(captured["payload"]["communication_route_execution"]["kind"], "communication_route_execution")
 
+    def test_service_control_audit_tail_missing_file(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = mod.service_control_audit_tail(root=root)
+
+        self.assertEqual(result["status"], "missing")
+        self.assertEqual(result["kind"], "service_control_audit_tail")
+        self.assertEqual(result["path"], str(root / mod.SERVICE_CONTROL_AUDIT_REL_PATH))
+        self.assertEqual(result["events"], [])
+        self.assertEqual(result["event_count"], 0)
+        self.assertEqual(result["skipped_bad_lines"], 0)
+
+    def test_service_control_audit_tail_bounds_newest_events(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / mod.SERVICE_CONTROL_AUDIT_REL_PATH
+            path.parent.mkdir(parents=True)
+            events = [
+                {"at": "2026-06-01T10:00:00Z", "action": "start", "command": "services.start", "status": "ok"},
+                {"at": "2026-06-01T10:01:00Z", "action": "restart", "command": "services.restart", "status": "ok"},
+                {"at": "2026-06-01T10:02:00Z", "action": "start", "command": "services.start", "status": "ok"},
+                {"at": "2026-06-01T10:03:00Z", "action": "restart", "command": "services.restart", "status": "ok"},
+                {"at": "2026-06-01T10:04:00Z", "action": "blocked", "command": "services.restart", "status": "blocked"},
+            ]
+            path.write_text("\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8")
+            result = mod.service_control_audit_tail(limit=3, root=root)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["event_count"], 3)
+        self.assertEqual(result["events"][0]["at"], "2026-06-01T10:02:00Z")
+        self.assertEqual(result["events"][2]["at"], "2026-06-01T10:04:00Z")
+
+    def test_service_control_audit_tail_skips_bad_jsonl(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / mod.SERVICE_CONTROL_AUDIT_REL_PATH
+            path.parent.mkdir(parents=True)
+            path.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"at": "2026-06-01T10:00:00Z", "status": "ok", "command": "services.start"}),
+                        "{bad-json-line}",
+                        json.dumps({"at": "2026-06-01T10:01:00Z", "status": "blocked", "command": "services.restart"}),
+                        "42",
+                        json.dumps({"at": "2026-06-01T10:02:00Z", "status": "ok", "command": "services.restart"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            result = mod.service_control_audit_tail(limit=10, root=root)
+
+        self.assertEqual(result["status"], "degraded")
+        self.assertEqual(result["skipped_bad_lines"], 2)
+        self.assertEqual(result["event_count"], 3)
+        self.assertEqual(result["events"][0]["status"], "ok")
+        self.assertEqual(result["events"][2]["status"], "ok")
+
+    def test_api_services_control_audit_route_passes_limit(self):
+        mod = load_control_api()
+        captured = {}
+        original_handler = mod.service_control_audit_tail
+
+        def fake_service_control_audit_tail(limit=20, *, root=mod.ROOT):
+            captured["limit"] = limit
+            captured["root"] = root
+            return {
+                "status": "ok",
+                "kind": "service_control_audit_tail",
+                "path": str(Path(root) / mod.SERVICE_CONTROL_AUDIT_REL_PATH),
+                "events": [],
+                "event_count": 0,
+                "skipped_bad_lines": 0,
+            }
+
+        class DummyServicesAuditGetHandler:
+            path = "/api/services/control-audit?limit=7"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        try:
+            mod.service_control_audit_tail = fake_service_control_audit_tail
+            mod.ControlHandler.do_GET(DummyServicesAuditGetHandler())
+        finally:
+            mod.service_control_audit_tail = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["limit"], 7)
+        self.assertEqual(captured["payload"]["kind"], "service_control_audit_tail")
+
     def test_recovery_transcript_joins_node_gateway_stream_and_loop_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -8076,6 +8172,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["communication_repair_suggestions"], "/api/communication/repair-suggestions")
         self.assertEqual(discovery["endpoints"]["communication_repair_suggestion_review"], "/api/communication/repair-suggestions/review")
         self.assertEqual(discovery["endpoints"]["register_node"], "/api/nodes/register")
+        self.assertEqual(discovery["endpoints"]["services_control_audit"], "/api/services/control-audit")
         self.assertEqual(discovery["endpoints"]["gateway_transport_contract"], "/api/gateway/transport-contract")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_decision"], "/api/gateway/reconnect-decision")
         self.assertEqual(discovery["endpoints"]["gateway_reconnect_diagnostic"], "/api/gateway/reconnect-diagnostic")

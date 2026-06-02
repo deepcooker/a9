@@ -1581,6 +1581,50 @@ def append_service_control_audit(event: dict[str, Any], *, root: Path = ROOT) ->
         handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
 
 
+def service_control_audit_tail(limit: int = 20, *, root: Path = ROOT) -> dict[str, Any]:
+    safe_limit = max(1, min(100, int(limit)))
+    path = root / SERVICE_CONTROL_AUDIT_REL_PATH
+    if not path.exists():
+        return {
+            "status": "missing",
+            "kind": "service_control_audit_tail",
+            "path": str(path),
+            "events": [],
+            "event_count": 0,
+            "skipped_bad_lines": 0,
+            "reason": "service_control_audit_file_not_found",
+        }
+
+    skipped_bad_lines = 0
+    events: list[dict[str, Any]] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            skipped_bad_lines += 1
+            continue
+        if not isinstance(payload, dict):
+            skipped_bad_lines += 1
+            continue
+        events.append(payload)
+
+    bounded_events = events[-safe_limit:]
+    result = {
+        "status": "degraded" if skipped_bad_lines else "ok",
+        "kind": "service_control_audit_tail",
+        "path": str(path),
+        "events": bounded_events,
+        "event_count": len(bounded_events),
+        "skipped_bad_lines": skipped_bad_lines,
+    }
+    if skipped_bad_lines:
+        result["reason"] = "service_control_audit_tail_bad_lines_skipped"
+    return result
+
+
 def enqueue_service_control_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
     thread = threading.Thread(
         target=append_service_control_audit,
@@ -2095,6 +2139,7 @@ def controller_discovery() -> dict[str, Any]:
             "communication_repair_one": "/api/communication/repair-one",
             "communication_repair_suggestions": "/api/communication/repair-suggestions",
             "communication_repair_suggestion_review": "/api/communication/repair-suggestions/review",
+            "services_control_audit": "/api/services/control-audit",
             "register_node": "/api/nodes/register",
             "heartbeat_node": "/api/nodes/heartbeat",
             "phone_control_status": "/api/phone-control/status",
@@ -6137,6 +6182,20 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, communication_action_plan())
             elif parsed.path == "/api/communication/repair-suggestions":
                 self.write_json(200, communication_repair_suggestions())
+            elif parsed.path == "/api/services/control-audit":
+                try:
+                    limit = int(query.get("limit", ["20"])[0])
+                except ValueError:
+                    self.write_json(
+                        400,
+                        {
+                            "status": "invalid_request",
+                            "kind": "service_control_audit_tail",
+                            "error": "limit must be integer",
+                        },
+                    )
+                    return
+                self.write_json(200, service_control_audit_tail(limit=limit))
             elif parsed.path == "/api/nodes/recovery-cycle":
                 self.write_json(
                     200,

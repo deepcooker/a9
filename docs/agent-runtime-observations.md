@@ -573,3 +573,36 @@ Verification:
 - Live POST to `/api/services/restart` without phone-control arm returned
   `status=blocked` and `blocked_reason=phone_control_disarmed`; all four services
   remained observed running.
+
+## 2026-06-02: service-control audit tail endpoint exposed to mobile/control
+
+Run evidence:
+- Local implementation and tests for bounded JSONL readback from
+  `.a9/services/service-control-audit.jsonl`.
+
+Reference mechanism copied:
+- JSONL async audit append pattern from `append_service_control_audit` /
+  `enqueue_service_control_audit`.
+- Bounded payload dispatch style from `controller_discovery` and GET route patterns
+  in `ControlHandler`.
+
+Implementation:
+- Added `service_control_audit_tail(limit=20, root=ROOT)` in
+  `scripts/a9_control_api.py`.
+- Added GET route `/api/services/control-audit` with optional `limit`.
+- Route uses safe limit clamp `1..100` and returns bounded newest events in
+  chronological order.
+- Added missing-file contract: `status=missing`, `kind=service_control_audit_tail`,
+  `path`, `events=[]`, `event_count=0`, `skipped_bad_lines=0`.
+- Malformed JSONL lines are skipped; `skipped_bad_lines` is returned and status is
+  `degraded` when any bad line exists.
+- Added discovery contract key:
+  `services_control_audit: /api/services/control-audit`.
+
+Checks:
+- `python3 -m py_compile scripts/a9_control_api.py tests/test_control_api.py`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_control_audit_tail_missing_file`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_control_audit_tail_bounds_newest_events`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_control_audit_tail_skips_bad_jsonl`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_api_services_control_audit_route_passes_limit`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_controller_discovery_exposes_registration_contract`
