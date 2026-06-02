@@ -2,9 +2,19 @@
 
 只从这里进入文档，避免被旧草稿带偏。
 
+默认入口现在只有三份：
+
+1. `AGENTS.md`
+2. `docs/context-governance.md`
+3. `docs/project.md`
+
+worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw session、研究草稿、
+归档原始想法只能按任务包指定的 bounded slice 读取。
+
 ## Core
 
 - `AGENTS.md`: 执行机器规则和当前主线。
+- `docs/context-governance.md`: 文档分层、噪音清理、worker 读上下文纪律。
 - `原始想法需求.md`: A9 原始哲学、产品脉络和需求源头。
 - `docs/project.md`: 项目状态和分层目标。
 - `docs/stage-handoff-2026-06-01.md`: 当前通讯/control 阶段收口和下一轮 session 精读任务包。
@@ -19,6 +29,8 @@
 - `docs/communication-governance-worker-task.md`: 下一刀 worker 任务模板。
 
 ## Evidence
+
+证据文档不是默认 prompt。只有任务包点名路径和 slice 时才读。
 
 - `docs/session-raw-summary.md`: raw session 滚动总结。
 - `docs/session-raw-close-reading.md`: raw session 精读索引，含 turn/line。

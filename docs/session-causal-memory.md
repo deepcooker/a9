@@ -294,6 +294,35 @@ Current status:
 - Needs a real fix before Hermes-like旁路 automation: scheduler lanes must be
   explicit, and session-refresh lanes must suppress unrelated goal continuation.
 
+### 14. Too Many Docs Can Corrupt The Mainline
+
+- Problem discovered: after repeated session close-reading, runtime experiments,
+  mobile/control work, communication governance, MoE review and worker repair,
+  the repository accumulated many markdown files. A worker that reads all docs
+  broadly can treat raw evidence, old task packets, research drafts, UI detours
+  and current requirements as the same authority level.
+- Resulting decision: context cleanup is part of requirements analysis, not
+  polish. A9 now has an explicit context routing table:
+  `docs/context-governance.md`.
+- Current worker rule: default context is only `AGENTS.md`,
+  `docs/context-governance.md`, `docs/project.md`, and the current task
+  prompt/plan/decision packet. Raw session files, observation logs, mistakes,
+  research docs and archived original ideas require an explicit bounded slice.
+- Noise policy: preserve raw facts, but archive/label stale branches and delete
+  scratch files with no factual value. Code noise follows the same rule: unused
+  paths become observation/repair first, then deletion only after there is no
+  current task, test, runtime evidence, or documented owner.
+- Evidence: `worker-output.txt` contained only `done` and was deleted as trivial
+  scratch noise. `docs/README.md` was narrowed to route workers through the
+  context governance entry instead of broad markdown discovery.
+
+Current status:
+
+- Implemented as documentation and prompt discipline.
+- Not yet implemented as a supervisor-enforced doc read policy.
+- Next enforcement should make worker task prompts include a bounded evidence
+  plan and should observe broad reads against `docs/context-governance.md`.
+
 ## Expired Or Downgraded Branches
 
 - "Just build the finance model now": expired for current phase. Finance is a
@@ -313,6 +342,8 @@ Current status:
   and memory retrieval must explicitly receive the scoped memory they need.
 - "Goal continuation can run during any summary operation": downgraded. Session
   governance needs an exclusive/priority lane to avoid drift and duplicate work.
+- "Every markdown file is useful worker context": expired. Docs now need
+  canonical/evidence/research/archive/noise routing.
 
 ## Active Decisions
 
@@ -330,6 +361,9 @@ Current status:
    prompt/memory packets.
 9. Hermes-like automation should be designed as sidecar lanes with explicit
    scheduler priority and memory routing, not as another free-running worker.
+10. Context cleanup is a requirements-analysis duty. Noisy docs and stale code
+    can bias execution and must be routed, archived, or removed before long-run
+    worker execution.
 
 ## Required Post-Close-Reading Procedure
 
@@ -345,9 +379,12 @@ After each incremental close-reading batch:
    - what worker must not do next
 3. Update `docs/project.md`, `AGENTS.md`, or `docs/collaboration.md` only when
    a causal change affects execution rules.
-4. If the current queue conflicts with this file, pause or rewrite the queued
+4. Update `docs/context-governance.md` or `docs/README.md` when a causal change
+   changes which documents are current truth, evidence, research, archive, or
+   noise.
+5. If the current queue conflicts with this file, pause or rewrite the queued
    task before running worker.
-5. Commit the close-reading, causal memory, and rule changes before resuming
+6. Commit the close-reading, causal memory, and rule changes before resuming
    worker execution.
 
 ## Next Bounded Task
