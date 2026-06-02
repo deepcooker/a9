@@ -873,6 +873,43 @@ def read_budgeted(path: Path, budget: int, *, keep: str = "head") -> str:
     return truncate_to_token_budget(text, budget, keep=keep)
 
 
+def build_canonical_doctrine_section(task: Task, budget: int) -> tuple[str, str]:
+    """Build bounded doctrine/context section.
+
+    Default workers should see a short canonical context index and source pointers,
+    while session-context tasks may still hydrate doctrine documents for close reading.
+    """
+    if task.phase in SESSION_CONTEXT_READ_PHASES:
+        doctrine_parts = []
+        source_paths = []
+        for path in [ROOT / "原始想法需求.md", ROOT / "session-governance.md"]:
+            source_paths.append(str(path))
+            text = read_budgeted(path, max(512, budget // 3), keep="head")
+            if text:
+                doctrine_parts.append(f"## {path.name}\n\n{text}")
+        return ",".join(source_paths), "\n\n".join(doctrine_parts) or "(none)"
+
+    canonical_sources = [
+        "AGENTS.md",
+        "docs/context-governance.md",
+        "docs/project.md",
+        "docs/session-causal-memory.md",
+        "docs/worker-method-packet.md",
+    ]
+    doctrinal_notes = [
+        "# Canonical Context Index",
+        "Workers should load this index first for active mainline and routing rules.",
+        "- AGENTS.md: stage model, hard rules, and task-level priorities.",
+        "- docs/context-governance.md: current context layering and evidence policy.",
+        "- docs/project.md: product/architecture/mainline summary.",
+        "- docs/session-causal-memory.md: causal lane and stale-branch memory.",
+        "- docs/worker-method-packet.md: requirements method and execution contract.",
+        "- Raw source doctrine references (preserved on disk): 原始想法需求.md, session-governance.md",
+        "  Read these only when task packets explicitly allow bounded close reading.",
+    ]
+    return ",".join(canonical_sources), truncate_to_token_budget("\n".join(doctrinal_notes), budget, keep="head")
+
+
 def scan_promptware_findings(text: str) -> list[str]:
     findings: list[str] = []
     for pattern in PROMPTWARE_PATTERNS:
@@ -934,12 +971,7 @@ def build_context_packet(task: Task) -> dict[str, Any]:
     total_budget = token_budget()
     section_budgets = section_token_budgets_for_phase(task.phase, total_budget)
 
-    doctrine_parts = []
-    for path in [ROOT / "原始想法需求.md", ROOT / "session-governance.md"]:
-        text = read_budgeted(path, max(512, section_budgets["doctrine"] // 3), keep="head")
-        if text:
-            doctrine_parts.append(f"## {path.name}\n\n{text}")
-    doctrine = "\n\n".join(doctrine_parts)
+    doctrine_source, doctrine = build_canonical_doctrine_section(task, section_budgets["doctrine"])
 
     previous_context_path = DONE_DIR / f"{artifact_task_ref(task.task_id)}.context.md"
     legacy_context_path = DONE_DIR / f"{task.task_id}.context.md"
@@ -1091,7 +1123,7 @@ Hard rules:
             },
             {
                 "name": "Doctrine Excerpts",
-                "source": "原始想法需求.md,session-governance.md",
+                "source": doctrine_source or "docs/context-governance.md",
                 "role": "doctrine",
                 "budget_tokens": section_budgets["doctrine"],
                 "reference_only": True,

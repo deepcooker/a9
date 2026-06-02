@@ -469,6 +469,70 @@ Do the work.
         self.assertIn("context_router", packet)
         self.assertIn("blocked by context router", packet["prompt"])
 
+    def test_build_context_packet_uses_canonical_context_index_for_doctrine_by_default(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            (tmp_root / "原始想法需求.md").write_text("ORIGINAL_DOCTRINE_TEXT: should_not_be_hydrated\n", encoding="utf-8")
+            (tmp_root / "session-governance.md").write_text(
+                "SESSION_GOVERNANCE_TEXT: should_not_be_hydrated\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="doctrine-index",
+                prompt="implement context packet slice",
+                allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            )
+
+            original_root = mod.ROOT
+            original_done_dir = mod.DONE_DIR
+            try:
+                mod.ROOT = tmp_root
+                mod.DONE_DIR = tmp_root / ".a9" / "tasks" / "done"
+                packet = mod.build_context_packet(task)
+            finally:
+                mod.ROOT = original_root
+                mod.DONE_DIR = original_done_dir
+
+        prompt = packet["prompt"]
+        doctrine_section = next(section for section in packet["context_router"]["sections"] if section["name"] == "Doctrine Excerpts")
+        self.assertEqual(doctrine_section["role"], "doctrine")
+        self.assertIn("Canonical Context Index", prompt)
+        self.assertIn("AGENTS.md", prompt)
+        self.assertIn("docs/context-governance.md", prompt)
+        self.assertNotIn("ORIGINAL_DOCTRINE_TEXT", prompt)
+        self.assertNotIn("SESSION_GOVERNANCE_TEXT", prompt)
+
+    def test_build_context_packet_hydrates_raw_doctrine_for_session_context_tasks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            (tmp_root / "原始想法需求.md").write_text("SESSION_TASK_RAW_DOCTRINE_TEXT: allow_hydrate\n", encoding="utf-8")
+            (tmp_root / "session-governance.md").write_text(
+                "SESSION_TASK_RAW_GOV_TEXT: allow_hydrate\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="doctrine-refresh",
+                prompt="source_session_path: /tmp/session.jsonl\nfrom_turn: 1\nto_turn: 1",
+                phase=mod.SESSION_REFRESH_PHASE,
+            )
+
+            original_root = mod.ROOT
+            original_done_dir = mod.DONE_DIR
+            try:
+                mod.ROOT = tmp_root
+                mod.DONE_DIR = tmp_root / ".a9" / "tasks" / "done"
+                packet = mod.build_context_packet(task)
+            finally:
+                mod.ROOT = original_root
+                mod.DONE_DIR = original_done_dir
+
+        self.assertIn("SESSION_TASK_RAW_DOCTRINE_TEXT", packet["prompt"])
+        self.assertIn("SESSION_TASK_RAW_GOV_TEXT", packet["prompt"])
+
     def test_context_budget_profile_is_phase_specific(self):
         mod = load_supervisor()
         implement = mod.section_token_budgets_for_phase("implement", 24000)
