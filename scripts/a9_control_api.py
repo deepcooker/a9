@@ -285,6 +285,53 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
         "evidence": "scripts/a9_control_api.py service_control_audit_tail + a9_control_api action log paths",
     },
 }
+COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE = {
+    "operator_session": {
+        "mysql_authority": "mysql.a9_operator_sessions (planned write authority)",
+        "redis_keys": [
+            "a9:operator_session:{operator_id}",
+            "a9:operator_session:{operator_id}:state",
+        ],
+        "status_enum": ["active", "connected", "disconnected", "revoked", "expired"],
+        "owner": "operator-session-runtime",
+        "invariants": [
+            "operator_id must be immutable once issued",
+            "status transitions through explicit lifecycle",
+            "last_seen_at can only move forward unless reset manually",
+        ],
+        "evidence": "docs/communication-runtime-model-closure.md",
+    },
+    "event_cursor": {
+        "mysql_authority": "mysql.a9_event_cursors (planned write authority)",
+        "redis_keys": [
+            "a9:event_cursor:{stream}:{consumer}",
+            "a9:event_cursor:meta",
+        ],
+        "status_enum": ["fresh", "expired", "missing", "gap", "invalid"],
+        "owner": "replay-read-controller",
+        "invariants": [
+            "stream and consumer identify a unique cursor entry",
+            "next_last_id always monotonic for a stream+consumer pair",
+        ],
+        "evidence": "docs/communication-runtime-model-closure.md",
+    },
+    "reconnect_state": {
+        "mysql_authority": "mysql.a9_reconnect_state (planned write authority)",
+        "redis_keys": [
+            "a9:reconnect:{node_id}",
+            "a9:reconnect:{node_id}:attempts",
+        ],
+        "phase_enum": ["connect", "stream", "observe", "recover", "backoff"],
+        "action_enum": ["continue", "reconnect", "terminate", "retry", "quarantine", "observe"],
+        "owner": "gateway-runtime",
+        "invariants": [
+            "phase/action are valid state machine values",
+            "attempt must not decrease without explicit reset",
+            "budget_remaining must be tracked when in backoff",
+        ],
+        "evidence": "docs/communication-runtime-model-closure.md",
+    },
+}
 
 
 def communication_data_contract_report(
@@ -312,6 +359,7 @@ def communication_data_contract_report(
     payload_objects = []
     for item in COMMUNICATION_DATA_CONTRACT_OBJECTS:
         baseline = COMMUNICATION_DATA_CONTRACT_BASELINE[item]
+        model_closure = COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE.get(item)
         payload_objects.append(
             {
                 "object": item,
@@ -319,6 +367,11 @@ def communication_data_contract_report(
                 "current_surface": baseline["current_surface"],
                 "missing_fields_or_gap": baseline["missing_fields_or_gap"],
                 "evidence": baseline["evidence"],
+                **(
+                    {"model_closure": model_closure}
+                    if model_closure is not None
+                    else {}
+                ),
             }
         )
 

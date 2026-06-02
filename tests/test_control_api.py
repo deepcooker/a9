@@ -1174,6 +1174,29 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(report["objects"][0]["object"], "node")
         self.assertEqual(report["objects"][0]["status"], "partial")
 
+    def test_communication_data_contract_report_includes_model_closure_for_closed_objects(self):
+        mod = load_control_api()
+        report = mod.communication_data_contract_report(root=mod.ROOT)
+
+        model_closed = {"operator_session", "event_cursor", "reconnect_state"}
+        for name in model_closed:
+            item = next(item for item in report["objects"] if item["object"] == name)
+            self.assertIn("model_closure", item)
+            model_closure = item["model_closure"]
+            self.assertIsInstance(model_closure, dict)
+            self.assertIn("mysql_authority", model_closure)
+            self.assertIn("redis_keys", model_closure)
+            self.assertIn("owner", model_closure)
+            self.assertIn("invariants", model_closure)
+            self.assertIn("evidence", model_closure)
+            self.assertTrue(isinstance(model_closure["redis_keys"], list))
+            self.assertTrue(model_closure["redis_keys"])
+            self.assertTrue(
+                "status_enum" in model_closure
+                or "phase_enum" in model_closure
+                or "action_enum" in model_closure
+            )
+
     def test_communication_data_contract_report_unknown_object_returns_missing(self):
         mod = load_control_api()
         report = mod.communication_data_contract_report(object_name="not-an-object", root=mod.ROOT)
