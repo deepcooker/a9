@@ -11,6 +11,7 @@
 - `docs/role-memory-governance.md`: 主控窗口和各角色如何读取/接收精读记忆。
 - `docs/role-memory-reference-scan.md`: 角色记忆/旁路治理的参考项目证据和临时决策边界。
 - `docs/requirements-plan-file-reference-scan.md`: 需求分析方法论与 plan-file agent 工作流参考扫描。
+- `docs/worker-method-packet.md`: analysis worker / execution worker 共用方法包，规定定案前博弈、定案后执行。
 - `docs/memory-graph-wiki-reference-scan.md`: GBrain/GraphRAG/Graphify/LLM-Wiki 长期记忆和图谱参考扫描。
 - `docs/reference-adoption-decision.md`: 多轮博弈后的参考机制取舍，哪些现在进、哪些暂缓。
 - `docs/collaboration.md`: 人类/监控者与 24 小时机器的协作方式。

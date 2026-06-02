@@ -670,3 +670,31 @@ Governance lesson:
 - Warn-only observations are preserved and non-blocking.
 - This keeps business continuity while adding a concrete signal for costly broad
   local file reads.
+
+## 2026-06-02: requirements-method packet added before more execution work
+
+Observation:
+- The 24h worker can execute bounded slices, but quality is capped if a task is
+  sent before requirements are aligned.
+- The real enterprise process is discussion, synchronization, role review, data
+  modeling, state-flow agreement, and acceptance confirmation before execution.
+  That front-loaded work can dominate total quality and reduce rework by an
+  order of magnitude.
+- A9 must distinguish `debate_next` from `execution_next`. Before decision,
+  next steps are research, modeling, review, contradiction, and decision record.
+  After decision, next steps become 24h worker execution backlog.
+
+Change:
+- `AGENTS.md` now defines the top-level phase rule:
+  `discussion / research / modeling / review / decision / execution`.
+- Added `docs/worker-method-packet.md` as the shared method packet for analysis
+  worker and execution worker.
+- `docs/README.md` now lists the method packet under Core.
+
+Governance lesson:
+- The 24h worker should not be treated as a product manager by accident.
+- Analysis worker may automate close-reading, reference scan, reverse modeling,
+  open questions, and review packets. Execution worker may only implement
+  decided slices.
+- Product/mainline remains the pressure role: market/reference research,
+  scenario pressure, solution overturning, and final product decision.
