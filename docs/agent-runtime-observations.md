@@ -1,5 +1,12 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-02: decision packet template added for analysis-to-execution handoff
+
+- Updated `scripts/a9_supervisor.py` with a reusable decision packet/template helper and injected it into AI-worker prompt surfaces (`Task Decision Packet` + `next_task_prompt`).
+- Expanded required decision field set so explicit `not_decided/partial_decision` tasks block auto-next while explicit `decided` tasks continue scheduling execution slices.
+- Extended `tests/test_supervisor.py` with focused assertions for template visibility, explicit decided-task auto-next continuity, and explicit partial/undecided non-progression checks.
+- Scope remains bounded to `scripts/a9_supervisor.py`, `tests/test_supervisor.py`, `docs/worker-method-packet.md`, and `docs/agent-runtime-observations.md`.
+
 ## 2026-06-02: deterministic restart subcommand added for targeted local service refresh
 
 - `scripts/a9_service.py` now supports `restart` with `--only` and `--dry-run`.

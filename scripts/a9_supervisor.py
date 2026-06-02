@@ -5332,8 +5332,12 @@ EXECUTION_DECISION_REQUIRED_FIELDS = (
     "system_requirement",
     "data_contract",
     "state_flow",
+    "exception_flow",
     "acceptance",
+    "out_of_scope",
     "allowed_execution",
+    "change_record",
+    "role_signoff",
 )
 
 
@@ -5358,6 +5362,22 @@ def task_decision_packet(task: Task) -> dict[str, Any]:
     }
 
 
+def decision_packet_template() -> str:
+    return """Decision packet task-shaping template:
+- decision_status: decided | not_decided | partial_decision.
+- problem: the real problem being solved, not proposed implementation steps.
+- system_requirement: mandatory system behavior and constraints.
+- data_contract: objects, fields, invariants, ownership, and event/state meaning.
+- state_flow: normal transitions and authoritative order of states.
+- exception_flow: failure, repair, timeout, manual intervention, audit, and rollback behavior.
+- acceptance: required evidence, tests, run outputs, and pass/fail rules.
+- out_of_scope: explicit exclusions and rationale.
+- allowed_execution: files, commands, checks, and boundaries for this slice.
+- change_record: what changed in direction, scope, or authority with justification.
+- role_signoff: required business/product/architecture/test confirmations.
+"""
+
+
 def task_decision_packet_prompt(task: Task) -> str:
     packet = task_decision_packet(task)
     missing = ", ".join(packet["missing_fields"]) if packet["missing_fields"] else "none"
@@ -5368,6 +5388,7 @@ def task_decision_packet_prompt(task: Task) -> str:
 - missing_fields: {missing}
 - recommendation: {packet['recommendation']}
 - rule: if route is debate_next, do analysis/research/modeling/review output and change_request; do not implement production changes.
+{decision_packet_template()}
 """
 
 

@@ -80,9 +80,31 @@ out_of_scope:
   What is explicitly not done and why.
 allowed_execution:
   Files, commands, checks, and boundaries.
+change_record:
+  What changed in direction, scope, or authority and why.
+role_signoff:
+  Product/mainline, business, architecture, and test approvals.
 ```
 
 If this packet cannot be built, execution must stop and produce a change request.
+
+Decision packet template (reusable for analysis output shaping):
+
+```text
+decision_status: decided / not_decided / partial_decision
+problem: the real problem, not the proposed solution name.
+system_requirement: required system behavior and constraints.
+data_contract: objects, fields, tables, state, events, ownership, and meaning.
+state_flow: normal transitions and authority order.
+exception_flow: failure, repair, timeout, manual intervention, rollback.
+acceptance: test, evidence, and run-signed criteria for completion.
+out_of_scope: explicit exclusions for this slice.
+allowed_execution: files, commands, checks, and boundaries.
+change_record: what changed in direction, scope, or authority and why.
+role_signoff: explicit approvals from product/mainline, business, architecture, and test roles.
+```
+
+Analysis workers must emit this template shape before proposing implementation work, and execution workers must only proceed when `route: execution_next`.
 
 ## Role Responsibilities
 

@@ -5505,8 +5505,12 @@ Do the work.
                 "system_requirement: expose latest audit events.",
                 "data_contract: audit event fields and tail response.",
                 "state_flow: missing -> ok/degraded.",
+                "exception_flow: blocked -> repair -> retry.",
                 "acceptance: focused tests pass.",
+                "out_of_scope: mobile and finance surfaces.",
                 "allowed_execution: scripts/a9_control_api.py tests/test_control_api.py",
+                "change_record: baseline monitoring lane added.",
+                "role_signoff: product approves, business approves.",
             ]
         )
         task = mod.Task(path=Path("task.md"), task_id="decided-method-context", prompt=prompt, phase="implement")
@@ -5517,6 +5521,36 @@ Do the work.
         self.assertIn("route: execution_next", packet["prompt"])
         self.assertIn("decided: true", packet["prompt"])
         self.assertIn("missing_fields: none", packet["prompt"])
+
+    def test_task_decision_packet_prompt_includes_decision_shaping_template(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="decision-template", prompt="not_decided", phase="implement")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "implement: carry shaping template"}}},
+        }
+
+        packet = mod.task_decision_packet_prompt(task)
+        prompt = mod.next_task_prompt(task, summary, "implement")
+
+        self.assertIn("Decision packet task-shaping template:", packet)
+        self.assertIn("- decision_status:", packet)
+        self.assertIn("- problem:", packet)
+        self.assertIn("- system_requirement:", packet)
+        self.assertIn("- data_contract:", packet)
+        self.assertIn("- state_flow:", packet)
+        self.assertIn("- exception_flow:", packet)
+        self.assertIn("- acceptance:", packet)
+        self.assertIn("- out_of_scope:", packet)
+        self.assertIn("- allowed_execution:", packet)
+        self.assertIn("- change_record:", packet)
+        self.assertIn("- role_signoff:", packet)
+        self.assertIn("Decision packet task-shaping template:", prompt)
+        self.assertIn("- decision_status:", prompt)
+        self.assertIn("- change_record:", prompt)
+        self.assertIn("- role_signoff:", prompt)
 
     def test_build_context_packet_omits_worker_method_text_for_session_refresh(self):
         mod = load_supervisor()
@@ -7145,6 +7179,91 @@ index 0000000..3e75765
         self.assertEqual(block["decision_status"], "not_decided")
         self.assertIn("data_contract", block["missing_fields"])
         self.assertIn("state_flow", block["missing_fields"])
+
+    def test_schedule_next_task_blocks_partial_decision_task(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-partial.md",
+            task_id="auto-partial",
+            prompt=(
+                "decision_status: partial_decision\n"
+                "problem: partial packet needs monitor confirmation.\n"
+                "system_requirement: keep decision packet strict.\n"
+                "data_contract: task, route, decision fields.\n"
+                "state_flow: analysis -> draft -> review.\n"
+                "exception_flow: monitor blocks.\n"
+                "acceptance: template test must exist.\n"
+                "out_of_scope: no hard gate expansion.\n"
+                "allowed_execution: scripts/a9_supervisor.py tests/test_supervisor.py.\n"
+                "change_record: partial -> monitor required.\n"
+                "role_signoff: mainline approves the contract.\n"
+            ),
+            phase="implement",
+            checks=["test -f docs/agent-runtime-observations.md"],
+            allowed_paths=["docs/agent-runtime-observations.md", "scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-partial-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-partial-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_task": "test: partial contract should block auto-next"}},
+            },
+        }
+
+        self.assertIsNone(mod.schedule_next_task(task, summary))
+        block = summary["auto_next_block"]
+        self.assertEqual(block["reason"], "debate_next_requires_monitor_decision")
+        self.assertEqual(block["decision_status"], "partial_decision")
+        self.assertEqual(block["missing_fields"], [])
+
+    def test_schedule_next_task_routes_explicit_decided_task_to_auto_next(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-decided.md",
+            task_id="auto-decided",
+            prompt=(
+                "decision_status: decided\n"
+                "problem: deterministic decision packet injection.\n"
+                "system_requirement: shape all analysis outputs through reusable contract.\n"
+                "data_contract: task packet fields and allowed execution boundary.\n"
+                "state_flow: analysis -> draft -> monitor -> execute.\n"
+                "exception_flow: blocked on missing scope or missing decision status.\n"
+                "acceptance: focused tests and evidence pass.\n"
+                "out_of_scope: no communication or finance scope.\n"
+                "allowed_execution: scripts/a9_supervisor.py tests/test_supervisor.py\n"
+                "change_record: moved routing contract into decision slice.\n"
+                "role_signoff: product/mainline approves; business approves; architecture approves; test approves.\n"
+            ),
+            phase="implement",
+            checks=["python3 -m unittest tests/test_supervisor.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-decided-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-decided-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "test: parse_task_frontmatter for decision packet"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "test"', text)
+            self.assertNotIn("auto_next_block", summary)
+            self.assertIn('  - "python3 -m unittest tests/test_supervisor.SupervisorTests.test_parse_task_frontmatter"', text)
+        finally:
+            next_path.unlink(missing_ok=True)
 
     def test_schedule_next_task_keeps_legacy_tasks_without_decision_status_routable(self):
         mod = load_supervisor()
