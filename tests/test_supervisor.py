@@ -6006,6 +6006,8 @@ Do the work.
         self.assertIn("route: debate_next", packet["prompt"])
         self.assertIn("missing_fields:", packet["prompt"])
         self.assertIn("strict_worker_envelope: true", packet["prompt"])
+        self.assertIn("valid JSON only", packet["prompt"])
+        self.assertIn("not Markdown links", packet["prompt"])
 
     def test_build_context_packet_routes_decided_task_to_execution_next(self):
         mod = load_supervisor()

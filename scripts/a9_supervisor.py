@@ -1043,6 +1043,7 @@ Hard rules:
 - If the task asks for `strict_worker_envelope: true`, the final answer must include a JSON object
   shaped like OpenClaw/Lobster tool envelopes, but A9 protocol is numeric:
   {"protocolVersion":1,"ok":true,"status":"ok","output":{...}}.
+  The envelope must be valid JSON only; put file paths and evidence as strings, not Markdown links.
 """,
         section_budgets["contract"],
     )

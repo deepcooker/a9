@@ -1123,3 +1123,34 @@ Governance lesson:
 - This supports the current mainline: quality comes from requirements alignment,
   explicit data/state contracts, declared evidence, and monitor review; not from
   arbitrary line/token thresholds.
+
+## 2026-06-02: compact test routing fixed prompt conflict, envelope still needed tightening
+
+Run evidence:
+- `.a9/runs/011-verify-compact-test-decision-route-20260602T122437Z-a1`
+
+Observation:
+- The task prompt now correctly rendered `Task Decision Packet` as
+  `route: execution_next`, `decided: true`, `missing_fields: none`, and
+  `required_fields: decision_status` for a `test` phase task.
+- This removed the previous conflict where a compact verification task carried
+  `Current Task: route execution_next` while the injected decision packet said
+  `route: debate_next`.
+- Supervisor-side declared checks passed and process governance had no findings.
+- The run still ended as `needs-repair` because the worker placed Markdown
+  links inside the strict JSON envelope, making the final block invalid JSON.
+
+Change:
+- Full 11-field decision packets remain required for production `implement`
+  tasks.
+- Compact `test` and `repair` tasks now require only `decision_status`; this
+  keeps monitor verification slices from being misrouted into requirements
+  debate.
+- The contract now explicitly says strict worker envelopes must be valid JSON
+  only, with paths/evidence as strings rather than Markdown links.
+
+Governance lesson:
+- The requirements method should protect production implementation, not create
+  contradictory instructions for small monitor/test slices.
+- Worker output remains untrusted until parsed by A9. Human-readable Markdown
+  can coexist with evidence, but the machine envelope must stay strict JSON.
