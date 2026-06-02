@@ -36,6 +36,29 @@
   not by string presence. Prompt text that says "do not read X" is a guardrail,
   not a read contract.
 
+## 2026-06-02: default doctrine hydration was pruned to a canonical context index
+
+- Monitoring run 005 showed that context governance in docs was not enough:
+  `build_context_packet()` still hydrated long `原始想法需求.md` and
+  `session-governance.md` head excerpts into ordinary worker prompts.
+- A 24h worker changed default prompt hydration so normal worker tasks now see
+  a short `Canonical Context Index` instead of raw doctrine bodies. The index
+  points to `AGENTS.md`, `docs/context-governance.md`, `docs/project.md`,
+  `docs/session-causal-memory.md`, and `docs/worker-method-packet.md`.
+- Raw doctrine documents remain preserved on disk and referenced by path.
+  Session-specific phases keep their existing close-reading exception for now.
+- Verification passed:
+  `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+  and 8 focused `build_context_packet` / context-router tests.
+- Process quality still needs work: the worker produced direct file-change
+  events instead of SEARCH/REPLACE-first edits. This is usable output but not
+  acceptable discipline for the long-running execution machine.
+
+Governance lesson:
+- Context governance must control what the supervisor hydrates, not only what
+  the worker is told to read. Otherwise old doctrine can still enter the prompt
+  as hidden default context and bury the active task.
+
 ## 2026-06-02: dirty worktree deterministic-apply bypass now needs repair
 
 - Monitoring found worker runs that emitted `search_replace_blocks` but had
