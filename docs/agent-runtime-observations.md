@@ -328,3 +328,31 @@ Governance lesson:
 - When `patch_guard=pass` but envelope parsing fails, monitor can accept the
   saved `patch.diff` after tests pass; the event should be recorded as protocol
   failure, not code-quality failure.
+
+## 2026-06-02: communication status consumed stream recovery action after monitor acceptance
+
+Run evidence:
+- `.a9/runs/000-implement-communication-status-consumes-stream-recovery-next-action-20260602-20260602T055246Z-a1`
+
+Observation:
+- The worker correctly identified the next link: `communication_status` was
+  still reading raw Redis Stream `stream_action`, while
+  `node_connection_summary` now exposes normalized `recovery_next_action`.
+- The patch connected `recovery_next_action` into the `tasks_stream` candidate
+  and routed `tasks_stream:recover_stale_commands` to
+  `/api/communication/repair-one` with `nodes.recover.stale_commands`.
+- Declared tests passed in the worker run, but the strict envelope failed again.
+  The final output was not parseable as the required worker envelope, so git
+  governance rolled the task back.
+
+Monitor intervention:
+- Applied the saved run patch:
+  `.a9/runs/000-implement-communication-status-consumes-stream-recovery-next-action-20260602-20260602T055246Z-a1/patch.diff`.
+- Ran the declared checks and full
+  `python3 -m unittest tests.test_control_api.ControlApiTests`.
+
+Governance lesson:
+- The 24h worker can now produce useful communication-runtime patches, but
+  strict-envelope reliability is the current automation bottleneck.
+- The monitor can safely accept saved patches only when `patch_guard=pass`,
+  `scope_guard=pass`, and focused plus broader regression tests pass.

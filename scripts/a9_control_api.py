@@ -2471,6 +2471,7 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
     services = service_observation_status(root)
     nodes = node_connection_summary(root)
     tasks_stream = nodes.get("tasks_stream") if isinstance(nodes.get("tasks_stream"), dict) else {}
+    recovery_next_action = nodes.get("recovery_next_action") if isinstance(nodes.get("recovery_next_action"), dict) else {}
     recovery = recovery_loop_latest(root=root)
 
     actions = {
@@ -2481,6 +2482,7 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
         "reconnect": 3,
         "login": 3,
         "install": 3,
+        "repair": 4,
         "intervene": 4,
         "quarantine": 5,
     }
@@ -2492,6 +2494,7 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
         "reconnect": "degraded",
         "login": "needs_attention",
         "install": "needs_attention",
+        "repair": "needs_attention",
         "intervene": "needs_attention",
         "quarantine": "needs_attention",
     }
@@ -2534,10 +2537,14 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
     candidates.append(
         {
             "source": "tasks_stream",
-            "action": str(tasks_stream.get("stream_action") or "continue"),
-            "reason": str(tasks_stream.get("stream_action_reason") or tasks_stream.get("reason") or "none"),
+            "action": str(recovery_next_action.get("action") or tasks_stream.get("stream_action") or "continue"),
+            "reason": str(recovery_next_action.get("reason") or tasks_stream.get("stream_action_reason") or tasks_stream.get("reason") or "none"),
             "lag": tasks_stream.get("lag"),
             "pending": tasks_stream.get("pending"),
+            "stream_action": tasks_stream.get("stream_action"),
+            "stream_action_reason": tasks_stream.get("stream_action_reason"),
+            "recommended_action": tasks_stream.get("recommended_action"),
+            "status": tasks_stream.get("status"),
         }
     )
     recovery_status = str(recovery.get("status") or recovery.get("cycle_status") or "")
@@ -2631,13 +2638,31 @@ def communication_action_plan(status: dict[str, Any] | None = None, *, root: Pat
             "steps": ["arm_remote", "post_nodes_recovery_cycle", "refresh_communication_status"],
             "executable": True,
         }
-    if source == "tasks_stream" and action in {"watch", "intervene"}:
+    if source == "tasks_stream" and action in {"watch", "intervene", "repair"}:
         stream_reason = str(
             status.get("layers", {}).get("tasks_stream", {}).get("stream_action_reason")
             or status.get("communication_followup", {}).get("intervention_decision", {}).get("reason")
             or ""
         )
+        status_reason = str(status.get("reason") or "")
+        action_reason = status_reason.removeprefix("tasks_stream:") if status_reason.startswith("tasks_stream:") else stream_reason
         if stream_reason == "pending_stuck":
+            return {
+                **base,
+                "plan_status": "ready",
+                "route": {
+                    "method": "POST",
+                    "endpoint": "/api/communication/repair-one",
+                    "command": "nodes.recover.stale_commands",
+                    "requires_arm": True,
+                    "arm_group": "remote",
+                },
+                "payload": {"action": "recover_stale_commands", "stream": TASKS_STREAM_KEY, "group": TASKS_STREAM_GROUP},
+                "reason": "recover_stream_stale_commands",
+                "steps": ["arm_remote", "post_communication_repair_one", "refresh_communication_status"],
+                "executable": True,
+            }
+        if action == "repair" or action_reason == "recover_stale_commands":
             return {
                 **base,
                 "plan_status": "ready",
