@@ -4364,6 +4364,35 @@ Do the work.
         self.assertEqual(findings[0]["level"], "error")
         self.assertEqual(findings[0]["path"], "vendor-src/codex/codex-rs/core/src/compact.rs")
 
+    def test_process_governance_allows_capped_rg_inside_explicit_allowed_read_scope(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'cd /root/a9/.a9/worktrees/example && rg -n -m 40 \"state|flow\" crates/a9-worker/src/main.rs'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="allowed-read-rg-scope",
+                phase="reference_scan",
+                prompt="Inspect only bounded slices from allowed_paths. Use bounded rg/sed reads only on allowed_paths.",
+                checks=[],
+                allowed_paths=["crates/a9-worker/src/main.rs"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("read_outside_allowed_paths", kinds)
+
     def test_process_governance_does_not_make_allowed_paths_global_read_scope(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

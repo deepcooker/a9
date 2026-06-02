@@ -2727,10 +2727,18 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
 
     if parts and parts[0] == "rg":
         allowed_flags = {"-n", "--line-number", "-F", "--fixed-strings"}
+        allowed_value_flags = {"-m", "--max-count"}
         saw_line_flag = False
         index = 1
         while index < len(parts) and parts[index].startswith("-"):
-            if parts[index] not in allowed_flags:
+            flag = parts[index]
+            if flag in allowed_value_flags:
+                index += 2
+                continue
+            if flag.startswith("--max-count="):
+                index += 1
+                continue
+            if flag not in allowed_flags:
                 return False
             saw_line_flag = saw_line_flag or parts[index] in {"-n", "--line-number"}
             index += 1
@@ -2793,8 +2801,17 @@ def command_read_targets(command: str) -> list[str]:
             index = 1
             rg_files = False
             while index < len(parts) and parts[index].startswith("-"):
-                if parts[index] == "--files":
+                flag = parts[index]
+                if flag == "--files":
                     rg_files = True
+                    index += 1
+                    continue
+                if flag in {"-m", "--max-count"}:
+                    index += 2
+                    continue
+                if flag.startswith("--max-count="):
+                    index += 1
+                    continue
                 index += 1
             if rg_files:
                 targets.extend(part for part in parts[index:] if not part.startswith("-"))
