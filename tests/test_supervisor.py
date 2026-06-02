@@ -4261,6 +4261,37 @@ Do the work.
         self.assertIn("archive/original-ideas/notes.md", paths)
         self.assertIn("docs/mistakes.md", paths)
 
+    def test_process_governance_allows_bounded_wildcard_session_raw_read(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="bounded-session-raw-allowance",
+                prompt="bounded read: docs/session-raw-*\nInspect reference governance docs.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(
+                task,
+                {"event_summaries_path": str(events)},
+                run_dir,
+            )
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("forbidden_session_context_read", kinds)
+
     def test_process_governance_allows_session_context_reads_for_session_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4655,6 +4686,22 @@ Do the work.
 
         self.assertEqual(allowed_read, {})
         self.assertEqual(disallowed_path, {})
+
+    def test_live_worker_allows_bounded_wildcard_archive_read(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="bounded-read-wildcard-archive",
+            prompt="bounded read: archive/original-ideas/*",
+            checks=[],
+        )
+
+        allowed_read = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'tail -n 20 archive/original-ideas/notes.md'",
+        )
+
+        self.assertEqual(allowed_read, {})
 
     def test_live_worker_blocks_session_context_reads_outside_session_tasks(self):
         mod = load_supervisor()

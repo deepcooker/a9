@@ -2568,7 +2568,7 @@ def prompt_requires_targeted_rg(prompt: str) -> bool:
 def bounded_read_paths_from_prompt(prompt: str) -> list[str]:
     paths: list[str] = []
     for match in re.finditer(
-        r"bounded read(?:\s+of|\s*:)\s*([A-Za-z0-9_./-]+)",
+        r"bounded read(?:\s+of|\s*:)\s*([A-Za-z0-9_./\-*]+)",
         str(prompt or ""),
         flags=re.IGNORECASE,
     ):
@@ -2620,19 +2620,41 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
         return command_fragment_is_bounded_read_of_paths(pipe_parts[0], paths)
     if len(pipe_parts) > 1:
         return False
-    target_pattern = "|".join(re.escape(path) for path in paths)
-    tail_match = re.search(rf"^tail\s+-n\s+(\d+)\s+['\"]?(?:{target_pattern})['\"]?$", inner)
-    if tail_match:
-        return True
-    sed_match = re.search(rf"^sed\s+-n\s+['\"]?(\d+)\s*,\s*(\d+)p['\"]?\s+['\"]?(?:{target_pattern})['\"]?$", inner)
-    if sed_match:
-        start = int(sed_match.group(1))
-        end = int(sed_match.group(2))
-        return end >= start
+
+    def path_matches(pattern: str, candidate: str) -> bool:
+        if pattern == candidate:
+            return True
+        if pattern.endswith("/") and candidate.startswith(pattern):
+            return True
+        if "*" in pattern and fnmatch.fnmatch(candidate, pattern):
+            return True
+        return False
+
     try:
         parts = shlex.split(inner)
     except ValueError:
         return False
+
+    if parts and parts[0] == "tail":
+        if len(parts) >= 4 and parts[1] == "-n":
+            target = parts[-1]
+            return any(path_matches(path, target) for path in paths)
+        return False
+
+    if parts and parts[0] == "sed":
+        if len(parts) < 4 or parts[1] != "-n":
+            return False
+        window = parts[2].strip("'\"")
+        seg = re.search(r"^(\d+)\s*,\s*(\d+)p$", window)
+        if not seg:
+            return False
+        start = int(seg.group(1))
+        end = int(seg.group(2))
+        if end < start:
+            return False
+        target = parts[3]
+        return any(path_matches(path, target) for path in paths)
+
     if parts and parts[0] == "rg":
         allowed_flags = {"-n", "--line-number", "-F", "--fixed-strings"}
         saw_line_flag = False
@@ -2648,7 +2670,7 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
         rg_paths = parts[index + 1 :]
         if not pattern or not rg_paths:
             return False
-        return all(path in paths for path in rg_paths)
+        return all(any(path_matches(pattern_text, rg_path) for pattern_text in paths) for rg_path in rg_paths)
     return False
 
 
