@@ -1495,3 +1495,28 @@ Governance lesson:
   compare implementation constants against the canonical model document.
 - Future execution prompts should explicitly say: do not invent enum/key/table
   values; copy them from the named authority document.
+
+## 2026-06-03: model-closure validation worker failed test-name contract
+
+Run evidence:
+- Worker run:
+  `.a9/runs/implement-communication-model-closure-validation-20260603-20260602T185014Z-a1`
+
+Observation:
+- The worker produced a useful read-only validation/serialization helper idea,
+  but the run was rolled back as `needs-repair`.
+- Direct cause: declared checks targeted exact test names, while the worker
+  created different test method names. The outer checks failed with
+  `ControlApiTests has no attribute ...`.
+- Monitor salvaged the implementation with the exact declared test names and
+  tightened semantics: validation only supports the three closed objects
+  (`operator_session`, `event_cursor`, `reconnect_state`), not every
+  communication data-contract object.
+- Declared focused checks passed after salvage.
+
+Governance lesson:
+- For worker tasks with exact declared checks, prompt must explicitly require
+  matching test names, not merely equivalent coverage.
+- Validation helpers are now correctly read-only and model-scoped; unsupported
+  objects report `unsupported_object` instead of silently accepting partial
+  contracts.

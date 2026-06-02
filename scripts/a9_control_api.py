@@ -336,6 +336,85 @@ COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE = {
 }
 
 
+_COMMUNICATION_MODEL_CLOSURE_ENUM_FIELD_MAP = {
+    "operator_session": {"status_enum": "status"},
+    "event_cursor": {"status_enum": "cursor_status"},
+    "reconnect_state": {"phase_enum": "phase", "action_enum": "action"},
+}
+
+
+def _communication_model_closure_missing_fields(
+    object_name: str, payload: dict[str, Any]
+) -> list[str]:
+    required_fields = COMMUNICATION_DATA_CONTRACT_FIELDS.get(object_name, [])
+    return [field for field in required_fields if field not in payload]
+
+
+def _communication_model_closure_enum_violations(
+    object_name: str, payload: dict[str, Any]
+) -> list[dict[str, Any]]:
+    model_closure = COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE.get(object_name, {})
+    enum_field_map = _COMMUNICATION_MODEL_CLOSURE_ENUM_FIELD_MAP.get(object_name, {})
+    violations: list[dict[str, Any]] = []
+    for enum_name, field_name in enum_field_map.items():
+        allowed = model_closure.get(enum_name)
+        if not isinstance(allowed, list) or field_name not in payload:
+            continue
+        value = payload.get(field_name)
+        if value not in allowed:
+            violations.append({"field": field_name, "value": value, "allowed": allowed})
+    return violations
+
+
+def communication_model_closure_serialize(
+    object_name: str, payload: Any
+) -> dict[str, Any]:
+    requested = (object_name or "").strip()
+    if not isinstance(payload, dict):
+        return {
+            "status": "invalid_payload",
+            "kind": "communication_model_closure_serialize",
+            "error_code": "invalid_payload",
+            "object": requested,
+            "serialized": {},
+            "missing_fields": [],
+            "enum_violations": [],
+        }
+
+    if requested not in COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE:
+        return {
+            "status": "unsupported_object",
+            "kind": "communication_model_closure_serialize",
+            "error_code": "unsupported_object",
+            "object": requested,
+            "serialized": {},
+            "missing_fields": [],
+            "enum_violations": [],
+        }
+
+    required_fields = COMMUNICATION_DATA_CONTRACT_FIELDS[requested]
+    serialized = {field: payload.get(field) for field in required_fields}
+    missing_fields = _communication_model_closure_missing_fields(requested, payload)
+    enum_violations = _communication_model_closure_enum_violations(requested, payload)
+
+    return {
+        "status": "ok" if not missing_fields and not enum_violations else "invalid_model",
+        "kind": "communication_model_closure_serialize",
+        "object": requested,
+        "serialized": serialized,
+        "required_fields": required_fields,
+        "missing_fields": missing_fields,
+        "enum_violations": enum_violations,
+    }
+
+
+def communication_model_closure_validate(
+    object_name: str, payload: Any
+) -> dict[str, Any]:
+    serialized = communication_model_closure_serialize(object_name, payload)
+    return {**serialized, "kind": "communication_model_closure_validate"}
+
+
 def communication_data_contract_report(
     *, object_name: str | None = None, root: Path = ROOT
 ) -> dict[str, Any]:

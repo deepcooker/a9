@@ -1270,6 +1270,97 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["kind"], "communication_data_contract_report")
         self.assertEqual(captured["payload"]["objects"][0]["object"], "command")
 
+    def test_communication_model_closure_validate_valid_operator_session(self):
+        mod = load_control_api()
+        payload = {
+            "operator_id": "op-1",
+            "client_kind": "cli",
+            "client_id": "client-1",
+            "auth_scope": ["operator.admin"],
+            "connected_at": "2026-06-03T00:00:00Z",
+            "last_seen_at": "2026-06-03T00:00:10Z",
+            "last_event_id": "1-0",
+            "control_permissions": ["services.start"],
+            "status": "active",
+        }
+
+        result = mod.communication_model_closure_validate("operator_session", payload)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["kind"], "communication_model_closure_validate")
+        self.assertEqual(result["object"], "operator_session")
+        self.assertEqual(
+            list(result["serialized"].keys()),
+            mod.COMMUNICATION_DATA_CONTRACT_FIELDS["operator_session"],
+        )
+        self.assertEqual(result["serialized"]["status"], "active")
+        self.assertEqual(result["missing_fields"], [])
+        self.assertEqual(result["enum_violations"], [])
+
+    def test_communication_model_closure_validate_missing_fields(self):
+        mod = load_control_api()
+        result = mod.communication_model_closure_validate(
+            "operator_session",
+            {
+                "operator_id": "op-1",
+                "client_kind": "cli",
+                "client_id": "client-1",
+                "status": "active",
+            },
+        )
+
+        self.assertEqual(result["status"], "invalid_model")
+        self.assertIn("auth_scope", result["missing_fields"])
+        self.assertIn("connected_at", result["missing_fields"])
+        self.assertIn("last_seen_at", result["missing_fields"])
+        self.assertEqual(result["enum_violations"], [])
+
+    def test_communication_model_closure_validate_invalid_enum(self):
+        mod = load_control_api()
+        payload = {
+            "stream": "a9:events",
+            "consumer": "operator:client-1",
+            "last_id": "1-0",
+            "oldest_id": "1-0",
+            "newest_id": "2-0",
+            "cursor_status": "broken",
+            "updated_at": "2026-06-03T00:00:00Z",
+        }
+
+        result = mod.communication_model_closure_validate("event_cursor", payload)
+
+        self.assertEqual(result["status"], "invalid_model")
+        self.assertEqual(
+            result["enum_violations"],
+            [
+                {
+                    "field": "cursor_status",
+                    "value": "broken",
+                    "allowed": ["active", "gap_detected", "invalid", "stale", "reset_pending"],
+                }
+            ],
+        )
+
+    def test_communication_model_closure_validate_unsupported_object(self):
+        mod = load_control_api()
+
+        result = mod.communication_model_closure_validate("node", {"node_id": "n1"})
+
+        self.assertEqual(result["status"], "unsupported_object")
+        self.assertEqual(result["error_code"], "unsupported_object")
+        self.assertEqual(result["object"], "node")
+        self.assertEqual(result["serialized"], {})
+
+    def test_communication_model_closure_validate_non_dict_payload(self):
+        mod = load_control_api()
+
+        result = mod.communication_model_closure_validate("operator_session", [])
+
+        self.assertEqual(result["status"], "invalid_payload")
+        self.assertEqual(result["error_code"], "invalid_payload")
+        self.assertEqual(result["object"], "operator_session")
+        self.assertEqual(result["serialized"], {})
+
     def test_communication_action_plan_routes_missing_services_to_runtime_gate(self):
         mod = load_control_api()
         plan = mod.communication_action_plan(
