@@ -1092,3 +1092,34 @@ Governance lesson:
 - This remains observation-first. Token and process findings should drive
   better task shaping, bounded evidence slices, and monitor intervention instead
   of arbitrary hard numeric gates before the business/data contract is stable.
+
+## 2026-06-02: exact-command evidence planning exposed worker execution drift
+
+Run evidence:
+- `.a9/runs/010-verify-exact-evidence-plan-commands-20260602T121641Z-a1`
+
+Observation:
+- The worker was asked to run an observation-only verification task with
+  `direct_file_change_policy: repair` and no expected file changes.
+- It did state a bounded evidence plan before source reads, so the newer
+  `missing_bounded_evidence_plan` check did not fire.
+- It also exposed a sharper failure mode: the second required command was
+  rewritten with an ellipsis (`test_process_gov...`) in both the assistant plan
+  and actual command execution.
+- The worker then tried `pytest`, `python3 -m pytest`, and incorrect unittest
+  class names before finally discovering `SupervisorTests` and running the two
+  focused tests successfully.
+- Process governance recorded seven warn-only `undeclared_check` findings.
+  The run ended as `needs-followup`, not a clean pass.
+
+Governance lesson:
+- A prompt that says "use this exact command" is not a reliable deterministic
+  executor contract when the model can abbreviate or rewrite long commands.
+- Declared checks and deterministic supervisor-side checks must remain the
+  authority; worker self-report is only evidence.
+- This should stay observation-first for now. The useful next improvement is
+  better task shaping: use shorter command IDs or supervisor-executed declared
+  checks, and record drift when the worker substitutes tools or command names.
+- This supports the current mainline: quality comes from requirements alignment,
+  explicit data/state contracts, declared evidence, and monitor review; not from
+  arbitrary line/token thresholds.
