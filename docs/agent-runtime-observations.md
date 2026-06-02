@@ -299,3 +299,32 @@ Governance lesson:
   Do not solve this by arbitrary token/line gates that block useful work.
 - Direct `file_change` events should remain visible to the monitor until the
   deterministic apply path is fully reliable.
+
+## 2026-06-02: connection summary stream recovery patch was useful but envelope failed
+
+Run evidence:
+- `.a9/runs/000-reference-scan-communication-stability-after-stale-recovery-20260602-20260602T054134Z-a1`
+- `.a9/runs/000-implement-connection-summary-stream-recovery-next-action-20260602-20260602T054303Z-a1`
+
+Observation:
+- The bounded reference scan behaved much better than the previous broad scan:
+  about 51k input tokens and no process-governance findings.
+- The implementation worker produced a useful patch and passed the declared
+  checks, but its final strict JSON envelope contained an unescaped newline in
+  a string. `worker_envelope` failed, so git governance rolled the worktree
+  back even though `patch_guard` and `scope_guard` passed.
+- The saved run patch was still usable:
+  `.a9/runs/000-implement-connection-summary-stream-recovery-next-action-20260602-20260602T054303Z-a1/patch.diff`.
+
+Monitor intervention:
+- Re-applied the saved patch manually to main.
+- Ran:
+  `python3 -m py_compile scripts/a9_control_api.py tests/test_control_api.py`,
+  the two declared focused tests, and full
+  `python3 -m unittest tests.test_control_api.ControlApiTests`.
+
+Governance lesson:
+- Strict envelope JSON validity is still a real automation blocker.
+- When `patch_guard=pass` but envelope parsing fails, monitor can accept the
+  saved `patch.diff` after tests pass; the event should be recorded as protocol
+  failure, not code-quality failure.

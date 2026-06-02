@@ -2302,6 +2302,41 @@ def node_status(root: Path = ROOT) -> dict[str, Any]:
 def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
     status = node_status(root)
     nodes = status.get("nodes", [])
+    tasks_stream = status.get("tasks_stream") if isinstance(status.get("tasks_stream"), dict) else {}
+    stream_reason = str(tasks_stream.get("stream_action_reason") or tasks_stream.get("reason") or "").strip()
+    stream_action = str(tasks_stream.get("stream_action") or "").strip()
+    stream_recommended_action = str(tasks_stream.get("recommended_action") or "").strip()
+
+    if stream_reason in {"", "none", "healthy"}:
+        recovery_next_action = {"action": "continue", "reason": "none"}
+    elif stream_reason == "pending_stuck" and stream_recommended_action == "recover_stale_commands":
+        recovery_next_action = {"action": "repair", "reason": "recover_stale_commands"}
+    elif stream_reason in {"lag_critical", "pending_skew"}:
+        recovery_next_action = {"action": "intervene", "reason": stream_reason}
+    elif stream_reason in {"lag_warn", "consumer_group_missing", "invalid_lag", "xpending_failed", "invalid_pending"}:
+        recovery_next_action = {"action": "watch", "reason": stream_reason}
+    elif stream_action == "intervene":
+        recovery_next_action = {"action": "intervene", "reason": stream_reason or "unknown"}
+    elif stream_action == "watch":
+        recovery_next_action = {"action": "watch", "reason": stream_reason or "unknown"}
+    elif stream_action in {"reconnect", "repair"}:
+        recovery_next_action = {"action": "repair", "reason": stream_reason or "unknown"}
+    else:
+        recovery_next_action = {"action": "continue", "reason": stream_reason or "none"}
+
+    stream_pending = tasks_stream.get("pending")
+    stream_evidence = {
+        "lag": tasks_stream.get("lag"),
+        "pending_total": stream_pending,
+        "pending": stream_pending,
+        "stream_action": tasks_stream.get("stream_action"),
+        "stream_action_reason": tasks_stream.get("stream_action_reason"),
+        "recommended_action": tasks_stream.get("recommended_action"),
+    }
+    top_consumers = tasks_stream.get("top_consumers")
+    if isinstance(top_consumers, list):
+        stream_evidence["top_consumers"] = top_consumers
+
     connection_states: dict[str, int] = {}
     recovery_actions: dict[str, int] = {}
     connection_actions: dict[str, int] = {}
@@ -2425,6 +2460,8 @@ def node_connection_summary(root: Path = ROOT) -> dict[str, Any]:
         "latest_evidence_paths": evidence_paths[-20:],
         "redis": status.get("redis"),
         "tasks_stream": status.get("tasks_stream"),
+        "stream_evidence": stream_evidence,
+        "recovery_next_action": recovery_next_action,
         "communication_followup": status.get("communication_followup"),
     }
 

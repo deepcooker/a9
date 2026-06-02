@@ -868,6 +868,71 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(summary["risk_nodes"][0]["retry_delay_ms"], 8000)
         self.assertEqual(summary["risk_nodes"][0]["connection_evidence_path"], str(probe_evidence_path))
 
+    def test_connection_summary_includes_stream_recovery_next_action(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_node_status = mod.node_status
+            top_consumers = [
+                {"name": "node-a", "pending": 7, "idle": 41000},
+                {"name": "node-b", "pending": 2, "idle": 1200},
+            ]
+            try:
+                mod.node_status = lambda root=root: {
+                    "count": 1,
+                    "nodes": [],
+                    "tasks_stream": {
+                        "lag": 123,
+                        "pending": 9,
+                        "stream_action": "intervene",
+                        "stream_action_reason": "pending_stuck",
+                        "recommended_action": "recover_stale_commands",
+                        "top_consumers": top_consumers,
+                    },
+                    "communication_followup": {"action": "continue", "reason": "healthy"},
+                }
+                summary = mod.node_connection_summary(root)
+            finally:
+                mod.node_status = original_node_status
+
+        self.assertEqual(summary["recovery_next_action"]["action"], "repair")
+        self.assertEqual(summary["recovery_next_action"]["reason"], "recover_stale_commands")
+        self.assertEqual(summary["stream_evidence"]["lag"], 123)
+        self.assertEqual(summary["stream_evidence"]["pending_total"], 9)
+        self.assertEqual(summary["stream_evidence"]["pending"], 9)
+        self.assertEqual(summary["stream_evidence"]["stream_action"], "intervene")
+        self.assertEqual(summary["stream_evidence"]["stream_action_reason"], "pending_stuck")
+        self.assertEqual(summary["stream_evidence"]["recommended_action"], "recover_stale_commands")
+        self.assertEqual(summary["stream_evidence"]["top_consumers"], top_consumers)
+
+    def test_connection_summary_stream_recovery_next_action_observes_watch_tier(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_node_status = mod.node_status
+            try:
+                mod.node_status = lambda root=root: {
+                    "count": 0,
+                    "nodes": [],
+                    "tasks_stream": {
+                        "lag": 72,
+                        "pending": 4,
+                        "stream_action": "watch",
+                        "stream_action_reason": "lag_warn",
+                    },
+                    "communication_followup": {"action": "continue", "reason": "healthy"},
+                }
+                summary = mod.node_connection_summary(root)
+            finally:
+                mod.node_status = original_node_status
+
+        self.assertEqual(summary["recovery_next_action"]["action"], "watch")
+        self.assertEqual(summary["recovery_next_action"]["reason"], "lag_warn")
+        self.assertEqual(summary["stream_evidence"]["lag"], 72)
+        self.assertEqual(summary["stream_evidence"]["pending_total"], 4)
+        self.assertEqual(summary["stream_evidence"]["stream_action"], "watch")
+        self.assertEqual(summary["stream_evidence"]["stream_action_reason"], "lag_warn")
+
     def test_api_nodes_connection_summary_endpoint_uses_summary_payload(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None}

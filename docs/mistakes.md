@@ -1292,3 +1292,20 @@
   phone-control group。
 - 这类 gate 是执行事实和安全边界，不是为了工程洁癖设置的硬门禁。
 - 测试必须先 arm 对应 group，再验证执行结果。
+
+## 2026-06-02：strict JSON envelope 里不能出现未转义换行
+
+现象：
+
+- `000-implement-connection-summary-stream-recovery-next-action-20260602`
+  代码 patch、scope 和声明测试都通过。
+- 但 final strict envelope 的 `implementation_notes` 字符串中包含裸换行，
+  导致 `worker_envelope` 解析失败。
+- git governance 因协议失败回滚了 worktree。
+- 主控只能从 run 目录保存的 `patch.diff` 重新验收并应用。
+
+规则：
+
+- strict envelope 必须是真正可解析 JSON，不是“看起来像 JSON”。
+- 多行说明必须拆成数组元素，或用合法转义，不能把换行塞进字符串。
+- `patch_guard=pass` 可以作为人工验收依据，但不能掩盖协议失败。
