@@ -2562,6 +2562,7 @@ def controller_discovery() -> dict[str, Any]:
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
             "communication_action_plan": "/api/communication/action-plan",
+            "communication_model_closure_validate": "/api/communication/model-closure-validate",
             "communication_repair_one": "/api/communication/repair-one",
             "communication_repair_suggestions": "/api/communication/repair-suggestions",
             "communication_repair_suggestion_review": "/api/communication/repair-suggestions/review",
@@ -6780,6 +6781,13 @@ class ControlHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
             if self.path == "/api/submit":
                 self.write_json(200, submit_task(payload))
+            elif self.path == "/api/communication/model-closure-validate":
+                requested_object = str(payload.get("object_name") or payload.get("object") or "")
+                requested_payload = payload.get("payload")
+                self.write_json(
+                    200,
+                    communication_model_closure_validate(requested_object, requested_payload),
+                )
             elif self.path == "/api/runtime/run-one":
                 self.write_json(200, runtime_run_one(payload))
             elif self.path == "/api/runtime/session-refresh-trial":

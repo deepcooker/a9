@@ -1726,6 +1726,63 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["response"]["kind"], "communication_repair_one")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
 
+    def test_api_communication_model_closure_validate_endpoint_valid_payload(self):
+        mod = load_control_api()
+        captured = {}
+        original_validate = mod.communication_model_closure_validate
+
+        def fake_validate(object_name, payload):
+            captured["object_name"] = object_name
+            captured["payload"] = payload
+            return {"status": "ok", "kind": "communication_model_closure_validate"}
+
+        mod.communication_model_closure_validate = fake_validate
+        body = json.dumps(
+            {
+                "object_name": "operator_session",
+                "payload": {"operator_id": "op-1"},
+            }
+        ).encode("utf-8")
+
+        class DummyCommunicationModelClosureValidatePostHandler:
+            path = "/api/communication/model-closure-validate"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.ControlHandler.do_POST(DummyCommunicationModelClosureValidatePostHandler())
+        finally:
+            mod.communication_model_closure_validate = original_validate
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["kind"], "communication_model_closure_validate")
+        self.assertEqual(captured["object_name"], "operator_session")
+        self.assertEqual(captured["payload"], {"operator_id": "op-1"})
+
+    def test_api_communication_model_closure_validate_endpoint_missing_payload(self):
+        mod = load_control_api()
+        captured = {}
+        body = json.dumps({"object": "operator_session"}).encode("utf-8")
+
+        class DummyCommunicationModelClosureValidateMissingPayloadPostHandler:
+            path = "/api/communication/model-closure-validate"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        mod.ControlHandler.do_POST(DummyCommunicationModelClosureValidateMissingPayloadPostHandler())
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["status"], "invalid_payload")
+        self.assertEqual(captured["response"]["object"], "operator_session")
+
     def test_node_recovery_cycle_plans_tmux_repair_and_writes_evidence(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -8402,12 +8459,25 @@ class ControlApiTests(unittest.TestCase):
             discovery["endpoints"]["node_command_result_by_command"],
             "/api/node-command-results/by-command/{command_id}",
         )
+        self.assertEqual(
+            discovery["endpoints"]["communication_model_closure_validate"],
+            "/api/communication/model-closure-validate",
+        )
         self.assertFalse(discovery["runtime"]["worker_claim_ready"])
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertTrue(discovery["runtime"]["gateway_reconnect_governance"])
         self.assertTrue(discovery["runtime"]["node_command_recovery_hint_contract"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)
         self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])
+
+    def test_controller_discovery_exposes_model_closure_validate_endpoint(self):
+        mod = load_control_api()
+        discovery = mod.controller_discovery()
+
+        self.assertEqual(
+            discovery["endpoints"]["communication_model_closure_validate"],
+            "/api/communication/model-closure-validate",
+        )
 
     def test_tailscale_status_reports_missing_binary(self):
         mod = load_control_api()

@@ -1520,3 +1520,27 @@ Governance lesson:
 - Validation helpers are now correctly read-only and model-scoped; unsupported
   objects report `unsupported_object` instead of silently accepting partial
   contracts.
+
+## 2026-06-03: model-closure validate endpoint needed test-name salvage
+
+Run evidence:
+- Worker run:
+  `.a9/runs/implement-communication-model-closure-validate-endpoint-20260603-20260602T190113Z-a1`
+
+Observation:
+- The worker implemented the right read-only POST route idea:
+  `/api/communication/model-closure-validate`, plus discovery metadata.
+- The run rolled back as `needs-repair` because one declared test name was not
+  created exactly: `test_controller_discovery_exposes_model_closure_validate_endpoint`.
+- Worker process also showed high token cost and several patch-location misses,
+  even though the final patch content was small and useful.
+- Monitor salvaged the endpoint, added the exact discovery test, and added an
+  endpoint missing-payload test to lock `invalid_payload` behavior.
+
+Governance lesson:
+- Exact test names remain a brittle but useful contract. For future endpoint
+  tasks, the worker prompt should require "create these exact method names" and
+  place them next to the matching existing test family.
+- Small endpoint tasks still consume too many tokens when worker cannot locate
+  anchors cleanly; prompts should include the exact anchor function names and
+  avoid relying on broad line offsets.
