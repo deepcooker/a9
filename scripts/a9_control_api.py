@@ -2426,6 +2426,7 @@ def controller_discovery() -> dict[str, Any]:
             "health": "/api/health",
             "status": "/api/status",
             "communication_status": "/api/communication/status",
+            "communication_data_contract_report": "/api/communication/data-contract-report",
             "communication_action_plan": "/api/communication/action-plan",
             "communication_repair_one": "/api/communication/repair-one",
             "communication_repair_suggestions": "/api/communication/repair-suggestions",

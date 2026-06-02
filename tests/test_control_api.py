@@ -8229,6 +8229,9 @@ class ControlApiTests(unittest.TestCase):
         discovery = mod.controller_discovery()
         self.assertEqual(discovery["service"], "a9-controller")
         self.assertEqual(discovery["endpoints"]["communication_status"], "/api/communication/status")
+        self.assertEqual(
+            discovery["endpoints"]["communication_data_contract_report"], "/api/communication/data-contract-report"
+        )
         self.assertEqual(discovery["endpoints"]["communication_action_plan"], "/api/communication/action-plan")
         self.assertEqual(discovery["endpoints"]["communication_repair_one"], "/api/communication/repair-one")
         self.assertEqual(discovery["endpoints"]["communication_repair_suggestions"], "/api/communication/repair-suggestions")
