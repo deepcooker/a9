@@ -1077,6 +1077,52 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(tasks_stream_candidate["stream_action"], "intervene")
         self.assertEqual(tasks_stream_candidate["stream_action_reason"], "pending_stuck")
 
+    def test_communication_status_prefers_recovery_loop_attention_over_stream_repair(self):
+        mod = load_control_api()
+        originals = {
+            "tailscale_status": mod.tailscale_status,
+            "service_observation_status": mod.service_observation_status,
+            "node_connection_summary": mod.node_connection_summary,
+            "recovery_loop_latest": mod.recovery_loop_latest,
+        }
+        try:
+            mod.tailscale_status = lambda: {"status": "ok"}
+            mod.service_observation_status = lambda root=mod.ROOT: {
+                "status": "ok",
+                "observed": {"missing_count": 0, "missing_services": [], "next_action": "observe"},
+            }
+            mod.node_connection_summary = lambda root=mod.ROOT: {
+                "status": "ok",
+                "risk_count": 0,
+                "tasks_stream": {
+                    "stream_action": "intervene",
+                    "stream_action_reason": "pending_stuck",
+                    "lag": 7,
+                    "pending": 4,
+                },
+                "recovery_next_action": {"action": "repair", "reason": "recover_stale_commands"},
+                "communication_followup": {"action": "continue", "reason": "healthy"},
+            }
+            mod.recovery_loop_latest = lambda *, root=mod.ROOT: {
+                "status": "needs_attention",
+                "risk_count": 2,
+            }
+
+            status = mod.communication_status()
+        finally:
+            mod.tailscale_status = originals["tailscale_status"]
+            mod.service_observation_status = originals["service_observation_status"]
+            mod.node_connection_summary = originals["node_connection_summary"]
+            mod.recovery_loop_latest = originals["recovery_loop_latest"]
+
+        self.assertEqual(status["status"], "needs_attention")
+        self.assertEqual(status["action"], "intervene")
+        self.assertEqual(status["priority_source"], "recovery_loop")
+        self.assertEqual(status["reason"], "recovery_loop:needs_attention")
+        tasks_stream_candidate = next(item for item in status["candidates"] if item["source"] == "tasks_stream")
+        self.assertEqual(tasks_stream_candidate["action"], "repair")
+        self.assertEqual(tasks_stream_candidate["reason"], "recover_stale_commands")
+
     def test_api_communication_status_endpoint_uses_status_payload(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None}

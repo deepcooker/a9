@@ -2562,7 +2562,18 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
         }
     )
 
-    best = max(candidates, key=lambda item: actions.get(str(item.get("action") or "watch"), actions["watch"]))
+    def candidate_key(item: dict[str, Any]) -> tuple[int, int]:
+        action = str(item.get("action") or "watch")
+        priority = actions.get(action, actions["watch"])
+        source = str(item.get("source") or "")
+        action_priority_tiebreak = 0
+        if priority == 4 and source == "recovery_loop" and action in {"repair", "intervene"}:
+            action_priority_tiebreak = 2
+        elif priority == 4 and source == "tasks_stream" and action in {"repair", "intervene"}:
+            action_priority_tiebreak = 1
+        return (priority, action_priority_tiebreak)
+
+    best = max(candidates, key=candidate_key)
     action = str(best.get("action") or "watch")
     return {
         "status": status_by_action.get(action, "degraded"),
