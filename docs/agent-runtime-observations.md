@@ -14,6 +14,18 @@
   checks, but broad file slices and direct file-change events produced many
   warn-only findings and very high actual token usage.
 
+## 2026-06-02: bounded evidence + SEARCH/REPLACE contract added for next-task prompts
+
+- Updated `scripts/a9_supervisor.py` `requirements_method_packet()` to require bounded evidence planning (paths, bounded read commands, and slice rationale) before source reads.
+- Added an `Evidence-and-edit contract` block into `next_task_prompt(...)` so implementation prompts now enforce:
+  - bounded evidence plan first,
+  - SEARCH/REPLACE-first edit preference,
+  - output/search_replace_blocks expectation when changes are needed.
+- Added `tests/test_supervisor.py::test_next_task_prompt_includes_evidence_and_edit_contract` to lock the new guidance in place.
+- Planned effect:
+  - reduce broad reads and unplanned direct edits by making bounded planning explicit in worker-visible contract,
+  - keep hard governance rules unchanged (no new numeric hard token gates, no extra read scope expansion).
+
 ## 2026-06-02: deterministic restart subcommand added for targeted local service refresh
 
 - `scripts/a9_service.py` now supports `restart` with `--only` and `--dry-run`.

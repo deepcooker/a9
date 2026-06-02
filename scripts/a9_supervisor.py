@@ -6167,6 +6167,8 @@ def requirements_method_packet() -> str:
 - Product/mainline is a pressure role: market/reference research, scenario pressure, solution overturning, and final product decision.
 - Acceptance must be evidence-based: tests, run evidence, traces, diffs, and cited references.
 - Gates are observation-first unless the action corrupts facts, violates license/security, skips declared tests, or mutates authority state.
+- Evidence-first within scope: before any source read, worker must state a bounded evidence plan with explicit paths, bounded slice commands, and reason.
+- Deterministic edit contract: changes should be expressed as SEARCH/REPLACE blocks in final output whenever possible; direct file edits should be treated as non-compliant.
 """
 
 
@@ -6459,6 +6461,18 @@ Previous worker output:
 - copied_mechanisms: {bounded_inline(json.dumps(worker_output.get('copied_mechanisms', []), ensure_ascii=False), 1200)}
 - changed_files: {bounded_inline(json.dumps(worker_output.get('changed_files', []), ensure_ascii=False), 500)}
 """
+    evidence_edit_contract = """
+Evidence-and-edit contract:
+- Before any reads, list a bounded evidence plan with:
+  - 3 paths max you will inspect.
+  - exact bounded read commands (rg/sed ranges) for each path.
+  - one-line reason for each slice.
+- Editing contract:
+  - prefer SEARCH/REPLACE for all file changes.
+  - include search_replace_blocks in strict-worker output (or return no-change if no edits).
+  - avoid proposing unbounded re-reads unless explicitly required.
+"""
+
     phase_lines = ""
     if phase == "reference_scan":
         phase_lines = """
@@ -6563,6 +6577,7 @@ Phase: {phase}
 {goal_lines}
 {phase_lines}
 {communication_acceptance_lines}
+{evidence_edit_contract}
 
 {requirements_method_packet()}
 {task_decision_packet_prompt(task)}

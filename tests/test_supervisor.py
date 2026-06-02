@@ -5481,6 +5481,23 @@ Do the work.
         self.assertIn("Performance second", prompt)
         self.assertIn("Gates are observation-first", prompt)
 
+    def test_next_task_prompt_includes_evidence_and_edit_contract(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="evidence-edit-contract", prompt="demo", phase="implement")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "implement: apply bounded evidence plan"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "implement")
+
+        self.assertIn("Evidence-and-edit contract:", prompt)
+        self.assertIn("3 paths max you will inspect", prompt)
+        self.assertIn("prefer SEARCH/REPLACE", prompt)
+        self.assertIn("search_replace_blocks", prompt)
+
     def test_build_context_packet_injects_worker_method_packet_for_ai_worker(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="method-context", prompt="implement one decided slice", phase="implement")
