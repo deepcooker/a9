@@ -3886,6 +3886,51 @@ Do the work.
         self.assertEqual(status, "needs-repair")
         self.assertIsNone(conflict)
 
+    def test_worker_envelope_parse_failure_with_passed_patch_scope_and_checks_reconciles_to_pass(self):
+        mod = load_supervisor()
+        worker_envelope = {
+            "status": "fail",
+            "required": True,
+            "findings": [{"level": "error", "message": "no worker envelope JSON object found"}],
+        }
+        checks = [{"command": "python3 -m unittest tests/test_supervisor.py", "return_code": 0}]
+
+        conflict = mod.reconcile_worker_envelope_check_conflict(
+            worker_envelope,
+            checks,
+            patch_apply={"status": "skip"},
+            patch_guard={"status": "pass", "touched_files": ["scripts/a9_control_api.py"]},
+            scope_guard={"status": "pass", "changed_files": ["scripts/a9_control_api.py"]},
+            process_governance={"status": "pass"},
+        )
+
+        self.assertIsNotNone(conflict)
+        assert conflict is not None
+        self.assertEqual(conflict["status"], "reconciled-pass")
+        self.assertEqual(conflict["error_code"], "worker_envelope_parse_failed")
+        self.assertEqual(conflict["patch_guard_status"], "pass")
+        self.assertEqual(conflict["scope_guard_status"], "pass")
+
+    def test_worker_envelope_parse_failure_does_not_reconcile_when_scope_fails(self):
+        mod = load_supervisor()
+        worker_envelope = {
+            "status": "fail",
+            "required": True,
+            "findings": [{"level": "error", "message": "no worker envelope JSON object found"}],
+        }
+        checks = [{"command": "python3 -m unittest tests/test_supervisor.py", "return_code": 0}]
+
+        conflict = mod.reconcile_worker_envelope_check_conflict(
+            worker_envelope,
+            checks,
+            patch_apply={"status": "skip"},
+            patch_guard={"status": "pass", "touched_files": ["scripts/a9_control_api.py"]},
+            scope_guard={"status": "fail", "findings": [{"level": "error", "message": "outside allowed paths"}]},
+            process_governance={"status": "pass"},
+        )
+
+        self.assertIsNone(conflict)
+
     def test_process_governance_flags_undeclared_worker_test_commands(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

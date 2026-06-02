@@ -356,3 +356,23 @@ Governance lesson:
   strict-envelope reliability is the current automation bottleneck.
 - The monitor can safely accept saved patches only when `patch_guard=pass`,
   `scope_guard=pass`, and focused plus broader regression tests pass.
+
+## 2026-06-02: supervisor can salvage valid patches after strict envelope parse failure
+
+Observation:
+- Two consecutive useful communication-runtime patches were rolled back because
+  the worker final message was not parseable as the strict JSON envelope.
+- In both cases, `patch_guard=pass`, `scope_guard=pass`, process governance had
+  no error findings, and the declared tests passed.
+
+Change:
+- `scripts/a9_supervisor.py::reconcile_worker_envelope_check_conflict` now has
+  a narrow salvage path for `no worker envelope JSON object found`.
+- It only reconciles to pass when supervisor checks pass, patch guard passes,
+  scope guard passes, and process governance does not fail.
+- Scope failures, patch failures, missing checks, or failing checks still block.
+
+Governance lesson:
+- This is not removing the strict envelope rule. It converts a known protocol
+  failure into a recorded reconciliation when deterministic evidence proves the
+  code patch is acceptable.

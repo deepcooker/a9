@@ -3011,6 +3011,32 @@ def reconcile_worker_envelope_check_conflict(
 ) -> dict[str, Any] | None:
     if not isinstance(worker_envelope, dict) or worker_envelope.get("status") != "fail":
         return None
+    findings = worker_envelope.get("findings") if isinstance(worker_envelope.get("findings"), list) else []
+    parse_failure = any(
+        str(item.get("message") or "") == "no worker envelope JSON object found"
+        for item in findings
+        if isinstance(item, dict)
+    )
+    if parse_failure:
+        if not checks or any(item.get("return_code") != 0 for item in checks):
+            return None
+        if patch_apply and patch_apply.get("status") == "fail":
+            return None
+        if not patch_guard or patch_guard.get("status") != "pass":
+            return None
+        if not scope_guard or scope_guard.get("status") != "pass":
+            return None
+        if process_governance and process_governance.get("status") == "fail":
+            return None
+        return {
+            "status": "reconciled-pass",
+            "reason": "worker envelope parse failed but patch, scope, process governance, and supervisor checks passed",
+            "error_code": "worker_envelope_parse_failed",
+            "error_message": "no worker envelope JSON object found",
+            "checks_count": len(checks),
+            "patch_guard_status": patch_guard.get("status"),
+            "scope_guard_status": scope_guard.get("status"),
+        }
     envelope = worker_envelope.get("envelope")
     if not isinstance(envelope, dict) or envelope.get("ok") is not False:
         return None
