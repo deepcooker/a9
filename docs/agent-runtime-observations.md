@@ -13,6 +13,17 @@
 - This remains observation-first: the finding does not block status unless a
   separate hard error is present.
 
+## 2026-06-02: dirty worktree deterministic-apply bypass now needs repair
+
+- Monitoring found worker runs that emitted `search_replace_blocks` but had
+  already modified files directly, causing `patch_apply.status` to become
+  `skip-dirty-worktree`.
+- That state bypasses A9 deterministic apply, so it now returns `needs-repair`
+  in `decide_status(...)` instead of allowing a pass.
+- This is not a numeric quality gate; it protects the execution authority path:
+  worker proposes, A9 deterministic apply writes, then git/test governance
+  decides.
+
 ## 2026-06-02: decision packet template added for analysis-to-execution handoff
 
 - Updated `scripts/a9_supervisor.py` with a reusable decision packet/template helper and injected it into AI-worker prompt surfaces (`Task Decision Packet` + `next_task_prompt`).

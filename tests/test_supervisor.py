@@ -5237,6 +5237,23 @@ Do the work.
 
         self.assertEqual(status, "pass")
 
+    def test_dirty_worktree_skipped_patch_apply_requires_repair(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "budget_stopped": False, "return_code": 0}
+
+        status = mod.decide_status(
+            worker,
+            {"diff_bytes": 120},
+            [{"command": "python3 -m py_compile scripts/a9_supervisor.py", "return_code": 0}],
+            patch_guard={"status": "pass"},
+            scope_guard={"status": "pass"},
+            patch_apply={"status": "skip-dirty-worktree"},
+            worker_envelope={"status": "pass"},
+            process_governance={"status": "pass"},
+        )
+
+        self.assertEqual(status, "needs-repair")
+
     def test_task_allows_no_diff_from_explicit_field_and_smoke_text(self):
         mod = load_supervisor()
         explicit = mod.Task(

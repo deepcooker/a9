@@ -3027,6 +3027,8 @@ def decide_status(
         return "needs-approval"
     if worker_envelope and worker_envelope.get("status") == "fail":
         return "needs-repair"
+    if patch_apply and patch_apply.get("status") == "skip-dirty-worktree":
+        return "needs-repair"
     if patch_apply and patch_apply.get("status") == "fail":
         return "needs-repair"
     if patch_guard and patch_guard.get("status") == "fail":
