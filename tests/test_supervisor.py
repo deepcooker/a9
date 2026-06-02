@@ -5488,10 +5488,35 @@ Do the work.
         packet = mod.build_context_packet(task)
 
         self.assertIn("A9 Worker Method Packet", packet["prompt"])
+        self.assertIn("Task Decision Packet", packet["prompt"])
         self.assertIn("Canonical method source: docs/worker-method-packet.md", packet["prompt"])
         self.assertIn("debate before decision, execute after decision", packet["prompt"])
         self.assertIn("Execution worker may implement only decided slices", packet["prompt"])
+        self.assertIn("route: debate_next", packet["prompt"])
+        self.assertIn("missing_fields:", packet["prompt"])
         self.assertIn("strict_worker_envelope: true", packet["prompt"])
+
+    def test_build_context_packet_routes_decided_task_to_execution_next(self):
+        mod = load_supervisor()
+        prompt = "\n".join(
+            [
+                "decision_status: decided",
+                "problem: add bounded audit tail.",
+                "system_requirement: expose latest audit events.",
+                "data_contract: audit event fields and tail response.",
+                "state_flow: missing -> ok/degraded.",
+                "acceptance: focused tests pass.",
+                "allowed_execution: scripts/a9_control_api.py tests/test_control_api.py",
+            ]
+        )
+        task = mod.Task(path=Path("task.md"), task_id="decided-method-context", prompt=prompt, phase="implement")
+
+        packet = mod.build_context_packet(task)
+
+        self.assertIn("Task Decision Packet", packet["prompt"])
+        self.assertIn("route: execution_next", packet["prompt"])
+        self.assertIn("decided: true", packet["prompt"])
+        self.assertIn("missing_fields: none", packet["prompt"])
 
     def test_build_context_packet_omits_worker_method_text_for_session_refresh(self):
         mod = load_supervisor()
@@ -5506,6 +5531,7 @@ Do the work.
 
         self.assertNotIn("Canonical method source: docs/worker-method-packet.md", packet["prompt"])
         self.assertNotIn("debate before decision, execute after decision", packet["prompt"])
+        self.assertNotIn("route: debate_next", packet["prompt"])
 
     def test_next_task_prompt_carries_active_goal_continuation(self):
         mod = load_supervisor()

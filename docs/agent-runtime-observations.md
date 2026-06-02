@@ -726,3 +726,32 @@ Governance lesson:
 - This is still advisory method injection, not a hard execution gate. The next
   step is to route not-decided tasks into analysis worker packets before they
   become execution backlog.
+
+## 2026-06-02: undecided task routing signal added to worker context
+
+Observation:
+- After method injection, the next gap was routing. A manually enqueued
+  implementation task could still lack a decision packet and rely on the model
+  to infer whether it should analyze or implement.
+
+Change:
+- Added `task_decision_packet(task)` and `task_decision_packet_prompt(task)`.
+- AI worker context now includes a `Task Decision Packet` policy section.
+- Auto-next prompts now include the same packet.
+- A task routes to `execution_next` only when `decision_status` is decided and
+  the prompt contains required fields: `problem`, `system_requirement`,
+  `data_contract`, `state_flow`, `acceptance`, and `allowed_execution`.
+- Otherwise it routes to `debate_next` with recommendation to produce analysis,
+  modeling, review output, or change request before implementation.
+
+Checks:
+- `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+- Focused task-decision prompt tests passed.
+- Prompt/context regression subset: 10 tests passed.
+
+Governance lesson:
+- This is advisory routing, not a hard gate. It gives the worker and monitor a
+  visible decision signal without blocking useful exploration.
+- The next maturity step is to make analysis worker outputs generate review
+  packets and execution backlog only after product/business/architecture/test
+  alignment.

@@ -1042,6 +1042,14 @@ Hard rules:
                 "body": method_packet,
             },
             {
+                "name": "Task Decision Packet",
+                "source": str(task.path),
+                "role": "policy",
+                "budget_tokens": 512,
+                "reference_only": False,
+                "body": task_decision_packet_prompt(task) if strict_worker_envelope_required_for_phase(task.phase) else "",
+            },
+            {
                 "name": "Current Task",
                 "source": str(task.path),
                 "role": "task",
@@ -5316,6 +5324,53 @@ def worker_prompt_with_default_envelope(task: Task) -> str:
     return f"strict_worker_envelope: true\n{task.prompt}".strip()
 
 
+DECIDED_STATUS_VALUES = {"decided", "decision", "done", "true", "yes"}
+NOT_DECIDED_STATUS_VALUES = {"", "not_decided", "not-decided", "undecided", "draft", "partial", "partial_decision"}
+EXECUTION_DECISION_REQUIRED_FIELDS = (
+    "decision_status",
+    "problem",
+    "system_requirement",
+    "data_contract",
+    "state_flow",
+    "acceptance",
+    "allowed_execution",
+)
+
+
+def task_decision_packet(task: Task) -> dict[str, Any]:
+    fields = parse_key_value_prompt(task.prompt)
+    decision_status = str(fields.get("decision_status", "")).strip().lower()
+    missing = [name for name in EXECUTION_DECISION_REQUIRED_FIELDS if not str(fields.get(name, "")).strip()]
+    decided = decision_status in DECIDED_STATUS_VALUES and not missing
+    if decided:
+        route = "execution_next"
+        recommendation = "execute_decided_slice"
+    else:
+        route = "debate_next"
+        recommendation = "produce_analysis_or_change_request_before_execution"
+    return {
+        "route": route,
+        "recommendation": recommendation,
+        "decision_status": decision_status or "missing",
+        "decided": decided,
+        "missing_fields": missing,
+        "required_fields": list(EXECUTION_DECISION_REQUIRED_FIELDS),
+    }
+
+
+def task_decision_packet_prompt(task: Task) -> str:
+    packet = task_decision_packet(task)
+    missing = ", ".join(packet["missing_fields"]) if packet["missing_fields"] else "none"
+    return f"""Task decision packet:
+- route: {packet['route']}
+- decision_status: {packet['decision_status']}
+- decided: {str(packet['decided']).lower()}
+- missing_fields: {missing}
+- recommendation: {packet['recommendation']}
+- rule: if route is debate_next, do analysis/research/modeling/review output and change_request; do not implement production changes.
+"""
+
+
 def parse_optional_int(value: str | None) -> int | None:
     if value is None:
         return None
@@ -6467,6 +6522,7 @@ Phase: {phase}
 {communication_acceptance_lines}
 
 {requirements_method_packet()}
+{task_decision_packet_prompt(task)}
 {plan_lines}
 {check_scope_notice}
 
