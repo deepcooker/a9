@@ -58,6 +58,7 @@ SERVICE_COMMANDS = {
     ],
 }
 SERVICE_START_ORDER = ["control-api", "node-worker", "recovery-loop", "supervisor"]
+SERVICE_RESTART_DEFAULT = ["control-api", "node-worker", "recovery-loop"]
 START_VERIFY_ATTEMPTS = 5
 START_VERIFY_SLEEP_SECONDS = 0.2
 START_VERIFY_TIMEOUT_SECONDS = START_VERIFY_ATTEMPTS * START_VERIFY_SLEEP_SECONDS
@@ -281,21 +282,20 @@ def verify_started_kind(kind: str) -> tuple[bool, int, int]:
     return False, START_VERIFY_ATTEMPTS, elapsed_ms
 
 
-def start_cmd(args: argparse.Namespace) -> int:
-    current = running_processes()
+def collect_start_payload(requested: list[str], dry_run: bool, running_processes_snapshot: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    current = running_processes_snapshot if running_processes_snapshot is not None else running_processes()
     running_kinds = {item["kind"] for item in current if item["kind"] in SERVICE_COMMANDS}
-    requested = list(SERVICE_START_ORDER if args.all else args.only)
     results: list[dict[str, Any]] = []
     for kind in requested:
         command = SERVICE_COMMANDS[kind]
         result = {
             "kind": kind,
-            "status": "already_running" if kind in running_kinds else "planned" if args.dry_run else "started",
+            "status": "already_running" if kind in running_kinds else "planned" if dry_run else "started",
             "command": ["setsid", "-f", *command],
             "pid": None,
             "observed_process_count": 0,
         }
-        if kind not in running_kinds and not args.dry_run:
+        if kind not in running_kinds and not dry_run:
             proc = subprocess.Popen(
                 ["setsid", "-f", *command],
                 cwd=ROOT,
@@ -352,9 +352,9 @@ def start_cmd(args: argparse.Namespace) -> int:
                 "recovery_action": "",
             }
         results.append(result)
-    payload = {
+    return {
         "checked_at": iso_now(),
-        "dry_run": args.dry_run,
+        "dry_run": dry_run,
         "requested": requested,
         "start_contract": {
             "verify_attempt_budget": START_VERIFY_ATTEMPTS,
@@ -364,26 +364,29 @@ def start_cmd(args: argparse.Namespace) -> int:
         },
         "started": results,
     }
+
+
+def start_cmd(args: argparse.Namespace) -> int:
+    requested = list(SERVICE_START_ORDER if args.all else args.only)
+    payload = collect_start_payload(requested=requested, dry_run=args.dry_run)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
 
-def stop_cmd(args: argparse.Namespace) -> int:
-    processes = running_processes()
-    if args.all:
-        targets = list(processes)
-        requested_kinds: list[str] = ["all"]
-        target_mode = "all"
+def collect_stop_payload(requested: list[str], dry_run: bool, target_mode: str, processes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    current = running_processes() if processes is None else processes
+    if target_mode == "all":
+        targets = list(current)
+        requested_kinds = ["all"]
     else:
-        requested_kinds = list(args.only or ["supervisor"])
-        target_mode = "only" if args.only else "default"
-        targets = [item for item in processes if item["kind"] in requested_kinds]
+        requested_kinds = list(requested)
+        targets = [item for item in current if item["kind"] in requested_kinds]
+
     stopped: list[dict[str, Any]] = []
     stopped_kinds: dict[str, set[int]] = {}
-
     for item in targets:
         result = {**item, "signal": "SIGTERM", "stopped": False, "error": ""}
-        if args.dry_run:
+        if dry_run:
             result["stopped"] = False
         else:
             try:
@@ -398,7 +401,7 @@ def stop_cmd(args: argparse.Namespace) -> int:
         stopped.append(result)
 
     pidfiles_removed: list[str] = []
-    if not args.dry_run and stopped_kinds:
+    if not dry_run and stopped_kinds:
         post_stop_processes = running_processes()
         post_stop_kinds = {item["kind"] for item in post_stop_processes}
         for kind in sorted(stopped_kinds):
@@ -420,17 +423,58 @@ def stop_cmd(args: argparse.Namespace) -> int:
                 path.unlink(missing_ok=True)
                 pidfiles_removed.append(str(path))
 
-    payload = {
+    return {
         "checked_at": iso_now(),
-        "dry_run": args.dry_run,
+        "dry_run": dry_run,
         "target_mode": target_mode,
         "requested": requested_kinds,
         "matched": len(targets),
         "stopped": stopped,
         "pidfiles_removed": pidfiles_removed,
     }
+
+
+def stop_cmd(args: argparse.Namespace) -> int:
+    processes = running_processes()
+    if args.all:
+        requested_kinds: list[str] = ["all"]
+        target_mode = "all"
+    else:
+        requested_kinds = list(args.only or ["supervisor"])
+        target_mode = "only" if args.only else "default"
+    payload = collect_stop_payload(requested=requested_kinds, dry_run=args.dry_run, target_mode=target_mode, processes=processes)
     print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 0 if not any(item.get("error") for item in stopped) else 1
+    return 0 if not any(item.get("error") for item in payload["stopped"]) else 1
+
+
+def restart_cmd(args: argparse.Namespace) -> int:
+    if args.all:
+        requested = list(SERVICE_START_ORDER)
+        stop_target_mode = "all"
+    else:
+        requested = list(args.only or SERVICE_RESTART_DEFAULT)
+        stop_target_mode = "only" if args.only else "default"
+
+    stop_payload = collect_stop_payload(
+        requested=requested,
+        dry_run=args.dry_run,
+        target_mode=stop_target_mode,
+    )
+    start_payload = collect_start_payload(requested=requested, dry_run=args.dry_run)
+
+    stop_failed = any(item.get("error") for item in stop_payload["stopped"])
+    start_failed = any(item.get("command_status", {}).get("failure_kind") for item in start_payload["started"])
+    payload = {
+        "kind": "service_restart",
+        "checked_at": iso_now(),
+        "dry_run": args.dry_run,
+        "requested": requested,
+        "stop": stop_payload,
+        "start": start_payload,
+        "status": "partial" if (stop_failed or start_failed) else "ok",
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 1 if (stop_failed or start_failed) else 0
 
 
 def print_unit(_: argparse.Namespace) -> int:
@@ -477,7 +521,7 @@ def main(argv: list[str]) -> int:
         "--only",
         nargs="+",
         choices=SERVICE_START_ORDER,
-        default=["control-api", "node-worker", "recovery-loop"],
+        default=SERVICE_RESTART_DEFAULT,
         help="service kinds to start when --all is not set",
     )
     start_parser.add_argument("--dry-run", action="store_true", help="show start commands without launching them")
@@ -490,6 +534,15 @@ def main(argv: list[str]) -> int:
         help="stop running services matching these kinds when --all is not set",
     )
     stop_parser.add_argument("--dry-run", action="store_true", help="show matched processes without signaling them")
+    restart_parser = sub.add_parser("restart")
+    restart_parser.add_argument("--all", action="store_true", help="restart the local A9 service set")
+    restart_parser.add_argument(
+        "--only",
+        nargs="+",
+        choices=SERVICE_START_ORDER,
+        help="restart only these service kinds when --all is not set",
+    )
+    restart_parser.add_argument("--dry-run", action="store_true", help="show planned restart without signaling processes")
     sub.add_parser("unit")
     sub.add_parser("install-hint")
     args = parser.parse_args(argv)
@@ -503,6 +556,8 @@ def main(argv: list[str]) -> int:
         return start_cmd(args)
     if args.command == "stop":
         return stop_cmd(args)
+    if args.command == "restart":
+        return restart_cmd(args)
     if args.command == "unit":
         return print_unit(args)
     if args.command == "install-hint":

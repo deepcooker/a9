@@ -226,6 +226,135 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(result_payload["pidfiles_removed"], [])
         self.assertEqual(rc, 0)
 
+    def test_service_restart_parser_accepts_restart(self):
+        result = subprocess.run(
+            [str(SERVICE_PATH), "restart", "--dry-run", "--only", "recovery-loop"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["kind"], "service_restart")
+        self.assertEqual(payload["dry_run"], True)
+        self.assertEqual(payload["requested"], ["recovery-loop"])
+        self.assertEqual(payload["stop"]["requested"], ["recovery-loop"])
+        self.assertEqual(payload["start"]["requested"], ["recovery-loop"])
+        self.assertIn("status", payload)
+        self.assertIn(payload["status"], {"ok", "partial"})
+
+    def test_service_restart_default_target_is_conservative_runtime_set(self):
+        result = subprocess.run(
+            [str(SERVICE_PATH), "restart", "--dry-run"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["kind"], "service_restart")
+        self.assertEqual(payload["requested"], ["control-api", "node-worker", "recovery-loop"])
+        self.assertNotIn("supervisor", payload["requested"])
+
+    def test_service_restart_dry_run_only_recovery_loop_without_kill_or_pidfile_mutation(self):
+        mod = load_service()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = Path(tmpdir) / ".a9" / "services" / "recovery-loop.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("222\n", encoding="utf-8")
+            with mock.patch.object(mod, "STATE_DIR", Path(tmpdir) / ".a9"):
+                with mock.patch.object(mod, "SERVICE_PID_DIR", Path(tmpdir) / ".a9" / "services"):
+                    with mock.patch.object(
+                        mod,
+                        "running_processes",
+                        return_value=[
+                            {
+                                "kind": "recovery-loop",
+                                "pid": 222,
+                                "ppid": 1,
+                                "etime": "00:00:01",
+                                "cmd": "python3 scripts/a9_recovery_loop.py --interval-seconds",
+                            }
+                        ],
+                    ):
+                        with mock.patch.object(mod.os, "kill") as kill:
+                            with mock.patch("builtins.print") as printer:
+                                rc = mod.restart_cmd(
+                                    argparse.Namespace(
+                                        command="restart",
+                                        all=False,
+                                        only=["recovery-loop"],
+                                        dry_run=True,
+                                    )
+                                )
+            payload = json.loads(printer.call_args.args[0])
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["kind"], "service_restart")
+            self.assertEqual(payload["dry_run"], True)
+            self.assertEqual(payload["requested"], ["recovery-loop"])
+            self.assertEqual(payload["stop"]["requested"], ["recovery-loop"])
+            self.assertEqual(payload["start"]["requested"], ["recovery-loop"])
+            self.assertEqual(payload["stop"]["matched"], 1)
+            self.assertEqual(payload["stop"]["stopped"][0]["stopped"], False)
+            self.assertIn(payload["start"]["started"][0]["status"], {"planned", "already_running"})
+            self.assertEqual(payload["status"], "ok")
+            self.assertTrue(pid_path.exists())
+            self.assertEqual(payload["stop"]["pidfiles_removed"], [])
+            kill.assert_not_called()
+
+    def test_service_restart_only_recovery_loop_stops_then_starts(self):
+        mod = load_service()
+        call_order: list[str] = []
+        stop_payload = {
+            "checked_at": "2026-06-02T00:00:00+00:00",
+            "dry_run": False,
+            "target_mode": "only",
+            "requested": ["recovery-loop"],
+            "matched": 1,
+            "stopped": [{"kind": "recovery-loop", "pid": 222, "error": "", "stopped": True}],
+            "pidfiles_removed": [],
+        }
+        start_payload = {
+            "checked_at": "2026-06-02T00:00:00+00:00",
+            "dry_run": False,
+            "requested": ["recovery-loop"],
+            "start_contract": {},
+            "started": [
+                {
+                    "kind": "recovery-loop",
+                    "status": "started",
+                    "command_status": {"failure_kind": ""},
+                }
+            ],
+        }
+
+        def record_stop(*args, **kwargs):
+            call_order.append("stop")
+            return stop_payload
+
+        def record_start(*args, **kwargs):
+            call_order.append("start")
+            return start_payload
+
+        with mock.patch.object(mod, "collect_stop_payload", side_effect=record_stop) as stop_fn:
+            with mock.patch.object(mod, "collect_start_payload", side_effect=record_start) as start_fn:
+                with mock.patch("builtins.print"):
+                    rc = mod.restart_cmd(
+                        argparse.Namespace(
+                            command="restart",
+                            all=False,
+                            only=["recovery-loop"],
+                            dry_run=False,
+                        )
+                    )
+
+        self.assertEqual(call_order, ["stop", "start"])
+        self.assertTrue(stop_fn.called)
+        self.assertTrue(start_fn.called)
+        self.assertEqual(rc, 0)
+
     def test_service_stop_dry_run_only_matches_requested_kinds(self):
         mod = load_service()
         with mock.patch.object(

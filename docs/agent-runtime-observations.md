@@ -1,5 +1,12 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-02: deterministic restart subcommand added for targeted local service refresh
+
+- `scripts/a9_service.py` now supports `restart` with `--only` and `--dry-run`.
+- `restart --only <services>` now executes stop then start for each requested service set using existing start/stop governance rules and payload shape.
+- `restart` is conservative by default: `--all` is explicit; without flags it restarts `control-api`, `node-worker`, and `recovery-loop` (never supervisor by default).
+- `--dry-run` for restart never signals processes and never mutates pidfiles; it returns a single JSON envelope that includes `kind: service_restart`, `stop`, `start`, `requested`, `dry_run`, and `status`.
+
 ## 2026-06-02: service stop gains granular `--only` target mode with observed-PID cleanup
 
 - `scripts/a9_service.py stop --only` now supports `control-api`, `node-worker`,
