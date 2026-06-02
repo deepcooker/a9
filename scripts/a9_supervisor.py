@@ -2621,7 +2621,13 @@ def evidence_plan_stated_in_text(text: str) -> bool:
     lowered = str(text or "").lower()
     if "bounded evidence plan" in lowered:
         return True
-    return "before any reads" in lowered and "bounded" in lowered and "plan" in lowered
+    if "before any reads" in lowered and "bounded" in lowered and "plan" in lowered:
+        return True
+    original = str(text or "")
+    has_path = bool(re.search(r"\b(?:scripts|tests|docs|crates|infra)/[A-Za-z0-9_./*-]+", original))
+    has_read_intent = any(token in original for token in ("只读", "读取", "检索", "定位", "相关片段", "证据"))
+    has_ordering = any(token in original for token in ("先", "随后", "下一步", "本轮"))
+    return has_path and has_read_intent and has_ordering
 
 
 def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> bool:

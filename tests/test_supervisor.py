@@ -4098,6 +4098,47 @@ Do the work.
         self.assertEqual(result["status"], "pass")
         self.assertNotIn("missing_bounded_evidence_plan", kinds)
 
+    def test_process_governance_accepts_chinese_bounded_evidence_plan_before_first_command(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "item_type": "agent_message",
+                                "text_preview": (
+                                    "我会按 execution_next 直接做一刀：先定位 "
+                                    "scripts/a9_supervisor.py 中 schedule_next_task/next_task_prompt "
+                                    "的持久化路径，再在 tests/test_supervisor.py 加一组聚焦回归。"
+                                    "本轮只读这两个文件的相关片段。"
+                                ),
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'rg -n \"schedule_next_task\" tests/test_supervisor.py'",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="present-chinese-bounded-plan",
+                prompt="Evidence-and-edit contract:\n- Before any reads, list a bounded evidence plan.",
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [finding["kind"] for finding in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("missing_bounded_evidence_plan", kinds)
+
     def test_process_governance_enforces_task_command_bounds(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

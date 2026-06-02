@@ -131,6 +131,27 @@ Governance lesson:
   task creation. Future execution slices can be governed without relying on the
   human operator to remember to add the policy each time.
 
+## 2026-06-02: bounded evidence plan detection accepts Chinese planning language
+
+- Run 009 was marked with `missing_bounded_evidence_plan`, but monitor review
+  found the worker did state a bounded plan in Chinese before its first command:
+  it named the target files, said it would first locate relevant paths, and
+  limited itself to related snippets.
+- The old detector only recognized English phrases such as
+  `bounded evidence plan`. That produced a false positive for normal Chinese
+  operator/worker language.
+- The detector now accepts a stricter Chinese pattern: the message must contain
+  a repo path plus read/search intent plus ordering language such as `先` or
+  `本轮`. This keeps casual Chinese notes from being treated as a plan.
+- Verification passed:
+  `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+  and focused missing-plan / English-plan / Chinese-plan tests.
+
+Governance lesson:
+- Process governance must match the language actually used by the worker and
+  operator. Otherwise the monitor will chase false positives and waste worker
+  cycles.
+
 ## 2026-06-02: dirty worktree deterministic-apply bypass now needs repair
 
 - Monitoring found worker runs that emitted `search_replace_blocks` but had
