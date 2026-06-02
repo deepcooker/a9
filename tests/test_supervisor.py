@@ -7693,6 +7693,74 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_infers_direct_file_change_policy_for_durable_test_followup(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-policy-test.md",
+            task_id="auto-policy-test",
+            prompt="implement one bounded policy slice",
+            phase="implement",
+            checks=["python3 -m unittest tests/test_supervisor.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-policy-test-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-policy-test-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "test: validate deterministic apply contract"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "test"', text)
+            self.assertIn("strict_worker_envelope: true", text)
+            self.assertIn("direct_file_change_policy: repair", text)
+            self.assertNotIn("direct_file_change_policy: observe", text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
+    def test_schedule_next_task_infers_direct_file_change_policy_for_durable_repair_followup(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-policy-repair.md",
+            task_id="auto-policy-repair",
+            prompt="implement deterministic repair governance slice",
+            phase="implement",
+            checks=["python3 -m unittest tests/test_supervisor.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "needs-repair",
+            "run_dir": str(mod.RUNS_DIR / "auto-policy-repair-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-policy-repair-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "repair: fix broken check"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            text = next_path.read_text(encoding="utf-8")
+            self.assertIn('phase: "repair"', text)
+            self.assertIn("strict_worker_envelope: true", text)
+            self.assertIn("direct_file_change_policy: repair", text)
+            self.assertNotIn("direct_file_change_policy: observe", text)
+        finally:
+            next_path.unlink(missing_ok=True)
+
     def test_schedule_next_task_blocks_explicit_debate_next_task(self):
         mod = load_supervisor()
         mod.ensure_dirs()
@@ -9061,6 +9129,8 @@ flow_expected_revision: None
             self.assertIn("flow_expected_last_seq: 21", text)
             self.assertIn("flow_sequence: 22", text)
             self.assertNotIn("Copy pipeline phases", text)
+            self.assertNotIn("strict_worker_envelope: true", text)
+            self.assertNotIn("direct_file_change_policy: repair", text)
         finally:
             next_path.unlink(missing_ok=True)
 

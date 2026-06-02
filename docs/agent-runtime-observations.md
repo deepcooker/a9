@@ -108,6 +108,29 @@ Governance lesson:
   the model obey SEARCH/REPLACE, but it prevents direct edits from being silently
   accepted and gives the monitor a deterministic salvage/repair point.
 
+## 2026-06-02: durable auto-next policy persistence was verified
+
+- Run 009 tested whether `direct_file_change_policy: repair` survives into
+  durable auto-next task markdown, not only transient `next_task_prompt(...)`
+  strings.
+- The worker again emitted direct `file_change` events, so the policy correctly
+  routed the run to `needs-repair` and rollback.
+- The monitor salvaged the useful test patch manually. New regression coverage
+  proves:
+  - `schedule_next_task(...)` persists `direct_file_change_policy: repair` for
+    durable test follow-ups.
+  - repair follow-ups also persist the policy.
+  - session refresh -> close reading auto-next does not inject strict worker
+    envelope or direct file-change repair policy by default.
+- Verification passed:
+  `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+  and 5 focused next-task/schedule-next tests.
+
+Governance lesson:
+- The edit authority contract now survives prompt generation and durable queued
+  task creation. Future execution slices can be governed without relying on the
+  human operator to remember to add the policy each time.
+
 ## 2026-06-02: dirty worktree deterministic-apply bypass now needs repair
 
 - Monitoring found worker runs that emitted `search_replace_blocks` but had
