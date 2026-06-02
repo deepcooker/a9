@@ -8083,6 +8083,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["gateway_health_refresh"], "/api/gateway/health-refresh")
         self.assertEqual(discovery["endpoints"]["node_recovery_loop_latest"], "/api/nodes/recovery-loop/latest")
         self.assertEqual(discovery["endpoints"]["node_recovery_transcript"], "/api/nodes/recovery-transcript")
+        self.assertEqual(discovery["endpoints"]["services_restart"], "/api/services/restart")
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
@@ -8370,6 +8371,114 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["response"]["command"], "services.start")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
+    def test_service_restart_action_requires_runtime_gate(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked = mod.service_restart_action({"operator_scopes": ["operator.admin"]}, root=root)
+            self.assertEqual(blocked["status"], "blocked")
+            self.assertEqual(blocked["command"], "services.restart")
+            self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+
+    def test_service_restart_action_requires_explicit_services(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            blocked = mod.service_restart_action({"operator_scopes": ["operator.admin"]}, root=root)
+            self.assertEqual(blocked["status"], "invalid_request")
+            self.assertEqual(blocked["command"], "services.restart")
+            self.assertEqual(blocked["reason"], "no_services_requested")
+
+    def test_service_restart_action_rejects_supervisor_by_default(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            rejected = mod.service_restart_action(
+                {"operator_scopes": ["operator.admin"], "services": ["supervisor", "recovery-loop"]},
+                root=root,
+            )
+            self.assertEqual(rejected["status"], "invalid_request")
+            self.assertEqual(rejected["command"], "services.restart")
+            self.assertEqual(rejected["reason"], "supervisor_restart_not_allowed")
+            self.assertEqual(rejected["target_services"], ["supervisor", "recovery-loop"])
+
+    def test_service_restart_action_runs_helper_and_returns_restart_json(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+
+            class FakeProc:
+                returncode = 0
+                stdout = json.dumps(
+                    {
+                        "checked_at": "2026-06-02T00:00:00+00:00",
+                        "kind": "service_restart",
+                        "requested": ["recovery-loop"],
+                        "stop": {"status": "ok", "requested": ["recovery-loop"]},
+                        "start": {"started": ["recovery-loop"]},
+                        "status": "ok",
+                    }
+                )
+
+            original_observation = mod.service_observation_status
+            original_run = mod.subprocess.run
+            try:
+                calls = []
+
+                def fake_observation(*args, **kwargs):
+                    return {"status": "ok", "observed": {"missing_services": [], "missing_count": 0}}
+
+                mod.service_observation_status = fake_observation
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.service_restart_action({"operator_scopes": ["operator.admin"], "services": ["recovery-loop"]}, root=root)
+            finally:
+                mod.service_observation_status = original_observation
+                mod.subprocess.run = original_run
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["command"], "services.restart")
+        self.assertEqual(result["restart_result"]["kind"], "service_restart")
+        self.assertEqual(result["restart_result"]["requested"], ["recovery-loop"])
+        self.assertEqual(calls[0][0][0], "python3")
+        self.assertEqual(calls[0][0][2:], ["restart", "--only", "recovery-loop"])
+
+    def test_api_services_restart_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.service_restart_action
+        captured = {}
+        try:
+            def fake_service_restart_action(payload):
+                captured["payload"] = payload
+                return {"status": "ok", "command": "services.restart"}
+
+            mod.service_restart_action = fake_service_restart_action
+            body = json.dumps({"operator_scopes": ["operator.admin"]}).encode("utf-8")
+
+            class DummyServicesRestartPostHandler:
+                path = "/api/services/restart"
+                headers = {"Content-Length": str(len(body))}
+                rfile = io.BytesIO(body)
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["response"] = payload
+
+            mod.ControlHandler.do_POST(DummyServicesRestartPostHandler())
+        finally:
+            mod.service_restart_action = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "services.restart")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
 
     def test_runtime_session_refresh_trial_uses_latest_session_without_worker(self):

@@ -51,6 +51,7 @@ PHONE_CONTROL_GROUPS = {
         "approval.reject",
         "eval.override",
         "services.start",
+        "services.restart",
     ],
     "remote": [
         "nodes.bootstrap.execute",
@@ -2044,6 +2045,7 @@ def controller_discovery() -> dict[str, Any]:
             "node_command_result": "/api/node-command-results/{result_event_id}",
             "node_command_result_by_command": "/api/node-command-results/by-command/{command_id}",
             "node_command_result_watch": "/api/node-command-results/watch/{command_id}",
+            "services_restart": "/api/services/restart",
             "events": "/api/events",
         },
         "runtime": {
@@ -5691,6 +5693,111 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
     }
 
 
+def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        observation = service_observation_status(root)
+        return {
+            "status": "blocked",
+            "command": "services.restart",
+            "blocked_reason": str(exc),
+            "service_observation": observation,
+        }
+    gate = command_gate("services.restart", root=root)
+    observation = service_observation_status(root)
+    if not gate.get("allowed"):
+        return {
+            "status": "blocked",
+            "command": "services.restart",
+            "gate": gate,
+            "blocked_reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "service_observation": observation,
+        }
+
+    requested_raw = payload.get("services")
+    requested_services = [str(item).strip() for item in requested_raw] if isinstance(requested_raw, list) else []
+    requested_services = [item for item in requested_services if item]
+    if not requested_services:
+        return {
+            "status": "invalid_request",
+            "command": "services.restart",
+            "gate": gate,
+            "reason": "no_services_requested",
+            "service_observation": observation,
+        }
+    requested_services = list(dict.fromkeys(requested_services))
+    if "supervisor" in requested_services and not bool(payload.get("allow_supervisor")):
+        return {
+            "status": "invalid_request",
+            "command": "services.restart",
+            "gate": gate,
+            "reason": "supervisor_restart_not_allowed",
+            "target_services": requested_services,
+            "service_observation": observation,
+        }
+    unknown = sorted({item for item in requested_services if item not in SERVICE_PROCESS_MARKERS})
+    if unknown:
+        return {
+            "status": "invalid_request",
+            "command": "services.restart",
+            "gate": gate,
+            "reason": "unknown_service",
+            "unknown_services": unknown,
+            "known_services": sorted(SERVICE_PROCESS_MARKERS),
+            "service_observation": observation,
+        }
+
+    cmd = ["python3", str(SERVICE_HELPER_PATH), "restart", "--only", *requested_services]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+            timeout=8,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "status": "degraded",
+            "command": "services.restart",
+            "gate": gate,
+            "reason": "service_restart_timeout",
+            "target_services": requested_services,
+            "timeout_seconds": 8,
+            "error": str(exc),
+            "service_observation": observation,
+        }
+
+    output = (proc.stdout or "").strip()
+    try:
+        restart_result = json.loads(output) if output else {}
+    except json.JSONDecodeError:
+        return {
+            "status": "degraded",
+            "command": "services.restart",
+            "gate": gate,
+            "reason": "service_restart_invalid_json",
+            "target_services": requested_services,
+            "return_code": proc.returncode,
+            "output": output[:2000],
+            "service_observation": observation,
+        }
+    refreshed = service_observation_status(root)
+    return {
+        "status": "ok" if proc.returncode == 0 else "failed",
+        "command": "services.restart",
+        "gate": gate,
+        "target_services": requested_services,
+        "return_code": proc.returncode,
+        "restart_result": restart_result,
+        "service_observation_before": observation,
+        "service_observation_after": refreshed,
+    }
+
+
 def eval_override(payload: dict[str, Any]) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("eval.override", root=ROOT)
@@ -5929,6 +6036,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_run_one(payload))
             elif self.path == "/api/runtime/session-refresh-trial":
                 self.write_json(200, runtime_session_refresh_trial(payload))
+            elif self.path == "/api/services/restart":
+                self.write_json(200, service_restart_action(payload))
             elif self.path == "/api/services/start":
                 self.write_json(200, service_start_action(payload))
             elif self.path == "/api/communication/repair-one":

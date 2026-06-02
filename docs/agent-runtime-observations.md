@@ -509,3 +509,14 @@ Governance lesson:
 - Communication monitoring must show both intent and execution mode. Operators
   need to know whether recovery loop only observed a route or actually posted a
   repair action.
+
+## 2026-06-02: mobile control API now exposes gated service restart
+
+- Added runtime phone-control command `services.restart` and POST route
+  `/api/services/restart`.
+- Implemented `service_restart_action(payload, root=ROOT)` with admin + gate checks,
+  explicit `services` list requirement, unknown-service rejection, and
+  `allow_supervisor`-guarded supervisor restart behavior.
+- Restart path executes `python3 scripts/a9_service.py restart --only <services>` with
+  timeout 8s, parses `restart_result`, and returns service observations before and
+  after restart.
