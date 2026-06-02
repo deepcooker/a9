@@ -2594,6 +2594,27 @@ def communication_action_plan(status: dict[str, Any] | None = None, *, root: Pat
             "executable": True,
         }
     if source == "tasks_stream" and action in {"watch", "intervene"}:
+        stream_reason = str(
+            status.get("layers", {}).get("tasks_stream", {}).get("stream_action_reason")
+            or status.get("communication_followup", {}).get("intervention_decision", {}).get("reason")
+            or ""
+        )
+        if stream_reason == "pending_stuck":
+            return {
+                **base,
+                "plan_status": "ready",
+                "route": {
+                    "method": "POST",
+                    "endpoint": "/api/communication/repair-one",
+                    "command": "nodes.recover.stale_commands",
+                    "requires_arm": True,
+                    "arm_group": "remote",
+                },
+                "payload": {"action": "recover_stale_commands", "stream": TASKS_STREAM_KEY, "group": TASKS_STREAM_GROUP},
+                "reason": "recover_stream_stale_commands",
+                "steps": ["arm_remote", "post_communication_repair_one", "refresh_communication_status"],
+                "executable": True,
+            }
         return {
             **base,
             "plan_status": "observe_only",
@@ -2644,12 +2665,237 @@ def communication_repair_one(payload: dict[str, Any] | None = None, *, root: Pat
             "operator_scopes": payload.get("operator_scopes") or payload.get("scopes") or [],
         }
         result = node_recovery_cycle(cycle_payload, root=root)
+    elif endpoint == "/api/communication/repair-one":
+        repair_action = str(payload.get("action") or "")
+        if repair_action != "recover_stale_commands":
+            return {"status": "manual_required", "kind": "communication_repair_one", "plan": plan, "reason": "unsupported_repair_action"}
+        recover_payload = {
+            **payload,
+            "node_id": str(payload.get("node_id") or ""),
+            "stream": str(payload.get("stream") or TASKS_STREAM_KEY),
+            "group": str(payload.get("group") or TASKS_STREAM_GROUP),
+            "count": payload.get("count"),
+            "max_claim": payload.get("max_claim"),
+            "min_idle_ms": payload.get("min_idle_ms"),
+            "timeout": payload.get("timeout"),
+            "operator_scopes": payload.get("operator_scopes") or payload.get("scopes") or [],
+            "request_id": str(payload.get("request_id") or ""),
+        }
+        result = recover_stale_commands(recover_payload, root=root)
     elif endpoint == "/api/gateway/health-refresh":
         result = gateway_health_refresh(root=root)
     else:
         return {"status": "manual_required", "kind": "communication_repair_one", "plan": plan, "reason": "unknown_route"}
     refreshed = communication_status(root)
     return {"status": "ok", "kind": "communication_repair_one", "plan": plan, "result": result, "communication_after": refreshed}
+
+
+def recover_stale_commands(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
+    payload = payload or {}
+    started_at = utc_now()
+    try:
+        node_id = safe_node_id(str(payload.get("node_id") or ""))
+    except ValueError:
+        return {
+            "status": "degraded",
+            "kind": "recover_stale_commands",
+            "action": "recover_stale_commands",
+            "node_id": "",
+            "stream": str(payload.get("stream") or TASKS_STREAM_KEY),
+            "group": str(payload.get("group") or TASKS_STREAM_GROUP),
+            "before": {},
+            "after": {},
+            "claim_result": {
+                "status": "degraded",
+                "error_code": "invalid_payload",
+                "action": "claim_stale_once",
+                "reason": "node_id is required",
+            },
+            "recovered_count": 0,
+            "claimed_ids": [],
+            "reason": "node_id is required",
+            "started_at": started_at,
+            "finished_at": utc_now(),
+        }
+
+    stream = str(payload.get("stream") or TASKS_STREAM_KEY).strip() or TASKS_STREAM_KEY
+    group = str(payload.get("group") or TASKS_STREAM_GROUP).strip() or TASKS_STREAM_GROUP
+    raw_count = payload.get("count")
+    if raw_count is None:
+        raw_count = payload.get("max_claim")
+    try:
+        count = int(raw_count or 1)
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "kind": "recover_stale_commands",
+            "action": "recover_stale_commands",
+            "node_id": node_id,
+            "stream": stream,
+            "group": group,
+            "before": {},
+            "after": {},
+            "claim_result": {
+                "status": "degraded",
+                "error_code": "invalid_payload",
+                "action": "claim_stale_once",
+                "reason": "count_or_max_claim_must_be_integer",
+            },
+            "recovered_count": 0,
+            "claimed_ids": [],
+            "reason": "count_or_max_claim_must_be_integer",
+            "started_at": started_at,
+            "finished_at": utc_now(),
+        }
+    if count < 1:
+        return {
+            "status": "degraded",
+            "kind": "recover_stale_commands",
+            "action": "recover_stale_commands",
+            "node_id": node_id,
+            "stream": stream,
+            "group": group,
+            "before": {},
+            "after": {},
+            "claim_result": {
+                "status": "degraded",
+                "error_code": "invalid_payload",
+                "action": "claim_stale_once",
+                "reason": "count_or_max_claim_must_be_positive",
+            },
+            "recovered_count": 0,
+            "claimed_ids": [],
+            "reason": "count_or_max_claim_must_be_positive",
+            "started_at": started_at,
+            "finished_at": utc_now(),
+        }
+    try:
+        min_idle_ms = int(payload.get("min_idle_ms") or 30000)
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "kind": "recover_stale_commands",
+            "action": "recover_stale_commands",
+            "node_id": node_id,
+            "stream": stream,
+            "group": group,
+            "before": {},
+            "after": {},
+            "claim_result": {
+                "status": "degraded",
+                "error_code": "invalid_payload",
+                "action": "claim_stale_once",
+                "reason": "min_idle_ms_must_be_integer",
+            },
+            "recovered_count": 0,
+            "claimed_ids": [],
+            "reason": "min_idle_ms_must_be_integer",
+            "started_at": started_at,
+            "finished_at": utc_now(),
+        }
+    try:
+        timeout = int(payload.get("timeout") or 3)
+    except (TypeError, ValueError):
+        return {
+            "status": "degraded",
+            "kind": "recover_stale_commands",
+            "action": "recover_stale_commands",
+            "node_id": node_id,
+            "stream": stream,
+            "group": group,
+            "before": {},
+            "after": {},
+            "claim_result": {
+                "status": "degraded",
+                "error_code": "invalid_payload",
+                "action": "claim_stale_once",
+                "reason": "timeout_must_be_integer",
+            },
+            "recovered_count": 0,
+            "claimed_ids": [],
+            "reason": "timeout_must_be_integer",
+            "started_at": started_at,
+            "finished_at": utc_now(),
+        }
+
+    before = redis_tasks_stream_probe()
+    claim_result = a9_node().node_command_claim_stale_once(
+        node_id=node_id,
+        count=count,
+        min_idle_ms=min_idle_ms,
+        group=group,
+        stream=stream,
+        timeout=max(1, timeout),
+    )
+    after = redis_tasks_stream_probe()
+    finished_at = utc_now()
+
+    events = claim_result.get("events") if isinstance(claim_result.get("events"), list) else []
+    claimed_ids = [str(item.get("id")) for item in events if isinstance(item, dict) and item.get("id")]
+    if claim_result.get("status") == "ok":
+        recovered_count = int(claim_result.get("command_count") or 0)
+        status = "ok"
+        reason = "stale_commands_recovered"
+    elif claim_result.get("status") == "noop" and claim_result.get("error_code") == "no_pending_events":
+        recovered_count = 0
+        status = "noop"
+        reason = "no_stale_pending_commands"
+    elif claim_result.get("status") == "noop":
+        recovered_count = 0
+        status = "ok"
+        reason = str(claim_result.get("reason") or "noop_without_pending_claims")
+    else:
+        recovered_count = 0
+        status = "degraded"
+        reason = str(claim_result.get("reason") or "recover_stale_commands_failed")
+
+    result = {
+        "status": status,
+        "kind": "recover_stale_commands",
+        "action": "recover_stale_commands",
+        "node_id": node_id,
+        "stream": stream,
+        "group": group,
+        "before": {
+            "status": before.get("status"),
+            "stream": before.get("stream") or stream,
+            "group": before.get("group") or group,
+            "pending": before.get("pending"),
+            "stream_action": before.get("stream_action"),
+            "stream_action_reason": before.get("stream_action_reason"),
+        },
+        "after": {
+            "status": after.get("status"),
+            "stream": after.get("stream") or stream,
+            "group": after.get("group") or group,
+            "pending": after.get("pending"),
+            "stream_action": after.get("stream_action"),
+            "stream_action_reason": after.get("stream_action_reason"),
+        },
+        "claim_result": claim_result,
+        "recovered_count": recovered_count,
+        "claimed_ids": claimed_ids,
+        "reason": reason,
+        "started_at": started_at,
+        "finished_at": finished_at,
+    }
+    evidence_path = write_node_evidence(
+        "recover-stale-commands",
+        node_id,
+        {
+            "kind": result["kind"],
+            "action": result["action"],
+            "node_id": node_id,
+            "stream": stream,
+            "group": group,
+            "before": result["before"],
+            "after": result["after"],
+            "claim_result": claim_result,
+        },
+        root=root,
+    )
+    result["evidence_path"] = str(evidence_path)
+    return result
 
 
 def _node_recovery_action_payload(node: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
@@ -3590,6 +3836,8 @@ def redis_tasks_stream_probe() -> dict[str, Any]:
                 action_reason = "pending_stuck"
         result["stream_action"] = action
         result["stream_action_reason"] = action_reason
+        if action_reason == "pending_stuck":
+            result["recommended_action"] = "recover_stale_commands"
 
     if pending.returncode != 0:
         result["status"] = "degraded"

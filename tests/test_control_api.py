@@ -1065,6 +1065,93 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["services"], ["node-worker"])
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
 
+    def test_recover_stale_commands_action_claims_pending_commands(self):
+        mod = load_control_api()
+        probe_samples = [
+            {"status": "ok", "pending": 5, "stream": "a9:tasks", "group": "a9-worker", "stream_action_reason": "pending_stuck"},
+            {"status": "ok", "pending": 3, "stream": "a9:tasks", "group": "a9-worker", "stream_action_reason": "none"},
+        ]
+        captured = {
+            "node_calls": 0,
+            "claim_call": {},
+            "probe_calls": 0,
+        }
+        originals = {
+            "a9_node": mod.a9_node,
+            "redis_tasks_stream_probe": mod.redis_tasks_stream_probe,
+        }
+
+        class FakeNode:
+            def node_command_claim_stale_once(self, node_id, count, min_idle_ms, group, stream, timeout):
+                captured["node_calls"] += 1
+                captured["claim_call"] = {
+                    "node_id": node_id,
+                    "count": count,
+                    "min_idle_ms": min_idle_ms,
+                    "group": group,
+                    "stream": stream,
+                    "timeout": timeout,
+                }
+                return {
+                    "status": "ok",
+                    "error_code": "ok",
+                    "action": "claim_stale_once",
+                    "node_id": node_id,
+                    "stream": stream,
+                    "group": group,
+                    "consumer": "node-a-consumer",
+                    "events": [
+                        {"id": "1740000200-0", "fields": {"command_id": "cmd-1"}},
+                        {"id": "1740000200-1", "fields": {"command_id": "cmd-2"}},
+                    ],
+                    "command_count": 2,
+                    "next_start_id": "0-0",
+                    "deleted_ids": [],
+                    "raw_output": {},
+                }
+
+        def fake_probe():
+            sample = probe_samples[min(captured["probe_calls"], len(probe_samples) - 1)]
+            captured["probe_calls"] += 1
+            return sample
+
+        fake_node = FakeNode()
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                mod.a9_node = lambda: fake_node
+                mod.redis_tasks_stream_probe = fake_probe
+                result = mod.recover_stale_commands(
+                    {
+                        "node_id": "node-a",
+                        "max_claim": 2,
+                        "min_idle_ms": 45000,
+                        "group": "a9-worker",
+                        "stream": "a9:tasks",
+                        "timeout": 5,
+                    },
+                    root=Path(tmp),
+                )
+                evidence_path = str(result["evidence_path"])
+                self.assertFalse(evidence_path == "")
+                self.assertTrue(Path(evidence_path).exists())
+            finally:
+                mod.a9_node = originals["a9_node"]
+                mod.redis_tasks_stream_probe = originals["redis_tasks_stream_probe"]
+
+        self.assertEqual(result["kind"], "recover_stale_commands")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["recovered_count"], 2)
+        self.assertEqual(result["claimed_ids"], ["1740000200-0", "1740000200-1"])
+        self.assertEqual(result["before"]["pending"], 5)
+        self.assertEqual(result["after"]["pending"], 3)
+        self.assertEqual(result["stream"], "a9:tasks")
+        self.assertEqual(result["group"], "a9-worker")
+        self.assertEqual(captured["node_calls"], 1)
+        self.assertEqual(captured["claim_call"]["count"], 2)
+        self.assertEqual(captured["claim_call"]["min_idle_ms"], 45000)
+        self.assertEqual(captured["claim_call"]["timeout"], 5)
+        self.assertEqual(captured["probe_calls"], 2)
+
     def test_api_communication_repair_one_endpoint_uses_payload(self):
         mod = load_control_api()
         captured = {}
@@ -2680,6 +2767,40 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["tasks_stream"]["thresholds_version"], "redis_streams_v1")
         self.assertEqual(status["tasks_stream"]["stream_action"], "intervene")
         self.assertEqual(status["tasks_stream"]["stream_action_reason"], "pending_stuck")
+
+    def test_tasks_stream_probe_recommends_recover_stale_commands_for_pending_stuck(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            def __init__(self, stdout: str = "", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args == ["XLEN", "a9:heartbeats"]:
+                return FakeProc("1\n")
+            if args == ["XLEN", "a9:events"]:
+                return FakeProc("1\n")
+            if args == ["--raw", "XINFO", "GROUPS", "a9:tasks"]:
+                return FakeProc("name\na9-worker\nconsumers\n2\nentries-read\n100\nlag\n5\n")
+            if args == ["--raw", "XPENDING", "a9:tasks", "a9-worker"]:
+                return FakeProc("5\n1740000001-0\n1740000010-0\nworker-a\n5\n")
+            if args == ["--raw", "XINFO", "CONSUMERS", "a9:tasks", "a9-worker"]:
+                return FakeProc("name\nworker-a\npending\n5\nidle\n30000\nname\nworker-b\npending\n0\nidle\n35\n")
+            raise AssertionError(f"unexpected redis args: {args}")
+
+        original_redis = mod.redis_cli
+        mod.redis_cli = fake_redis
+        try:
+            status = mod.redis_tasks_stream_probe()
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(status["stream_action"], "intervene")
+        self.assertEqual(status["stream_action_reason"], "pending_stuck")
+        self.assertEqual(status["recommended_action"], "recover_stale_commands")
 
     def test_node_status_tasks_stream_probe_sets_intervene_action_on_lag_critical(self):
         mod = load_control_api()
