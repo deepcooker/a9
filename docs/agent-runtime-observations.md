@@ -458,3 +458,25 @@ Governance lesson:
 - Passing tests are not enough when fixtures drift from the real data model.
   Monitor review must compare worker fixtures against the source contract,
   especially for communication/runtime execution paths.
+
+## 2026-06-02: recovery-loop execution visibility exposed through control API
+
+Run evidence:
+- `.a9/runs/000-expose-recovery-loop-communication-execution-status-20260602-20260602T070844Z-a1`
+
+Observation:
+- The worker exposed `communication_execute_enabled` and
+  `communication_route_execution` from `.a9/services/recovery-loop-latest.json`
+  through `recovery_loop_latest()`.
+- It did not change service defaults. Recovery loop remains observe-only unless
+  an explicit execution flag is used.
+
+Verification:
+- Worker declared checks passed.
+- Monitor reran full `python3 -m unittest tests.test_control_api.ControlApiTests`
+  and 219 tests passed.
+
+Governance lesson:
+- Communication monitoring must show both intent and execution mode. Operators
+  need to know whether recovery loop only observed a route or actually posted a
+  repair action.
