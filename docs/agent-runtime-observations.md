@@ -831,3 +831,19 @@ Governance lesson:
   evidence, not only from the last progress snapshot.
 - Stale telemetry can cause bad operator decisions even when the queue itself
   is clean.
+
+## 2026-06-02: current decision packet drafted for contract-first execution
+
+Artifact:
+- `docs/a9-current-decision-packet.md`
+
+Observation:
+- The review packet and role review agreed that execution is not generally
+  approved yet.
+- The only safe next approval candidate is a contract/template slice: make
+  analysis outputs produce complete decision packets before worker execution.
+
+Governance lesson:
+- `decision_status: decided` should be granted per slice, not globally.
+- This keeps product/mainline pressure in front of worker execution while still
+  allowing 24h automation to continue once the slice is explicit.
