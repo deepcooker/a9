@@ -425,3 +425,29 @@ Governance lesson:
   repair execution and evidence creation in a deterministic fixture.
 - Next communication-runtime work can move from unit-route wiring toward
   runtime command/recovery loop consumption or real Redis/tmux smoke.
+
+## 2026-06-02: monitor corrected recovery-loop route payload contract
+
+Run evidence:
+- `.a9/runs/000-implement-recovery-loop-communication-route-dispatch-20260602-20260602T070505Z-a1`
+
+Observation:
+- The worker correctly added explicit `--execute-communication-repair` support
+  and route dispatch for `/api/communication/repair-one`.
+- It passed its tests, but the new fixtures placed `payload` inside `route`.
+  The real `communication_action_plan` contract keeps `payload` at the top
+  level and `route` only carries method/endpoint/command/arm metadata.
+
+Monitor intervention:
+- `execute_communication_route` now reads the POST payload from
+  `communication_plan.payload`.
+- Tests were corrected to mirror the real action-plan shape.
+
+Verification:
+- `python3 -m py_compile scripts/a9_recovery_loop.py tests/test_recovery_loop.py`
+- `python3 -m unittest tests.test_recovery_loop.RecoveryLoopTests`
+
+Governance lesson:
+- Passing tests are not enough when fixtures drift from the real data model.
+  Monitor review must compare worker fixtures against the source contract,
+  especially for communication/runtime execution paths.

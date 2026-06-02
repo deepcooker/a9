@@ -153,8 +153,8 @@ class RecoveryLoopTests(unittest.TestCase):
                             "route": {
                                 "method": "POST",
                                 "endpoint": "/api/communication/repair-one",
-                                "payload": {"action": "recover_stale_commands", "stream": "tasks_stream"},
                             },
+                            "payload": {"action": "recover_stale_commands", "stream": "tasks_stream"},
                         }
                     return {
                         "status": "needs_attention",
@@ -215,8 +215,8 @@ class RecoveryLoopTests(unittest.TestCase):
                             "route": {
                                 "method": "POST",
                                 "endpoint": "/api/communication/repair-one",
-                                "payload": {"action": "recover_stale_commands", "stream": "tasks_stream", "group": "workers"},
                             },
+                            "payload": {"action": "recover_stale_commands", "stream": "tasks_stream", "group": "workers"},
                         }
                     return {"status": "needs_attention", "step_count": 1, "summary": {"risk_count": 0}}
 

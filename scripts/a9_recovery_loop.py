@@ -151,6 +151,7 @@ def communication_repair_suggestions_update(
 
 def execute_communication_route(plan: dict[str, Any], *, controller_url: str, timeout: int = 10) -> dict[str, Any]:
     route = plan.get("communication_route") if isinstance(plan.get("communication_route"), dict) else {}
+    communication_plan = plan.get("communication_plan") if isinstance(plan.get("communication_plan"), dict) else {}
     endpoint = str(route.get("endpoint") or "")
     if endpoint != "/api/communication/repair-one":
         return {
@@ -159,7 +160,7 @@ def execute_communication_route(plan: dict[str, Any], *, controller_url: str, ti
             "reason": "unsupported_route",
             "route": route,
         }
-    payload = route.get("payload") if isinstance(route.get("payload"), dict) else {}
+    payload = communication_plan.get("payload") if isinstance(communication_plan.get("payload"), dict) else {}
     try:
         result = post_json_url(f"{controller_url}{endpoint}", payload, timeout=timeout)
         return {
