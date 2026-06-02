@@ -128,6 +128,164 @@ class RecoveryLoopTests(unittest.TestCase):
         self.assertEqual(suggestions["pending_count"], 0)
         self.assertEqual(suggestions["last_observation"]["recommendation"], "operator_review")
 
+    def test_recovery_cycle_once_does_not_post_repair_one_without_execute_flag(self):
+        mod = load_module()
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            original_state = mod.STATE_DIR
+            original_latest = mod.LATEST_PATH
+            original_observation = mod.COMMUNICATION_OBSERVATION_PATH
+            original_suggestions = mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH
+            original_read = mod.read_json_url
+            original_post = mod.post_json_url
+            mod.STATE_DIR = Path(tmp) / "services"
+            mod.LATEST_PATH = mod.STATE_DIR / "recovery-loop-latest.json"
+            mod.COMMUNICATION_OBSERVATION_PATH = mod.STATE_DIR / "communication-observation.json"
+            mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = mod.STATE_DIR / "communication-repair-suggestions.json"
+            try:
+                def fake_read(url, *, timeout=10):
+                    calls.append(("read", url, timeout))
+                    if url.endswith("/api/communication/action-plan"):
+                        return {
+                            "status": "ok",
+                            "plan_status": "ready",
+                            "communication": {"action": "intervene", "priority_source": "tasks_stream"},
+                            "route": {
+                                "method": "POST",
+                                "endpoint": "/api/communication/repair-one",
+                                "payload": {"action": "recover_stale_commands", "stream": "tasks_stream"},
+                            },
+                        }
+                    return {
+                        "status": "needs_attention",
+                        "step_count": 1,
+                        "summary": {"risk_count": 0},
+                    }
+
+                def fake_post(url, payload, *, timeout=10):
+                    calls.append(("post", url, timeout, payload))
+                    return {"status": "unexpected"}
+
+                mod.read_json_url = fake_read
+                mod.post_json_url = fake_post
+                result = mod.recovery_cycle_once("http://controller:8787/")
+            finally:
+                mod.STATE_DIR = original_state
+                mod.LATEST_PATH = original_latest
+                mod.COMMUNICATION_OBSERVATION_PATH = original_observation
+                mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = original_suggestions
+                mod.read_json_url = original_read
+                mod.post_json_url = original_post
+
+        self.assertEqual(result["communication_route"]["endpoint"], "/api/communication/repair-one")
+        self.assertEqual(result["communication_route_execution"]["reason"], "observe_only")
+        self.assertEqual(
+            [entry[0] for entry in calls if entry[0] == "post"],
+            [],
+        )
+        self.assertEqual(
+            calls[:2],
+            [
+                ("read", "http://controller:8787/api/communication/action-plan", 10),
+                ("read", "http://controller:8787/api/nodes/recovery-cycle?max_actions=3", 10),
+            ],
+        )
+
+    def test_recovery_cycle_once_posts_repair_one_when_execute_flag_enabled(self):
+        mod = load_module()
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            original_state = mod.STATE_DIR
+            original_latest = mod.LATEST_PATH
+            original_observation = mod.COMMUNICATION_OBSERVATION_PATH
+            original_suggestions = mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH
+            original_read = mod.read_json_url
+            original_post = mod.post_json_url
+            mod.STATE_DIR = Path(tmp) / "services"
+            mod.LATEST_PATH = mod.STATE_DIR / "recovery-loop-latest.json"
+            mod.COMMUNICATION_OBSERVATION_PATH = mod.STATE_DIR / "communication-observation.json"
+            mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = mod.STATE_DIR / "communication-repair-suggestions.json"
+            try:
+                def fake_read(url, *, timeout=10):
+                    if url.endswith("/api/communication/action-plan"):
+                        return {
+                            "status": "ok",
+                            "plan_status": "ready",
+                            "communication": {"action": "repair", "priority_source": "tasks_stream"},
+                            "route": {
+                                "method": "POST",
+                                "endpoint": "/api/communication/repair-one",
+                                "payload": {"action": "recover_stale_commands", "stream": "tasks_stream", "group": "workers"},
+                            },
+                        }
+                    return {"status": "needs_attention", "step_count": 1, "summary": {"risk_count": 0}}
+
+                def fake_post(url, payload, *, timeout=10):
+                    calls.append(("post", url, timeout, payload))
+                    return {"status": "ok", "kind": "communication_repair_one", "result": {"recovered": 1}}
+
+                mod.read_json_url = fake_read
+                mod.post_json_url = fake_post
+                result = mod.recovery_cycle_once("http://controller:8787/", execute_communication_repair=True)
+            finally:
+                mod.STATE_DIR = original_state
+                mod.LATEST_PATH = original_latest
+                mod.COMMUNICATION_OBSERVATION_PATH = original_observation
+                mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = original_suggestions
+                mod.read_json_url = original_read
+                mod.post_json_url = original_post
+
+        self.assertEqual(result["communication_route"]["endpoint"], "/api/communication/repair-one")
+        self.assertEqual(result["communication_route_execution"]["status"], "ok")
+        self.assertEqual(result["communication_route_execution"]["endpoint"], "/api/communication/repair-one")
+        self.assertEqual(result["communication_route_execution"]["payload"]["group"], "workers")
+        self.assertEqual(result["communication_route_execution"]["result"], {"status": "ok", "kind": "communication_repair_one", "result": {"recovered": 1}})
+        self.assertEqual(calls, [("post", "http://controller:8787/api/communication/repair-one", 10, {"action": "recover_stale_commands", "stream": "tasks_stream", "group": "workers"})])
+
+    def test_recovery_cycle_once_records_manual_required_when_route_unsupported(self):
+        mod = load_module()
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            original_state = mod.STATE_DIR
+            original_latest = mod.LATEST_PATH
+            original_observation = mod.COMMUNICATION_OBSERVATION_PATH
+            original_suggestions = mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH
+            original_read = mod.read_json_url
+            original_post = mod.post_json_url
+            mod.STATE_DIR = Path(tmp) / "services"
+            mod.LATEST_PATH = mod.STATE_DIR / "recovery-loop-latest.json"
+            mod.COMMUNICATION_OBSERVATION_PATH = mod.STATE_DIR / "communication-observation.json"
+            mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = mod.STATE_DIR / "communication-repair-suggestions.json"
+            try:
+                def fake_read(url, *, timeout=10):
+                    if url.endswith("/api/communication/action-plan"):
+                        return {
+                            "status": "ok",
+                            "plan_status": "ready",
+                            "communication": {"action": "repair", "priority_source": "tasks_stream"},
+                            "route": {"method": "POST", "endpoint": "/api/communication/unsupported", "payload": {}},
+                        }
+                    return {"status": "needs_attention", "step_count": 1, "summary": {"risk_count": 0}}
+
+                def fake_post(url, payload, *, timeout=10):
+                    calls.append(("post", url, timeout, payload))
+                    return {"status": "unexpected"}
+
+                mod.read_json_url = fake_read
+                mod.post_json_url = fake_post
+                result = mod.recovery_cycle_once("http://controller:8787/", execute_communication_repair=True)
+            finally:
+                mod.STATE_DIR = original_state
+                mod.LATEST_PATH = original_latest
+                mod.COMMUNICATION_OBSERVATION_PATH = original_observation
+                mod.COMMUNICATION_REPAIR_SUGGESTIONS_PATH = original_suggestions
+                mod.read_json_url = original_read
+                mod.post_json_url = original_post
+
+        self.assertEqual(result["communication_route_execution"]["status"], "manual_required")
+        self.assertEqual(result["communication_route_execution"]["reason"], "unsupported_route")
+        self.assertEqual(calls, [])
+
     def test_communication_observation_updates_streak_without_executing(self):
         mod = load_module()
         with tempfile.TemporaryDirectory() as tmp:

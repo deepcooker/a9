@@ -36,6 +36,20 @@ def read_json_url(url: str, *, timeout: int = 10) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
+def post_json_url(url: str, payload: dict[str, Any] | None, *, timeout: int = 10) -> dict[str, Any]:
+    body = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+    request = Request(
+        url,
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+    )
+    with LOCAL_CONTROLLER_OPENER.open(request, timeout=timeout) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
 def read_json_file(path: Path) -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -60,6 +74,7 @@ def communication_observation_update(result: dict[str, Any], *, path: Path | Non
         recommendation = "operator_review"
         if streak >= 2:
             recommendation = "candidate_for_repair_one"
+    auto_execute = bool(result.get("communication_execute_enabled"))
     observation = {
         "status": "ok",
         "kind": "communication_observation",
@@ -73,9 +88,9 @@ def communication_observation_update(result: dict[str, Any], *, path: Path | Non
         "last_seen_at": now,
         "recommendation": recommendation,
         "route": route,
-        "auto_execute": False,
+        "auto_execute": auto_execute,
         "policy": {
-            "mode": "observe_only",
+            "mode": "execute_enabled" if auto_execute else "observe_only",
             "reason": "collect_stable_action_evidence_before_auto_repair",
         },
     }
@@ -126,7 +141,7 @@ def communication_repair_suggestions_update(
             "current_key": observation.get("current_key"),
             "streak": observation.get("streak"),
             "recommendation": observation.get("recommendation"),
-            "auto_execute": False,
+            "auto_execute": bool(observation.get("auto_execute")),
         },
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -134,7 +149,44 @@ def communication_repair_suggestions_update(
     return queue
 
 
-def recovery_cycle_once(controller_url: str, *, timeout: int = 10, max_actions: int = 3) -> dict[str, Any]:
+def execute_communication_route(plan: dict[str, Any], *, controller_url: str, timeout: int = 10) -> dict[str, Any]:
+    route = plan.get("communication_route") if isinstance(plan.get("communication_route"), dict) else {}
+    endpoint = str(route.get("endpoint") or "")
+    if endpoint != "/api/communication/repair-one":
+        return {
+            "status": "manual_required",
+            "kind": "communication_route_execution",
+            "reason": "unsupported_route",
+            "route": route,
+        }
+    payload = route.get("payload") if isinstance(route.get("payload"), dict) else {}
+    try:
+        result = post_json_url(f"{controller_url}{endpoint}", payload, timeout=timeout)
+        return {
+            "status": "ok",
+            "kind": "communication_route_execution",
+            "endpoint": endpoint,
+            "method": "POST",
+            "payload": payload,
+            "result": result,
+        }
+    except (OSError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return {
+            "status": "manual_required",
+            "kind": "communication_route_execution",
+            "reason": "execution_failed",
+            "endpoint": endpoint,
+            "error": str(exc),
+        }
+
+
+def recovery_cycle_once(
+    controller_url: str,
+    *,
+    timeout: int = 10,
+    max_actions: int = 3,
+    execute_communication_repair: bool = False,
+) -> dict[str, Any]:
     base = controller_url.rstrip("/")
     plan_url = f"{base}/api/communication/action-plan"
     url = f"{base}/api/nodes/recovery-cycle"
@@ -177,6 +229,16 @@ def recovery_cycle_once(controller_url: str, *, timeout: int = 10, max_actions: 
             "execute": False,
             "error": str(exc),
         }
+    result["communication_execute_enabled"] = bool(execute_communication_repair)
+    if execute_communication_repair:
+        result["communication_route_execution"] = execute_communication_route(result, controller_url=base, timeout=timeout)
+    else:
+        result["communication_route_execution"] = {
+            "status": "ok",
+            "kind": "communication_route_execution",
+            "reason": "observe_only",
+            "route": result.get("communication_route", {}),
+        }
     communication_observation = communication_observation_update(result)
     communication_repair_suggestions = communication_repair_suggestions_update(communication_observation, result)
     result["communication_observation"] = communication_observation
@@ -192,6 +254,7 @@ def recovery_loop(
     interval_seconds: float = 60.0,
     timeout: int = 10,
     max_actions: int = 3,
+    execute_communication_repair: bool = False,
     max_iterations: int = 0,
     emit=None,
 ) -> dict[str, Any]:
@@ -202,7 +265,12 @@ def recovery_loop(
     last_result: dict[str, Any] = {}
     while safe_max == 0 or iterations < safe_max:
         iterations += 1
-        last_result = recovery_cycle_once(controller_url, timeout=timeout, max_actions=max_actions)
+        last_result = recovery_cycle_once(
+            controller_url,
+            timeout=timeout,
+            max_actions=max_actions,
+            execute_communication_repair=execute_communication_repair,
+        )
         if last_result.get("status") != "ok":
             degraded += 1
         if emit is not None:
@@ -227,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--interval-seconds", type=float, default=60.0)
     parser.add_argument("--timeout", type=int, default=10)
     parser.add_argument("--max-actions", type=int, default=3)
+    parser.add_argument("--execute-communication-repair", action="store_true")
     parser.add_argument("--max-iterations", type=int, default=0)
     args = parser.parse_args(argv)
 
@@ -238,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         interval_seconds=args.interval_seconds,
         timeout=args.timeout,
         max_actions=args.max_actions,
+        execute_communication_repair=args.execute_communication_repair,
         max_iterations=args.max_iterations,
         emit=emit,
     )
