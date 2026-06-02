@@ -1211,3 +1211,11 @@ Governance lesson:
   run's declared checks passed.
 - The run summary remains authoritative. Envelope wording is evidence, not the
   source of truth.
+
+Change:
+- Strict envelope contract now asks workers to report `worker_commands_run`
+  separately from `supervisor_declared_checks`.
+- The worker envelope validator emits warn-only findings when object outputs do
+  not include those two fields.
+- The warning does not change pass/fail status; it only makes self-report
+  ambiguity visible to the monitor.

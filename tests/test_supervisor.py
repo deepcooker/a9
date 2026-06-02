@@ -5199,6 +5199,55 @@ Do the work.
 
         self.assertEqual(envelope["status"], "pass")
 
+    def test_worker_envelope_warns_when_check_fields_are_not_separated(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":{"changed_files":[],"tests":[]}}\n',
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-check-separation",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "pass")
+        messages = [finding.get("message", "") for finding in envelope.get("findings", [])]
+        self.assertTrue(any("worker_commands_run" in message for message in messages))
+        self.assertTrue(any("supervisor_declared_checks" in message for message in messages))
+
+    def test_worker_envelope_check_separation_fields_avoid_warning(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                (
+                    'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":'
+                    '{"changed_files":[],"worker_commands_run":[],"supervisor_declared_checks":[]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-check-separation-ok",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "pass")
+        messages = [finding.get("message", "") for finding in envelope.get("findings", [])]
+        self.assertFalse(any("worker_commands_run" in message for message in messages))
+        self.assertFalse(any("supervisor_declared_checks" in message for message in messages))
+
     def test_worker_envelope_status_alias_pass_normalizes_to_ok(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -6053,6 +6102,8 @@ Do the work.
         self.assertIn("strict_worker_envelope: true", packet["prompt"])
         self.assertIn("valid JSON only", packet["prompt"])
         self.assertIn("not Markdown links", packet["prompt"])
+        self.assertIn("worker_commands_run", packet["prompt"])
+        self.assertIn("supervisor_declared_checks", packet["prompt"])
 
     def test_build_context_packet_routes_decided_task_to_execution_next(self):
         mod = load_supervisor()

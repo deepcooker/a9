@@ -1044,6 +1044,8 @@ Hard rules:
   shaped like OpenClaw/Lobster tool envelopes, but A9 protocol is numeric:
   {"protocolVersion":1,"ok":true,"status":"ok","output":{...}}.
   The envelope must be valid JSON only; put file paths and evidence as strings, not Markdown links.
+  In output, separate worker_commands_run from supervisor_declared_checks; worker self-report is evidence,
+  while supervisor-declared checks in the run summary are authoritative.
 """,
         section_budgets["contract"],
     )
@@ -2237,6 +2239,22 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
                     )
         elif status == "ok" and "output" in envelope and not isinstance(envelope.get("output"), (dict, list)):
             result["findings"].append({"level": "error", "message": "output must be an object or list when present"})
+        output = envelope.get("output")
+        if status == "ok" and isinstance(output, dict):
+            if "worker_commands_run" not in output:
+                result["findings"].append(
+                    {
+                        "level": "warn",
+                        "message": "output should include worker_commands_run separate from supervisor_declared_checks",
+                    }
+                )
+            if "supervisor_declared_checks" not in output:
+                result["findings"].append(
+                    {
+                        "level": "warn",
+                        "message": "output should include supervisor_declared_checks separate from worker_commands_run",
+                    }
+                )
         has_error_finding = any(item.get("level") == "error" for item in result["findings"])
         if has_error_finding:
             result["status"] = "fail"
@@ -6813,7 +6831,7 @@ Requirement shaping card:
 - must: preserve the shaped task boundary, declared checks, allowed paths, and one-slice execution.
 - should: copy a mature mechanism only from a precise local reference entry.
 - could: record broader ideas as next_slice or observations, not as code in this slice.
-- system_requirement: produce a strict worker envelope with changed_files, copied_mechanisms, tests, and next_slice.
+- system_requirement: produce a strict worker envelope with changed_files, copied_mechanisms, worker_commands_run, supervisor_declared_checks, and next_slice.
 - solution_type: runtime_infra.
 - data_shape: task prompt, run summary, patch/apply result, checks, monitor observation, evidence/state files.
 - normal_flow: inspect bounded evidence -> act on the phase -> run declared checks -> emit envelope.
@@ -6836,7 +6854,7 @@ Core rule:
 - Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, `docs/session-raw-*`, raw session logs, `docs/agent-runtime-observations.md`, `docs/communication-observation-log.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
 - Use `rg -n` first, then read small line windows only; avoid broad `sed` ranges and full-file dumps.
 - If `strict_worker_envelope: true` is present, final output must include:
-  {{"protocolVersion":1,"ok":true,"status":"ok","output":{{"changed_files":[],"copied_mechanisms":[],"tests":[],"next_slice":""}}}}
+  {{"protocolVersion":1,"ok":true,"status":"ok","output":{{"changed_files":[],"copied_mechanisms":[],"worker_commands_run":[],"supervisor_declared_checks":[],"next_slice":""}}}}
   Valid status values are only `ok`, `needs_approval`, and `cancelled`.
 
 Copy pipeline phases:
