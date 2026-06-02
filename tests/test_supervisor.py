@@ -4023,6 +4023,39 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "undeclared_check")
         self.assertIn("pytest", result["findings"][0]["command"])
 
+    def test_process_governance_flags_undeclared_python_heredoc_validation(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc \"python3 - <<'PY'\n"
+                            "assert True\n"
+                            "print('CHECK: no-diff behavior verified')\n"
+                            "PY\""
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="process-governance-heredoc",
+                prompt="verify declared checks only",
+                checks=["python3 -m unittest tests.test_supervisor.SupervisorTests.test_no_diff_diagnostic_task_can_pass"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["level"], "warn")
+        self.assertEqual(result["findings"][0]["kind"], "undeclared_check")
+        self.assertIn("CHECK: no-diff behavior verified", result["findings"][0]["command"])
+
     def test_process_governance_observes_missing_bounded_evidence_plan(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

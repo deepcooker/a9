@@ -1179,3 +1179,12 @@ Governance lesson:
 - The next observability improvement should detect ad-hoc validation commands
   as warn-only evidence drift when declared checks are already authoritative.
   This is an observation gap, not a reason to block useful progress.
+
+Change:
+- Python heredoc commands such as `python3 - <<...` are now treated as
+  test-like when they contain assertion markers such as `assert`,
+  `AssertionError`, `CHECK:`, or `raise`.
+- These commands reuse the existing `undeclared_check` warning path when they
+  are outside declared checks.
+- This keeps declared checks authoritative without making ad-hoc validation a
+  hard blocker.

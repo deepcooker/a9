@@ -2532,7 +2532,11 @@ def normalize_shell_command(command: str) -> str:
 
 def command_looks_like_test(command: str) -> bool:
     normalized = normalize_shell_command(command)
-    return any(hint in normalized for hint in TEST_COMMAND_HINTS)
+    if any(hint in normalized for hint in TEST_COMMAND_HINTS):
+        return True
+    if re.search(r"\bpython3?\s+-\s*<<", normalized):
+        return any(marker in normalized for marker in ("assert ", "AssertionError", "CHECK:", "raise "))
+    return False
 
 
 def command_matches_declared_check(command: str, checks: list[str]) -> bool:
