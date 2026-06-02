@@ -1188,3 +1188,26 @@ Change:
   are outside declared checks.
 - This keeps declared checks authoritative without making ad-hoc validation a
   hard blocker.
+
+## 2026-06-02: heredoc drift detector passed in tests; worker self-report still conflates checks
+
+Run evidence:
+- `.a9/runs/014-verify-heredoc-validation-drift-observation-20260602T123818Z-a1`
+
+Observation:
+- The live worker obeyed the prompt and did not run ad-hoc Python heredoc
+  validation, so the new warning path was not exercised by runtime events.
+- The declared supervisor check
+  `test_process_governance_flags_undeclared_python_heredoc_validation` passed,
+  proving the detector behavior through the authoritative check path.
+- The worker final envelope said no tests were run because the worker itself did
+  not execute them. The run summary still shows supervisor-declared checks ran
+  and passed.
+
+Governance lesson:
+- Worker final output should distinguish `worker_commands_run` from
+  `supervisor_declared_checks`. Otherwise a correct run can look inconsistent:
+  the worker truthfully says "I did not run tests", while A9 truthfully says the
+  run's declared checks passed.
+- The run summary remains authoritative. Envelope wording is evidence, not the
+  source of truth.
