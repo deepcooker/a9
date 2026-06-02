@@ -9,6 +9,10 @@
 
 ## 2026-06-02: auto-next recovered, then entered a local repair loop
 
+- Observed: `.a9/services/recovery-loop.pid` and `.a9/services/control-api.pid` became stale because `a9_service.py start` returned the launcher `setsid` pid while the actual service pid remained different.
+- Patch applied: `scripts/a9_service.py` now writes/refreshes service pidfiles to the observed real process pid from `running_processes()` and uses deterministic primary selection when multiple matches exist.
+- Effect: restart/hot-reload can now target real service processes using pidfile content instead of launcher shells.
+
 Context:
 - The 24h worker previously stalled when `pass` plus `next_slice` did not produce `next_task_path`.
 - Several repair/test slices fixed real issues around `schedule_next_task`, runtime pre-gate false positives, and `monitor_blocked_repair_checks`.

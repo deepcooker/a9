@@ -21,6 +21,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT / ".a9"
+SERVICE_PID_DIR = STATE_DIR / "services"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 SUPERVISOR_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-supervisor.service"
@@ -115,6 +116,30 @@ def parse_process_table(text: str) -> list[dict[str, Any]]:
 def running_processes() -> list[dict[str, Any]]:
     proc = run(["ps", "-eo", "pid,ppid,etime,cmd"])
     return parse_process_table(proc.stdout)
+
+
+def service_pid_path(kind: str) -> Path:
+    return SERVICE_PID_DIR / f"{kind}.pid"
+
+
+def observed_pid_for_kind(kind: str, processes: list[dict[str, Any]] | None = None) -> tuple[int | None, int]:
+    if processes is None:
+        processes = running_processes()
+    matching = [item for item in processes if item.get("kind") == kind]
+    if not matching:
+        return None, 0
+    # Deterministic selection across multiple matches: prefer largest pid, then ppid, then command.
+    primary = sorted(matching, key=lambda item: (int(item["pid"]), int(item.get("ppid", 0)), str(item.get("cmd", ""))))[-1]
+    return int(primary["pid"]), len(matching)
+
+
+def refresh_service_pidfile(kind: str, processes: list[dict[str, Any]]) -> tuple[int | None, int]:
+    pid, count = observed_pid_for_kind(kind, processes)
+    if pid is not None:
+        path = service_pid_path(kind)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"{pid}\n", encoding="utf-8")
+    return pid, count
 
 
 def iso_now() -> str:
@@ -268,6 +293,7 @@ def start_cmd(args: argparse.Namespace) -> int:
             "status": "already_running" if kind in running_kinds else "planned" if args.dry_run else "started",
             "command": ["setsid", "-f", *command],
             "pid": None,
+            "observed_process_count": 0,
         }
         if kind not in running_kinds and not args.dry_run:
             proc = subprocess.Popen(
@@ -280,6 +306,10 @@ def start_cmd(args: argparse.Namespace) -> int:
             result["pid"] = proc.pid
             observed_running, attempts_used, observed_after_ms = verify_started_kind(kind)
             if observed_running:
+                observed_pid, observed_count = refresh_service_pidfile(kind, running_processes())
+                if observed_pid is not None:
+                    result["pid"] = observed_pid
+                result["observed_process_count"] = observed_count
                 result["command_status"] = {
                     "phase": "running",
                     "observed_running": True,
@@ -289,6 +319,7 @@ def start_cmd(args: argparse.Namespace) -> int:
                     "recovery_action": "",
                 }
             else:
+                result["observed_process_count"] = 0
                 result["command_status"] = {
                     "phase": "start_timeout",
                     "observed_running": False,
@@ -298,6 +329,9 @@ def start_cmd(args: argparse.Namespace) -> int:
                     "recovery_action": start_failure_to_action("timeout"),
                 }
         elif kind in running_kinds:
+            observed_pid, observed_count = refresh_service_pidfile(kind, current)
+            result["pid"] = observed_pid
+            result["observed_process_count"] = observed_count
             result["command_status"] = {
                 "phase": "already_running",
                 "observed_running": True,
@@ -307,6 +341,8 @@ def start_cmd(args: argparse.Namespace) -> int:
                 "recovery_action": "",
             }
         else:
+            # Dry-run and planned services must not mutate pidfiles.
+            result["observed_process_count"] = 0
             result["command_status"] = {
                 "phase": "planned",
                 "observed_running": False,

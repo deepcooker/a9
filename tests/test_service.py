@@ -5,6 +5,7 @@ import importlib.util
 import argparse
 import json
 import subprocess
+import tempfile
 import sys
 import unittest
 from pathlib import Path
@@ -135,16 +136,24 @@ class ServiceTests(unittest.TestCase):
     def test_start_cmd_sets_running_status_after_verify(self):
         mod = load_service()
         args = argparse.Namespace(command="start", all=False, only=["control-api"], dry_run=False)
-        with mock.patch.object(mod, "running_processes", side_effect=[[], [{"kind": "control-api", "pid": 123, "ppid": 1, "etime": "00:00:01", "cmd": "x"}]]):
-            with mock.patch.object(mod.subprocess, "Popen") as popen:
-                popen.return_value.pid = 999
-                with mock.patch.object(mod.time, "sleep"):
-                    with mock.patch("builtins.print") as printer:
-                        rc = mod.start_cmd(args)
+        running = [{"kind": "control-api", "pid": 123, "ppid": 1, "etime": "00:00:01", "cmd": "x"}, {"kind": "control-api", "pid": 777, "ppid": 1, "etime": "00:00:02", "cmd": "x"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(mod, "STATE_DIR", Path(tmpdir) / ".a9"):
+                with mock.patch.object(mod, "SERVICE_PID_DIR", Path(tmpdir) / ".a9" / "services"):
+                    with mock.patch.object(mod, "running_processes", side_effect=[[], running, running]):
+                        with mock.patch.object(mod.subprocess, "Popen") as popen:
+                            popen.return_value.pid = 999
+                            with mock.patch.object(mod.time, "sleep"):
+                                with mock.patch("builtins.print") as printer:
+                                    rc = mod.start_cmd(args)
+                payload = json.loads(printer.call_args.args[0])
+                self.assertEqual(payload["started"][0]["command_status"]["phase"], "running")
+                self.assertTrue(payload["started"][0]["command_status"]["observed_running"])
+                self.assertEqual(payload["started"][0]["observed_process_count"], 2)
+                self.assertEqual(payload["started"][0]["pid"], 777)
+                pidfile = Path(tmpdir) / ".a9" / "services" / "control-api.pid"
+                self.assertEqual(pidfile.read_text(encoding="utf-8"), "777\n")
         self.assertEqual(rc, 0)
-        payload = json.loads(printer.call_args.args[0])
-        self.assertEqual(payload["started"][0]["command_status"]["phase"], "running")
-        self.assertTrue(payload["started"][0]["command_status"]["observed_running"])
 
     def test_start_cmd_timeout_maps_to_retry_action(self):
         mod = load_service()
@@ -162,6 +171,41 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(payload["started"][0]["command_status"]["phase"], "start_timeout")
         self.assertEqual(payload["started"][0]["command_status"]["failure_kind"], "timeout")
         self.assertEqual(payload["started"][0]["command_status"]["recovery_action"], "retry")
+
+    def test_start_cmd_refreshes_stale_pidfile_for_already_running(self):
+        mod = load_service()
+        args = argparse.Namespace(command="start", all=False, only=["recovery-loop"], dry_run=False)
+        running = [{"kind": "recovery-loop", "pid": 2222, "ppid": 1, "etime": "00:00:30", "cmd": "x"}]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(mod, "STATE_DIR", Path(tmpdir) / ".a9"):
+                with mock.patch.object(mod, "SERVICE_PID_DIR", Path(tmpdir) / ".a9" / "services"):
+                    pid_path = Path(tmpdir) / ".a9" / "services" / "recovery-loop.pid"
+                    pid_path.parent.mkdir(parents=True, exist_ok=True)
+                    pid_path.write_text("9999\n", encoding="utf-8")
+                    with mock.patch.object(mod, "running_processes", return_value=running):
+                        with mock.patch.object(mod.subprocess, "Popen") as popen:
+                            with mock.patch("builtins.print") as printer:
+                                rc = mod.start_cmd(args)
+                    payload = json.loads(printer.call_args.args[0])
+                    self.assertEqual(payload["started"][0]["status"], "already_running")
+                    self.assertEqual(payload["started"][0]["pid"], 2222)
+                    self.assertEqual(payload["started"][0]["observed_process_count"], 1)
+                    self.assertEqual(pid_path.read_text(encoding="utf-8"), "2222\n")
+                    popen.assert_not_called()
+        self.assertEqual(rc, 0)
+
+    def test_observed_pid_for_kind_prefers_stable_primary(self):
+        mod = load_service()
+        processes = [
+            {"kind": "control-api", "pid": 200, "ppid": 1, "etime": "00:00:01", "cmd": "a"},
+            {"kind": "control-api", "pid": 500, "ppid": 2, "etime": "00:00:02", "cmd": "b"},
+            {"kind": "control-api", "pid": 500, "ppid": 3, "etime": "00:00:03", "cmd": "c"},
+            {"kind": "recovery-loop", "pid": 900, "ppid": 1, "etime": "00:00:01", "cmd": "x"},
+        ]
+        first = mod.observed_pid_for_kind("control-api", processes)
+        second = mod.observed_pid_for_kind("control-api", processes)
+        self.assertEqual(first, (500, 3))
+        self.assertEqual(second, (500, 3))
 
     def test_service_stop_dry_run_returns_json(self):
         result = subprocess.run(
