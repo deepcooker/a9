@@ -1210,6 +1210,158 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(plan["route"]["arm_group"], "remote")
         self.assertEqual(plan["payload"]["action"], "recover_stale_commands")
 
+    def test_communication_repair_one_executes_stream_recovery_chain(self):
+        mod = load_control_api()
+        original_tailscale_status = mod.tailscale_status
+        original_service_observation_status = mod.service_observation_status
+        original_node_connection_summary = mod.node_connection_summary
+        original_recovery_loop_latest = mod.recovery_loop_latest
+        original_command_gate = mod.command_gate
+        original_a9_node = mod.a9_node
+        original_redis_tasks_stream_probe = mod.redis_tasks_stream_probe
+
+        connection_summary_calls = []
+        node_command_calls = []
+        command_gate_calls = []
+        probe_calls = []
+
+        probe_samples = [
+            {"status": "ok", "pending": 5, "stream": "a9:tasks", "group": "a9-worker", "stream_action_reason": "pending_stuck"},
+            {"status": "ok", "pending": 3, "stream": "a9:tasks", "group": "a9-worker", "stream_action_reason": "none"},
+        ]
+
+        def fake_tailscale_status():
+            return {"status": "ok"}
+
+        def fake_service_observation_status(root=mod.ROOT):
+            return {
+                "status": "ok",
+                "observed": {"missing_count": 0, "missing_services": [], "next_action": "observe"},
+            }
+
+        def fake_node_connection_summary(root=mod.ROOT):
+            if len(connection_summary_calls) == 0:
+                connection_summary_calls.append("pending")
+                return {
+                    "status": "ok",
+                    "risk_count": 0,
+                    "tasks_stream": {"stream_action": "intervene", "stream_action_reason": "pending_stuck", "lag": 7, "pending": 4},
+                    "recovery_next_action": {"action": "repair", "reason": "recover_stale_commands"},
+                    "communication_followup": {"action": "continue", "reason": "healthy"},
+                }
+            connection_summary_calls.append("healthy")
+            return {
+                "status": "ok",
+                "risk_count": 0,
+                "tasks_stream": {"stream_action": "continue", "stream_action_reason": "none", "lag": 0, "pending": 0},
+                "recovery_next_action": {"action": "continue", "reason": "none"},
+                "communication_followup": {"action": "continue", "reason": "healthy"},
+            }
+
+        def fake_recovery_loop_latest(*, root=mod.ROOT):
+            return {"status": "ok"}
+
+        def fake_node_command_claim_stale_once(node_id, count, min_idle_ms, group, stream, timeout):
+            node_command_calls.append(
+                {
+                    "node_id": node_id,
+                    "count": count,
+                    "min_idle_ms": min_idle_ms,
+                    "group": group,
+                    "stream": stream,
+                    "timeout": timeout,
+                }
+            )
+            return {
+                "status": "ok",
+                "error_code": "ok",
+                "action": "claim_stale_once",
+                "node_id": node_id,
+                "stream": stream,
+                "group": group,
+                "consumer": "node-a-consumer",
+                "events": [
+                    {"id": "1740000200-0", "fields": {"command_id": "cmd-1"}},
+                    {"id": "1740000200-1", "fields": {"command_id": "cmd-2"}},
+                ],
+                "command_count": 2,
+                "next_start_id": "0-0",
+                "deleted_ids": [],
+                "raw_output": {},
+            }
+
+        def fake_redis_tasks_stream_probe():
+            sample = probe_samples[min(len(probe_calls), len(probe_samples) - 1)]
+            probe_calls.append(sample["pending"])
+            return sample
+
+        def fake_command_gate(command, *, root=None):
+            command_gate_calls.append(command)
+            return {
+                "status": "allowed",
+                "allowed": True,
+                "command": command,
+                "reason": "test_gate",
+            }
+
+        class FakeNode:
+            def node_command_claim_stale_once(self, node_id, count, min_idle_ms, group, stream, timeout):
+                return fake_node_command_claim_stale_once(
+                    node_id=node_id,
+                    count=count,
+                    min_idle_ms=min_idle_ms,
+                    group=group,
+                    stream=stream,
+                    timeout=timeout,
+                )
+
+        try:
+            mod.tailscale_status = fake_tailscale_status
+            mod.service_observation_status = fake_service_observation_status
+            mod.node_connection_summary = fake_node_connection_summary
+            mod.recovery_loop_latest = fake_recovery_loop_latest
+            mod.command_gate = fake_command_gate
+            mod.a9_node = lambda: FakeNode()
+            mod.redis_tasks_stream_probe = fake_redis_tasks_stream_probe
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                result = mod.communication_repair_one(
+                    {
+                        "action": "recover_stale_commands",
+                        "node_id": "node/a",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+
+                self.assertEqual(result["status"], "ok")
+                self.assertEqual(result["plan"]["route"]["endpoint"], "/api/communication/repair-one")
+                self.assertEqual(result["plan"]["route"]["command"], "nodes.recover.stale_commands")
+                self.assertEqual(result["result"]["kind"], "recover_stale_commands")
+                self.assertEqual(result["result"]["recovered_count"], 2)
+                self.assertEqual(result["result"]["claimed_ids"], ["1740000200-0", "1740000200-1"])
+                self.assertEqual(result["communication_after"]["status"], "ok")
+                self.assertEqual(len(connection_summary_calls), 2)
+                evidence_path = result["result"]["evidence_path"]
+                self.assertTrue(evidence_path)
+                self.assertTrue(Path(evidence_path).exists())
+        finally:
+            mod.tailscale_status = original_tailscale_status
+            mod.service_observation_status = original_service_observation_status
+            mod.node_connection_summary = original_node_connection_summary
+            mod.recovery_loop_latest = original_recovery_loop_latest
+            mod.command_gate = original_command_gate
+            mod.a9_node = original_a9_node
+            mod.redis_tasks_stream_probe = original_redis_tasks_stream_probe
+
+        self.assertEqual(len(node_command_calls), 1)
+        self.assertEqual(node_command_calls[0]["node_id"], "node-a")
+        self.assertEqual(node_command_calls[0]["count"], 1)
+        self.assertEqual(node_command_calls[0]["stream"], "a9:tasks")
+        self.assertEqual(node_command_calls[0]["group"], "a9-worker")
+        self.assertEqual(probe_calls, [5, 3])
+        self.assertEqual(command_gate_calls, ["nodes.recover.stale_commands"])
+
     def test_communication_repair_one_dispatches_missing_service_start(self):
         mod = load_control_api()
         originals = {
