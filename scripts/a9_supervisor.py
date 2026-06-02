@@ -102,8 +102,15 @@ FORBIDDEN_SESSION_CONTEXT_PATHS = (
     "docs/session-raw-summary.md",
     "docs/session-raw-close-reading.md",
     "docs/session-causal-memory.md",
+    "docs/communication-observation-log.md",
+    "docs/agent-runtime-observations.md",
+    "docs/mistakes.md",
     "/root/.codex/sessions",
     ".a9/external_sessions",
+)
+FORBIDDEN_SESSION_CONTEXT_PATH_PREFIXES = (
+    "docs/session-raw-",
+    "archive/original-ideas/",
 )
 RUNTIME_EVIDENCE_ROOTS = (
     ".a9",
@@ -996,6 +1003,7 @@ Hard rules:
 - Do not inline huge raw logs or whole reference repositories.
 - Do not search `.a9/tasks/done`, `.a9/worktrees`, or `.a9/runs` as broad roots; read only explicit evidence paths.
 - Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, or raw session logs unless phase is `session_refresh`/`session_close_reading`.
+- Do not read `docs/agent-runtime-observations.md`, `docs/communication-observation-log.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless bounded by prompt evidence plan.
 - Do not edit repository files with shell redirection, `tee`, or `sed -i`; output SEARCH/REPLACE blocks in final and let A9 deterministic apply write files.
 - Cite local source paths when borrowing ideas from reference projects.
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
@@ -2648,7 +2656,27 @@ def task_allows_session_context_reads(task: Task) -> bool:
     if task.phase in SESSION_CONTEXT_READ_PHASES:
         return True
     prompt = str(task.prompt or "").lower()
-    return any(path.lower() in prompt for path in FORBIDDEN_SESSION_CONTEXT_PATHS)
+    if any(path.lower() in prompt for path in FORBIDDEN_SESSION_CONTEXT_PATHS):
+        return True
+    return any(path in prompt or f"./{path}" in prompt for path in FORBIDDEN_SESSION_CONTEXT_PATH_PREFIXES)
+
+
+def command_session_context_path(command: str, prefix: str) -> str:
+    normalized_prefix = f"./{prefix}"
+    idx = command.find(prefix)
+    if idx < 0:
+        idx = command.find(normalized_prefix)
+        if idx < 0:
+            return prefix
+        else:
+            idx = idx + 2
+    if idx < 0:
+        return prefix
+    tail = command[idx:]
+    parts = re.split(r"\s+|['\"]|[|;&]", tail)
+    if parts:
+        return parts[0].strip()
+    return prefix
 
 
 def forbidden_session_context_read(task: Task, command: str) -> dict[str, Any] | None:
@@ -2664,6 +2692,19 @@ def forbidden_session_context_read(task: Task, command: str) -> dict[str, Any] |
                 "message": "worker read session memory/raw context outside a session_refresh/session_close_reading task",
                 "command": normalized,
                 "path": path,
+            }
+    for path in FORBIDDEN_SESSION_CONTEXT_PATH_PREFIXES:
+        if path in lowered:
+            matched_path = command_session_context_path(normalized, path)
+            return {
+                "level": "warn",
+                "kind": "forbidden_session_context_read",
+                "message": (
+                    "worker read session context/archival or raw evidence file outside a "
+                    "session_refresh/session_close_reading task"
+                ),
+                "command": normalized,
+                "path": matched_path,
             }
     return None
 
@@ -6662,7 +6703,7 @@ Core rule:
 - Task frontmatter `allowed_paths` is the only write-scope authority. Prompt context (including active-plan `allowed_execution`) is advisory only.
 - Declared checks are authoritative. Do not add pytest or cargo unless they are explicitly declared in this task.
 - Do not use web search or browsing unless the task explicitly asks for internet research.
-- Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, raw session logs, or service/process status unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
+- Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, `docs/session-raw-*`, raw session logs, `docs/agent-runtime-observations.md`, `docs/communication-observation-log.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
 - Use `rg -n` first, then read small line windows only; avoid broad `sed` ranges and full-file dumps.
 - If `strict_worker_envelope: true` is present, final output must include:
   {{"protocolVersion":1,"ok":true,"status":"ok","output":{{"changed_files":[],"copied_mechanisms":[],"tests":[],"next_slice":""}}}}

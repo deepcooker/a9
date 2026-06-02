@@ -4212,6 +4212,55 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "forbidden_session_context_read")
         self.assertEqual(result["findings"][0]["path"], "docs/session-raw-summary.md")
 
+    def test_process_governance_observes_context_evidence_archive_reads_without_allowance(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'tail -n 80 docs/agent-runtime-observations.md'",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'tail -n 80 docs/communication-observation-log.md'",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'tail -n 80 archive/original-ideas/notes.md'",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'tail -n 80 docs/mistakes.md'",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(path=Path("task.md"), task_id="context-noise-reads", prompt="Inspect local references only.")
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        findings = [item for item in result["findings"] if item["kind"] == "forbidden_session_context_read"]
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(len(findings), 4)
+        paths = {item["path"] for item in findings}
+        self.assertIn("docs/agent-runtime-observations.md", paths)
+        self.assertIn("docs/communication-observation-log.md", paths)
+        self.assertIn("archive/original-ideas/notes.md", paths)
+        self.assertIn("docs/mistakes.md", paths)
+
     def test_process_governance_allows_session_context_reads_for_session_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4623,6 +4672,33 @@ Do the work.
         )
 
         self.assertEqual(violation, {})
+
+    def test_live_worker_observes_context_evidence_archive_reads_as_non_blocking(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="live-context-noise-no-block",
+            phase="mechanism_extract",
+            prompt="Inspect only reference slices.",
+            checks=[],
+        )
+
+        agent_runtime_observations = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'tail -n 80 docs/agent-runtime-observations.md'",
+        )
+        mistakes = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'tail -n 80 docs/mistakes.md'",
+        )
+        archive_read = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'tail -n 10 archive/original-ideas/notes.md'",
+        )
+
+        self.assertEqual(agent_runtime_observations, {})
+        self.assertEqual(mistakes, {})
+        self.assertEqual(archive_read, {})
 
     def test_live_worker_observes_uncapped_rg_in_read_heavy_tasks_without_blocking(self):
         mod = load_supervisor()
