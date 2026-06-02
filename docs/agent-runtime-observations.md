@@ -6,6 +6,13 @@
 - Expanded required decision field set so explicit `not_decided/partial_decision` tasks block auto-next while explicit `decided` tasks continue scheduling execution slices.
 - Extended `tests/test_supervisor.py` with focused assertions for template visibility, explicit decided-task auto-next continuity, and explicit partial/undecided non-progression checks.
 - Scope remains bounded to `scripts/a9_supervisor.py`, `tests/test_supervisor.py`, `docs/worker-method-packet.md`, and `docs/agent-runtime-observations.md`.
+- Monitor reran the new focused tests and found one wrong assertion: a vague
+  `next_slice` like `test: parse_task_frontmatter...` must not be promoted into
+  a concrete undeclared unittest command. The test was corrected to require the
+  declared frontmatter check to remain authoritative.
+- Worker process discipline still needs improvement: this run passed guards and
+  checks, but broad file slices and direct file-change events produced many
+  warn-only findings and very high actual token usage.
 
 ## 2026-06-02: deterministic restart subcommand added for targeted local service refresh
 

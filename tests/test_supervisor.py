@@ -7261,7 +7261,8 @@ index 0000000..3e75765
             text = next_path.read_text(encoding="utf-8")
             self.assertIn('phase: "test"', text)
             self.assertNotIn("auto_next_block", summary)
-            self.assertIn('  - "python3 -m unittest tests/test_supervisor.SupervisorTests.test_parse_task_frontmatter"', text)
+            self.assertIn('  - "python3 -m unittest tests/test_supervisor.py"', text)
+            self.assertNotIn("tests/test_supervisor.SupervisorTests.test_parse_task_frontmatter", text)
         finally:
             next_path.unlink(missing_ok=True)
 
