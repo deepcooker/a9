@@ -4247,6 +4247,69 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "command_window_missing_rationale")
         self.assertEqual(result["findings"][0]["level"], "warning")
 
+    def test_process_governance_observes_broad_file_slice(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc \"sed -n '1,260p' scripts/a9_supervisor.py\"",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="broad-sed-slice",
+                phase="implement",
+                prompt="Use narrow read windows to keep cost stable.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertIn("broad_file_slice_observation", kinds)
+        finding = next(
+            item for item in result["findings"] if item["kind"] == "broad_file_slice_observation"
+        )
+        self.assertEqual(finding["level"], "warn")
+        self.assertEqual(finding["line_count"], 260)
+        self.assertEqual(finding["read_span"], "1-260")
+        self.assertEqual(finding["recommendation"], "use rg anchors (grep-like) to locate lines first, then read narrower sed slices")
+
+    def test_process_governance_ignores_narrow_file_slice(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc \"sed -n '1,120p' scripts/a9_supervisor.py\"",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="narrow-sed-slice",
+                phase="implement",
+                prompt="Use narrow read windows to keep cost stable.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertNotIn("broad_file_slice_observation", kinds)
+
     def test_process_governance_observes_empty_web_search_event(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -621,3 +621,37 @@ Worker quality note:
 - Direction and implementation were acceptable, but the worker again read broad
   file ranges during reference scan. Future prompts should require exact `rg`
   anchors before any `sed` range larger than roughly 120 lines.
+
+## 2026-06-02: broad local sed slice observation added to process governance
+
+Reference paths:
+- `scripts/a9_supervisor.py` (`sed_window_policy`, `sed_window_governance`)
+- `tests/test_supervisor.py` (`test_process_governance_observes_broad_file_slice`,
+  `test_process_governance_ignores_narrow_file_slice`)
+
+Mechanism copied:
+- Borrowed the existing `sed_window_governance` pattern from current process
+  governance code and added a dedicated warn-only `broad_file_slice_observation`
+  finding when `sed -n A,Bp` spans more than `BROAD_FILE_SLICE_WARN_LINES` lines.
+- Recommendation payload is now recorded with each observation to force a low-cost,
+  context-stable reading pattern:
+  `use rg anchors plus narrower sed slices`.
+
+Implementation:
+- Added `BROAD_FILE_SLICE_WARN_LINES = 240` constant and
+  `broad_file_slice_observation` emit path in `scripts/a9_supervisor.py`.
+- Added focused tests:
+  - `test_process_governance_observes_broad_file_slice` asserts the new warn finding,
+    including `line_count`, `read_span`, and recommendation.
+  - `test_process_governance_ignores_narrow_file_slice` asserts narrow windows are
+    not flagged.
+
+Checks:
+- `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+- `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_observes_broad_file_slice`
+- `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_ignores_narrow_file_slice`
+
+Governance lesson:
+- Warn-only observations are preserved and non-blocking.
+- This keeps business continuity while adding a concrete signal for costly broad
+  local file reads.

@@ -2658,6 +2658,7 @@ BATCHED_READ_RATIONALE_HINTS = (
     "context",
     "failure",
 )
+BROAD_FILE_SLICE_WARN_LINES = 240
 
 
 def sed_window_policy(task: Task) -> dict[str, Any] | None:
@@ -2690,12 +2691,28 @@ def sed_window_governance(
     rationale: str = "",
 ) -> list[dict[str, Any]]:
     policy = sed_window_policy(task)
-    if not policy:
-        return []
     findings: list[dict[str, Any]] = []
     has_rationale = rationale_supports_batched_read(rationale)
     for start, end in sed_windows_from_command(command):
         lines = end - start + 1
+        if not policy and lines > BROAD_FILE_SLICE_WARN_LINES:
+            findings.append(
+                {
+                    "command": command,
+                    "start": start,
+                    "end": end,
+                    "line_count": lines,
+                    "lines": lines,
+                    "read_span": f"{start}-{end}",
+                    "level": "warn",
+                    "kind": "broad_file_slice_observation",
+                    "message": "worker read a broad sed file slice; prefer rg anchors plus narrower sed slices",
+                    "recommendation": "use rg anchors (grep-like) to locate lines first, then read narrower sed slices",
+                }
+            )
+            continue
+        if not policy:
+            continue
         base = {
             "command": command,
             "start": start,
