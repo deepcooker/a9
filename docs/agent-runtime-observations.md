@@ -1157,3 +1157,25 @@ Governance lesson:
   contradictory instructions for small monitor/test slices.
 - Worker output remains untrusted until parsed by A9. Human-readable Markdown
   can coexist with evidence, but the machine envelope must stay strict JSON.
+
+## 2026-06-02: no-diff test phase can now pass, but ad-hoc validation remains under-observed
+
+Run evidence:
+- `.a9/runs/013-verify-test-no-diff-pass-status-20260602T123130Z-a1`
+
+Observation:
+- The no-diff `test` phase run passed after the `task_allows_no_diff()` change.
+- Supervisor-side declared checks passed, the worker envelope parsed as valid
+  JSON, and process governance reported no findings.
+- The worker still drifted from the declared-check boundary by running an
+  ad-hoc heredoc Python validation, first with missing `python`, then with
+  `python3`.
+- Current `process_governance` did not flag this because it recognizes common
+  test commands, not Python snippets that perform assertion-style validation.
+
+Governance lesson:
+- Letting pure test/observation tasks pass without repository diffs is correct;
+  otherwise the monitor loop creates false follow-up work.
+- The next observability improvement should detect ad-hoc validation commands
+  as warn-only evidence drift when declared checks are already authoritative.
+  This is an observation gap, not a reason to block useful progress.
