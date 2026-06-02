@@ -26,6 +26,18 @@
   - reduce broad reads and unplanned direct edits by making bounded planning explicit in worker-visible contract,
   - keep hard governance rules unchanged (no new numeric hard token gates, no extra read scope expansion).
 
+## 2026-06-02: decision parser now ignores embedded template fields
+
+- Monitoring found an auto-repair prompt where the embedded decision-packet
+  template polluted `task_decision_packet(...)`.
+- The parser incorrectly treated template lines such as
+  `decision_status: decided | not_decided | partial_decision` as real task
+  control fields.
+- `task_decision_packet(...)` now reads only the leading task control block, so
+  real execution decisions must be placed at the top of the prompt and template
+  examples cannot fake `missing_fields: none`.
+- Added regression coverage for this exact auto-repair contamination pattern.
+
 ## 2026-06-02: deterministic restart subcommand added for targeted local service refresh
 
 - `scripts/a9_service.py` now supports `restart` with `--only` and `--dry-run`.

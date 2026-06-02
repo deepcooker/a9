@@ -5342,7 +5342,7 @@ EXECUTION_DECISION_REQUIRED_FIELDS = (
 
 
 def task_decision_packet(task: Task) -> dict[str, Any]:
-    fields = parse_key_value_prompt(task.prompt)
+    fields = parse_leading_key_value_prompt(task.prompt)
     decision_status = str(fields.get("decision_status", "")).strip().lower()
     missing = [name for name in EXECUTION_DECISION_REQUIRED_FIELDS if not str(fields.get(name, "")).strip()]
     decided = decision_status in DECIDED_STATUS_VALUES and not missing
@@ -5414,6 +5414,26 @@ def parse_key_value_prompt(prompt: str) -> dict[str, str]:
         match = re.match(r"^\s*(?:[-*]\s*)?([A-Za-z0-9_-]+)\s*[:=]\s*(.+?)\s*$", line)
         if not match:
             continue
+        key = match.group(1).strip().lower().replace("-", "_")
+        fields[key] = match.group(2).strip().strip('"').strip("'")
+    return fields
+
+
+def parse_leading_key_value_prompt(prompt: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    started = False
+    for line in prompt.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            if started:
+                break
+            continue
+        match = re.match(r"^\s*(?:[-*]\s*)?([A-Za-z0-9_-]+)\s*[:=]\s*(.+?)\s*$", line)
+        if not match:
+            if started:
+                break
+            continue
+        started = True
         key = match.group(1).strip().lower().replace("-", "_")
         fields[key] = match.group(2).strip().strip('"').strip("'")
     return fields

@@ -5539,6 +5539,26 @@ Do the work.
         self.assertIn("decided: true", packet["prompt"])
         self.assertIn("missing_fields: none", packet["prompt"])
 
+    def test_task_decision_packet_ignores_embedded_template_fields(self):
+        mod = load_supervisor()
+        prompt = f"""strict_worker_envelope: true
+
+Continue A9 24-hour automation.
+
+{mod.task_decision_packet_prompt(
+    mod.Task(path=Path("previous.md"), task_id="previous", prompt="not_decided", phase="implement")
+)}
+"""
+        task = mod.Task(path=Path("task.md"), task_id="template-contamination", prompt=prompt, phase="repair")
+
+        packet = mod.task_decision_packet(task)
+
+        self.assertEqual(packet["route"], "debate_next")
+        self.assertEqual(packet["decision_status"], "missing")
+        self.assertFalse(packet["decided"])
+        self.assertIn("decision_status", packet["missing_fields"])
+        self.assertIn("problem", packet["missing_fields"])
+
     def test_task_decision_packet_prompt_includes_decision_shaping_template(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="decision-template", prompt="not_decided", phase="implement")
