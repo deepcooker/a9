@@ -27,6 +27,7 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/collaboration.md`: 人类/监控者与 24 小时机器的协作方式。
 - `docs/communication-governance-framework.md`: 当前主线，通讯治理架构。
 - `docs/communication-runtime-decision-packet.md`: 通讯运行时当前决策包，规定先做数据/状态模型校验，再允许实现。
+- `docs/communication-runtime-role-review.md`: 通讯运行时第二轮角色评审，批准先做 data contract v1，不准直接做 SSH/tmux 功能。
 - `docs/runtime-auto-next-review.md`: auto-next 治理评审，规定 phase-prefixed 才能自动续跑。
 - `docs/communication-governance-worker-task.md`: 下一刀 worker 任务模板。
 

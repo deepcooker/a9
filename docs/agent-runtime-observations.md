@@ -6,6 +6,10 @@ Run evidence:
 - `.a9/runs/communication-runtime-model-validation-20260602-20260602T141549Z-a1`
 - monitor override:
   `.a9/eval_store/overrides/override-communication-runtime-model-validatio-4df9f6fd4f-20260602T141725Z.json`
+- narrow retry evidence:
+  `.a9/runs/communication-runtime-model-validation-narrow-20260602-20260602T151204Z-a1`
+  and
+  `.a9/runs/communication-runtime-model-validation-narrow2-20260602-20260602T151510Z-a1`
 
 Observation:
 - The worker produced useful model-validation output for the communication
@@ -30,10 +34,17 @@ Monitor intervention:
   stopped before consuming the full token budget.
 - Kept ordinary implementation `allowed_paths` as write-scope only unless the
   prompt explicitly turns it into a read-scope contract.
+- First narrow retry exposed a parser false positive: `rg -n -m 40 <pattern>
+  <path>` treated the search pattern as a path. This was fixed so capped `rg`
+  value flags are parsed correctly.
+- Second narrow retry proved the rule is not a false positive: the worker read
+  several context docs outside the explicit five-path scope and was correctly
+  `monitor-blocked`.
 
 Checks:
 - `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
 - `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_fails_explicit_allowed_read_scope_violation tests.test_supervisor.SupervisorTests.test_process_governance_does_not_make_allowed_paths_global_read_scope tests.test_supervisor.SupervisorTests.test_process_governance_blocks_commands_outside_bounded_read_scope`
+- `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_allows_capped_rg_inside_explicit_allowed_read_scope tests.test_supervisor.SupervisorTests.test_process_governance_allows_capped_rg_in_read_heavy_tasks`
 
 Governance lesson:
 - This is not an arbitrary numeric gate. It protects a task authority fact:
