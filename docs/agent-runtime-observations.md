@@ -520,3 +520,17 @@ Governance lesson:
 - Restart path executes `python3 scripts/a9_service.py restart --only <services>` with
   timeout 8s, parses `restart_result`, and returns service observations before and
   after restart.
+
+Verification:
+- Worker declared checks passed.
+- Monitor added a regression test proving `allow_supervisor: true` is required
+  for supervisor restart to pass through the helper path.
+- Monitor reran `python3 -m py_compile scripts/a9_control_api.py
+  tests/test_control_api.py`, six focused restart route tests, and full
+  `python3 -m unittest tests.test_control_api.ControlApiTests`; 225 tests passed.
+- Live reloaded `control-api` with `python3 scripts/a9_service.py restart --only
+  control-api`; new pid was observed as `59265`.
+- Live `/api/discovery` exposed `services_restart: /api/services/restart`.
+- Live POST to `/api/services/restart` without phone-control arm returned
+  `status=blocked` and `blocked_reason=phone_control_disarmed`; all four services
+  remained observed running.
