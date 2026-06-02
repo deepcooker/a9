@@ -5880,6 +5880,20 @@ Do the work.
         self.assertEqual(output["next_slice_source"], "worker_envelope.output.next_recommended_task")
         self.assertEqual(output["next_slice_resolution_revision"], 1)
 
+    def test_operator_handoff_next_slice_is_not_actionable_auto_next(self):
+        mod = load_supervisor()
+
+        self.assertTrue(
+            mod.next_slice_is_operator_handoff(
+                "Hand off to outer A9 supervisor for declared-check execution after final."
+            )
+        )
+        self.assertFalse(
+            mod.next_slice_is_operator_handoff(
+                "test: verify outer A9 supervisor wording remains explicit"
+            )
+        )
+
     def test_resolve_next_slice_contract_keeps_ordered_source_precedence(self):
         mod = load_supervisor()
         contract = mod.resolve_next_slice_contract(
@@ -7896,6 +7910,43 @@ index 0000000..3e75765
             self.assertNotIn("cargo build --workspace", text)
         finally:
             next_path.unlink(missing_ok=True)
+
+    def test_schedule_next_task_blocks_operator_handoff_next_recommended_task(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-handoff.md",
+            task_id="auto-handoff",
+            prompt="test one bounded verification slice",
+            phase="test",
+            checks=["python3 -m unittest tests/test_supervisor.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-handoff-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-handoff-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {
+                    "output": {
+                        "next_recommended_task": (
+                            "Hand off to outer A9 supervisor for declared-check execution after final."
+                        )
+                    }
+                },
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+
+        self.assertIsNone(next_path)
+        self.assertEqual(summary["auto_next_block"]["reason"], "operator_handoff_next_slice_requires_monitor")
+        self.assertEqual(
+            summary["auto_next_block"]["next_slice_source"],
+            "worker_envelope.output.next_recommended_task",
+        )
 
     def test_schedule_next_task_infers_direct_file_change_policy_for_durable_test_followup(self):
         mod = load_supervisor()

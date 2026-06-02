@@ -6575,6 +6575,27 @@ def phase_from_next_slice(next_slice: Any) -> str | None:
     return NEXT_SLICE_PHASE_PREFIXES.get(prefix)
 
 
+def next_slice_is_operator_handoff(next_slice: Any) -> bool:
+    text = str(next_slice or "").strip().lower()
+    if not text:
+        return False
+    if phase_from_next_slice(text):
+        return False
+    return any(
+        marker in text
+        for marker in (
+            "hand off",
+            "handoff",
+            "outer a9 supervisor",
+            "outer supervisor",
+            "declared-check",
+            "declared check",
+            "deferred to supervisor",
+            "supervisor will run",
+        )
+    )
+
+
 def resolve_next_slice_contract(output: Any) -> dict[str, Any]:
     if not isinstance(output, dict):
         return {
@@ -7281,6 +7302,15 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
                 "reason": "missing_worker_next_slice",
                 "status": summary["status"],
                 "task_id": task.task_id,
+            }
+            return None
+        if next_slice_is_operator_handoff(worker_output.get("next_slice")):
+            summary["auto_next_block"] = {
+                "reason": "operator_handoff_next_slice_requires_monitor",
+                "status": summary["status"],
+                "task_id": task.task_id,
+                "next_slice": worker_output.get("next_slice", ""),
+                "next_slice_source": worker_output.get("next_slice_source", ""),
             }
             return None
         summary.pop("auto_next_block", None)

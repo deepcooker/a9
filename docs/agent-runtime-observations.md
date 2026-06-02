@@ -1240,3 +1240,36 @@ Governance lesson:
   commands.
 - Worker prompts should explicitly say: do not invoke `a9_supervisor.py
   run-one`, `run-loop`, or nested worker/supervisor processes.
+
+## 2026-06-02: handoff next_recommended_task caused a noisy auto reference scan
+
+Run evidence:
+- Good verification:
+  `.a9/runs/016-verify-outer-check-execution-wording-20260602T124845Z-a1`
+- Noisy auto-next:
+  `.a9/runs/auto-reference_scan-016-verify-outer-check-execution-wording-20260602T124928Z-20260602T124938Z-a1`
+
+Observation:
+- The 016 worker obeyed the new wording: it did not invoke nested supervisor
+  commands, output a valid envelope, and separated `worker_commands_run` from
+  `supervisor_declared_checks`.
+- Its `next_recommended_task` was an operator handoff sentence, not an
+  actionable phase slice.
+- Auto-next treated that fallback text as the next slice, defaulted the next
+  phase from `test` to `reference_scan`, and spent a high token budget reading
+  broad local/test/reference slices.
+- The noisy run still passed, but process governance recorded broad read
+  findings; pass status alone would hide the cost problem.
+
+Change:
+- Auto-next now blocks unprefixed handoff-style next slices such as "hand off to
+  outer supervisor" or "declared-check execution" and records
+  `auto_next_block.reason = operator_handoff_next_slice_requires_monitor`.
+- Explicit phase-prefixed next slices such as `test: ...` and `implement: ...`
+  remain actionable.
+
+Governance lesson:
+- `next_recommended_task` is advisory unless it is a concrete phase-prefixed
+  execution slice.
+- Operator handoff language should stop for monitor review, not restart the copy
+  pipeline.
