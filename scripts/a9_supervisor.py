@@ -2630,6 +2630,13 @@ def evidence_plan_stated_in_text(text: str) -> bool:
     return has_path and has_read_intent and has_ordering
 
 
+def evidence_plan_has_bounded_read_commands(text: str) -> bool:
+    original = str(text or "")
+    has_path = bool(re.search(r"\b(?:scripts|tests|docs|crates|infra)/[A-Za-z0-9_./*-]+", original))
+    has_bounded_command = bool(re.search(r"\b(?:rg\s+-n|sed\s+-n|tail\s+-n)\b", original))
+    return has_path and has_bounded_command
+
+
 def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> bool:
     if not paths:
         return True
@@ -2968,7 +2975,9 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     prompt_lower = task.prompt.lower()
     requires_bounded_plan = prompt_requires_bounded_evidence_plan(task.prompt)
     bounded_plan_stated = False
+    bounded_plan_has_commands = False
     missing_plan_recorded = False
+    missing_plan_commands_recorded = False
     deterministic_output_required = (
         "search/replace" in prompt_lower and "deterministic apply" in prompt_lower
     ) or ("strict_worker_envelope: true" in prompt_lower)
@@ -2981,6 +2990,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
             last_agent_rationale = str(event.get("text_preview") or "")
             if not bounded_plan_stated and evidence_plan_stated_in_text(last_agent_rationale):
                 bounded_plan_stated = True
+                bounded_plan_has_commands = evidence_plan_has_bounded_read_commands(last_agent_rationale)
             continue
         item_type = str(event.get("item_type") or "")
         if item_type == "file_change" and deterministic_output_required:
@@ -3027,6 +3037,23 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                 }
             )
             missing_plan_recorded = True
+        if (
+            requires_bounded_plan
+            and bounded_plan_stated
+            and not bounded_plan_has_commands
+            and not missing_plan_commands_recorded
+        ):
+            findings.append(
+                {
+                    "level": "warn",
+                    "kind": "bounded_evidence_plan_missing_commands",
+                    "message": "bounded evidence plan did not include exact bounded read commands",
+                    "command": command,
+                    "evidence": "plan should include exact rg/sed/tail commands before source reads",
+                    "rationale": last_agent_rationale[:500],
+                }
+            )
+            missing_plan_commands_recorded = True
         if command_looks_like_test(command) and task.checks and not command_matches_declared_check(command, task.checks):
             findings.append(
                 {

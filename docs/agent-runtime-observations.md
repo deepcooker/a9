@@ -152,6 +152,30 @@ Governance lesson:
   operator. Otherwise the monitor will chase false positives and waste worker
   cycles.
 
+## 2026-06-02: bounded evidence plan quality now observes missing read commands
+
+- Broad sed reads in recent runs were not only a line-count problem. The worker
+  often stated a plan, but did not include exact bounded read commands before
+  executing source reads.
+- A new warn-only finding, `bounded_evidence_plan_missing_commands`, separates
+  this from `missing_bounded_evidence_plan`:
+  - no plan before first read -> `missing_bounded_evidence_plan`;
+  - plan exists but lacks exact `rg -n` / `sed -n` / `tail -n` commands ->
+    `bounded_evidence_plan_missing_commands`.
+- This keeps the policy aligned with the user direction: do not use arbitrary
+  hard line counts as the quality proxy; use mechanism quality. The worker must
+  specify bounded commands up front so the monitor can judge whether a later
+  larger read was justified.
+- Verification passed:
+  `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+  and focused tests for missing plan, English plan, Chinese plan, exact command
+  plan, and broad slice observation.
+
+Governance lesson:
+- The useful control is not "never read more than N lines"; it is "declare the
+  bounded evidence plan with concrete read commands, then compare actual reads
+  to that plan."
+
 ## 2026-06-02: dirty worktree deterministic-apply bypass now needs repair
 
 - Monitoring found worker runs that emitted `search_replace_blocks` but had

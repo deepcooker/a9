@@ -4098,6 +4098,46 @@ Do the work.
         self.assertEqual(result["status"], "pass")
         self.assertNotIn("missing_bounded_evidence_plan", kinds)
 
+    def test_process_governance_accepts_bounded_evidence_plan_with_exact_commands(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "item_type": "agent_message",
+                                "text_preview": (
+                                    "bounded evidence plan: `rg -n \"schedule_next_task\" "
+                                    "tests/test_supervisor.py` before any reads"
+                                ),
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "item_type": "command_execution",
+                                "command": "/bin/bash -lc 'rg -n \"schedule_next_task\" tests/test_supervisor.py'",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="present-bounded-plan-with-commands",
+                prompt="Evidence-and-edit contract:\n- Before any reads, list a bounded evidence plan.",
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [finding["kind"] for finding in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("missing_bounded_evidence_plan", kinds)
+        self.assertNotIn("bounded_evidence_plan_missing_commands", kinds)
+
     def test_process_governance_accepts_chinese_bounded_evidence_plan_before_first_command(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4138,6 +4178,7 @@ Do the work.
         kinds = [finding["kind"] for finding in result["findings"]]
         self.assertEqual(result["status"], "pass")
         self.assertNotIn("missing_bounded_evidence_plan", kinds)
+        self.assertIn("bounded_evidence_plan_missing_commands", kinds)
 
     def test_process_governance_enforces_task_command_bounds(self):
         mod = load_supervisor()
