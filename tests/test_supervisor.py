@@ -6132,6 +6132,65 @@ index 0000000..3e75765
 
         next_path.unlink(missing_ok=True)
 
+    def test_service_progress_ignores_missing_next_task_path(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        missing_next = mod.QUEUE_DIR / "missing-next-task.md"
+        missing_next.unlink(missing_ok=True)
+
+        progress = mod.service_progress(
+            {
+                "task_id": "stale-next",
+                "status": "needs-followup",
+                "run_dir": "/tmp/stale-next-run",
+            },
+            missing_next,
+        )
+
+        self.assertEqual(progress["stage"], "supervisor-mvp")
+        self.assertFalse(progress["auto_next_scheduled"])
+        self.assertEqual(progress["next_task_path"], "")
+
+    def test_status_refreshes_progress_from_actual_queue_state(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        stale_next = mod.QUEUE_DIR / "stale-next-task.md"
+        stale_next.unlink(missing_ok=True)
+        mod.write_json(
+            mod.PROGRESS_PATH,
+            {
+                "progress_percent": 100.0,
+                "stage": "auto-loop-mvp",
+                "next_task_path": str(stale_next),
+                "capability_groups": {},
+            },
+        )
+        run_dir = mod.RUNS_DIR / "selftest-stale-progress-run"
+        shutil.rmtree(run_dir, ignore_errors=True)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            mod.write_json(
+                run_dir / "summary.json",
+                {
+                    "task_id": "selftest-stale-progress",
+                    "status": "pass",
+                    "run_dir": str(run_dir),
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                mod.status()
+            output = buffer.getvalue()
+            refreshed = mod.read_json_file(mod.PROGRESS_PATH)
+
+            self.assertIn("next=", output)
+            self.assertNotIn(str(stale_next), output)
+            self.assertEqual(refreshed["stage"], "supervisor-mvp")
+            self.assertEqual(refreshed["next_task_path"], "")
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
     def test_enqueue_task_file_adds_default_strict_envelope_for_worker_phase(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

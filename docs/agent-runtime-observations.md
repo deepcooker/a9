@@ -811,3 +811,23 @@ Governance lesson:
   the business/data contract is settled.
 - The better control is task-shape governance: undecided requirement work stops
   at review/change-request evidence and waits for monitor/product decision.
+
+## 2026-06-02: status progress now clears stale next task paths
+
+Observation:
+- After the monitor stopped the stale debate-next auto-repair chain, actual
+  queue/running directories were empty, but CLI/control progress still showed an
+  old `next_task_path` from `progress.json`.
+- This made the control plane look as if the abandoned task was still scheduled.
+
+Change:
+- `service_progress()` now treats `next_task_path` as scheduled only when the
+  referenced task file still exists.
+- `status()` refreshes progress from the latest run summary and actual
+  queue/running directories instead of only printing stale `progress.json`.
+
+Governance lesson:
+- Monitor state must be derived from authoritative runtime directories and run
+  evidence, not only from the last progress snapshot.
+- Stale telemetry can cause bad operator decisions even when the queue itself
+  is clean.

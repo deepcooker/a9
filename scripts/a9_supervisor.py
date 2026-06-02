@@ -7205,6 +7205,7 @@ def schedule_next_session_close_reading_task(task: Task, summary: dict[str, Any]
 
 def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path | None = None) -> dict[str, Any]:
     ensure_dirs()
+    existing_next_task_path = next_task_path if next_task_path and next_task_path.exists() else None
     completed_runs = len(list(RUNS_DIR.glob("*/summary.json")))
     done_tasks = len(list(DONE_DIR.glob("*.json")))
     queued_tasks = len(list(QUEUE_DIR.glob("*.md")))
@@ -7290,7 +7291,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
     progress = {
         "updated_at": utc_now(),
         "service": "a9-24h-automation",
-        "stage": "auto-loop-mvp" if next_task_path else "supervisor-mvp",
+        "stage": "auto-loop-mvp" if existing_next_task_path else "supervisor-mvp",
         "progress_percent": round(done_capabilities / len(capabilities) * 100, 1),
         "completed_runs": completed_runs,
         "done_tasks": done_tasks,
@@ -7309,8 +7310,8 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "latest_worker_model_source": summary.get("worker", {}).get("worker_model_source", "") if summary else "",
         "latest_monitor_block": summary.get("monitor_block", {}) if summary else {},
         "auto_loop_guard": summary.get("auto_loop_guard", read_json_file(AUTO_LOOP_GUARD_PATH)) if summary else read_json_file(AUTO_LOOP_GUARD_PATH),
-        "next_task_path": str(next_task_path) if next_task_path else "",
-        "auto_next_scheduled": next_task_path is not None,
+        "next_task_path": str(existing_next_task_path) if existing_next_task_path else "",
+        "auto_next_scheduled": existing_next_task_path is not None,
         "capabilities": capabilities,
         "capability_groups": group_progress,
         "next_goal": "Run the copy pipeline under the daemon for longer unattended soak tests.",
@@ -8277,9 +8278,11 @@ def status() -> int:
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
     print(f"running: {len(list(RUNNING_DIR.glob('*.json')))}")
     print(f"done: {len(list(DONE_DIR.glob('*.json')))}")
+    latest_summary: dict[str, Any] | None = None
     latest = sorted(RUNS_DIR.glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
     if latest:
         data = json.loads(latest[-1].read_text(encoding="utf-8"))
+        latest_summary = data
         print(f"latest: {data['task_id']} {data['status']} {data['run_dir']}")
         guards = data.get("guard_summary") or compact_guard_summary(data)
         if guards:
@@ -8312,13 +8315,12 @@ def status() -> int:
                     f"output={usage.get('output_tokens', 0)} "
                     f"reasoning={usage.get('reasoning_output_tokens', 0)}"
                 )
-    if PROGRESS_PATH.exists():
-        progress = json.loads(PROGRESS_PATH.read_text(encoding="utf-8"))
-        print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
-        groups = progress.get("capability_groups", {})
-        if groups:
-            rendered = " ".join(f"{name}={item.get('percent', 0)}%" for name, item in sorted(groups.items()))
-            print(f"24h groups: {rendered}")
+    progress = service_progress(latest_summary)
+    print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
+    groups = progress.get("capability_groups", {})
+    if groups:
+        rendered = " ".join(f"{name}={item.get('percent', 0)}%" for name, item in sorted(groups.items()))
+        print(f"24h groups: {rendered}")
     current_plan_id = active_plan_id()
     if current_plan_id:
         plan = load_plan(current_plan_id)
