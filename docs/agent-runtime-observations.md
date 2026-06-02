@@ -173,6 +173,25 @@ Checks run:
 - `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_restart_action_audits_ok_result`
 - `python3 -m unittest tests.test_control_api.ControlApiTests.test_append_service_control_audit_writes_jsonl`
 
+Monitor verification:
+- Reran the declared focused checks and full
+  `python3 -m unittest tests.test_control_api.ControlApiTests`; 229 tests passed.
+- Confirmed API responses do not include full `audit_event`; only `audit_async`
+  is returned for audited branches.
+- Live reloaded `control-api` with `python3 scripts/a9_service.py restart --only
+  control-api`; new pid was observed as `80591`.
+- Live POST to `/api/services/restart` without phone-control arm returned
+  `status=blocked`, `blocked_reason=phone_control_disarmed`, and
+  `audit_async=true`.
+- `.a9/services/service-control-audit.jsonl` was created and appended one compact
+  JSONL event with `action=restart`, `status=blocked`, gate metadata,
+  service-observation summary, and operator scope count only.
+
+Worker quality note:
+- Direction and mechanism copy were correct. Token cost was high because the
+  worker read broad file slices; next worker prompts should ask for narrower
+  `rg`/`sed` slices after initial reference anchors are found.
+
 ## 2026-06-02: communication worker produced useful patch but failed full declared check
 
 Run evidence:
