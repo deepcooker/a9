@@ -861,3 +861,23 @@ Governance lesson:
 - `decision_status: decided` should be granted per slice, not globally.
 - This keeps product/mainline pressure in front of worker execution while still
   allowing 24h automation to continue once the slice is explicit.
+
+## 2026-06-02: process quality is now visible in status/progress
+
+Observation:
+- The decision-template worker run passed and produced useful code, but process
+  governance still recorded many warn-only findings such as broad file slices
+  and direct file change events.
+- Actual token usage was also high enough that a simple `pass` status would hide
+  the operational cost problem from the monitor.
+
+Change:
+- `service_progress()` now exposes `latest_process_quality` with process
+  governance counts and actual token usage.
+- `status` now prints a concise `latest process` line beside guards, git,
+  context, and token usage.
+
+Governance lesson:
+- This remains observation-first. Token and process findings should drive
+  better task shaping, bounded evidence slices, and monitor intervention instead
+  of arbitrary hard numeric gates before the business/data contract is stable.

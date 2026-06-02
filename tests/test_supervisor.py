@@ -6202,6 +6202,41 @@ index 0000000..3e75765
         self.assertFalse(progress["auto_next_scheduled"])
         self.assertEqual(progress["next_task_path"], "")
 
+    def test_service_progress_exposes_latest_process_quality(self):
+        mod = load_supervisor()
+        summary = {
+            "task_id": "process-quality",
+            "status": "pass",
+            "run_dir": "/tmp/process-quality-run",
+            "context_pressure": {
+                "actual_token_usage": {
+                    "input_tokens": 2800000,
+                    "cached_input_tokens": 2700000,
+                    "uncached_input_tokens": 100000,
+                    "output_tokens": 20000,
+                    "reasoning_output_tokens": 12000,
+                }
+            },
+            "process_governance": {
+                "status": "pass",
+                "policy": "observation_first",
+                "findings": [
+                    {"kind": "broad_file_slice_observation", "message": "broad read"},
+                    {"kind": "direct_file_change_event", "message": "direct edit"},
+                    {"kind": "direct_file_change_event", "message": "direct edit again"},
+                ],
+            },
+        }
+
+        progress = mod.service_progress(summary)
+        quality = progress["latest_process_quality"]
+
+        self.assertEqual(quality["actual_token_usage"]["input_tokens"], 2800000)
+        self.assertEqual(quality["process_governance"]["status"], "pass")
+        self.assertEqual(quality["process_governance"]["findings_count"], 3)
+        self.assertEqual(quality["process_governance"]["by_kind"]["direct_file_change_event"], 2)
+        self.assertEqual(quality["process_governance"]["by_kind"]["broad_file_slice_observation"], 1)
+
     def test_status_refreshes_progress_from_actual_queue_state(self):
         mod = load_supervisor()
         mod.ensure_dirs()
@@ -6239,6 +6274,50 @@ index 0000000..3e75765
             self.assertNotIn(str(stale_next), output)
             self.assertEqual(refreshed["stage"], "supervisor-mvp")
             self.assertEqual(refreshed["next_task_path"], "")
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_status_prints_latest_process_quality(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        run_dir = mod.RUNS_DIR / "selftest-process-quality-run"
+        shutil.rmtree(run_dir, ignore_errors=True)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            mod.write_json(
+                run_dir / "summary.json",
+                {
+                    "task_id": "selftest-process-quality",
+                    "status": "pass",
+                    "run_dir": str(run_dir),
+                    "context_pressure": {
+                        "actual_token_usage": {
+                            "input_tokens": 2800000,
+                            "cached_input_tokens": 2700000,
+                            "uncached_input_tokens": 100000,
+                            "output_tokens": 20000,
+                            "reasoning_output_tokens": 12000,
+                        }
+                    },
+                    "process_governance": {
+                        "status": "pass",
+                        "findings": [
+                            {"kind": "broad_file_slice_observation", "message": "broad read"},
+                            {"kind": "direct_file_change_event", "message": "direct edit"},
+                        ],
+                    },
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                mod.status()
+            output = buffer.getvalue()
+
+            self.assertIn("latest actual tokens: input=2800000", output)
+            self.assertIn("latest process: status=pass findings=2", output)
+            self.assertIn("broad_file_slice_observation=1", output)
+            self.assertIn("direct_file_change_event=1", output)
         finally:
             shutil.rmtree(run_dir, ignore_errors=True)
 

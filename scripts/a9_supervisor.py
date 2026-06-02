@@ -6292,6 +6292,21 @@ def process_governance_prompt_summary(process_governance: dict[str, Any]) -> dic
     }
 
 
+def latest_process_quality(summary: dict[str, Any] | None) -> dict[str, Any]:
+    if not summary:
+        return {}
+    process = process_governance_prompt_summary(summary.get("process_governance", {}))
+    usage = summary.get("context_pressure", {}).get("actual_token_usage", {})
+    if not isinstance(usage, dict) or not usage:
+        usage = summary.get("worker", {}).get("actual_token_usage", {})
+    if not isinstance(usage, dict):
+        usage = {}
+    return {
+        "process_governance": process,
+        "actual_token_usage": usage,
+    }
+
+
 def next_phase_for(status: str, current_phase: str) -> str:
     if status in {"needs-repair", "monitor-blocked"} or status.startswith("retryable-"):
         return "repair"
@@ -7330,6 +7345,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "latest_worker_model": summary.get("worker", {}).get("worker_model", "") if summary else "",
         "latest_worker_model_source": summary.get("worker", {}).get("worker_model_source", "") if summary else "",
         "latest_monitor_block": summary.get("monitor_block", {}) if summary else {},
+        "latest_process_quality": latest_process_quality(summary),
         "auto_loop_guard": summary.get("auto_loop_guard", read_json_file(AUTO_LOOP_GUARD_PATH)) if summary else read_json_file(AUTO_LOOP_GUARD_PATH),
         "next_task_path": str(existing_next_task_path) if existing_next_task_path else "",
         "auto_next_scheduled": existing_next_task_path is not None,
@@ -8336,6 +8352,21 @@ def status() -> int:
                     f"output={usage.get('output_tokens', 0)} "
                     f"reasoning={usage.get('reasoning_output_tokens', 0)}"
                 )
+        process_quality = latest_process_quality(data)
+        process_summary = process_quality.get("process_governance", {}) if isinstance(process_quality, dict) else {}
+        if process_summary:
+            by_kind = process_summary.get("by_kind", {})
+            by_kind_text = (
+                ",".join(f"{kind}={count}" for kind, count in sorted(by_kind.items()))
+                if isinstance(by_kind, dict) and by_kind
+                else "none"
+            )
+            print(
+                "latest process: "
+                f"status={process_summary.get('status', '')} "
+                f"findings={process_summary.get('findings_count', 0)} "
+                f"by_kind={by_kind_text}"
+            )
     progress = service_progress(latest_summary)
     print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
     groups = progress.get("capability_groups", {})
