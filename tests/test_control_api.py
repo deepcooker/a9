@@ -8406,6 +8406,48 @@ class ControlApiTests(unittest.TestCase):
             self.assertEqual(rejected["reason"], "supervisor_restart_not_allowed")
             self.assertEqual(rejected["target_services"], ["supervisor", "recovery-loop"])
 
+    def test_service_restart_action_allows_supervisor_when_explicitly_enabled(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+
+            class FakeProc:
+                returncode = 0
+                stdout = json.dumps(
+                    {
+                        "kind": "service_restart",
+                        "requested": ["supervisor"],
+                        "status": "ok",
+                    }
+                )
+
+            original_observation = mod.service_observation_status
+            original_run = mod.subprocess.run
+            try:
+                calls = []
+                mod.service_observation_status = lambda *args, **kwargs: {
+                    "status": "ok",
+                    "observed": {"missing_services": [], "missing_count": 0},
+                }
+
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.service_restart_action(
+                    {"operator_scopes": ["operator.admin"], "services": ["supervisor"], "allow_supervisor": True},
+                    root=root,
+                )
+            finally:
+                mod.service_observation_status = original_observation
+                mod.subprocess.run = original_run
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["target_services"], ["supervisor"])
+        self.assertEqual(calls[0][0][2:], ["restart", "--only", "supervisor"])
+
     def test_service_restart_action_runs_helper_and_returns_restart_json(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
