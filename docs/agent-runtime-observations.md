@@ -400,3 +400,28 @@ Governance lesson:
   without manual patch acceptance when the envelope is valid.
 - The remaining automation quality issue is worker event discipline, not this
   specific routing capability.
+
+## 2026-06-02: communication repair-one stream recovery e2e fixture passed
+
+Run evidence:
+- `.a9/runs/000-implement-communication-repair-one-stream-recovery-e2e-20260602-20260602T062014Z-a1`
+
+Observation:
+- The worker added an end-to-end fixture test for
+  `communication_repair_one -> recover_stale_commands -> evidence_path ->
+  communication_after`.
+- It initially hit a fixture bug in `service_observation_status` monkeypatch
+  signature, fixed it, reran the declared checks, and then supervisor committed
+  automatically.
+- The worker still emitted direct `file_change` events, recorded as warn-only.
+
+Verification:
+- Worker declared checks passed.
+- Monitor reran full `python3 -m unittest tests.test_control_api.ControlApiTests`
+  and 219 tests passed.
+
+Governance lesson:
+- The Redis Stream recovery path is now covered from status/action-plan through
+  repair execution and evidence creation in a deterministic fixture.
+- Next communication-runtime work can move from unit-route wiring toward
+  runtime command/recovery loop consumption or real Redis/tmux smoke.
