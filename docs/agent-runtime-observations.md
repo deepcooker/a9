@@ -755,3 +755,29 @@ Governance lesson:
 - The next maturity step is to make analysis worker outputs generate review
   packets and execution backlog only after product/business/architecture/test
   alignment.
+
+## 2026-06-02: first analysis-worker review packet run passed with discipline warnings
+
+Run evidence:
+- `.a9/runs/000-analysis-current-a9-review-packet-20260602-20260602T100534Z-a1`
+- Auto-commit: `f3386814e6de51e2dc291d3b372b4350a9bbe5de`
+
+Observation:
+- The 24h worker received both `A9 Worker Method Packet` and `Task Decision
+  Packet`; the task routed to `debate_next` because required execution fields
+  were intentionally missing.
+- It produced `docs/a9-current-review-packet.md` and correctly kept the result
+  as a requirements review packet, not a production implementation.
+- Declared checks passed, patch guard passed, and scope guard passed.
+- Process governance still recorded warn-only findings: broad local `sed`
+  slices and direct `file_change` events instead of pure deterministic
+  SEARCH/REPLACE output.
+
+Governance lesson:
+- The new method injection and decision routing are useful enough to steer a
+  weak execution model toward analysis work.
+- Worker discipline is still not strong enough to trust unattended quality by
+  self-report alone. Monitor review must inspect process findings, token usage,
+  changed files, and whether the result stays in `debate_next`.
+- The next review step should use the packet for role debate before any
+  `execution_next` slice is approved.
