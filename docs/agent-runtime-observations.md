@@ -1354,3 +1354,40 @@ Governance lesson:
 - This closes the noisy auto-reference-scan failure class from the 016 follow-up.
 - Human-readable recommendations remain preserved as evidence, but automatic
   execution now requires an explicit phase-prefixed slice.
+
+## 2026-06-02: communication data-contract report passed, process quality still needs observation
+
+Run evidence:
+- Worker run:
+  `.a9/runs/implement-communication-data-contract-report-20260602-20260602T152235Z-a1`
+- Integrated commit:
+  `001f423cb0b0af8237ddc7a7675c99b1d9566540`
+
+Observation:
+- The worker implemented the decided non-mutating communication data-contract
+  report in `scripts/a9_control_api.py` and focused tests in
+  `tests/test_control_api.py`.
+- A9 exposed `/api/communication/data-contract-report` and
+  `communication_data_contract_report()` with the v1 objects:
+  `operator_session`, `node`, `ssh_identity`, `tmux_session`, `command`,
+  `command_result`, `event_cursor`, `heartbeat`, `reconnect_state`,
+  `repair_action`, and `audit_event`.
+- Declared checks passed under the outer supervisor, and monitor rerun passed:
+  `python3 -m py_compile scripts/a9_control_api.py tests/test_control_api.py`
+  and `python3 -m unittest tests.test_control_api.ControlApiTests`.
+- The task stayed inside the allowed edit files and did not implement SSH/tmux,
+  Redis mutation, MySQL migration, or mobile UI.
+
+Quality findings:
+- Process governance recorded warn-only findings: three broad `sed` read slices
+  and six direct file-change events.
+- This should not block the data-first communication runtime path, but it proves
+  the worker still does not reliably obey SEARCH/REPLACE-first edit discipline.
+- Treat direct edits and broad reads as observation signals unless they violate
+  authority, license/security, declared checks, or explicit scope.
+
+Governance lesson:
+- This is an acceptable execution slice because the data contract became
+  observable before behavior expansion.
+- Next communication work should continue from the report output, not from a
+  broad project scan.
