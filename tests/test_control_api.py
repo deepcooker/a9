@@ -1197,6 +1197,42 @@ class ControlApiTests(unittest.TestCase):
                 or "action_enum" in model_closure
             )
 
+    def test_communication_data_contract_report_model_closure_matches_canonical_doc(self):
+        mod = load_control_api()
+        report = mod.communication_data_contract_report(root=mod.ROOT)
+        by_object = {item["object"]: item for item in report["objects"]}
+
+        operator_session = by_object["operator_session"]["model_closure"]
+        self.assertEqual(operator_session["mysql_authority"], "a9_operator_sessions")
+        self.assertEqual(
+            operator_session["redis_keys"],
+            ["a9:operator_events", "a9:operator:{operator_id}:{client_id}"],
+        )
+        self.assertEqual(
+            operator_session["status_enum"],
+            ["active", "idle", "stale", "revoked", "disconnected"],
+        )
+
+        event_cursor = by_object["event_cursor"]["model_closure"]
+        self.assertEqual(event_cursor["mysql_authority"], "a9_event_cursors")
+        self.assertEqual(event_cursor["redis_keys"], ["a9:events", "a9:tasks"])
+        self.assertEqual(
+            event_cursor["status_enum"],
+            ["active", "gap_detected", "invalid", "stale", "reset_pending"],
+        )
+
+        reconnect_state = by_object["reconnect_state"]["model_closure"]
+        self.assertEqual(reconnect_state["mysql_authority"], "a9_reconnect_states")
+        self.assertEqual(
+            reconnect_state["redis_keys"],
+            ["a9:reconnect_events", "a9:reconnect:{node_id}", "a9:events"],
+        )
+        self.assertEqual(reconnect_state["phase_enum"], ["connect", "stream", "ssh", "tmux", "redis"])
+        self.assertEqual(
+            reconnect_state["action_enum"],
+            ["continue", "reconnect", "terminate", "quarantine", "watch"],
+        )
+
     def test_communication_data_contract_report_unknown_object_returns_missing(self):
         mod = load_control_api()
         report = mod.communication_data_contract_report(object_name="not-an-object", root=mod.ROOT)

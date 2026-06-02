@@ -1468,3 +1468,30 @@ Governance lesson:
   only after open questions are either answered or explicitly scoped out.
 - The next worker prompt should cap `rg` with `-m` and keep reference claims tied
   to actually-read evidence.
+
+## 2026-06-03: model-closure report implementation needed monitor correction
+
+Run evidence:
+- Worker run:
+  `.a9/runs/implement-communication-model-closure-report-20260603-20260602T170547Z-a1`
+- Integrated commit:
+  `53bb23da1540fab898b5922bd6fa11d52a0fb236`
+
+Observation:
+- The worker added read-only `model_closure` metadata to
+  `communication_data_contract_report()` for `operator_session`,
+  `event_cursor`, and `reconnect_state`, plus tests.
+- Declared checks passed, but monitor review found the worker invented several
+  enum/key/table values instead of matching
+  `docs/communication-runtime-model-closure.md`.
+- Monitor corrected the report constants to the canonical model-closure doc and
+  added a test that asserts the exact MySQL authority, Redis keys, and enum
+  values for the three objects.
+- Full `tests.test_control_api.ControlApiTests` passed after correction:
+  239 tests OK.
+
+Governance lesson:
+- A passing worker run is not enough. For data-first work, monitor review must
+  compare implementation constants against the canonical model document.
+- Future execution prompts should explicitly say: do not invent enum/key/table
+  values; copy them from the named authority document.
