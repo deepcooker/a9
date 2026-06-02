@@ -4652,6 +4652,38 @@ Do the work.
         self.assertEqual(result["findings"][0]["level"], "warn")
         self.assertEqual(result["findings"][0]["kind"], "direct_file_change_event")
 
+    def test_process_governance_repair_policy_treats_direct_file_change_as_fail(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "file_change",
+                        "changes": [{"path": "README.md", "kind": "update"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="deterministic-apply-repair",
+                prompt=(
+                    "Hard rules:\n"
+                    "- Do not edit repository files with shell redirection, tee, or sed -i; "
+                    "output SEARCH/REPLACE blocks in final and let A9 deterministic apply write files.\n"
+                    "direct_file_change_policy: repair\n"
+                ),
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["findings"][0]["level"], "error")
+        self.assertEqual(result["findings"][0]["kind"], "direct_file_change_event")
+
     def test_process_governance_failure_blocks_status_even_when_checks_pass(self):
         mod = load_supervisor()
         worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
@@ -4664,7 +4696,7 @@ Do the work.
             process_governance={"status": "fail", "findings": [{"kind": "undeclared_check"}]},
         )
 
-        self.assertEqual(status, "monitor-blocked")
+        self.assertEqual(status, "needs-repair")
 
     def test_live_worker_observes_task_bound_violations_without_blocking(self):
         mod = load_supervisor()

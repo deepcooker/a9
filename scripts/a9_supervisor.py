@@ -2944,6 +2944,12 @@ def read_jsonl_file(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def parse_direct_file_change_policy(prompt: str) -> str:
+    fields = parse_key_value_prompt(prompt)
+    value = str(fields.get("direct_file_change_policy", "")).strip().lower()
+    return "repair" if value == "repair" else "observe"
+
+
 def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     output_path = run_dir / "process_governance.json"
     event_path = Path(str(worker.get("event_summaries_path") or ""))
@@ -2961,6 +2967,8 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         "search/replace" in prompt_lower and "deterministic apply" in prompt_lower
     ) or ("strict_worker_envelope: true" in prompt_lower)
     forbids_web = ("do not browse web" in prompt_lower) or ("no web" in prompt_lower)
+    direct_change_policy = parse_direct_file_change_policy(task.prompt)
+    direct_change_enforce = deterministic_output_required and direct_change_policy == "repair"
     last_agent_rationale = ""
     for event in read_jsonl_file(event_path):
         if event.get("item_type") in {"agent_message", "reasoning"}:
@@ -2970,9 +2978,10 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
             continue
         item_type = str(event.get("item_type") or "")
         if item_type == "file_change" and deterministic_output_required:
+            level = "error" if direct_change_enforce else "warn"
             findings.append(
                 {
-                    "level": "warn",
+                    "level": level,
                     "kind": "direct_file_change_event",
                     "message": "worker emitted direct file_change events while task requires deterministic SEARCH/REPLACE final output",
                 }
@@ -3097,6 +3106,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
     result = {
         "status": "fail" if error_findings else "pass",
         "policy": "declared_checks_and_task_command_bounds_are_authoritative",
+        "direct_file_change_policy": direct_change_policy,
         "findings": findings,
         "error_findings_count": len(error_findings),
         "output_path": str(output_path),
@@ -3132,7 +3142,7 @@ def decide_status(
     if scope_guard and scope_guard.get("status") == "fail":
         return "needs-repair"
     if process_governance and process_governance.get("status") == "fail":
-        return "monitor-blocked"
+        return "needs-repair"
     failed_checks = [item for item in checks if item["return_code"] != 0]
     if failed_checks:
         return "needs-repair"
@@ -3978,6 +3988,7 @@ def create_policy_attestation(task: Task, run_dir: Path, summary: dict[str, Any]
         "checks": task.checks,
         "phase": task.phase,
         "strict_worker_envelope": parse_bool_field(fields, "strict_worker_envelope", False),
+        "direct_file_change_policy": parse_direct_file_change_policy(task.prompt),
         "worker_model": summary.get("worker", {}).get("worker_model") or resolved_worker_model(task)[0],
         "worker_model_source": summary.get("worker", {}).get("worker_model_source") or resolved_worker_model(task)[1],
         "guards": ["worker_envelope", "patch_guard", "scope_guard", "checks", "git_governance"],
