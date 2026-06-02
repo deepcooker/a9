@@ -29,6 +29,7 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/communication-runtime-decision-packet.md`: 通讯运行时当前决策包，规定先做数据/状态模型校验，再允许实现。
 - `docs/communication-runtime-role-review.md`: 通讯运行时第二轮角色评审，批准先做 data contract v1，不准直接做 SSH/tmux 功能。
 - `docs/communication-runtime-data-contract-v1.md`: 通讯运行时对象、状态、Redis/MySQL/evidence 合同，后续实现必须对齐。
+- `docs/communication-runtime-readiness-review.md`: 通讯运行时对象级就绪评审，按 data-first 维度给出下一对象实现优先级。
 - `docs/runtime-auto-next-review.md`: auto-next 治理评审，规定 phase-prefixed 才能自动续跑。
 - `docs/communication-governance-worker-task.md`: 下一刀 worker 任务模板。
 

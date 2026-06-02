@@ -1416,3 +1416,27 @@ Governance lesson:
   token cost and broad-scan drift.
 - The remaining process weakness is edit-channel discipline, not task
   understanding or scope control.
+
+## 2026-06-02: readiness review produced useful output but failed due check quoting
+
+Run evidence:
+- Worker run:
+  `.a9/runs/communication-runtime-readiness-review-20260602-20260602T154012Z-a1`
+
+Observation:
+- The worker produced a useful communication runtime readiness review and ranked
+  `operator_session`, `event_cursor`, and `reconnect_state` as the next
+  data-first model-closure focus.
+- The run was marked `needs-repair` and rolled back because the supervisor
+  declared check command had a shell quoting error:
+  `unexpected EOF while looking for matching '"'`.
+- Process governance stayed warn-only: broad `sed` slices, uncapped `rg`, and
+  direct file-change events. There was no scope error and no runtime mutation.
+- Monitor salvaged the useful doc output manually, fixed the required section
+  headings, and reran the readiness section check.
+
+Governance lesson:
+- Worker quality was acceptable for analysis, but the prompt/check authoring
+  quality was not. Declared checks must be shell-validated before enqueueing.
+- For debate/review tasks, process findings should guide the next prompt but
+  should not discard valid business/data analysis.
