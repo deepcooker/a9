@@ -6104,6 +6104,8 @@ Do the work.
         self.assertIn("not Markdown links", packet["prompt"])
         self.assertIn("worker_commands_run", packet["prompt"])
         self.assertIn("supervisor_declared_checks", packet["prompt"])
+        self.assertIn("Do not invoke nested supervisor", packet["prompt"])
+        self.assertIn("outer A9 supervisor", packet["prompt"])
 
     def test_build_context_packet_routes_decided_task_to_execution_next(self):
         mod = load_supervisor()

@@ -1219,3 +1219,24 @@ Change:
   not include those two fields.
 - The warning does not change pass/fail status; it only makes self-report
   ambiguity visible to the monitor.
+
+## 2026-06-02: ambiguous supervisor wording caused nested run-one attempt
+
+Run evidence:
+- `.a9/runs/015-verify-worker-supervisor-check-reporting-20260602T124450Z-a1`
+
+Observation:
+- The prompt asked the worker to run declared checks "through supervisor only".
+- The worker interpreted that as permission to inspect and invoke
+  `python3 scripts/a9_supervisor.py run-one --help`.
+- A9 stopped the run with `budget_stop_kind: command_bounds` and
+  `budget_reason: blocked nested worker command: a9_supervisor.py run-one`.
+- This protected the runtime from recursive/nested supervisor execution, but it
+  also prevented the worker from producing a final strict envelope.
+
+Governance lesson:
+- "Supervisor-declared checks" must mean the outer A9 supervisor will execute
+  checks after the worker final, not that the worker should call supervisor
+  commands.
+- Worker prompts should explicitly say: do not invoke `a9_supervisor.py
+  run-one`, `run-loop`, or nested worker/supervisor processes.

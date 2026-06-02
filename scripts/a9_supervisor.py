@@ -1040,6 +1040,8 @@ Hard rules:
 - Cite local source paths when borrowing ideas from reference projects.
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
 - Final answer must include files changed, reference ideas used, commands run, test result, and next recommended task.
+- Do not invoke nested supervisor or worker loops such as `a9_supervisor.py run-one`, `a9_supervisor.py run-loop`, or `codex exec`.
+- Declared checks are executed by the outer A9 supervisor after the worker final; do not call supervisor commands to run them.
 - If the task asks for `strict_worker_envelope: true`, the final answer must include a JSON object
   shaped like OpenClaw/Lobster tool envelopes, but A9 protocol is numeric:
   {"protocolVersion":1,"ok":true,"status":"ok","output":{...}}.
@@ -6846,7 +6848,7 @@ Core rule:
 - Inspect local reference projects under `/root/a9/reference-projects`.
 - Record copied source/license obligations in docs/vendor records when adding new references.
 - Implement one concrete, testable improvement only when the current phase calls for implementation or test hardening.
-- Run the declared checks.
+- Do not invoke nested supervisor or worker loops. The outer A9 supervisor runs declared checks after your final envelope.
 - Keep the task bounded; do not broaden beyond the task file's allowed paths.
 - Task frontmatter `allowed_paths` is the only write-scope authority. Prompt context (including active-plan `allowed_execution`) is advisory only.
 - Declared checks are authoritative. Do not add pytest or cargo unless they are explicitly declared in this task.
