@@ -370,8 +370,17 @@ def start_cmd(args: argparse.Namespace) -> int:
 
 def stop_cmd(args: argparse.Namespace) -> int:
     processes = running_processes()
-    targets = [item for item in processes if args.all or item["kind"] == "supervisor"]
+    if args.all:
+        targets = list(processes)
+        requested_kinds: list[str] = ["all"]
+        target_mode = "all"
+    else:
+        requested_kinds = list(args.only or ["supervisor"])
+        target_mode = "only" if args.only else "default"
+        targets = [item for item in processes if item["kind"] in requested_kinds]
     stopped: list[dict[str, Any]] = []
+    stopped_kinds: dict[str, set[int]] = {}
+
     for item in targets:
         result = {**item, "signal": "SIGTERM", "stopped": False, "error": ""}
         if args.dry_run:
@@ -380,17 +389,45 @@ def stop_cmd(args: argparse.Namespace) -> int:
             try:
                 os.kill(int(item["pid"]), signal.SIGTERM)
                 result["stopped"] = True
+                if item["kind"] in SERVICE_COMMANDS:
+                    stopped_kinds.setdefault(item["kind"], set()).add(int(item["pid"]))
             except ProcessLookupError:
                 result["error"] = "process not found"
             except PermissionError:
                 result["error"] = "permission denied"
         stopped.append(result)
+
+    pidfiles_removed: list[str] = []
+    if not args.dry_run and stopped_kinds:
+        post_stop_processes = running_processes()
+        post_stop_kinds = {item["kind"] for item in post_stop_processes}
+        for kind in sorted(stopped_kinds):
+            if kind not in SERVICE_COMMANDS:
+                continue
+            path = service_pid_path(kind)
+            if not path.exists():
+                continue
+            remove_pidfile = False
+            try:
+                observed_pid = int(path.read_text(encoding="utf-8").strip())
+                if observed_pid in stopped_kinds[kind]:
+                    remove_pidfile = True
+            except (OSError, ValueError):
+                remove_pidfile = True
+            if not remove_pidfile and kind not in post_stop_kinds:
+                remove_pidfile = True
+            if remove_pidfile:
+                path.unlink(missing_ok=True)
+                pidfiles_removed.append(str(path))
+
     payload = {
         "checked_at": iso_now(),
         "dry_run": args.dry_run,
-        "target": "all" if args.all else "supervisor",
+        "target_mode": target_mode,
+        "requested": requested_kinds,
         "matched": len(targets),
         "stopped": stopped,
+        "pidfiles_removed": pidfiles_removed,
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not any(item.get("error") for item in stopped) else 1
@@ -446,6 +483,12 @@ def main(argv: list[str]) -> int:
     start_parser.add_argument("--dry-run", action="store_true", help="show start commands without launching them")
     stop_parser = sub.add_parser("stop")
     stop_parser.add_argument("--all", action="store_true", help="also stop direct codex worker children")
+    stop_parser.add_argument(
+        "--only",
+        nargs="+",
+        choices=SERVICE_START_ORDER,
+        help="stop running services matching these kinds when --all is not set",
+    )
     stop_parser.add_argument("--dry-run", action="store_true", help="show matched processes without signaling them")
     sub.add_parser("unit")
     sub.add_parser("install-hint")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import argparse
+import signal
 import json
 import subprocess
 import tempfile
@@ -208,6 +209,102 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(second, (500, 3))
 
     def test_service_stop_dry_run_returns_json(self):
+        mod = load_service()
+        result = None
+        with mock.patch.object(mod, "running_processes", return_value=[
+            {"kind": "supervisor", "pid": 111, "ppid": 1, "etime": "00:00:01", "cmd": "python3 scripts/a9_supervisor.py run-loop"},
+            {"kind": "worker", "pid": 222, "ppid": 1, "etime": "00:00:01", "cmd": "node /usr/local/bin/codex exec --json -C /tmp/work prompt"},
+        ]):
+            with mock.patch("builtins.print") as printer:
+                rc = mod.stop_cmd(argparse.Namespace(command="stop", all=False, only=None, dry_run=True))
+            result_payload = json.loads(printer.call_args.args[0])
+            self.assertTrue(result_payload["dry_run"])
+            self.assertEqual(result_payload["target_mode"], "default")
+            self.assertEqual(result_payload["requested"], ["supervisor"])
+            self.assertEqual(result_payload["matched"], 1)
+            self.assertEqual([item["kind"] for item in result_payload["stopped"]], ["supervisor"])
+            self.assertEqual(result_payload["pidfiles_removed"], [])
+        self.assertEqual(rc, 0)
+
+    def test_service_stop_dry_run_only_matches_requested_kinds(self):
+        mod = load_service()
+        with mock.patch.object(
+            mod,
+            "running_processes",
+            return_value=[
+                {"kind": "control-api", "pid": 111, "ppid": 1, "etime": "00:00:01", "cmd": "python3 scripts/a9_control_api.py serve"},
+                {"kind": "recovery-loop", "pid": 222, "ppid": 1, "etime": "00:00:10", "cmd": "python3 scripts/a9_recovery_loop.py --interval-seconds"},
+                {"kind": "supervisor", "pid": 333, "ppid": 1, "etime": "00:00:03", "cmd": "python3 scripts/a9_supervisor.py run-loop"},
+                {"kind": "worker", "pid": 444, "ppid": 333, "etime": "00:00:02", "cmd": "node /usr/local/bin/codex exec --json -C /tmp/work prompt"},
+            ],
+        ):
+            with mock.patch("builtins.print") as printer:
+                rc = mod.stop_cmd(argparse.Namespace(command="stop", all=False, only=["control-api", "recovery-loop"], dry_run=True))
+            payload = json.loads(printer.call_args.args[0])
+            self.assertTrue(payload["dry_run"])
+            self.assertEqual(payload["target_mode"], "only")
+            self.assertEqual(payload["requested"], ["control-api", "recovery-loop"])
+            self.assertEqual(payload["matched"], 2)
+            self.assertEqual({item["kind"] for item in payload["stopped"]}, {"control-api", "recovery-loop"})
+            self.assertEqual(payload["pidfiles_removed"], [])
+        self.assertEqual(rc, 0)
+
+    def test_service_stop_only_recovery_loop_sends_sigterm_and_removes_pidfile(self):
+        mod = load_service()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = Path(tmpdir) / ".a9" / "services" / "recovery-loop.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("222\n", encoding="utf-8")
+            with mock.patch.object(mod, "STATE_DIR", Path(tmpdir) / ".a9"):
+                with mock.patch.object(mod, "SERVICE_PID_DIR", Path(tmpdir) / ".a9" / "services"):
+                    with mock.patch.object(
+                        mod,
+                        "running_processes",
+                        side_effect=[
+                            [{"kind": "recovery-loop", "pid": 222, "ppid": 1, "etime": "00:00:10", "cmd": "python3 scripts/a9_recovery_loop.py --interval-seconds"},
+                            {"kind": "supervisor", "pid": 333, "ppid": 1, "etime": "00:00:01", "cmd": "python3 scripts/a9_supervisor.py run-loop"}],
+                            [],
+                        ],
+                    ):
+                        with mock.patch.object(mod.os, "kill") as kill:
+                            with mock.patch("builtins.print") as printer:
+                                rc = mod.stop_cmd(argparse.Namespace(command="stop", all=False, only=["recovery-loop"], dry_run=False))
+            payload = json.loads(printer.call_args.args[0])
+            self.assertEqual(rc, 0)
+            self.assertEqual(payload["target_mode"], "only")
+            self.assertEqual(payload["requested"], ["recovery-loop"])
+            self.assertEqual(payload["matched"], 1)
+            self.assertEqual(len(payload["stopped"]), 1)
+            self.assertEqual(payload["stopped"][0]["stopped"], True)
+            self.assertTrue(kill.called)
+            kill.assert_called_once_with(222, signal.SIGTERM)
+            self.assertFalse(pid_path.exists())
+            self.assertEqual([str(pid_path)], payload["pidfiles_removed"])
+
+    def test_service_stop_dry_run_keeps_pidfile(self):
+        mod = load_service()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = Path(tmpdir) / ".a9" / "services" / "recovery-loop.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("222\n", encoding="utf-8")
+            with mock.patch.object(mod, "STATE_DIR", Path(tmpdir) / ".a9"):
+                with mock.patch.object(mod, "SERVICE_PID_DIR", Path(tmpdir) / ".a9" / "services"):
+                    with mock.patch.object(mod, "running_processes", return_value=[
+                        {"kind": "recovery-loop", "pid": 222, "ppid": 1, "etime": "00:00:10", "cmd": "python3 scripts/a9_recovery_loop.py --interval-seconds"},
+                    ]):
+                        with mock.patch.object(mod.os, "kill") as kill:
+                            with mock.patch("builtins.print") as printer:
+                                rc = mod.stop_cmd(argparse.Namespace(command="stop", all=False, only=["recovery-loop"], dry_run=True))
+            payload = json.loads(printer.call_args.args[0])
+            self.assertEqual(payload["dry_run"], True)
+            self.assertEqual(payload["target_mode"], "only")
+            self.assertEqual(payload["requested"], ["recovery-loop"])
+            self.assertEqual(payload["stopped"][0]["stopped"], False)
+            kill.assert_not_called()
+            self.assertTrue(pid_path.exists())
+            self.assertEqual(payload["pidfiles_removed"], [])
+        self.assertEqual(rc, 0)
+
         result = subprocess.run(
             [str(SERVICE_PATH), "stop", "--dry-run"],
             cwd=ROOT,
@@ -218,7 +315,8 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
         payload = json.loads(result.stdout)
         self.assertTrue(payload["dry_run"])
-        self.assertEqual(payload["target"], "supervisor")
+        self.assertEqual(payload["target_mode"], "default")
+        self.assertEqual(payload["requested"], ["supervisor"])
 
     def test_service_readiness_returns_run_mode_json(self):
         result = subprocess.run(

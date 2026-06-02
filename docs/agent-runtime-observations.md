@@ -1,5 +1,15 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-02: service stop gains granular `--only` target mode with observed-PID cleanup
+
+- `scripts/a9_service.py stop --only` now supports `control-api`, `node-worker`,
+  `recovery-loop`, and `supervisor`; default behavior remains supervisor-only when neither
+  `--all` nor `--only` is set.
+- Stop path now signals observed processes directly and updates/removes service pidfiles only for
+  targeted service kinds; dry-run stays non-mutating for both process signals and pidfiles.
+- CLI output now carries explicit stop envelope fields (`target_mode`, `requested`,
+  `matched`, `pidfiles_removed`) to make recovery telemetry deterministic.
+
 ## 2026-06-02: recovery-loop exposes execute mode in monitor payload
 
 - Recovery-loop monitor now distinguishes observe-only and execute-enabled recovery runs via
