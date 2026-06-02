@@ -1275,3 +1275,29 @@ Governance lesson:
   execution slice.
 - Operator handoff language should stop for monitor review, not restart the copy
   pipeline.
+
+## 2026-06-02: unprefixed next_recommended_task live validation blocked auto-next
+
+Run evidence:
+- Failed harness attempt:
+  `.a9/runs/017-live-unprefixed-next-recommended-task-20260602T132909Z-a1`
+- Successful validation:
+  `.a9/runs/018-live-unprefixed-next-recommended-task-fixed-20260602T133007Z-a1`
+
+Observation:
+- The first fake-worker validation failed because the test harness used
+  `Path({run_dir})` without quoting the substituted run path. This was harness
+  error, not A9 routing behavior.
+- The corrected fake worker output a valid strict envelope with
+  `next_recommended_task: Extend active-plan prompt hydration with progress
+  tails.` and no phase prefix.
+- A9 recorded the suggestion in `worker_output.next_slice`, but did not enqueue
+  a follow-up task.
+- The run summary contains
+  `auto_next_block.reason = next_slice_missing_phase_prefix` and
+  `next_task_path = ""`.
+
+Governance lesson:
+- This closes the noisy auto-reference-scan failure class from the 016 follow-up.
+- Human-readable recommendations remain preserved as evidence, but automatic
+  execution now requires an explicit phase-prefixed slice.
