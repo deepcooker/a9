@@ -651,6 +651,21 @@ Checks:
 - `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_observes_broad_file_slice`
 - `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_ignores_narrow_file_slice`
 
+Monitor verification:
+- Reran the declared focused checks; they passed.
+- Reran adjacent sed-window regressions:
+  `test_process_governance_observes_batched_sed_reads_with_rationale`,
+  `test_process_governance_warns_on_batched_sed_read_without_rationale`, and
+  `test_process_governance_enforces_task_command_bounds`; they passed.
+- Full `python3 -m unittest tests.test_supervisor.SupervisorTests` did not pass.
+  Failures were concentrated in historical auto-next selftests where
+  `next_task_path` resolved to `.` or expected `pass` became `needs-repair`.
+  The inspected failed run summaries had `process_governance.status=pass` and
+  no process-governance findings, so the new warn-only broad-slice observation
+  was not the direct blocker.
+- No task queue/running residue remained after the failed full suite; git
+  worktree stayed clean before this documentation update.
+
 Governance lesson:
 - Warn-only observations are preserved and non-blocking.
 - This keeps business continuity while adding a concrete signal for costly broad
