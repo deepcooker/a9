@@ -606,3 +606,18 @@ Checks:
 - `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_control_audit_tail_skips_bad_jsonl`
 - `python3 -m unittest tests.test_control_api.ControlApiTests.test_api_services_control_audit_route_passes_limit`
 - `python3 -m unittest tests.test_control_api.ControlApiTests.test_controller_discovery_exposes_registration_contract`
+
+Monitor verification:
+- Reran the declared focused checks and full
+  `python3 -m unittest tests.test_control_api.ControlApiTests`; 233 tests passed.
+- Live reloaded `control-api` with `python3 scripts/a9_service.py restart --only
+  control-api`; new pid was observed as `3787`.
+- Live GET `/api/services/control-audit?limit=1` returned the latest blocked
+  `services.restart` audit event with `reason=phone_control_disarmed`.
+- Live `/api/discovery` exposed
+  `services_control_audit: /api/services/control-audit`.
+
+Worker quality note:
+- Direction and implementation were acceptable, but the worker again read broad
+  file ranges during reference scan. Future prompts should require exact `rg`
+  anchors before any `sed` range larger than roughly 120 lines.
