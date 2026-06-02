@@ -7055,6 +7055,69 @@ index 0000000..3e75765
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_blocks_explicit_debate_next_task(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-debate-next.md",
+            task_id="auto-debate-next",
+            prompt=(
+                "decision_status: not_decided\n"
+                "problem: role review found missing execution contract fields.\n"
+            ),
+            phase="implement",
+            checks=["test -f docs/a9-current-role-review.md"],
+            allowed_paths=["docs/a9-current-role-review.md"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-debate-next-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-debate-next-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_task": "test: should not auto-run before monitor decision"}},
+            },
+        }
+
+        self.assertIsNone(mod.schedule_next_task(task, summary))
+        block = summary["auto_next_block"]
+        self.assertEqual(block["reason"], "debate_next_requires_monitor_decision")
+        self.assertEqual(block["decision_status"], "not_decided")
+        self.assertIn("data_contract", block["missing_fields"])
+        self.assertIn("state_flow", block["missing_fields"])
+
+    def test_schedule_next_task_keeps_legacy_tasks_without_decision_status_routable(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        task = mod.Task(
+            path=mod.DONE_DIR / "auto-legacy-next.md",
+            task_id="auto-legacy-next",
+            prompt="continue one bounded legacy slice",
+            phase="implement",
+            checks=["python3 -m unittest tests/test_control_api.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "pass",
+            "run_dir": str(mod.RUNS_DIR / "auto-legacy-next-run"),
+            "context_path": str(mod.RUNS_DIR / "auto-legacy-next-run" / "context.md"),
+            "worker_envelope": {
+                "status": "pass",
+                "envelope": {"output": {"next_slice": "test: validate bounded routing"}},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+        self.assertIsNotNone(next_path)
+        assert next_path is not None
+        try:
+            self.assertIn('phase: "test"', next_path.read_text(encoding="utf-8"))
+            self.assertNotIn("auto_next_block", summary)
+        finally:
+            next_path.unlink(missing_ok=True)
+
     def test_schedule_next_task_routes_needs_followup_from_next_slice_prefix(self):
         mod = load_supervisor()
         mod.ensure_dirs()

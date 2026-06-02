@@ -5371,6 +5371,13 @@ def task_decision_packet_prompt(task: Task) -> str:
 """
 
 
+def explicit_task_decision_packet(task: Task) -> dict[str, Any] | None:
+    fields = parse_key_value_prompt(task.prompt)
+    if "decision_status" not in fields:
+        return None
+    return task_decision_packet(task)
+
+
 def parse_optional_int(value: str | None) -> int | None:
     if value is None:
         return None
@@ -6961,6 +6968,16 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if gateway_runtime_blocks_next(task, summary):
         return None
     if summary["status"] not in {"pass", "needs-followup", "needs-repair"}:
+        return None
+    explicit_decision = explicit_task_decision_packet(task)
+    if explicit_decision and explicit_decision.get("route") == "debate_next":
+        summary["auto_next_block"] = {
+            "reason": "debate_next_requires_monitor_decision",
+            "decision_status": explicit_decision.get("decision_status", "missing"),
+            "missing_fields": explicit_decision.get("missing_fields", []),
+            "recommendation": explicit_decision.get("recommendation", ""),
+            "task_id": task.task_id,
+        }
         return None
     phase = next_phase_for(summary["status"], task.phase)
     worker_output = worker_output_from_summary(summary)

@@ -781,3 +781,33 @@ Governance lesson:
   changed files, and whether the result stays in `debate_next`.
 - The next review step should use the packet for role debate before any
   `execution_next` slice is approved.
+
+## 2026-06-02: debate_next auto-next continuation was stopped by monitor
+
+Run evidence:
+- Good role-review run:
+  `.a9/runs/001-analysis-role-review-current-a9-20260602-20260602T100916Z-a1`
+- Bad auto-next continuation:
+  `.a9/runs/auto-test-001-analysis-role-review-current-a9-20260602-20260602T101013Z-20260602T101023Z-a1`
+
+Observation:
+- The role-review worker produced `docs/a9-current-role-review.md`, kept the
+  route as `debate_next`, and concluded execution was not approved.
+- Auto-next then mechanically wrapped its `next_task` into a `test` phase.
+- The follow-up worker violated context discipline by broad-searching `docs`
+  and runtime roots, which pulled raw session close-reading content into the
+  event stream and drove actual token usage to a very high level.
+
+Monitor intervention:
+- The monitor stopped the follow-up worker and kept the run as
+  `needs-followup` evidence instead of letting it continue.
+- `scripts/a9_supervisor.py::schedule_next_task` now blocks auto-next when a
+  task explicitly carries `decision_status` and its decision packet still routes
+  to `debate_next`.
+- Legacy tasks without explicit `decision_status` keep the old routing behavior.
+
+Governance lesson:
+- Token cost should not be controlled by arbitrary hard line/token counts before
+  the business/data contract is settled.
+- The better control is task-shape governance: undecided requirement work stops
+  at review/change-request evidence and waits for monitor/product decision.
