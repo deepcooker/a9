@@ -5824,6 +5824,58 @@ Do the work.
         self.assertIn("proposal-only", prompt)
         self.assertIn("unless it is added to task.checks/frontmatter", prompt)
 
+    def test_next_task_prompt_infers_direct_file_change_repair_for_deterministic_worker_phases(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="deterministic-policy-default", prompt="demo", phase="implement")
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "implement: apply policy defaulting"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "implement")
+
+        self.assertIn("direct_file_change_policy: repair", prompt)
+
+    def test_next_task_prompt_carries_explicit_direct_file_change_policy_on_non_strict_phase(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="explicit-policy-session-refresh",
+            phase=mod.SESSION_REFRESH_PHASE,
+            prompt="source_session_path: /tmp/session.jsonl\nfrom_turn: 1\nto_turn: 1\ndirect_file_change_policy: repair",
+        )
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "session_refresh: continue"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, mod.SESSION_REFRESH_PHASE)
+
+        self.assertIn("direct_file_change_policy: repair", prompt)
+
+    def test_next_task_prompt_does_not_default_direct_file_change_policy_for_session_refresh(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="no-policy-session-refresh",
+            phase=mod.SESSION_REFRESH_PHASE,
+            prompt="source_session_path: /tmp/session.jsonl\nfrom_turn: 1\nto_turn: 1",
+        )
+        summary = {
+            "status": "pass",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "session_refresh: continue"}}},
+        }
+
+        prompt = mod.next_task_prompt(task, summary, mod.SESSION_REFRESH_PHASE)
+
+        self.assertNotIn("direct_file_change_policy: repair", prompt)
+
     def test_next_task_prompt_includes_requirements_method_packet(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="method-packet", prompt="demo", phase="implement")

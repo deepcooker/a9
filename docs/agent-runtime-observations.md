@@ -87,6 +87,27 @@ Governance lesson:
   repair is appropriate, but only when the task contract asks for it; otherwise
   monitor-blocked remains the safer state for governance violations.
 
+## 2026-06-02: direct file-change repair policy closed the loop
+
+- Run 008 intentionally carried `direct_file_change_policy: repair`.
+- The worker still emitted direct `file_change` events, so the new policy
+  worked: `process_governance.status=fail`, the run became `needs-repair`, and
+  the worker diff was rolled back instead of committed.
+- The patch itself was useful, so the monitor salvaged it manually through
+  deterministic `apply_patch` after reviewing `patch.diff`, `final.md`, and
+  `process_governance.json`.
+- Salvaged change: `next_task_prompt(...)` now propagates
+  `direct_file_change_policy: repair` into deterministic worker follow-up
+  prompts while leaving `session_refresh` default behavior unchanged.
+- Verification passed:
+  `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+  and 5 focused `next_task_prompt` tests.
+
+Governance lesson:
+- The repair policy is now proven in live execution. It does not magically make
+  the model obey SEARCH/REPLACE, but it prevents direct edits from being silently
+  accepted and gives the monitor a deterministic salvage/repair point.
+
 ## 2026-06-02: dirty worktree deterministic-apply bypass now needs repair
 
 - Monitoring found worker runs that emitted `search_replace_blocks` but had

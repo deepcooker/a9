@@ -6601,6 +6601,13 @@ def worker_output_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
     focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
     worker_output = worker_output_from_summary(summary)
+    include_direct_file_change_repair = (
+        parse_direct_file_change_policy(task.prompt) == "repair"
+        or strict_worker_envelope_required_for_phase(phase)
+    )
+    direct_file_change_policy_line = (
+        "direct_file_change_policy: repair\n" if include_direct_file_change_repair else ""
+    )
     test_slice_command = extracted_test_command_from_next_slice(worker_output.get("next_slice", ""))
     check_scope_notice = ""
     if test_slice_command:
@@ -6727,6 +6734,7 @@ Codex-style goal continuation:
     communication_acceptance_lines = communication_acceptance_hints(task, summary)
     plan_lines = active_plan_prompt_context()
     return f"""strict_worker_envelope: true
+{direct_file_change_policy_line}
 
 Continue A9 24-hour automation.
 
