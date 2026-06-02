@@ -13,6 +13,29 @@
 - This remains observation-first: the finding does not block status unless a
   separate hard error is present.
 
+## 2026-06-02: context-governance doc reads are observable, but allowance must be explicit
+
+- A 24h worker implemented observation-first process governance for noisy
+  context reads. Reads of `docs/session-raw-*`, `docs/communication-observation-log.md`,
+  `docs/agent-runtime-observations.md`, `docs/mistakes.md`, and
+  `archive/original-ideas/*` outside explicit session/close-reading work now
+  become `forbidden_session_context_read` warnings instead of hard failures.
+- Auto-test then extended the slice to wildcard bounded reads and found a real
+  regex bug in the prompt path parser. The repair passed focused tests, but the
+  process quality was still weak: direct file changes, undeclared checks, and
+  high token input showed the worker is not yet following SEARCH/REPLACE-first
+  discipline.
+- Monitor review found a more important bug: the worker treated any forbidden
+  path text in the prompt as allowance. That is wrong because supervisor
+  prompts often say "Do not read docs/session-raw-summary.md"; prohibition text
+  must not become permission.
+- The monitor fixed this authority bug manually. Session/evidence/archive reads
+  are now allowed only for session phases or when the task has an explicit
+  `bounded read:` path and the command is actually a bounded read of that path.
+- Governance lesson: context cleanup must be enforced by positive allowance,
+  not by string presence. Prompt text that says "do not read X" is a guardrail,
+  not a read contract.
+
 ## 2026-06-02: dirty worktree deterministic-apply bypass now needs repair
 
 - Monitoring found worker runs that emitted `search_replace_blocks` but had

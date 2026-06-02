@@ -2621,15 +2621,6 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
     if len(pipe_parts) > 1:
         return False
 
-    def path_matches(pattern: str, candidate: str) -> bool:
-        if pattern == candidate:
-            return True
-        if pattern.endswith("/") and candidate.startswith(pattern):
-            return True
-        if "*" in pattern and fnmatch.fnmatch(candidate, pattern):
-            return True
-        return False
-
     try:
         parts = shlex.split(inner)
     except ValueError:
@@ -2638,7 +2629,7 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
     if parts and parts[0] == "tail":
         if len(parts) >= 4 and parts[1] == "-n":
             target = parts[-1]
-            return any(path_matches(path, target) for path in paths)
+            return any(bounded_read_path_matches(path, target) for path in paths)
         return False
 
     if parts and parts[0] == "sed":
@@ -2653,7 +2644,7 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
         if end < start:
             return False
         target = parts[3]
-        return any(path_matches(path, target) for path in paths)
+        return any(bounded_read_path_matches(path, target) for path in paths)
 
     if parts and parts[0] == "rg":
         allowed_flags = {"-n", "--line-number", "-F", "--fixed-strings"}
@@ -2670,17 +2661,27 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
         rg_paths = parts[index + 1 :]
         if not pattern or not rg_paths:
             return False
-        return all(any(path_matches(pattern_text, rg_path) for pattern_text in paths) for rg_path in rg_paths)
+        return all(any(bounded_read_path_matches(pattern_text, rg_path) for pattern_text in paths) for rg_path in rg_paths)
     return False
 
 
-def task_allows_session_context_reads(task: Task) -> bool:
+def bounded_read_path_matches(pattern: str, candidate: str) -> bool:
+    if pattern == candidate:
+        return True
+    if pattern.endswith("/") and candidate.startswith(pattern):
+        return True
+    if "*" in pattern and fnmatch.fnmatch(candidate, pattern):
+        return True
+    return False
+
+
+def task_allows_session_context_reads(task: Task, command: str) -> bool:
     if task.phase in SESSION_CONTEXT_READ_PHASES:
         return True
-    prompt = str(task.prompt or "").lower()
-    if any(path.lower() in prompt for path in FORBIDDEN_SESSION_CONTEXT_PATHS):
-        return True
-    return any(path in prompt or f"./{path}" in prompt for path in FORBIDDEN_SESSION_CONTEXT_PATH_PREFIXES)
+    bounded_paths = bounded_read_paths_from_prompt(task.prompt)
+    if not bounded_paths:
+        return False
+    return command_is_single_bounded_read_of_paths(command, bounded_paths)
 
 
 def command_session_context_path(command: str, prefix: str) -> str:
@@ -2702,7 +2703,7 @@ def command_session_context_path(command: str, prefix: str) -> str:
 
 
 def forbidden_session_context_read(task: Task, command: str) -> dict[str, Any] | None:
-    if task_allows_session_context_reads(task):
+    if task_allows_session_context_reads(task, command):
         return None
     normalized = normalize_shell_command(command)
     lowered = normalized.lower()

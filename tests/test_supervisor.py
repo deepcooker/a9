@@ -4292,6 +4292,37 @@ Do the work.
         self.assertEqual(result["status"], "pass")
         self.assertNotIn("forbidden_session_context_read", kinds)
 
+    def test_process_governance_does_not_treat_forbidden_path_text_as_allowance(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="forbidden-path-text-is-not-allowance",
+                prompt="Do not read docs/session-raw-summary.md unless this is a session task.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(
+                task,
+                {"event_summaries_path": str(events)},
+                run_dir,
+            )
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertIn("forbidden_session_context_read", kinds)
+
     def test_process_governance_allows_session_context_reads_for_session_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
