@@ -1391,3 +1391,28 @@ Governance lesson:
   observable before behavior expansion.
 - Next communication work should continue from the report output, not from a
   broad project scan.
+
+## 2026-06-02: communication report discovery slice stayed small
+
+Run evidence:
+- Worker run:
+  `.a9/runs/implement-communication-data-contract-discovery-20260602-20260602T153056Z-a1`
+- Integrated commit:
+  `905b4633e6d5c952c5e94ce4d393f55b85697c63`
+
+Observation:
+- The worker added `communication_data_contract_report` to
+  `controller_discovery()` and added a focused discovery assertion.
+- Patch size was four lines across `scripts/a9_control_api.py` and
+  `tests/test_control_api.py`.
+- Declared checks passed:
+  `python3 -m py_compile scripts/a9_control_api.py tests/test_control_api.py`
+  and the two focused `ControlApiTests` cases.
+- Process governance recorded four warn-only direct file-change events and no
+  broad read findings.
+
+Governance lesson:
+- Small, decided execution packets with explicit allowed paths materially reduce
+  token cost and broad-scan drift.
+- The remaining process weakness is edit-channel discipline, not task
+  understanding or scope control.
