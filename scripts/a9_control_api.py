@@ -42,6 +42,7 @@ RECOVERY_LOOP_LATEST_REL_PATH = Path(".a9") / "services" / "recovery-loop-latest
 COMMUNICATION_OBSERVATION_REL_PATH = Path(".a9") / "services" / "communication-observation.json"
 COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestions.json"
 COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestion-audit.jsonl"
+SERVICE_CONTROL_AUDIT_REL_PATH = Path(".a9") / "services" / "service-control-audit.jsonl"
 PHONE_CONTROL_GROUPS = {
     "runtime": [
         "submit.run",
@@ -1512,6 +1513,77 @@ def append_communication_suggestion_audit(event: dict[str, Any], *, root: Path =
 def enqueue_communication_suggestion_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
     thread = threading.Thread(
         target=append_communication_suggestion_audit,
+        kwargs={"event": event, "root": root},
+        daemon=True,
+    )
+    thread.start()
+
+
+def build_service_control_audit_event(
+    action: str,
+    command: str,
+    status: str,
+    *,
+    target_services: list[str] | None = None,
+    requested_services: list[str] | None = None,
+    reason: str | None = None,
+    gate: dict[str, Any] | None = None,
+    return_code: int | None = None,
+    payload: dict[str, Any] | None = None,
+    service_observation: dict[str, Any] | None = None,
+    service_observation_path: str | None = None,
+) -> dict[str, Any]:
+    operator_scopes = payload.get("operator_scopes") if isinstance(payload, dict) else []
+    scope_count = len([scope for scope in operator_scopes if str(scope).strip()]) if isinstance(operator_scopes, list) else 0
+    observation_summary: dict[str, Any] | None = None
+    if isinstance(service_observation, dict):
+        observed = service_observation.get("observed")
+        if isinstance(observed, dict):
+            observation_summary = {
+                "status": service_observation.get("status"),
+                "checked_at": service_observation.get("checked_at"),
+                "observed_status": observed.get("next_action"),
+                "missing_count": observed.get("missing_count"),
+            }
+    event = {
+        "at": utc_now(),
+        "action": action,
+        "command": command,
+        "status": status,
+    }
+    if status in {"blocked", "invalid_request"} and reason:
+        event["reason"] = reason
+    if target_services is not None:
+        event["target_services"] = target_services
+    if requested_services is not None:
+        event["requested_services"] = requested_services
+    if gate is not None:
+        event["gate_allowed"] = bool(gate.get("allowed"))
+        event["gate_reason"] = gate.get("reason") or gate.get("status")
+        event["gate_status"] = gate.get("status")
+    if return_code is not None:
+        event["return_code"] = return_code
+    if reason and status == "failed":
+        event["reason"] = reason
+    if observation_summary is not None:
+        event["service_observation_summary"] = observation_summary
+    if service_observation_path:
+        event["service_observation_path"] = service_observation_path
+    event["has_operator_scope"] = scope_count > 0
+    event["operator_scope_count"] = scope_count
+    return event
+
+
+def append_service_control_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    path = root / SERVICE_CONTROL_AUDIT_REL_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def enqueue_service_control_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    thread = threading.Thread(
+        target=append_service_control_audit,
         kwargs={"event": event, "root": root},
         daemon=True,
     )
@@ -5593,18 +5665,30 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
     except PermissionError as exc:
         observation = service_observation_status(root)
         missing_services = [str(item) for item in observation.get("observed", {}).get("missing_services", [])]
-        return {
+        result = {
             "status": "blocked",
             "command": "services.start",
             "blocked_reason": str(exc),
             "missing_services": missing_services,
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "start",
+            "services.start",
+            "blocked",
+            reason=str(exc),
+            target_services=missing_services,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
     gate = command_gate("services.start", root=root)
     observation = service_observation_status(root)
     missing_services = [str(item) for item in observation.get("observed", {}).get("missing_services", [])]
     if not gate.get("allowed"):
-        return {
+        result = {
             "status": "blocked",
             "command": "services.start",
             "gate": gate,
@@ -5612,6 +5696,19 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
             "missing_services": missing_services,
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "start",
+            "services.start",
+            "blocked",
+            reason=str(gate.get("reason") or "phone_control_disarmed"),
+            gate=gate,
+            target_services=missing_services,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
 
     requested_raw = payload.get("services", payload.get("missing_services", []))
     requested_services = [str(item).strip() for item in requested_raw] if isinstance(requested_raw, list) else []
@@ -5619,7 +5716,7 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
     if requested_services:
         unknown = sorted({item for item in requested_services if item not in SERVICE_PROCESS_MARKERS})
         if unknown:
-            return {
+            result = {
                 "status": "invalid_request",
                 "command": "services.start",
                 "gate": gate,
@@ -5629,6 +5726,20 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
                 "missing_services": missing_services,
                 "service_observation": observation,
             }
+            audit_event = build_service_control_audit_event(
+                "start",
+                "services.start",
+                "invalid_request",
+                reason="unknown_service",
+                requested_services=requested_services,
+                gate=gate,
+                target_services=[],
+                payload=payload,
+                service_observation=observation,
+            )
+            enqueue_service_control_audit(audit_event, root=root)
+            result["audit_async"] = True
+            return result
         target_services = [item for item in requested_services if item in missing_services]
     else:
         target_services = missing_services
@@ -5655,7 +5766,7 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
             timeout=5,
         )
     except subprocess.TimeoutExpired as exc:
-        return {
+        result = {
             "status": "degraded",
             "command": "services.start",
             "gate": gate,
@@ -5665,12 +5776,25 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
             "error": str(exc),
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "start",
+            "services.start",
+            "degraded",
+            reason="service_start_timeout",
+            target_services=target_services,
+            gate=gate,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
 
     output = (proc.stdout or "").strip()
     try:
         start_result = json.loads(output) if output else {}
     except json.JSONDecodeError:
-        return {
+        result = {
             "status": "degraded",
             "command": "services.start",
             "gate": gate,
@@ -5680,8 +5804,22 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
             "output": output[:2000],
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "start",
+            "services.start",
+            "degraded",
+            reason="service_start_invalid_json",
+            target_services=target_services,
+            return_code=proc.returncode,
+            gate=gate,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
     refreshed = service_observation_status(root)
-    return {
+    result = {
         "status": "ok" if proc.returncode == 0 else "failed",
         "command": "services.start",
         "gate": gate,
@@ -5691,6 +5829,19 @@ def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
         "service_observation_before": observation,
         "service_observation_after": refreshed,
     }
+    audit_event = build_service_control_audit_event(
+        "start",
+        "services.start",
+        result["status"],
+        target_services=target_services,
+        return_code=proc.returncode,
+        gate=gate,
+        payload=payload,
+        service_observation=observation,
+    )
+    enqueue_service_control_audit(audit_event, root=root)
+    result["audit_async"] = True
+    return result
 
 
 def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
@@ -5698,37 +5849,74 @@ def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dic
         require_phone_admin(payload)
     except PermissionError as exc:
         observation = service_observation_status(root)
-        return {
+        result = {
             "status": "blocked",
             "command": "services.restart",
             "blocked_reason": str(exc),
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "restart",
+            "services.restart",
+            "blocked",
+            reason=str(exc),
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
     gate = command_gate("services.restart", root=root)
     observation = service_observation_status(root)
     if not gate.get("allowed"):
-        return {
+        result = {
             "status": "blocked",
             "command": "services.restart",
             "gate": gate,
             "blocked_reason": str(gate.get("reason") or "phone_control_disarmed"),
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "restart",
+            "services.restart",
+            "blocked",
+            reason=str(gate.get("reason") or "phone_control_disarmed"),
+            gate=gate,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
 
     requested_raw = payload.get("services")
     requested_services = [str(item).strip() for item in requested_raw] if isinstance(requested_raw, list) else []
     requested_services = [item for item in requested_services if item]
     if not requested_services:
-        return {
+        result = {
             "status": "invalid_request",
             "command": "services.restart",
             "gate": gate,
             "reason": "no_services_requested",
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "restart",
+            "services.restart",
+            "invalid_request",
+            reason="no_services_requested",
+            gate=gate,
+            target_services=requested_services,
+            requested_services=requested_services,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
     requested_services = list(dict.fromkeys(requested_services))
     if "supervisor" in requested_services and not bool(payload.get("allow_supervisor")):
-        return {
+        result = {
             "status": "invalid_request",
             "command": "services.restart",
             "gate": gate,
@@ -5736,9 +5924,22 @@ def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dic
             "target_services": requested_services,
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "restart",
+            "services.restart",
+            "invalid_request",
+            reason="supervisor_restart_not_allowed",
+            target_services=requested_services,
+            gate=gate,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
     unknown = sorted({item for item in requested_services if item not in SERVICE_PROCESS_MARKERS})
     if unknown:
-        return {
+        result = {
             "status": "invalid_request",
             "command": "services.restart",
             "gate": gate,
@@ -5747,6 +5948,20 @@ def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dic
             "known_services": sorted(SERVICE_PROCESS_MARKERS),
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "restart",
+            "services.restart",
+            "invalid_request",
+            reason="unknown_service",
+            requested_services=requested_services,
+            gate=gate,
+            target_services=requested_services,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
 
     cmd = ["python3", str(SERVICE_HELPER_PATH), "restart", "--only", *requested_services]
     try:
@@ -5760,7 +5975,7 @@ def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dic
             timeout=8,
         )
     except subprocess.TimeoutExpired as exc:
-        return {
+        result = {
             "status": "degraded",
             "command": "services.restart",
             "gate": gate,
@@ -5770,12 +5985,25 @@ def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dic
             "error": str(exc),
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "restart",
+            "services.restart",
+            "degraded",
+            reason="service_restart_timeout",
+            target_services=requested_services,
+            gate=gate,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
 
     output = (proc.stdout or "").strip()
     try:
         restart_result = json.loads(output) if output else {}
     except json.JSONDecodeError:
-        return {
+        result = {
             "status": "degraded",
             "command": "services.restart",
             "gate": gate,
@@ -5785,8 +6013,22 @@ def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dic
             "output": output[:2000],
             "service_observation": observation,
         }
+        audit_event = build_service_control_audit_event(
+            "restart",
+            "services.restart",
+            "degraded",
+            reason="service_restart_invalid_json",
+            target_services=requested_services,
+            return_code=proc.returncode,
+            gate=gate,
+            payload=payload,
+            service_observation=observation,
+        )
+        enqueue_service_control_audit(audit_event, root=root)
+        result["audit_async"] = True
+        return result
     refreshed = service_observation_status(root)
-    return {
+    result = {
         "status": "ok" if proc.returncode == 0 else "failed",
         "command": "services.restart",
         "gate": gate,
@@ -5796,6 +6038,19 @@ def service_restart_action(payload: dict[str, Any], *, root: Path = ROOT) -> dic
         "service_observation_before": observation,
         "service_observation_after": refreshed,
     }
+    audit_event = build_service_control_audit_event(
+        "restart",
+        "services.restart",
+        result["status"],
+        target_services=requested_services,
+        return_code=proc.returncode,
+        gate=gate,
+        payload=payload,
+        service_observation=observation,
+    )
+    enqueue_service_control_audit(audit_event, root=root)
+    result["audit_async"] = True
+    return result
 
 
 def eval_override(payload: dict[str, Any]) -> dict[str, Any]:

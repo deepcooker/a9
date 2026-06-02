@@ -148,10 +148,30 @@ Why this matters:
 
 Bounded implement next slice:
 - `implement` (only `scripts/a9_supervisor.py` and `tests/test_supervisor.py`):
-  - On next-task generation, if `next_slice` includes a concrete test command, either:
+- On next-task generation, if `next_slice` includes a concrete test command, either:
   - add it explicitly into generated task `checks`; or
   - rewrite prompt wording to mark it as proposal-only and explicitly non-executable unless declared in `checks`.
   - Add focused tests to lock the chosen behavior and prevent undeclared test execution drift.
+
+## 2026-06-02: async service-control mutation audit added to mobile/control API
+
+Mechanism copied:
+- `append_communication_suggestion_audit` / `enqueue_communication_suggestion_audit` in `scripts/a9_control_api.py` (threaded JSONL append + non-blocking enqueue pattern, compact JSON separators).
+- `build_remote_post_audit_receipt` / `guarded_remote_post` shape and fields (`command`, `request/return status`, `gate` metadata) for consistent durable audit envelopes.
+
+Implementation:
+- Added `.a9/services/service-control-audit.jsonl` as durable async sink (`SERVICE_CONTROL_AUDIT_REL_PATH`).
+- Added `build_service_control_audit_event`, `append_service_control_audit`, and `enqueue_service_control_audit`.
+- Wired `service_start_action` and `service_restart_action` to enqueue audit events on `blocked`, `invalid_request`, `degraded`, `failed`, and `ok` outcomes.
+- Added `audit_async` marker in returned payloads where async append is enqueued.
+- Audit event includes timestamp, action, command, status, reason for blocked/invalid outcomes, target/requested services where present, gate allowed/reason, return_code where available, operator scope presence/count, and available service-observation summary.
+
+Checks run:
+- `python3 -m py_compile scripts/a9_control_api.py tests/test_control_api.py`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_start_action_audits_blocked_gate`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_restart_action_audits_invalid_request`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_service_restart_action_audits_ok_result`
+- `python3 -m unittest tests.test_control_api.ControlApiTests.test_append_service_control_audit_writes_jsonl`
 
 ## 2026-06-02: communication worker produced useful patch but failed full declared check
 

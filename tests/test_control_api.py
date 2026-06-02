@@ -8344,6 +8344,38 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(calls[0][0][0], "python3")
         self.assertEqual(calls[0][0][2:], ["start", "--only", "node-worker"])
 
+    def test_service_start_action_audits_blocked_gate(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit_calls = []
+            original_audit = mod.enqueue_service_control_audit
+
+            def fake_enqueue(event, *, root):
+                audit_calls.append((event, root))
+
+            try:
+                mod.enqueue_service_control_audit = fake_enqueue
+                result = mod.service_start_action({"operator_scopes": ["operator.admin"]}, root=root)
+            finally:
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["command"], "services.start")
+        self.assertEqual(result["gate"]["reason"], "phone_control_disarmed")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(len(audit_calls), 1)
+        event, audit_root = audit_calls[0]
+        self.assertEqual(event["status"], "blocked")
+        self.assertEqual(event["action"], "start")
+        self.assertEqual(event["command"], "services.start")
+        self.assertFalse(event["gate_allowed"])
+        self.assertEqual(event["gate_reason"], "phone_control_disarmed")
+        self.assertTrue(event["has_operator_scope"])
+        self.assertEqual(event["operator_scope_count"], 1)
+        self.assertIn("service_observation_summary", event)
+        self.assertEqual(audit_root, root)
+
     def test_api_services_start_route_calls_handler(self):
         mod = load_control_api()
         original_handler = mod.service_start_action
@@ -8372,6 +8404,25 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["response"]["command"], "services.start")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
+    def test_append_service_control_audit_writes_jsonl(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = {
+                "status": "ok",
+                "command": "services.restart",
+                "target_services": ["recovery-loop"],
+                "has_operator_scope": True,
+            }
+            mod.append_service_control_audit(payload, root=root)
+            path = root / mod.SERVICE_CONTROL_AUDIT_REL_PATH
+            self.assertTrue(path.parent.exists())
+            line = path.read_text(encoding="utf-8").strip().splitlines()[-1]
+            self.assertIn('"status":"ok"', line)
+            self.assertNotIn(": ", line)
+            self.assertNotIn(", ", line)
+            self.assertEqual(json.loads(line), payload)
 
     def test_service_restart_action_requires_runtime_gate(self):
         mod = load_control_api()
@@ -8448,6 +8499,36 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["target_services"], ["supervisor"])
         self.assertEqual(calls[0][0][2:], ["restart", "--only", "supervisor"])
 
+    def test_service_restart_action_audits_invalid_request(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            audit_calls = []
+            original_audit = mod.enqueue_service_control_audit
+
+            def fake_enqueue(event, *, root):
+                audit_calls.append((event, root))
+
+            try:
+                mod.enqueue_service_control_audit = fake_enqueue
+                result = mod.service_restart_action({"operator_scopes": ["operator.admin"]}, root=root)
+            finally:
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "invalid_request")
+        self.assertEqual(result["command"], "services.restart")
+        self.assertEqual(result["reason"], "no_services_requested")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(len(audit_calls), 1)
+        event, audit_root = audit_calls[0]
+        self.assertEqual(event["status"], "invalid_request")
+        self.assertEqual(event["action"], "restart")
+        self.assertEqual(event["command"], "services.restart")
+        self.assertEqual(event["reason"], "no_services_requested")
+        self.assertEqual(event["target_services"], [])
+        self.assertEqual(audit_root, root)
+
     def test_service_restart_action_runs_helper_and_returns_restart_json(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -8493,6 +8574,52 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["restart_result"]["requested"], ["recovery-loop"])
         self.assertEqual(calls[0][0][0], "python3")
         self.assertEqual(calls[0][0][2:], ["restart", "--only", "recovery-loop"])
+
+    def test_service_restart_action_audits_ok_result(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            audit_calls = []
+            original_audit = mod.enqueue_service_control_audit
+
+            class FakeProc:
+                returncode = 0
+                stdout = json.dumps(
+                    {
+                        "kind": "service_restart",
+                        "requested": ["recovery-loop"],
+                        "status": "ok",
+                    }
+                )
+
+            original_observation = mod.service_observation_status
+            original_run = mod.subprocess.run
+            try:
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                mod.service_observation_status = lambda *args, **kwargs: {
+                    "status": "ok",
+                    "checked_at": "2026-06-02T00:00:00+00:00",
+                    "observed": {"missing_count": 0},
+                }
+                def fake_run(cmd, **kwargs):
+                    return FakeProc()
+                mod.subprocess.run = fake_run
+                result = mod.service_restart_action({"operator_scopes": ["operator.admin"], "services": ["recovery-loop"]}, root=root)
+            finally:
+                mod.service_observation_status = original_observation
+                mod.subprocess.run = original_run
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["command"], "services.restart")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(len(audit_calls), 1)
+        event, audit_root = audit_calls[0]
+        self.assertEqual(event["status"], "ok")
+        self.assertEqual(event["target_services"], ["recovery-loop"])
+        self.assertEqual(event["return_code"], 0)
+        self.assertEqual(audit_root, root)
 
     def test_api_services_restart_route_calls_handler(self):
         mod = load_control_api()
