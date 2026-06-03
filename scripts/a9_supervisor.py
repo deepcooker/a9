@@ -1634,10 +1634,35 @@ def blocked_worker_command(command: str) -> str:
     return ""
 
 
-def command_reads_runtime_evidence_root(command: str) -> bool:
+def command_reads_runtime_evidence_root(
+    command: str,
+    bounded_read_paths: list[str] | None = None,
+) -> bool:
     normalized = normalize_shell_command(command)
     if not re.search(r"\b(?:rg|grep|find|ls)\b", normalized):
         return False
+    bounded_read_paths = [path.rstrip("/") for path in (bounded_read_paths or [])]
+    read_targets = command_read_targets(normalized)
+    for target in read_targets:
+        normalized_target = target[2:] if target.startswith("./") else target
+        if any(bounded_read_path_matches(pattern, normalized_target) for pattern in bounded_read_paths):
+            continue
+        if not any(
+            normalized_target == root.rstrip("/")
+            or normalized_target.startswith(root.rstrip("/") + "/")
+            for root in RUNTIME_EVIDENCE_ROOTS
+        ):
+            continue
+        candidate = Path(normalized_target)
+        # Avoid treating bounded evidence file reads as a root read.
+        if candidate.suffix:
+            continue
+        try:
+            if candidate.exists() and candidate.is_file():
+                continue
+        except OSError:
+            pass
+        return True
     for root in RUNTIME_EVIDENCE_ROOTS:
         escaped = re.escape(root.rstrip("/"))
         if re.search(rf"(?:^|[\s'\"=])(?:\./)?{escaped}/?(?:$|[\s'\"|&;])", normalized):
@@ -1688,7 +1713,7 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         return {}
     if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(normalized):
         return {}
-    if command_reads_runtime_evidence_root(normalized):
+    if command_reads_runtime_evidence_root(normalized, bounded_paths):
         return {}
     session_read_finding = forbidden_session_context_read(task, normalized)
     if session_read_finding and session_read_finding.get("level") == "error":
@@ -3321,7 +3346,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "command": command,
                 }
             )
-        if command_reads_runtime_evidence_root(command):
+        if command_reads_runtime_evidence_root(command, bounded_read_paths):
             findings.append(
                 {
                     "level": "warn",

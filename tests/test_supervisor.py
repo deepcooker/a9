@@ -4809,6 +4809,63 @@ Do the work.
         self.assertEqual(finding["read_span"], "1-260")
         self.assertEqual(finding["recommendation"], "use rg anchors (grep-like) to locate lines first, then read narrower sed slices")
 
+    def test_process_governance_allows_bounded_runtime_evidence_read_without_root_warning(self):
+        mod = load_supervisor()
+        evidence_path = ".a9/runs/compact-monitor-run/summary.json"
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": f"/bin/bash -lc \"sed -n '1,80p' {evidence_path}\"",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="bounded-monitor-evidence-read",
+                phase="implement",
+                prompt=f"bounded read: {evidence_path}\nUse compact monitor evidence only.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("runtime_evidence_root_read", kinds)
+
+    def test_process_governance_flags_broad_runtime_evidence_root_without_bounded_plan(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'rg -n -m 20 token .a9/runs'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="runtime-root-read-no-bounded-plan",
+                phase="implement",
+                prompt="Do bounded source work.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertIn("runtime_evidence_root_read", kinds)
+
     def test_process_governance_ignores_narrow_file_slice(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

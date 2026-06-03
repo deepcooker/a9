@@ -1,5 +1,15 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: distinguish exact monitor evidence reads from runtime root scans
+
+Run evidence:
+- failed attempt 1: `/root/a9/.a9/runs/fix-monitor-blocked-selftest-noise-20260603-20260603T053954Z-a1`
+- failed attempt 2: `/root/a9/.a9/runs/repair-monitor-blocked-selftest-noise-explicit-evidence-20260603-20260603T054306Z-a1`
+
+Observation:
+- monitor injects compact evidence paths explicitly, so exact evidence reads should be treated as bounded evidence reads and not as broad runtime-root scans.
+- repair work should fix monitor logic from code/test context only; avoid broad runtime root or full summary reads in worker execution.
+
 ## 2026-06-02: explicit allowed read scope now blocks reference-scan drift
 
 Run evidence:
