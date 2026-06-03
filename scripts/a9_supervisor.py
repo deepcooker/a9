@@ -3005,15 +3005,17 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
         if len(parts) < 4 or parts[1] != "-n":
             return False
         window = parts[2].strip("'\"")
-        seg = re.search(r"^(\d+)\s*,\s*(\d+)p$", window)
-        if not seg:
-            return False
-        start = int(seg.group(1))
-        end = int(seg.group(2))
-        if end < start:
+        if not sed_window_is_bounded(window):
             return False
         target = parts[3]
         return any(bounded_read_path_matches(path, target) for path in paths)
+
+    if parts and parts[0] == "git" and len(parts) >= 5 and parts[1] == "show" and "--" in parts:
+        dash_index = parts.index("--")
+        targets = [part for part in parts[dash_index + 1 :] if part.strip()]
+        return bool(targets) and all(
+            any(bounded_read_path_matches(pattern_text, target) for pattern_text in paths) for target in targets
+        )
 
     if parts and parts[0] == "rg":
         allowed_flags = {"-n", "--line-number", "-F", "--fixed-strings"}
@@ -3040,6 +3042,21 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
             return False
         return all(any(bounded_read_path_matches(pattern_text, rg_path) for pattern_text in paths) for rg_path in rg_paths)
     return False
+
+
+def sed_window_is_bounded(window: str) -> bool:
+    segments = [segment.strip() for segment in window.split(";") if segment.strip()]
+    if not segments:
+        return False
+    for segment in segments:
+        match = re.fullmatch(r"(\d+)\s*,\s*(\d+)p", segment)
+        if not match:
+            return False
+        start = int(match.group(1))
+        end = int(match.group(2))
+        if end < start:
+            return False
+    return True
 
 
 def bounded_read_path_matches(pattern: str, candidate: str) -> bool:

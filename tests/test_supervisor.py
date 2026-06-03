@@ -4836,6 +4836,68 @@ Do the work.
         kinds = [item["kind"] for item in result["findings"]]
         self.assertNotIn("forbidden_session_context_read", kinds)
 
+    def test_process_governance_allows_task_allowed_observation_log_multi_sed_window(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc \"sed -n '146,230p;680,730p;1158,1210p' "
+                            "docs/agent-runtime-observations.md\""
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="multi-window-observation-log-read",
+                prompt="Verify a bounded observation log slice.",
+                allowed_paths=["docs/agent-runtime-observations.md"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertNotIn("forbidden_session_context_read", kinds)
+
+    def test_process_governance_allows_task_allowed_observation_log_git_show_path_read(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc 'git show 0b9ea34 -- scripts/a9_supervisor.py "
+                            "tests/test_supervisor.py docs/agent-runtime-observations.md'"
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="git-show-observation-log-read",
+                prompt="Verify a bounded observation log slice.",
+                allowed_paths=[
+                    "docs/agent-runtime-observations.md",
+                    "scripts/a9_supervisor.py",
+                    "tests/test_supervisor.py",
+                ],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertNotIn("forbidden_session_context_read", kinds)
+
     def test_process_governance_still_blocks_allowed_path_session_raw_read_without_session_phase(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

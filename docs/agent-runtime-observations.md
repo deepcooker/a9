@@ -38,6 +38,12 @@ Follow-up governance fix:
   multi-path reads when all paths are in `allowed_paths`.
 - Replayed results now keep only real findings: broad source slices and missing
   bounded evidence plan.
+- A follow-up 24h validation found two more bounded evidence shapes:
+  multi-window `sed -n 'A,Bp;C,Dp' docs/agent-runtime-observations.md` and
+  `git show <commit> -- allowed/path ...`. Both are now treated as bounded
+  reads when every path is in `allowed_paths`.
+- Replaying that run now removes the forbidden-session false positives and
+  leaves only the real broad test-source slice.
 
 ## 2026-06-03: strict repair and Spark startup 24h validation passed with protocol noise
 
