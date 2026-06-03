@@ -1,5 +1,37 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: review closure status slice passed, but worker cost was too high
+
+Run evidence:
+- `.a9/runs/implement-review-closure-status-20260603-20260603T071504Z-a1`
+- Auto-commit: `01b456366bc221280b036e8fd0ddfd032b898f7b`
+
+Result:
+- The task used `decision_status: decided` and the injected `Task Decision
+  Packet` routed to `execution_next` with no missing fields.
+- The worker added `runtime_state` / `runtime_state_reason` to
+  `service_progress()` and printed `runtime_state` in `status()`.
+- CLI status now distinguishes empty queue from completion:
+  `runtime_state: waiting_for_review_closure`.
+- Declared checks passed under the supervisor, and the monitor additionally ran
+  five focused tests for the new runtime-state behavior.
+
+Quality findings:
+- Process governance recorded broad file slice observations and direct
+  `file_change` events.
+- Actual usage was very high: input `2284009`, cached input `2188928`, uncached
+  input `95081`, output `21623`, reasoning `13536`.
+- This confirms the worker can execute a closed slice, but still over-reads and
+  does not reliably use deterministic SEARCH/REPLACE output.
+
+Governance lesson:
+- Review closure improved routing quality: the worker knew it was executing a
+  decided slice.
+- Worker context/cost discipline is still not acceptable for long unattended
+  runs. The next review should focus on reducing broad reads through stronger
+  evidence-plan enforcement and narrower source hydration, not arbitrary token
+  number gates.
+
 ## 2026-06-03: compound wide-read commands are now observable
 
 Run evidence:
