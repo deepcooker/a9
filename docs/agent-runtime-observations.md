@@ -1900,3 +1900,37 @@ Governance lesson:
   `running: 1`.
 - This is runtime hygiene, not a gate. It prevents stale state from blocking the
   next small task and preserves evidence for monitor review.
+
+## 2026-06-03: strict stability smoke exposed worker check self-report drift
+
+Run evidence:
+- Worker run:
+  `.a9/runs/verify-worker-discipline-stability-20260603-20260603T104751Z-a1`
+
+Observation:
+- The 24h worker completed the bounded stability smoke with process governance
+  clean: no broad file slice, no forbidden session read, no undeclared worker
+  check, and no direct file change event.
+- The worker correctly left tests to the outer supervisor, and the supervisor
+  executed the task YAML checks as the authoritative evidence.
+- The worker envelope still self-reported stale `supervisor_declared_checks`
+  from an older prompt shape. This did not affect execution, but it proved that
+  worker self-report must never be treated as authoritative check evidence.
+- Token growth remained observation-only: the run exceeded the event-byte
+  observation threshold but was not blocked by an arbitrary hard budget.
+
+Change:
+- `validate_worker_envelope()` now records a warning with kind
+  `worker_declared_checks_self_report_mismatch` when the worker-reported
+  `output.supervisor_declared_checks` differs from the task's actual checks.
+- The warning is deliberately non-blocking. It gives the monitor a drift signal
+  while preserving the rule that task YAML, check logs, and summary evidence are
+  authoritative.
+
+Governance lesson:
+- Worker envelopes are structured evidence, not truth. A9 must compare them
+  against deterministic supervisor state before using them for monitoring,
+  scoring, or next-task routing.
+- This is the right pattern for current gate policy: facts and authority state
+  are protected, but noisy quality signals remain observation-first until the
+  review process decides they should become blocking.

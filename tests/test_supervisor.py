@@ -5908,6 +5908,37 @@ Do the work.
         self.assertFalse(any("worker_commands_run" in message for message in messages))
         self.assertFalse(any("supervisor_declared_checks" in message for message in messages))
 
+    def test_worker_envelope_observes_declared_check_self_report_mismatch(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                (
+                    'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":'
+                    '{"changed_files":[],"worker_commands_run":[],"supervisor_declared_checks":["pytest stale.py"]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-check-self-report-mismatch",
+                prompt="strict_worker_envelope: true\nDo work.",
+                checks=[
+                    "python3 -m unittest "
+                    "tests.test_supervisor.SupervisorTests.test_worker_envelope_ok_passes_when_required"
+                ],
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "pass")
+        findings = envelope.get("findings", [])
+        self.assertTrue(
+            any(finding.get("kind") == "worker_declared_checks_self_report_mismatch" for finding in findings)
+        )
+
     def test_worker_envelope_status_alias_pass_normalizes_to_ok(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

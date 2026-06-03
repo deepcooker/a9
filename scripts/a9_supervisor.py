@@ -2544,6 +2544,19 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
                         "message": "output should include supervisor_declared_checks separate from worker_commands_run",
                     }
                 )
+            elif (
+                isinstance(output.get("supervisor_declared_checks"), list)
+                and output.get("supervisor_declared_checks") != task.checks
+            ):
+                result["findings"].append(
+                    {
+                        "level": "warn",
+                        "kind": "worker_declared_checks_self_report_mismatch",
+                        "message": "worker-reported supervisor_declared_checks differ from task checks; task checks remain authoritative",
+                        "expected": task.checks,
+                        "actual": output.get("supervisor_declared_checks"),
+                    }
+                )
         has_error_finding = any(item.get("level") == "error" for item in result["findings"])
         if has_error_finding:
             result["status"] = "fail"
