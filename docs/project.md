@@ -93,6 +93,12 @@ agent 稳定后的垂直化训练和数据项目。
   policy gate、机器可读 CLI、长期记忆和多 agent 隔离。重评后 OpenClaw/Lobster
   升级为 24 小时 runtime/gateway/managed-flow 的主参考，见
   `docs/reference-selection-reassessment.md`。
+- ECC：已下载到 `reference-projects/ecc`，来源
+  `https://github.com/affaan-m/ECC`，commit
+  `99baa8250096f2d295583572399a5c9aba2ce312`，license `MIT`。重点参考
+  cross-harness operator system、session adapter contract、plugin/hook/agent skills、
+  token optimization 和 continuous learning 设计。ECC 目前只作为 reference
+  source；未来复制源码切片时必须单独走 `vendor_import` 并记录 source/commit/license。
 - Mobile Agent UI：只作为控制入口和产品壳保留。当前主线不是继续抠页面，
   入口细节不要干扰通讯治理和 24 小时 runtime。
 - Barter-rs：已下载到 `reference-projects/barter-rs/`，作为通讯治理和
