@@ -1,5 +1,19 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: monitor-blocked repair prompts now inject compact evidence
+
+Run evidence:
+- high-token pass: `.a9/runs/repair-monitor-blocked-selftest-noise-inline-evidence-20260603-20260603T054445Z-a1`
+- interrupted repair: `.a9/runs/implement-compact-monitor-evidence-injection-20260603-20260603T055110Z-a1`
+- auto-repair drift: `.a9/runs/auto-repair-implement-compact-monitor-evidence-in-6a41bbd306-20260603T055208Z-20260603T055218Z-a1`
+
+Observation:
+- The high-token pass consumed about 819k total tokens, even after compact inline evidence was supplied.
+- Follow-up workers still over-read code slices or generated auto-repair prompts that pointed at prior
+  runtime context.
+- Monitor-blocked repair prompts should inject compact process/run evidence directly and ask workers
+  to request missing evidence from the monitor, not inspect raw runtime summaries or output paths.
+
 ## 2026-06-03: distinguish exact monitor evidence reads from runtime root scans
 
 Run evidence:

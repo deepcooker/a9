@@ -7693,14 +7693,15 @@ index 0000000..3e75765
             text = next_path.read_text(encoding="utf-8")
             self.assertIn('phase: "repair"', text)
             self.assertIn("Monitor-blocked repair", text)
-            self.assertIn("process_governance_summary", text)
+            self.assertIn("compact_monitor_evidence", text)
             self.assertIn('"findings_count": 5', text)
             self.assertIn('"undeclared_check": 2', text)
             self.assertIn('"broad_rg_command": 2', text)
-            self.assertIn("/tmp/run/process_governance.json", text)
-            self.assertIn("patch.diff", text)
+            self.assertNotIn("/tmp/run/process_governance.json", text)
+            self.assertNotIn("patch.diff", text)
             self.assertIn("Declared checks are authoritative", text)
-            self.assertIn("prefer <=180 line", text)
+            self.assertIn("Use the compact evidence above first", text)
+            self.assertIn("return a change request asking the monitor", text)
             self.assertIn(
                 f"python3 -m unittest {MONITOR_BLOCKED_REGRESSION_TARGET}",
                 text,

@@ -6734,7 +6734,6 @@ def process_governance_prompt_summary(process_governance: dict[str, Any]) -> dic
         "findings_count": len(findings),
         "by_kind": by_kind,
         "samples": samples,
-        "output_path": process_governance.get("output_path", "") if isinstance(process_governance, dict) else "",
     }
 
 
@@ -6901,6 +6900,37 @@ def worker_output_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def compact_monitor_repair_evidence(summary: dict[str, Any]) -> dict[str, Any]:
+    process = process_governance_prompt_summary(summary.get("process_governance", {}))
+    worker_output = worker_output_from_summary(summary)
+    checks = summary.get("checks", [])
+    checks = checks if isinstance(checks, list) else []
+    check_summary = []
+    for item in checks[:5]:
+        if not isinstance(item, dict):
+            continue
+        check_summary.append(
+            {
+                "command": bounded_inline(str(item.get("command") or ""), 180),
+                "return_code": item.get("return_code"),
+                "status": item.get("status", ""),
+            }
+        )
+    diff = summary.get("diff", {})
+    diff = diff if isinstance(diff, dict) else {}
+    changed_files = worker_output.get("changed_files", [])
+    return {
+        "task_id": summary.get("task_id", ""),
+        "status": summary.get("status", ""),
+        "run_dir": summary.get("run_dir", ""),
+        "process_governance": process,
+        "monitor_block": summary.get("monitor_block", {}),
+        "checks": check_summary,
+        "diff_bytes": diff.get("diff_bytes", 0),
+        "changed_files": changed_files if isinstance(changed_files, list) else [],
+    }
+
+
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
     focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
     worker_output = worker_output_from_summary(summary)
@@ -6974,19 +7004,16 @@ Phase-specific bounds:
 {patch_apply_hint}
 """
     if summary.get("status") == "monitor-blocked":
-        diff_path = summary.get("diff", {}).get("diff_path", "") if isinstance(summary.get("diff"), dict) else ""
-        process_governance = process_governance_prompt_summary(summary.get("process_governance", {}))
-        monitor_block = summary.get("monitor_block", {})
+        compact_evidence = compact_monitor_repair_evidence(summary)
         repair_hint = f"""
 Monitor-blocked repair:
 - The previous run was blocked by monitor/process governance; do not continue the normal pipeline.
-- patch_diff: {diff_path}
-- process_governance_summary: {bounded_inline(json.dumps(process_governance, ensure_ascii=False), 900)}
-- monitor_block: {bounded_inline(json.dumps(monitor_block, ensure_ascii=False), 800)}
-- First inspect the blocked run evidence and patch diff, then salvage only the useful minimal changes.
+- compact_monitor_evidence: {bounded_inline(json.dumps(compact_evidence, ensure_ascii=False), 1400)}
+- Use the compact evidence above first. Do not inspect raw runtime evidence, run summaries, event logs,
+  or process_governance output files unless a monitor supplies a new exact bounded evidence path.
 - Declared checks are authoritative. Do not rerun undeclared checks, especially broad pytest/cargo commands.
-- If process_governance_summary cites an output_path, inspect it in bounded batches; prefer <=180 line
-  windows, and explain the reason before any larger batch.
+- If compact evidence is insufficient, return a change request asking the monitor for the missing
+  bounded evidence instead of searching `.a9/runs`.
 - Preserve data-first acceptance and performance-second constraints before applying or rewriting any patch.
 """
     flow = summary.get("flow_transition", {})
