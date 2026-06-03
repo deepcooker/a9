@@ -1,5 +1,32 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: strict repair and Spark startup 24h validation passed with protocol noise
+
+Run evidence:
+- `.a9/runs/verify-strict-direct-edit-repair-retry-20260603-20260603T080010Z-a1`
+
+Result:
+- The 24h worker started on `gpt-5.3-codex-spark` after the supervisor added
+  `--disable image_generation`.
+- Outer supervisor declared checks passed:
+  - direct edit governance and Spark disable focused tests
+  - `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+- No `direct_file_change_event` was recorded.
+
+Quality observations:
+- The worker still read one broad source slice.
+- The worker ran three undeclared checks, including one nonexistent test, before
+  correcting course.
+- The worker tried to record the observation as a fenced `*** Begin Patch`
+  patch, but A9 deterministic apply currently expects SEARCH/REPLACE blocks, so
+  `patch_apply` skipped it.
+
+Governance lesson:
+- The startup/tool contract is fixed enough for Spark to run again.
+- The next worker-quality improvement should target output patch-format
+  normalization and declared-check discipline, not another arbitrary token
+  threshold.
+
 ## 2026-06-03: Spark worker disables unsupported image generation tool
 
 Run evidence:
