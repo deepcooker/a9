@@ -2015,3 +2015,13 @@ Governance lesson:
 - If we want a structured field to be exact, the authoritative data must be in
   the prompt as structured data. Do not ask the worker to infer hidden
   supervisor state.
+
+Validation:
+- Worker run:
+  `.a9/runs/verify-declared-check-context-20260604-20260603T174308Z-a1`
+- Result: pass, process governance clean, no file edits.
+- The worker envelope correctly used `worker_commands_run` and copied the exact
+  two `supervisor_declared_checks` from the new section.
+- Remaining observation: the worker put local A9 files into `copied_mechanisms`.
+  That field needs later semantic tightening so it means borrowed external
+  mechanisms or source slices, not ordinary files inspected during validation.
