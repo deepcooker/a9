@@ -4233,6 +4233,35 @@ Do the work.
         self.assertEqual(result["findings"][0]["kind"], "undeclared_check")
         self.assertIn("CHECK: no-diff behavior verified", result["findings"][0]["command"])
 
+    def test_process_governance_does_not_treat_rg_test_path_as_undeclared_check(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc 'rg -n \"Begin Patch|SEARCH/REPLACE\" "
+                            "tests/test_supervisor.py | head -n 40'"
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="rg-test-path-is-evidence",
+                prompt="Verify evidence reads only.",
+                checks=["python3 -m unittest tests.test_supervisor.SupervisorTests.test_demo"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertNotIn("undeclared_check", kinds)
+
     def test_process_governance_observes_missing_bounded_evidence_plan(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4738,6 +4767,69 @@ Do the work.
                 task_id="bounded-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
                 allowed_paths=["docs/agent-runtime-observations.md"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertNotIn("forbidden_session_context_read", kinds)
+
+    def test_process_governance_allows_cd_then_task_allowed_observation_log_bounded_read(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc 'cd /tmp/worktree && rg -n \"worker cost\" "
+                            "docs/agent-runtime-observations.md | head -n 40'"
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="cd-bounded-observation-log-read",
+                prompt="Verify a bounded observation log slice.",
+                allowed_paths=["docs/agent-runtime-observations.md"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertNotIn("forbidden_session_context_read", kinds)
+
+    def test_process_governance_allows_cd_then_multi_allowed_observation_log_bounded_rg(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc 'cd /tmp/worktree && rg -n \"f0b4f31\" "
+                            "docs/agent-runtime-observations.md scripts/a9_supervisor.py "
+                            "tests/test_supervisor.py | head -n 40'"
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="cd-multi-bounded-observation-log-read",
+                prompt="Verify a bounded observation log slice.",
+                allowed_paths=[
+                    "docs/agent-runtime-observations.md",
+                    "scripts/a9_supervisor.py",
+                    "tests/test_supervisor.py",
+                ],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 

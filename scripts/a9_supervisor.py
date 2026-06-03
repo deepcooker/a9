@@ -2839,7 +2839,10 @@ def normalize_shell_command(command: str) -> str:
 
 def command_looks_like_test(command: str) -> bool:
     normalized = normalize_shell_command(command)
-    if any(hint in normalized for hint in TEST_COMMAND_HINTS):
+    lowered = normalized.lower()
+    if re.search(r"\bpython3?\s+-m\s+(?:unittest|pytest|py_compile)\b", lowered):
+        return True
+    if re.search(r"(?:^|&&|;)\s*(?:pytest|cargo\s+test|npm\s+test|pnpm\s+test|yarn\s+test)\b", lowered):
         return True
     if re.search(r"\bpython3?\s+-\s*<<", normalized):
         return any(marker in normalized for marker in ("assert ", "AssertionError", "CHECK:", "raise "))
@@ -2958,6 +2961,7 @@ def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> b
     if re.search(r"\s(?:\|\||;)\s", inner):
         return False
     fragments = [part.strip() for part in re.split(r"\s+&&\s+", inner) if part.strip()]
+    fragments = [part for part in fragments if not command_fragment_is_cd(part)]
     return bool(fragments) and all(command_fragment_is_bounded_read_of_paths(fragment, paths) for fragment in fragments)
 
 
@@ -2969,6 +2973,14 @@ def shell_lc_inner_command(command: str) -> str:
     if len(parts) >= 3 and parts[0] in {"/bin/bash", "/bin/sh", "bash", "sh"} and parts[1] == "-lc":
         return parts[2]
     return command
+
+
+def command_fragment_is_cd(inner: str) -> bool:
+    try:
+        parts = shlex.split(inner)
+    except ValueError:
+        return False
+    return len(parts) == 2 and parts[0] == "cd" and bool(parts[1].strip())
 
 
 def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> bool:
@@ -3204,6 +3216,8 @@ def task_allows_session_context_reads(task: Task, command: str) -> bool:
             "docs/mistakes.md",
         }
     ]
+    if allowed_context_paths and command_is_single_bounded_read_of_paths(command, task.allowed_paths):
+        return True
     return bool(allowed_context_paths) and command_is_single_bounded_read_of_paths(command, allowed_context_paths)
 
 

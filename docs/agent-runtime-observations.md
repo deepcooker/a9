@@ -28,6 +28,17 @@ Governance lesson:
 - This copies Codex's common patch shape at the protocol boundary without
   relaxing A9's deterministic apply authority.
 
+Follow-up governance fix:
+- Replayed the failing worker events and found two false positives:
+  `rg ... tests/test_supervisor.py` was treated as an undeclared check because
+  the path contains test terms, and `cd worktree && rg ... docs/... | head` was
+  not treated as a bounded observation-log read.
+- The classifier now recognizes test commands by executable action rather than
+  path text, allows a leading `cd` before bounded reads, and allows bounded
+  multi-path reads when all paths are in `allowed_paths`.
+- Replayed results now keep only real findings: broad source slices and missing
+  bounded evidence plan.
+
 ## 2026-06-03: strict repair and Spark startup 24h validation passed with protocol noise
 
 Run evidence:
