@@ -3851,6 +3851,58 @@ Do the work.
             any(item.get("code") == "final_message.begin_patch_update.extracted" for item in result["findings"])
         )
 
+    def test_apply_worker_search_replace_extracts_envelope_documentation_patch(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            run_dir = Path(tmp) / "run"
+            root.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "docs").mkdir()
+            target = root / "docs" / "observations.md"
+            target.write_text("# Notes\n\n## Existing\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-m", "base"],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            final = run_dir / "final.md"
+            final.write_text(
+                json.dumps(
+                    {
+                        "protocolVersion": 1,
+                        "ok": True,
+                        "status": "ok",
+                        "output": {
+                            "documentation_patch": (
+                                "SEARCH/REPLACE\n"
+                                f"*** Update File: {target}\n"
+                                "<<<<<<< SEARCH\n"
+                                "# Notes\n\n## Existing\n"
+                                "=======\n"
+                                "# Notes\n\n## Added\n\n## Existing\n"
+                                ">>>>>>> REPLACE"
+                            )
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = mod.apply_worker_search_replace({"final_path": str(final)}, root, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["applied_count"], 1)
+        self.assertEqual(result["touched_files"], ["docs/observations.md"])
+        self.assertEqual(result["patch_source"], "worker_envelope.output.documentation_patch")
+        self.assertTrue(
+            any(item.get("code") == "worker_envelope.output.documentation_patch.extracted" for item in result["findings"])
+        )
+
     def test_apply_worker_search_replace_envelope_blocks_precede_trailing_fenced_markdown_blocks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -2050,6 +2050,20 @@ def normalize_worker_patch_path(raw_path: str, root: Path | None) -> str:
     return path
 
 
+def normalize_worker_search_replace_text(text: str, root: Path | None = None) -> str:
+    lines = text.strip().splitlines()
+    normalized: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.upper() == "SEARCH/REPLACE":
+            continue
+        if stripped.startswith("*** Update File: "):
+            normalized.append(normalize_worker_patch_path(stripped.split(": ", 1)[1], root))
+            continue
+        normalized.append(line)
+    return "\n".join(normalized).strip() + "\n" if normalized else ""
+
+
 def extract_begin_patch_update_blocks(text: str, root: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
     begin = text.find("*** Begin Patch")
     end = text.find("*** End Patch", begin)
@@ -2213,6 +2227,21 @@ def extract_worker_search_replace_patch(text: str, root: Path | None = None) -> 
                 )
                 return "\n".join(parts), "worker_envelope.output.search_replace_blocks", findings
 
+        if isinstance(output, dict):
+            for field_name in ("documentation_patch", "patch"):
+                patch_value = output.get(field_name)
+                if isinstance(patch_value, str) and "<<<<<<< SEARCH" in patch_value and ">>>>>>> REPLACE" in patch_value:
+                    normalized_patch = normalize_worker_search_replace_text(patch_value, root)
+                    findings.append(
+                        {
+                            "level": "info",
+                            "code": f"worker_envelope.output.{field_name}.extracted",
+                            "scope": f"envelope.output.{field_name}",
+                            "message": f"extracted SEARCH/REPLACE patch from worker envelope output.{field_name}",
+                        }
+                    )
+                    return normalized_patch, f"worker_envelope.output.{field_name}", findings
+
     def _extract_markdown_file_blocks(raw_text: str) -> list[str]:
         parts: list[str] = []
         fence_re = re.compile(r"```[^\n`]*\n(.*?)\n```", re.DOTALL)
@@ -2272,7 +2301,7 @@ def extract_worker_search_replace_patch(text: str, root: Path | None = None) -> 
     findings.extend(begin_patch_findings)
 
     if "<<<<<<< SEARCH" in text and ">>>>>>> REPLACE" in text:
-        return text, "final_message", findings
+        return normalize_worker_search_replace_text(text, root), "final_message", findings
     return "", None, findings
 
 

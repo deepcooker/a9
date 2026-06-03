@@ -6,16 +6,22 @@ Trigger:
 - The previous 24h validation worker produced a fenced Codex-style
   `*** Begin Patch` / `*** Update File` patch instead of A9 SEARCH/REPLACE
   blocks, so `patch_apply` skipped a valid intended documentation update.
+- A follow-up worker produced a JSON envelope with
+  `output.documentation_patch` containing `SEARCH/REPLACE` plus
+  `*** Update File: path`, which also needed normalization.
 
 Change:
 - A9 now converts update-only Begin Patch hunks with existing context into
   SEARCH/REPLACE blocks before invoking the existing deterministic apply engine.
 - Absolute paths under the worker worktree are normalized to repository-relative
   paths.
+- A9 also accepts envelope `output.documentation_patch` / `output.patch`
+  strings when they contain SEARCH/REPLACE blocks.
 - Add/delete file hunks remain out of scope for this compatibility slice.
 
 Checks:
 - `python3 -m unittest tests.test_supervisor.SupervisorTests.test_apply_worker_search_replace_extracts_final_message_blocks tests.test_supervisor.SupervisorTests.test_apply_worker_search_replace_extracts_fenced_markdown_blocks_after_strict_envelope tests.test_supervisor.SupervisorTests.test_apply_worker_search_replace_extracts_begin_patch_update_blocks tests.test_supervisor.SupervisorTests.test_apply_worker_search_replace_envelope_blocks_precede_trailing_fenced_markdown_blocks`
+- `python3 -m unittest tests.test_supervisor.SupervisorTests.test_apply_worker_search_replace_extracts_begin_patch_update_blocks tests.test_supervisor.SupervisorTests.test_apply_worker_search_replace_extracts_envelope_documentation_patch tests.test_supervisor.SupervisorTests.test_apply_worker_search_replace_extracts_final_message_blocks`
 - `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
 
 Governance lesson:
