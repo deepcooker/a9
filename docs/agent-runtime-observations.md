@@ -1544,3 +1544,27 @@ Governance lesson:
 - Small endpoint tasks still consume too many tokens when worker cannot locate
   anchors cleanly; prompts should include the exact anchor function names and
   avoid relying on broad line offsets.
+
+## 2026-06-03: live smoke worker hung before producing summaries
+
+Run evidence:
+- Worker run:
+  `.a9/runs/implement-communication-model-closure-live-smoke-20260603-20260603T050138Z-a1`
+
+Observation:
+- The live HTTP smoke task was small, but the worker stalled with only
+  `events.jsonl`, `prompt.md`, `raw_task.md`, `reference_gate.json`, and
+  `stderr.log`; no final message or event summaries were produced.
+- `stderr.log` contained an upstream/transport initialization failure and no
+  useful patch output.
+- Monitor killed the stuck worker/run-loop child process, moved the task files
+  from `running` to `interrupted`, and preserved the run directory evidence.
+- Monitor then implemented the live HTTP round-trip test locally:
+  `test_live_api_communication_model_closure_validate_endpoint_round_trip`.
+
+Governance lesson:
+- Some failures are transport/runtime failures, not model reasoning failures.
+  For tiny tests, a stuck worker should be stopped quickly and handled locally
+  to protect token budget.
+- The supervisor should eventually mark externally killed runs as interrupted
+  automatically instead of requiring manual task-file cleanup.

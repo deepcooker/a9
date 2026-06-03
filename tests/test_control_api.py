@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import importlib.util
+import http.client
 import io
 import os
 import json
 import contextlib
 import sys
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1782,6 +1784,51 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["response"]["status"], "invalid_payload")
         self.assertEqual(captured["response"]["object"], "operator_session")
+
+    def test_live_api_communication_model_closure_validate_endpoint_round_trip(self):
+        mod = load_control_api()
+        server = mod.ThreadingHTTPServer(("127.0.0.1", 0), mod.ControlHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        body = json.dumps(
+            {
+                "object_name": "operator_session",
+                "payload": {
+                    "operator_id": "op-1",
+                    "client_kind": "cli",
+                    "client_id": "client-1",
+                    "auth_scope": ["operator.admin"],
+                    "connected_at": "2026-06-03T00:00:00Z",
+                    "last_seen_at": "2026-06-03T00:00:10Z",
+                    "last_event_id": "1-0",
+                    "control_permissions": ["services.start"],
+                    "status": "active",
+                },
+            }
+        ).encode("utf-8")
+        try:
+            thread.start()
+            conn = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+            try:
+                conn.request(
+                    "POST",
+                    "/api/communication/model-closure-validate",
+                    body=body,
+                    headers={"Content-Type": "application/json"},
+                )
+                response = conn.getresponse()
+                payload = json.loads(response.read().decode("utf-8"))
+            finally:
+                conn.close()
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
+        self.assertEqual(response.status, 200)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["kind"], "communication_model_closure_validate")
+        self.assertEqual(payload["object"], "operator_session")
+        self.assertEqual(payload["serialized"]["status"], "active")
 
     def test_node_recovery_cycle_plans_tmux_repair_and_writes_evidence(self):
         mod = load_control_api()
