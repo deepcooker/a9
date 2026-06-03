@@ -7244,6 +7244,32 @@ Continue A9 24-hour automation.
 
         self.assertEqual(failure["status"], "")
 
+    def test_transport_observation_records_transient_tool_errors_without_failure(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr = Path(tmp) / "stderr.log"
+            stderr.write_text(
+                "ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed\n"
+                "error=exec_command failed: CreateProcess Rejected\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "timed_out": False,
+                "idle_timed_out": False,
+                "budget_stopped": False,
+                "return_code": 0,
+                "stderr_path": str(stderr),
+            }
+
+            failure = mod.classify_worker_failure(worker)
+            observation = mod.classify_transport_observation(worker)
+
+        self.assertEqual(failure["status"], "")
+        self.assertEqual(observation["status"], "observed")
+        self.assertEqual(observation["category"], "transport_runtime")
+        self.assertGreaterEqual(observation["count"], 2)
+        self.assertTrue(observation["does_not_affect_status"])
+
     def test_worker_startup_error_is_classified_separately(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -8102,6 +8128,36 @@ role_signoff: product, business, architecture, test approved.
             output = buffer.getvalue()
 
             self.assertIn("worker_cost_risk: level=high reasons=high_input_tokens,broad_reads", output)
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_status_prints_transport_observation(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        run_dir = mod.RUNS_DIR / "selftest-transport-observation-run"
+        shutil.rmtree(run_dir, ignore_errors=True)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            mod.write_json(
+                run_dir / "summary.json",
+                {
+                    "task_id": "selftest-transport-observation",
+                    "status": "pass",
+                    "run_dir": str(run_dir),
+                    "transport_observation": {
+                        "status": "observed",
+                        "category": "transport_runtime",
+                        "count": 2,
+                    },
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                mod.status()
+            output = buffer.getvalue()
+
+            self.assertIn("latest transport: status=observed count=2 category=transport_runtime", output)
         finally:
             shutil.rmtree(run_dir, ignore_errors=True)
 

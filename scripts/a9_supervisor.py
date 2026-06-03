@@ -287,6 +287,14 @@ WORKER_BROKEN_PIPE_PATTERNS = [
     re.compile(r"\bBroken pipe\b", re.I),
     re.compile(r"\bEPIPE\b", re.I),
 ]
+WORKER_TRANSPORT_OBSERVATION_PATTERNS = [
+    re.compile(r"\bTransport channel closed\b", re.I),
+    re.compile(r"\bhttp/request failed\b", re.I),
+    re.compile(r"\berror sending request\b", re.I),
+    re.compile(r"\bCreateProcess\b.*\bRejected\b", re.I),
+    re.compile(r"\bexec_command failed\b", re.I),
+    re.compile(r"\brmcp::transport::worker\b", re.I),
+]
 
 
 def utc_now() -> str:
@@ -5836,6 +5844,29 @@ def worker_failure_text(worker: dict[str, Any], limit: int = 12000) -> str:
     return "\n".join(part for part in parts if part).strip()[:limit]
 
 
+def classify_transport_observation(worker: dict[str, Any]) -> dict[str, Any]:
+    text = worker_failure_text(worker, limit=12000)
+    matches: list[dict[str, str]] = []
+    for pattern in WORKER_TRANSPORT_OBSERVATION_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            matches.append(
+                {
+                    "pattern": pattern.pattern,
+                    "sample": bounded_inline(match.group(0), 240),
+                }
+            )
+    if not matches:
+        return {"status": "none", "category": "", "count": 0, "matches": []}
+    return {
+        "status": "observed",
+        "category": "transport_runtime",
+        "count": len(matches),
+        "matches": matches,
+        "does_not_affect_status": True,
+    }
+
+
 def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
     reference_gate = worker.get("reference_gate", {})
     if isinstance(reference_gate, dict) and reference_gate.get("status") == "fail":
@@ -9164,6 +9195,7 @@ def run_one(*, auto_next: bool = False) -> int:
         scope_guard = validate_scope(diff, task, run_dir)
         process_governance = classify_process_governance(task, worker, run_dir)
         worker_failure = classify_worker_failure(worker)
+        transport_observation = classify_transport_observation(worker)
         if worker_failure_short_circuits_checks(worker_failure):
             checks = []
             status = str(worker_failure["status"])
@@ -9213,6 +9245,7 @@ def run_one(*, auto_next: bool = False) -> int:
             "patch_guard": patch_guard,
             "scope_guard": scope_guard,
             "process_governance": process_governance,
+            "transport_observation": transport_observation,
             "worker_envelope_check_conflict": worker_envelope_check_conflict,
             "monitor_score": monitor_score,
             "monitor_block": monitor_block,
@@ -9575,6 +9608,13 @@ def status() -> int:
         reasons = cost.get("reasons", [])
         reasons_text = ",".join(str(reason) for reason in reasons) if reasons else "none"
         print(f"worker_cost_risk: level={cost.get('level', 'missing')} reasons={reasons_text}")
+        transport = data.get("transport_observation", {})
+        if isinstance(transport, dict) and transport.get("status") == "observed":
+            print(
+                "latest transport: "
+                f"status=observed count={transport.get('count', 0)} "
+                f"category={transport.get('category', '')}"
+            )
     progress = service_progress(latest_summary)
     print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
     print(

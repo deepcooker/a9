@@ -2057,3 +2057,23 @@ Validation:
   errors during the run, but the worker recovered and final process governance
   stayed clean. This should remain observable because transport instability is
   different from reasoning or prompt-contract failure.
+
+## 2026-06-04: transport/runtime transients are separate observations
+
+Change:
+- A9 now records `transport_observation` separately from `worker_failure`,
+  `process_governance`, and `worker_cost_risk`.
+- The observation watches stderr/final/event text for transient runtime issues
+  such as transport channel closed, HTTP request failure, rejected exec process,
+  and failed tool command creation.
+- `status` prints `latest transport: status=observed ...` when these appear.
+
+Why:
+- The latest worker recovered from transient tool/app transport errors and
+  still produced a valid, clean run. Treating those as model/prompt failure
+  would corrupt the quality signal.
+
+Governance lesson:
+- Runtime transport instability, worker reasoning quality, and prompt-contract
+  compliance are separate dimensions. They should be observed and trended
+  separately before deciding whether any of them should become blocking.
