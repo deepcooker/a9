@@ -1,5 +1,26 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: Spark worker disables unsupported image generation tool
+
+Run evidence:
+- `.a9/runs/verify-strict-direct-edit-repair-20260603-20260603T075425Z-a1`
+
+Observation:
+- The 24h worker failed before model reasoning with HTTP 400:
+  `Tool 'image_generation' is not supported with gpt-5.3-codex-spark`.
+- Actual token usage was zero, so this was worker startup/toolset
+  compatibility, not task quality or prompt cost.
+
+Change:
+- Spark worker commands now add `--disable image_generation`.
+- A direct smoke confirmed that `gpt-5.3-codex-spark` can start and return when
+  image generation is disabled.
+
+Governance lesson:
+- Model availability and supported tools are runtime state. A9 should fix the
+  command/tool contract first, then retry the same bounded task instead of
+  treating startup failures as reasoning failures.
+
 ## 2026-06-03: strict worker direct edits now default to repair
 
 Observation:

@@ -1457,7 +1457,7 @@ def build_worker_cmd(
         return ["bash", "-lc", formatted]
     model, _source = resolved_worker_model(task)
     prepare_worker_codex_home()
-    return [
+    cmd = [
         "env",
         f"CODEX_HOME={WORKER_CODEX_HOME}",
         f"HOME={WORKER_CODEX_HOME}",
@@ -1474,6 +1474,17 @@ def build_worker_cmd(
         str(final_path),
         prompt_text,
     ]
+    for feature in worker_disabled_features_for_model(model):
+        insert_at = cmd.index("-C")
+        cmd[insert_at:insert_at] = ["--disable", feature]
+    return cmd
+
+
+def worker_disabled_features_for_model(model: str) -> list[str]:
+    model_name = model.lower()
+    if "spark" in model_name:
+        return ["image_generation"]
+    return []
 
 
 def resolved_worker_model(task: Task) -> tuple[str, str]:

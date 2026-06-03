@@ -258,10 +258,14 @@ Do the work.
                 self.assertIn("--ephemeral", cmd)
                 self.assertIn("--model", cmd)
                 self.assertEqual(cmd[cmd.index("--model") + 1], mod.DEFAULT_WORKER_MODEL)
+                if "spark" in mod.DEFAULT_WORKER_MODEL:
+                    self.assertIn("--disable", cmd)
+                    self.assertEqual(cmd[cmd.index("--disable") + 1], "image_generation")
 
                 os.environ["A9_SUPERVISOR_MODEL"] = "gpt-5.5"
                 cmd = mod.build_worker_cmd(task, Path("/tmp/worktree"), run_dir, final_path, "prompt")
                 self.assertEqual(cmd[cmd.index("--model") + 1], "gpt-5.5")
+                self.assertNotIn("--disable", cmd)
             finally:
                 if old_model is not None:
                     os.environ["A9_SUPERVISOR_MODEL"] = old_model
@@ -301,6 +305,11 @@ Do the work.
                 os.environ["A9_SUPERVISOR_REFERENCE_MODEL"] = old_reference_model
             else:
                 os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
+
+    def test_spark_worker_disables_unsupported_image_generation_tool(self):
+        mod = load_supervisor()
+        self.assertEqual(mod.worker_disabled_features_for_model("gpt-5.3-codex-spark"), ["image_generation"])
+        self.assertEqual(mod.worker_disabled_features_for_model("gpt-5.5"), [])
 
     def test_aider_style_compression_preserves_recent_tail_and_references(self):
         mod = load_supervisor()
