@@ -6794,7 +6794,9 @@ Do the work.
         self.assertIn("bounded read of scripts/a9_supervisor.py", packet["prompt"])
         self.assertIn("bounded read of tests/test_supervisor.py", packet["prompt"])
         self.assertIn("direct_file_change_policy: repair", packet["prompt"])
-        self.assertIn("Do not start with `sed -n '1,260p'`", packet["prompt"])
+        self.assertIn('Use `rg -n "<symbol-or-term>" ... | head -n 40` before every `sed` source read.', packet["prompt"])
+        self.assertIn("Keep each `sed -n '<start>,<end>p'` source window <= 120 lines.", packet["prompt"])
+        self.assertIn("keep the total requested source lines <= 180", packet["prompt"])
 
     def test_build_context_packet_routes_compact_decided_test_task_to_execution_next(self):
         mod = load_supervisor()

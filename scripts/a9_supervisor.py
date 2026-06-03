@@ -6044,7 +6044,10 @@ def worker_evidence_and_edit_contract(task: Task) -> str:
 {path_lines}
 - Preferred bounded read commands:
 {commands}
-- Do not start with `sed -n '1,260p'` or larger broad file slices.
+- Use `rg -n "<symbol-or-term>" ... | head -n 40` before every `sed` source read.
+- Keep each `sed -n '<start>,<end>p'` source window <= 120 lines.
+- If multiple `sed` windows are needed, keep the total requested source lines <= 180 and state why.
+- Do not start with broad file slices such as `sed -n '1,260p'`, `sed -n '1,400p'`, or multi-window reads over the total limit.
 - Do not chain multiple broad reads in one shell command.
 - direct_file_change_policy: repair
 - Do not edit files directly. Put SEARCH/REPLACE blocks in the final answer for deterministic A9 apply.

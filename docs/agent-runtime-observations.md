@@ -1,5 +1,23 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: evidence contract now makes sed discipline explicit
+
+Trigger:
+- The latest 24h worker validation still produced a real
+  `broad_file_slice_observation`, including a source read over 600 lines.
+
+Change:
+- The worker evidence/edit contract now says to run `rg -n ... | head -n 40`
+  before each `sed` source read.
+- Each `sed` source window should stay <= 120 lines.
+- Multi-window reads should stay <= 180 total requested source lines and state
+  why they are needed.
+
+Governance lesson:
+- This is prompt/discipline shaping plus observation, not a hard business gate.
+  The goal is to lower context cost and noise while keeping the execution lane
+  moving.
+
 ## 2026-06-03: Begin Patch update blocks now normalize into deterministic apply
 
 Trigger:
