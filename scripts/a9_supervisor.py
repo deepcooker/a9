@@ -2983,8 +2983,40 @@ def command_fragment_is_cd(inner: str) -> bool:
     return len(parts) == 2 and parts[0] == "cd" and bool(parts[1].strip())
 
 
+def shell_pipeline_parts(command: str) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    quote = ""
+    escaped = False
+    for char in command:
+        if escaped:
+            current.append(char)
+            escaped = False
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            continue
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = ""
+            continue
+        if char in {"'", '"'}:
+            current.append(char)
+            quote = char
+            continue
+        if char == "|":
+            parts.append("".join(current).strip())
+            current = []
+            continue
+        current.append(char)
+    parts.append("".join(current).strip())
+    return [part for part in parts if part]
+
+
 def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> bool:
-    pipe_parts = [part.strip() for part in re.split(r"\s+\|\s+", inner) if part.strip()]
+    pipe_parts = shell_pipeline_parts(inner)
     if len(pipe_parts) == 2 and re.fullmatch(r"head\s+(?:-n\s+\d+|-\d+)", pipe_parts[1]):
         return command_fragment_is_bounded_read_of_paths(pipe_parts[0], paths)
     if len(pipe_parts) > 1:
@@ -3090,7 +3122,7 @@ def command_read_targets(command: str) -> list[str]:
     fragments = [part.strip() for part in re.split(r"\s+(?:&&|;)\s+", inner) if part.strip()]
     targets: list[str] = []
     for fragment in fragments or [inner]:
-        pipe_head = re.split(r"\s+\|\s+", fragment, maxsplit=1)[0].strip()
+        pipe_head = shell_pipeline_parts(fragment)[0].strip()
         try:
             parts = shlex.split(pipe_head)
         except ValueError:
@@ -3133,7 +3165,7 @@ def command_read_fragments(command: str) -> list[dict[str, Any]]:
     fragments = [part.strip() for part in re.split(r"\s+(?:&&|;)\s+", inner) if part.strip()]
     reads: list[dict[str, Any]] = []
     for fragment in fragments or [inner]:
-        pipe_head = re.split(r"\s+\|\s+", fragment, maxsplit=1)[0].strip()
+        pipe_head = shell_pipeline_parts(fragment)[0].strip()
         try:
             parts = shlex.split(pipe_head)
         except ValueError:

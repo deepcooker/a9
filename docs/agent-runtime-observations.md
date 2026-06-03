@@ -18,6 +18,14 @@ Governance lesson:
   The goal is to lower context cost and noise while keeping the execution lane
   moving.
 
+24h validation:
+- Run `.a9/runs/verify-evidence-read-discipline-20260603-20260603T084612Z-a1`
+  followed the new contract better: no broad `sed` finding was produced.
+- One remaining false positive came from an `rg` pattern containing `|`, which
+  the parser mistook for a shell pipe.
+- The shell pipeline parser now ignores `|` inside quotes. Replaying the run
+  produces no process-governance findings.
+
 ## 2026-06-03: Begin Patch update blocks now normalize into deterministic apply
 
 Trigger:

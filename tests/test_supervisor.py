@@ -4836,6 +4836,36 @@ Do the work.
         kinds = [item["kind"] for item in result["findings"]]
         self.assertNotIn("forbidden_session_context_read", kinds)
 
+    def test_process_governance_allows_bounded_observation_log_rg_with_pipe_in_pattern(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc 'cd /tmp/worktree && rg -n "
+                            "\"evidence contract|rg -n .* | head -n 40|broad\" "
+                            "docs/agent-runtime-observations.md | head -n 80'"
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="pipe-pattern-observation-log-read",
+                prompt="Verify a bounded observation log slice.",
+                allowed_paths=["docs/agent-runtime-observations.md"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertNotIn("forbidden_session_context_read", kinds)
+
     def test_process_governance_allows_task_allowed_observation_log_multi_sed_window(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
