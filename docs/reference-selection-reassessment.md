@@ -235,6 +235,92 @@ and node heartbeat hot-state behavior before adding SSE replay or WebSocket.
 - Do not copy Claude Code or Antigravity source unless an open-source repository
   and license are verified.
 
+## ECC Mechanism Extract (for A9)
+
+Reference source set (license): `reference-projects/ecc/LICENSE` (MIT), commit snapshot tracked in `docs/project.md` (`99baa8250096f2d295583572399a5c9aba2ce312`).
+
+### Cross-harness session adapter contract
+- Source: `reference-projects/ecc/docs/SESSION-ADAPTER-CONTRACT.md`
+- Mechanism: canonical `ecc.session.v1` snapshot (`schemaVersion`, `adapterId`, `session`, `workers`, `aggregates`) + strict required field validation and fallback duplicate suppression.
+- Why it matters: matches A9 need for control-plane-safe, harness-agnostic session/state snapshots between operator and runtime channels.
+- Adopt now:
+  - Use a similar `schemaVersion`-gated snapshot contract for A9 session/worker records.
+  - Keep contract required-field validation and empty/`null` semantics for unknown values.
+  - Keep counts/derived aggregates (`workerCount`, state/health maps) as invariant checks.
+- Not now:
+  - Do not enforce adapter-specific fields (`dmux-tmux`/`claude-session`) as canonical.
+  - Do not bind A9 runtime to specific artifact names until adapters are mature.
+- Risks:
+  - Contract mismatch if A9 flow states and worker health enums are not normalized.
+  - Snapshot schema drift with existing `.a9` formats unless migration gate is explicit.
+
+### Cross-harness runtime architecture and adapter strategy
+- Source: `reference-projects/ecc/docs/ECC-2.0-REFERENCE-ARCHITECTURE.md`
+- Mechanism: adapter matrix + 5-layer operator stack (operator surface → adapter layer → worktree/session runtime → observability/eval loop → security/commercial), and explicit lifecycle events for worktree/session.
+- Why it matters: aligns with A9 "session governance + long run" objective and prevents one-harness assumptions.
+- Adopt now:
+  - Add explicit lifecycle events for `create/resume/pause/stop/close` to A9 session/flow state.
+  - Define a stable external payload for operator status/hud snapshots (context/queue/tool/health).
+  - Keep adapter layer as contract boundary before UI/product-specific semantics.
+- Not now:
+  - Avoid porting full UI/HUD stacks, billing/enterprise modules, or hosted telemetry before backend state proof.
+- Risks:
+  - Extra coupling between adapter matrix and existing Rust gateway if names differ.
+  - Potential event explosion before event consumers and retention policy exist.
+
+### Token optimization and context governance
+- Source: `reference-projects/ecc/docs/token-optimization.md`
+- Mechanism: model-class split, reasoning token caps, subagent model downshift, MCP/tool count control, planned compaction policy, deliberate context-reset/compact points.
+- Why it matters: A9 currently prioritizes long-horizon automation stability; token pressure directly affects run quality and repair load.
+- Adopt now:
+  - Set explicit A9 policy for model selection defaults, context reset points, and hook/summary cadence.
+  - Enforce compaction boundaries at stage boundaries (pre/post milestone, debug breaks).
+  - Prefer cheaper models for exploration tasks.
+- Not now:
+  - Avoid fixed env hard-coding to specific provider models until provider policy stabilizes.
+- Risks:
+  - Aggressive compaction can lose cross-run trace context for later audit.
+  - Provider capability differences can make per-task model routing brittle.
+
+### Continuous learning v2 pipeline
+- Source: `reference-projects/ecc/docs/continuous-learning-v2-spec.md`
+- Mechanism: hook-based observation collection + background analysis loop + scored instincts + persistence + evolution into skills/commands.
+- Why it matters: A9 needs mechanism-driven self-improvement while keeping production evidence explicit.
+- Adopt now:
+  - Introduce A9 observation loop that emits structured lessons to staged review artifacts before any mutation.
+  - Require scoring/evidence before any adaptive skill changes.
+- Not now:
+  - Do not auto-promote evolved behaviors without verifier/rollback proof.
+- Risks:
+  - Feedback loop instability if low-quality hooks emit noisy signals.
+  - Drift if scoring criteria are absent or inconsistent.
+
+### Plan/PRD staged flow
+- Source: `reference-projects/ecc/docs/PLAN-PRD-PATTERN.md`
+- Mechanism: file-based staged handoff (`.claude/prds/*.prd.md`, `.claude/plans/*.plan.md`) consumed by next command as arguments.
+- Why it matters: A9 already separates context and execution; staged artifacts improve reproducible task continuity and handoff across sessions.
+- Adopt now:
+  - Standardize A9 task package flow with committable PRD/plan artifacts for non-trivial work.
+  - Use staged docs to drive role/phase handoff rather than long in-context state.
+- Not now:
+  - Do not enforce PRD for every task.
+- Risks:
+  - Operational overhead if artifact generation is required for small routine edits.
+  - Artifact staleness if execution diverges without explicit delta updates.
+
+### Plugin / skill / hook packaging references
+- Source: `reference-projects/ecc/README.md`
+- Mechanism: profile-driven install/module selection; plugin vs manual install parity; install manifests; command surface with strong separation of concerns.
+- Why it matters: A9’s future role/hook package model benefits from manifest-level gating and capability boundaries.
+- Adopt now:
+  - Treat plugin-like A9 capabilities as manifest-scoped packs (worker skill, hooks, channels), imported with explicit scope.
+  - Keep duplicate-install prevention and idempotency checks at boundary registration.
+- Not now:
+  - Do not replicate product/install UX (dashboard, GitHub App, marketing surfaces) in current infrastructure.
+- Risks:
+  - Incomplete dependency graph resolution across packs causing partial capability loads.
+  - Divergence between manifest and runtime state without attested import check.
+
 ## Next Implementation Slices
 
 1. Add A9 managed flow records with revisioned transitions.
