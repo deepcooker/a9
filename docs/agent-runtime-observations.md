@@ -1,5 +1,31 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: tiny code smoke improved reads but still direct-edited
+
+Run evidence:
+- `.a9/runs/implement-runtime-state-reason-status-smoke-20260603-20260603T074417Z-a1`
+- Auto-commit: `82de807502d30ab3eeeb4ee40aff118fc253dcdd`
+
+Result:
+- The worker made a tiny real code change: `status()` now prints both
+  `runtime_state` and `runtime_state_reason`.
+- Focused status test passed under the supervisor and was re-run by the monitor.
+- Usage improved again: input `189523`, cached input `165632`, uncached input
+  `23891`, output `3960`, reasoning `2441`.
+- No broad-read findings were recorded.
+
+Remaining problem:
+- Process governance still recorded `direct_file_change_event=4`.
+- The evidence/edit contract improved read discipline but did not force
+  deterministic SEARCH/REPLACE output in this worker model.
+
+Governance lesson:
+- Prompt-shaping is useful for read discipline and token cost.
+- Direct-edit discipline likely needs a stronger execution mechanism: either
+  require deterministic apply from final SEARCH/REPLACE for code tasks, or
+  route code changes through an apply engine/worker mode that cannot emit
+  direct file changes.
+
 ## 2026-06-03: execution prompts now include an evidence/edit contract
 
 Observation:
