@@ -5913,6 +5913,56 @@ def explicit_task_decision_packet(task: Task) -> dict[str, Any] | None:
     return task_decision_packet(task)
 
 
+def task_has_closed_execution_decision(task: Task) -> bool:
+    packet = task_decision_packet(task)
+    return bool(packet.get("decided")) and packet.get("route") == "execution_next"
+
+
+def closed_execution_route_exists_from_summary(summary: dict[str, Any] | None) -> bool:
+    if not summary:
+        return False
+    task_path = summary.get("task_path", "")
+    if not task_path:
+        return False
+    try:
+        task = parse_task(Path(task_path))
+    except OSError:
+        return False
+    return task_has_closed_execution_decision(task)
+
+
+def summary_has_explicit_goal_completion(summary: dict[str, Any] | None) -> bool:
+    if not summary:
+        return False
+    goal_state = summary.get("goal_state")
+    if not isinstance(goal_state, dict):
+        return False
+    goal = goal_state.get("goal")
+    if not isinstance(goal, dict) or str(goal.get("status", "")).strip() != "complete":
+        return False
+    audits = goal.get("completion_audit")
+    if not isinstance(audits, list):
+        return False
+    for entry in audits:
+        if isinstance(entry, dict) and str(entry.get("audit", "")).strip():
+            return True
+    return False
+
+
+def runtime_state_from_summary(
+    queued_tasks: int,
+    running_tasks: int,
+    summary: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    if queued_tasks or running_tasks:
+        return "active", "tasks_in_queue_or_running"
+    if summary_has_explicit_goal_completion(summary):
+        return "complete", "goal_completion_evidence_present"
+    if closed_execution_route_exists_from_summary(summary):
+        return "active", "closed_execution_task_declared"
+    return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+
 def parse_optional_int(value: str | None) -> int | None:
     if value is None:
         return None
@@ -7976,10 +8026,13 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "auto_loop_guard": summary.get("auto_loop_guard", read_json_file(AUTO_LOOP_GUARD_PATH)) if summary else read_json_file(AUTO_LOOP_GUARD_PATH),
         "next_task_path": str(existing_next_task_path) if existing_next_task_path else "",
         "auto_next_scheduled": existing_next_task_path is not None,
+        "runtime_state": "",
+        "runtime_state_reason": "",
         "capabilities": capabilities,
         "capability_groups": group_progress,
         "next_goal": "Run the copy pipeline under the daemon for longer unattended soak tests.",
     }
+    progress["runtime_state"], progress["runtime_state_reason"] = runtime_state_from_summary(queued_tasks, running_tasks, summary)
     write_json(PROGRESS_PATH, progress)
     return progress
 
@@ -9000,6 +9053,7 @@ def status() -> int:
             )
     progress = service_progress(latest_summary)
     print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
+    print(f"runtime_state: {progress['runtime_state']}")
     groups = progress.get("capability_groups", {})
     if groups:
         rendered = " ".join(f"{name}={item.get('percent', 0)}%" for name, item in sorted(groups.items()))

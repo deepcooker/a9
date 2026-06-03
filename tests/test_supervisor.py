@@ -7182,6 +7182,119 @@ index 0000000..3e75765
         self.assertEqual(quality["process_governance"]["by_kind"]["direct_file_change_event"], 2)
         self.assertEqual(quality["process_governance"]["by_kind"]["broad_file_slice_observation"], 1)
 
+    def test_service_progress_marks_runtime_waiting_for_review_closure_when_no_active_or_complete_evidence(self):
+        mod = load_supervisor()
+        old_queue = mod.QUEUE_DIR
+        old_running = mod.RUNNING_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mod.QUEUE_DIR = Path(tmp) / "queue"
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.QUEUE_DIR.mkdir(parents=True)
+                mod.RUNNING_DIR.mkdir(parents=True)
+                summary = {
+                    "task_id": "selftest-review-closure-waiting",
+                    "status": "pass",
+                    "run_dir": str(Path(tmp) / "run"),
+                }
+                progress = mod.service_progress(summary)
+                self.assertEqual(progress["runtime_state"], "waiting_for_review_closure")
+                self.assertEqual(progress["runtime_state_reason"], "closed_next_execution_task_missing")
+        finally:
+            mod.QUEUE_DIR = old_queue
+            mod.RUNNING_DIR = old_running
+
+    def test_service_progress_marks_runtime_complete_when_goal_completion_evidence_exists(self):
+        mod = load_supervisor()
+        old_queue = mod.QUEUE_DIR
+        old_running = mod.RUNNING_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mod.QUEUE_DIR = Path(tmp) / "queue"
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.QUEUE_DIR.mkdir(parents=True)
+                mod.RUNNING_DIR.mkdir(parents=True)
+                summary = {
+                    "task_id": "selftest-review-closure-complete",
+                    "status": "pass",
+                    "run_dir": str(Path(tmp) / "run"),
+                    "goal_state": {
+                        "goal": {
+                            "status": "complete",
+                            "completion_audit": [
+                                {"audit": "explicit completion evidence", "task_id": "close", "run_id": "run-1"}
+                            ],
+                        }
+                    },
+                }
+                progress = mod.service_progress(summary)
+                self.assertEqual(progress["runtime_state"], "complete")
+                self.assertEqual(progress["runtime_state_reason"], "goal_completion_evidence_present")
+        finally:
+            mod.QUEUE_DIR = old_queue
+            mod.RUNNING_DIR = old_running
+
+    def test_service_progress_marks_runtime_active_when_queue_or_running_tasks_exist(self):
+        mod = load_supervisor()
+        old_queue = mod.QUEUE_DIR
+        old_running = mod.RUNNING_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mod.QUEUE_DIR = Path(tmp) / "queue"
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.QUEUE_DIR.mkdir(parents=True)
+                mod.RUNNING_DIR.mkdir(parents=True)
+                (mod.QUEUE_DIR / "queued.md").write_text("---\nid: queued\n---\nwork\n", encoding="utf-8")
+                progress = mod.service_progress({"status": "pass", "task_id": "queued-task", "run_dir": str(Path(tmp) / "run")})
+                self.assertEqual(progress["runtime_state"], "active")
+                self.assertEqual(progress["runtime_state_reason"], "tasks_in_queue_or_running")
+        finally:
+            mod.QUEUE_DIR = old_queue
+            mod.RUNNING_DIR = old_running
+
+    def test_service_progress_marks_runtime_active_when_summary_has_closed_execution_decision(self):
+        mod = load_supervisor()
+        old_queue = mod.QUEUE_DIR
+        old_running = mod.RUNNING_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                task_path = Path(tmp) / "closed-task.md"
+                task_path.write_text(
+                    """---
+id: closed-task
+phase: implement
+---
+decision_status: decided
+problem: explicit runtime gate
+system_requirement: status must show completion reason.
+data_contract: task fields and queue state only.
+state_flow: review -> execution.
+exception_flow: review stalls and resumes through monitor.
+acceptance: evidence in run summary.
+out_of_scope: no gateway expansion.
+allowed_execution: scripts/a9_supervisor.py
+change_record: status marker added.
+role_signoff: product, business, architecture, test approved.
+""",
+                    encoding="utf-8",
+                )
+                mod.QUEUE_DIR = Path(tmp) / "queue"
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.QUEUE_DIR.mkdir(parents=True)
+                mod.RUNNING_DIR.mkdir(parents=True)
+                summary = {
+                    "task_id": "closed-task",
+                    "status": "pass",
+                    "run_dir": str(Path(tmp) / "run"),
+                    "task_path": str(task_path),
+                }
+                progress = mod.service_progress(summary)
+                self.assertEqual(progress["runtime_state"], "active")
+                self.assertEqual(progress["runtime_state_reason"], "closed_execution_task_declared")
+        finally:
+            mod.QUEUE_DIR = old_queue
+            mod.RUNNING_DIR = old_running
+
     def test_status_refreshes_progress_from_actual_queue_state(self):
         mod = load_supervisor()
         mod.ensure_dirs()
@@ -7265,6 +7378,40 @@ index 0000000..3e75765
             self.assertIn("direct_file_change_event=1", output)
         finally:
             shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_status_prints_runtime_state_waiting_for_review_closure(self):
+        mod = load_supervisor()
+        old_queue = mod.QUEUE_DIR
+        old_running = mod.RUNNING_DIR
+        old_runs = mod.RUNS_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mod.QUEUE_DIR = Path(tmp) / "queue"
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.RUNS_DIR = Path(tmp) / "runs"
+                mod.ensure_dirs()
+                run_dir = mod.RUNS_DIR / "selftest-runtime-state-run"
+                run_dir.mkdir(parents=True, exist_ok=True)
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "selftest-runtime-state",
+                        "status": "pass",
+                        "run_dir": str(run_dir),
+                    },
+                )
+
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    mod.status()
+                output = buffer.getvalue()
+
+                self.assertIn("runtime_state: waiting_for_review_closure", output)
+                self.assertIn("queued: 0", output)
+        finally:
+            mod.QUEUE_DIR = old_queue
+            mod.RUNNING_DIR = old_running
+            mod.RUNS_DIR = old_runs
 
     def test_enqueue_task_file_adds_default_strict_envelope_for_worker_phase(self):
         mod = load_supervisor()
