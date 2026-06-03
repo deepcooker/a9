@@ -2096,3 +2096,15 @@ Change:
 Governance lesson:
 - Runtime status is an operator control surface. It must be robust while workers
   are writing evidence, even if the underlying run eventually completes cleanly.
+
+Validation:
+- Worker run:
+  `.a9/runs/verify-status-summary-write-robustness-20260604-20260603T180521Z-a1`
+- Result: pass, process governance clean, declared checks passed.
+- `status()` stayed healthy and printed `latest transport: status=observed ...`.
+- The worker envelope correctly kept `changed_files: []`, `copied_mechanisms: []`,
+  and exact `supervisor_declared_checks`.
+- Remaining minor field hygiene observation: `files_validated` included `.git`
+  because the worker used `git show` as validation evidence. This is not a copy
+  mechanism issue, but future envelope semantics can distinguish repository
+  metadata commands from source files validated.
