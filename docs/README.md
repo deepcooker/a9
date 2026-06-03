@@ -2,11 +2,12 @@
 
 只从这里进入文档，避免被旧草稿带偏。
 
-默认入口现在只有三份：
+默认入口现在只有四份：
 
 1. `AGENTS.md`
 2. `docs/context-governance.md`
 3. `docs/project.md`
+4. `docs/requirements-review-closure.md`
 
 worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw session、研究草稿、
 归档原始想法只能按任务包指定的 bounded slice 读取。
@@ -17,6 +18,7 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/context-governance.md`: 文档分层、噪音清理、worker 读上下文纪律。
 - `原始想法需求.md`: A9 原始哲学、产品脉络和需求源头。
 - `docs/project.md`: 项目状态和分层目标。
+- `docs/requirements-review-closure.md`: 评审博弈什么时候算完成，以及何时允许进入 `execution_next`。
 - `docs/stage-handoff-2026-06-01.md`: 当前通讯/control 阶段收口和下一轮 session 精读任务包。
 - `docs/role-memory-governance.md`: 主控窗口和各角色如何读取/接收精读记忆。
 - `docs/role-memory-reference-scan.md`: 角色记忆/旁路治理的参考项目证据和临时决策边界。

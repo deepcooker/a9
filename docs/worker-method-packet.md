@@ -23,6 +23,10 @@ Before a large task becomes code, A9 must align:
 If these are not clear, the next step is debate, research, modeling, or review.
 It is not implementation.
 
+Review closure is defined by `docs/requirements-review-closure.md`. A review
+artifact, mechanism extract, or worker recommendation is not enough. Execution
+starts only after a closed decision packet approves one bounded slice.
+
 ## Two Kinds Of Next
 
 ### debate_next
@@ -52,6 +56,11 @@ Not allowed:
 ### execution_next
 
 Use `execution_next` only after the requirement is decided.
+
+`decided` means decided for one slice, not globally decided for the whole A9
+product. The execution worker must cite the decision packet source and must not
+change product definition, data contract, state flow, acceptance, or out of
+scope inside the implementation.
 
 Required task packet:
 
@@ -251,9 +260,11 @@ For analysis tasks, output:
 - decision options
 - recommended debate_next
 - what cannot be executed yet
+- whether review closure is missing, and which closure fields are missing
 
 For execution tasks, output:
 
+- decision packet source
 - decision source
 - reference mechanism copied
 - files changed
@@ -265,6 +276,8 @@ For execution tasks, output:
 ## Non-Negotiable
 
 No decided requirement, no execution backlog.
+
+No review closure, no `execution_next`.
 
 No data/state contract, no serious implementation.
 

@@ -189,7 +189,28 @@ agent 稳定后的垂直化训练和数据项目。
 
 ## 还要做什么
 
-MVP 完成不代表生产级完成，也不代表最终产品完成。下一步只保留高优先级：
+MVP 完成不代表生产级完成，也不代表最终产品完成。
+
+当前最高优先级不是继续堆功能，而是把需求评审闭环做完。评审闭环以
+`docs/requirements-review-closure.md` 为准：没有明确的 `decision_status:
+decided`、数据/状态合同、异常流、验收证据、out_of_scope、allowed_execution
+和角色 signoff，就不能把 review/analysis 产物当成 `execution_next`。
+
+当前状态：
+
+- 24 小时 worker 执行能力可用，后台 supervisor/control API 可运行。
+- 最近 ECC 机制抽取已经完成，但它仍暴露出 review 与 execution 边界不够强：
+  worker 能写分析文档，但不等于下一步执行已经定案。
+- 当前 24 小时机器 idle 的直接原因是 queue 为空；根因是还没有 closed decision
+  packet 生成下一条 `execution_next`。
+
+下一步只保留高优先级：
+
+- 先产出当前 24 小时 runtime 主线的 review closure / decision packet，确认下一条
+  可执行切片。
+- 只有 closure 完成后，再把任务投给 24 小时 worker 小步执行。
+- 如果 closure 未完成，worker 只能做 `debate_next` 的资料精读、参考扫描、数据/状态
+  建模、角色评审和 change request。
 
 - `docs/runtime-governance-review-2026-05-29.md` 已确认一次主线偏差：
   最近执行通路修得较快，但 reference review、Codex goal runtime、Hermes context

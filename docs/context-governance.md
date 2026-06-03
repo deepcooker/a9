@@ -28,6 +28,8 @@ These files define the current mainline:
 - `docs/project.md`: current A9 product layers, architecture, progress, next work.
 - `原始想法需求.md`: original product philosophy and requirement source.
 - `docs/worker-method-packet.md`: requirements-analysis and worker method.
+- `docs/requirements-review-closure.md`: review completion standard and
+  debate-to-execution closure gate.
 - `docs/session-causal-memory.md`: causal changes, stale branches, current decision memory.
 
 If these files conflict, resolve in this order:
@@ -35,9 +37,10 @@ If these files conflict, resolve in this order:
 1. newest explicit human direction in the current operator session
 2. `AGENTS.md`
 3. `docs/context-governance.md`
-4. `docs/session-causal-memory.md`
-5. `docs/project.md`
-6. `原始想法需求.md`
+4. `docs/requirements-review-closure.md`
+5. `docs/session-causal-memory.md`
+6. `docs/project.md`
+7. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.
@@ -152,4 +155,3 @@ not reading:
 
 If a task requires broad close reading, use `debate_next` or
 `session_close_reading`; do not disguise it as implementation.
-

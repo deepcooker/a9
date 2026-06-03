@@ -56,6 +56,8 @@ execution：生成 backlog，交给 24 小时 worker 小切片执行。
 ```
 
 参考执行文档：`docs/worker-method-packet.md`。
+评审是否真的完成，以 `docs/requirements-review-closure.md` 为准。没有 closure，
+就只是讨论、研究或分析产物，不能当成执行许可。
 
 ## 最高方法论：先定形，再治理
 

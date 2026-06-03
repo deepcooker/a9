@@ -982,6 +982,7 @@ def build_canonical_doctrine_section(task: Task, budget: int) -> tuple[str, str]
         "docs/project.md",
         "docs/session-causal-memory.md",
         "docs/worker-method-packet.md",
+        "docs/requirements-review-closure.md",
     ]
     doctrinal_notes = [
         "# Canonical Context Index",
@@ -991,6 +992,7 @@ def build_canonical_doctrine_section(task: Task, budget: int) -> tuple[str, str]
         "- docs/project.md: product/architecture/mainline summary.",
         "- docs/session-causal-memory.md: causal lane and stale-branch memory.",
         "- docs/worker-method-packet.md: requirements method and execution contract.",
+        "- docs/requirements-review-closure.md: review completion standard before execution.",
         "- Raw source doctrine references (preserved on disk): 原始想法需求.md, session-governance.md",
         "  Read these only when task packets explicitly allow bounded close reading.",
     ]
