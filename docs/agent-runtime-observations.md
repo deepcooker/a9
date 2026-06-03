@@ -2077,3 +2077,22 @@ Governance lesson:
 - Runtime transport instability, worker reasoning quality, and prompt-contract
   compliance are separate dimensions. They should be observed and trended
   separately before deciding whether any of them should become blocking.
+
+Validation:
+- Worker run:
+  `.a9/runs/verify-transport-observation-20260604-20260603T180023Z-a1`
+- Result: pass, process governance clean, declared checks passed.
+- `status()` now prints `latest transport: status=observed ...` when the latest
+  run has transient tool/app transport errors.
+- The same validation exposed a status-read race: `status()` briefly read a
+  half-written `summary.json` and crashed with `JSONDecodeError`.
+
+Change:
+- `write_json()` now writes through a same-directory temp file and atomically
+  replaces the target path.
+- `status()` now skips invalid latest summary files and falls back to the newest
+  valid summary instead of crashing.
+
+Governance lesson:
+- Runtime status is an operator control surface. It must be robust while workers
+  are writing evidence, even if the underlying run eventually completes cleanly.

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import warnings
 from unittest import mock
@@ -8024,6 +8025,46 @@ role_signoff: product, business, architecture, test approved.
             self.assertIn("direct_file_changes", output)
         finally:
             shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_status_skips_invalid_latest_summary_json(self):
+        mod = load_supervisor()
+        old_runs = mod.RUNS_DIR
+        old_queue = mod.QUEUE_DIR
+        old_running = mod.RUNNING_DIR
+        old_done = mod.DONE_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                mod.RUNS_DIR = base / "runs"
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNNING_DIR = base / "running"
+                mod.DONE_DIR = base / "done"
+                mod.ensure_dirs()
+                valid_run = mod.RUNS_DIR / "valid-run"
+                invalid_run = mod.RUNS_DIR / "invalid-run"
+                valid_run.mkdir(parents=True)
+                invalid_run.mkdir(parents=True)
+                mod.write_json(
+                    valid_run / "summary.json",
+                    {"task_id": "valid-task", "status": "pass", "run_dir": str(valid_run)},
+                )
+                (invalid_run / "summary.json").write_text("", encoding="utf-8")
+                now = time.time()
+                os.utime(valid_run / "summary.json", (now, now))
+                os.utime(invalid_run / "summary.json", (now + 2, now + 2))
+
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    mod.status()
+                output = buffer.getvalue()
+
+            self.assertIn("latest skipped invalid summaries: 1", output)
+            self.assertIn("latest: valid-task pass", output)
+        finally:
+            mod.RUNS_DIR = old_runs
+            mod.QUEUE_DIR = old_queue
+            mod.RUNNING_DIR = old_running
+            mod.DONE_DIR = old_done
 
     def test_status_prints_process_replay_when_current_rules_differ(self):
         mod = load_supervisor()

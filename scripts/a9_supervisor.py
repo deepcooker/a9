@@ -4603,7 +4603,10 @@ def format_patch_apply_repair_hint(
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def read_json_file(path: Path) -> dict[str, Any]:
@@ -9536,7 +9539,19 @@ def status() -> int:
     latest_summary: dict[str, Any] | None = None
     latest = sorted(RUNS_DIR.glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
     if latest:
-        data = json.loads(latest[-1].read_text(encoding="utf-8"))
+        invalid_summaries = 0
+        data: dict[str, Any] = {}
+        for summary_path in reversed(latest):
+            data = read_json_file(summary_path)
+            if data:
+                break
+            invalid_summaries += 1
+        if not data:
+            print(f"latest: unavailable invalid_summaries={invalid_summaries}")
+            data = {}
+        elif invalid_summaries:
+            print(f"latest skipped invalid summaries: {invalid_summaries}")
+    if latest and data:
         latest_summary = data
         print(f"latest: {data['task_id']} {data['status']} {data['run_dir']}")
         guards = data.get("guard_summary") or compact_guard_summary(data)
