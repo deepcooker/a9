@@ -7707,6 +7707,27 @@ index 0000000..3e75765
                 text,
             )
             self.assertNotIn("rg -n other docs .", text)
+            marker = "compact_monitor_evidence:"
+            compact_text = text[text.index(marker) + len(marker) :].lstrip()
+            start = compact_text.index("{")
+            depth = 0
+            end = 0
+            for index, char in enumerate(compact_text[start:], start=start):
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end = index + 1
+                        break
+            compact = json.loads(compact_text[start:end])
+            governance = compact["process_governance"]
+            self.assertEqual(governance["findings_count"], 5)
+            self.assertEqual(governance["by_kind"]["undeclared_check"], 2)
+            self.assertEqual(governance["by_kind"]["broad_rg_command"], 2)
+            samples = governance["samples"]
+            self.assertTrue(any("python3 -m pytest -q" in item.get("command", "") for item in samples))
+            self.assertNotIn("output_path", governance)
         finally:
             next_path.unlink(missing_ok=True)
 
