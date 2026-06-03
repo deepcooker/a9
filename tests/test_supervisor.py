@@ -7576,6 +7576,7 @@ role_signoff: product, business, architecture, test approved.
                 output = buffer.getvalue()
 
                 self.assertIn("runtime_state: waiting_for_review_closure", output)
+                self.assertIn("runtime_state_reason: closed_next_execution_task_missing", output)
                 self.assertIn("queued: 0", output)
         finally:
             mod.QUEUE_DIR = old_queue

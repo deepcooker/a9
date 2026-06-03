@@ -9192,7 +9192,10 @@ def status() -> int:
         print(f"worker_cost_risk: level={cost.get('level', 'missing')} reasons={reasons_text}")
     progress = service_progress(latest_summary)
     print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
-    print(f"runtime_state: {progress['runtime_state']}")
+    print(
+        f"runtime_state: {progress['runtime_state']} "
+        f"runtime_state_reason: {progress['runtime_state_reason']}"
+    )
     groups = progress.get("capability_groups", {})
     if groups:
         rendered = " ".join(f"{name}={item.get('percent', 0)}%" for name, item in sorted(groups.items()))
