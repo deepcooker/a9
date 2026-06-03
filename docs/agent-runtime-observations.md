@@ -1,5 +1,32 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: execution prompts now include an evidence/edit contract
+
+Observation:
+- Two decided execution runs still over-read and emitted direct file changes
+  even though the general contract said to use bounded evidence plans and
+  SEARCH/REPLACE.
+- The failure is prompt shape as much as model discipline: generic rules were
+  too far from the concrete task and did not list allowed paths as explicit
+  bounded read targets.
+
+Change:
+- Added a supervisor-generated `Evidence And Edit Contract` section for worker
+  phases.
+- The section lists task `allowed_paths` as `bounded read of ...`, gives narrow
+  `rg`/`sed` command shapes, forbids broad first-file slices, and sets
+  `direct_file_change_policy: repair`.
+
+Checks:
+- `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+- `python3 -m unittest tests.test_supervisor.SupervisorTests.test_build_context_packet_injects_evidence_and_edit_contract_for_worker tests.test_supervisor.SupervisorTests.test_build_context_packet_routes_decided_task_to_execution_next tests.test_supervisor.SupervisorTests.test_process_governance_enforces_task_command_bounds`
+- `python3 scripts/a9_supervisor.py status`
+
+Governance lesson:
+- This is still observation-first prompt shaping, not an arbitrary token gate.
+- The next real worker run should be monitored specifically for fewer broad
+  reads, fewer direct file changes, and lower uncached token use.
+
 ## 2026-06-03: cost-risk worker failed checks; monitor salvaged the slice
 
 Run evidence:

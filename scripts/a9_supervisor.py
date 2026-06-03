@@ -1119,6 +1119,7 @@ LangGraph/mem0/OpenHands/Continue complement persistence:
             section_budgets.get("method", 0),
         )
 
+    evidence_edit_contract = truncate_to_token_budget(worker_evidence_and_edit_contract(task), 900)
     task_prompt = truncate_to_token_budget(worker_prompt_with_default_envelope(task), section_budgets["task"], keep="tail")
     contract = truncate_to_token_budget(
         """Run under the A9 supervisor.
@@ -1188,6 +1189,14 @@ Hard rules:
                 "budget_tokens": 512,
                 "reference_only": False,
                 "body": task_decision_packet_prompt(task) if strict_worker_envelope_required_for_phase(task.phase) else "",
+            },
+            {
+                "name": "Evidence And Edit Contract",
+                "source": "supervisor.evidence_edit_contract",
+                "role": "policy",
+                "budget_tokens": 900,
+                "reference_only": False,
+                "body": evidence_edit_contract,
             },
             {
                 "name": "Current Task",
@@ -5833,6 +5842,32 @@ def worker_prompt_with_default_envelope(task: Task) -> str:
     if "strict_worker_envelope" in fields or not strict_worker_envelope_required_for_phase(task.phase):
         return task.prompt
     return f"strict_worker_envelope: true\n{task.prompt}".strip()
+
+
+def worker_evidence_and_edit_contract(task: Task) -> str:
+    if not strict_worker_envelope_required_for_phase(task.phase):
+        return ""
+    paths = [path for path in task.allowed_paths if str(path).strip()]
+    path_lines = "\n".join(f"- bounded read of {path}" for path in paths) or "- bounded read of task-named files only"
+    command_lines = []
+    for path in paths[:4]:
+        command_lines.append(f"- `rg -n \"<symbol-or-term>\" {path} | head -40`")
+        command_lines.append(f"- `sed -n '<start>,<end>p' {path}` after an rg anchor; keep windows narrow")
+    if not command_lines:
+        command_lines.append("- `rg -n \"<symbol-or-term>\" <task-file> | head -40`")
+        command_lines.append("- `sed -n '<start>,<end>p' <task-file>` after an rg anchor; keep windows narrow")
+    commands = "\n".join(command_lines[:8])
+    return f"""Evidence-and-edit contract:
+- Before any reads, state a bounded evidence plan with exact paths, exact rg/sed commands, and the reason for each read.
+- Read only these task-scoped paths unless the monitor supplies new explicit evidence:
+{path_lines}
+- Preferred bounded read commands:
+{commands}
+- Do not start with `sed -n '1,260p'` or larger broad file slices.
+- Do not chain multiple broad reads in one shell command.
+- direct_file_change_policy: repair
+- Do not edit files directly. Put SEARCH/REPLACE blocks in the final answer for deterministic A9 apply.
+"""
 
 
 DECIDED_STATUS_VALUES = {"decided", "decision", "done", "true", "yes"}
