@@ -27,6 +27,18 @@ Governance lesson:
 - The next real worker run should be monitored specifically for fewer broad
   reads, fewer direct file changes, and lower uncached token use.
 
+Smoke result:
+- Run: `.a9/runs/verify-evidence-edit-contract-worker-discipline-20260603-20260603T073327Z-a1`
+- Usage improved versus previous code runs: input `544421`, cached input
+  `513664`, uncached input `30757`, output `5997`, reasoning `3896`.
+- No `broad_file_slice_observation` or `direct_file_change_event` findings were
+  recorded.
+- New issue found: bounded reads of `docs/agent-runtime-observations.md` were
+  incorrectly reported as forbidden session context reads even when the task
+  explicitly listed that file in `allowed_paths`.
+- Follow-up fix: allow bounded reads of task-allowed observation logs while
+  keeping `docs/session-raw-*` protected outside session phases.
+
 ## 2026-06-03: cost-risk worker failed checks; monitor salvaged the slice
 
 Run evidence:

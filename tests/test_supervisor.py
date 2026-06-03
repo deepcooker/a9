@@ -4602,6 +4602,61 @@ Do the work.
         self.assertIn("archive/original-ideas/notes.md", paths)
         self.assertIn("docs/mistakes.md", paths)
 
+    def test_process_governance_allows_task_allowed_observation_log_bounded_read(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc 'rg -n \"worker cost\" "
+                            "docs/agent-runtime-observations.md | head -40'"
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="bounded-observation-log-read",
+                prompt="Verify a bounded observation log slice.",
+                allowed_paths=["docs/agent-runtime-observations.md"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertNotIn("forbidden_session_context_read", kinds)
+
+    def test_process_governance_still_blocks_allowed_path_session_raw_read_without_session_phase(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="session-raw-still-forbidden",
+                prompt="Verify raw summary is protected.",
+                allowed_paths=["docs/session-raw-summary.md"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertIn("forbidden_session_context_read", kinds)
+
     def test_process_governance_allows_bounded_wildcard_session_raw_read(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

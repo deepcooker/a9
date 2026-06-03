@@ -2842,7 +2842,7 @@ def shell_lc_inner_command(command: str) -> str:
 
 def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> bool:
     pipe_parts = [part.strip() for part in re.split(r"\s+\|\s+", inner) if part.strip()]
-    if len(pipe_parts) == 2 and re.fullmatch(r"head\s+-n\s+\d+", pipe_parts[1]):
+    if len(pipe_parts) == 2 and re.fullmatch(r"head\s+(?:-n\s+\d+|-\d+)", pipe_parts[1]):
         return command_fragment_is_bounded_read_of_paths(pipe_parts[0], paths)
     if len(pipe_parts) > 1:
         return False
@@ -3061,9 +3061,19 @@ def task_allows_session_context_reads(task: Task, command: str) -> bool:
     if task.phase in SESSION_CONTEXT_READ_PHASES:
         return True
     bounded_paths = bounded_read_paths_from_prompt(task.prompt)
-    if not bounded_paths:
-        return False
-    return command_is_single_bounded_read_of_paths(command, bounded_paths)
+    if bounded_paths and command_is_single_bounded_read_of_paths(command, bounded_paths):
+        return True
+    allowed_context_paths = [
+        path
+        for path in task.allowed_paths
+        if path
+        in {
+            "docs/agent-runtime-observations.md",
+            "docs/communication-observation-log.md",
+            "docs/mistakes.md",
+        }
+    ]
+    return bool(allowed_context_paths) and command_is_single_bounded_read_of_paths(command, allowed_context_paths)
 
 
 def command_session_context_path(command: str, prefix: str) -> str:
@@ -5851,10 +5861,10 @@ def worker_evidence_and_edit_contract(task: Task) -> str:
     path_lines = "\n".join(f"- bounded read of {path}" for path in paths) or "- bounded read of task-named files only"
     command_lines = []
     for path in paths[:4]:
-        command_lines.append(f"- `rg -n \"<symbol-or-term>\" {path} | head -40`")
+        command_lines.append(f"- `rg -n \"<symbol-or-term>\" {path} | head -n 40`")
         command_lines.append(f"- `sed -n '<start>,<end>p' {path}` after an rg anchor; keep windows narrow")
     if not command_lines:
-        command_lines.append("- `rg -n \"<symbol-or-term>\" <task-file> | head -40`")
+        command_lines.append("- `rg -n \"<symbol-or-term>\" <task-file> | head -n 40`")
         command_lines.append("- `sed -n '<start>,<end>p' <task-file>` after an rg anchor; keep windows narrow")
     commands = "\n".join(command_lines[:8])
     return f"""Evidence-and-edit contract:
