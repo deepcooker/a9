@@ -1568,3 +1568,26 @@ Governance lesson:
   to protect token budget.
 - The supervisor should eventually mark externally killed runs as interrupted
   automatically instead of requiring manual task-file cleanup.
+
+## 2026-06-03: orphaned running task reconciliation added
+
+Run evidence:
+- Triggering incident:
+  `.a9/runs/implement-communication-model-closure-live-smoke-20260603-20260603T050138Z-a1`
+
+Change:
+- `scripts/a9_supervisor.py` now has `INTERRUPTED_DIR` and
+  `reconcile_orphaned_running_tasks()`.
+- `status()` and `run_loop()` call the reconciler before reporting/running.
+- A stale running lease is moved from `.a9/tasks/running` to
+  `.a9/tasks/interrupted` when:
+  - its run directory has no `summary.json`,
+  - the lease is older than the reconciliation threshold,
+  - no live process command line references the run directory.
+- The run directory receives `orphaned_interruption.json` as durable evidence.
+
+Governance lesson:
+- A killed or transport-hung worker should not leave A9 reporting false
+  `running: 1`.
+- This is runtime hygiene, not a gate. It prevents stale state from blocking the
+  next small task and preserves evidence for monitor review.

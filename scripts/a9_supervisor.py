@@ -32,6 +32,7 @@ STATE_DIR = ROOT / ".a9"
 QUEUE_DIR = STATE_DIR / "tasks" / "queue"
 RUNNING_DIR = STATE_DIR / "tasks" / "running"
 DONE_DIR = STATE_DIR / "tasks" / "done"
+INTERRUPTED_DIR = STATE_DIR / "tasks" / "interrupted"
 RUNS_DIR = STATE_DIR / "runs"
 WORKTREES_DIR = STATE_DIR / "worktrees"
 WORKER_CODEX_HOME = STATE_DIR / "codex-home"
@@ -349,6 +350,7 @@ def ensure_dirs() -> None:
         QUEUE_DIR,
         RUNNING_DIR,
         DONE_DIR,
+        INTERRUPTED_DIR,
         RUNS_DIR,
         WORKTREES_DIR,
         WORKER_CODEX_HOME,
@@ -449,6 +451,91 @@ def claim_next_task() -> Task | None:
             continue
         return parse_task(claimed)
     return None
+
+
+def parse_utc_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        text = str(value)
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def running_process_contains(text: str) -> bool:
+    if not text:
+        return False
+    proc = run_cmd_no_raise(["ps", "-eo", "args"], cwd=ROOT)
+    return proc.returncode == 0 and text in proc.stdout
+
+
+def running_lease_is_orphaned(lease: dict[str, Any], *, max_age_seconds: int = 60) -> tuple[bool, str]:
+    run_dir_text = str(lease.get("run_dir") or "")
+    if not run_dir_text:
+        return False, "missing_run_dir"
+    run_dir = Path(run_dir_text)
+    if (run_dir / "summary.json").exists():
+        return False, "summary_exists"
+    started_at = parse_utc_datetime(lease.get("started_at"))
+    if started_at is None:
+        return False, "missing_started_at"
+    age_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
+    if age_seconds < max_age_seconds:
+        return False, "lease_not_old_enough"
+    if running_process_contains(run_dir_text):
+        return False, "worker_process_alive"
+    return True, "no_live_worker_process"
+
+
+def interrupt_running_task(
+    lease_path: Path,
+    lease: dict[str, Any],
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    ensure_dirs()
+    task_id = str(lease.get("task_id") or lease_path.stem)
+    suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target_json = INTERRUPTED_DIR / f"{lease_path.stem}-interrupted-{suffix}.json"
+    target_md = INTERRUPTED_DIR / f"{lease_path.stem}-interrupted-{suffix}.md"
+    task_md = RUNNING_DIR / f"{lease_path.stem}.md"
+    interrupted = {
+        **lease,
+        "status": "interrupted",
+        "interrupted_at": utc_now(),
+        "interrupt_reason": reason,
+        "lease_path": str(lease_path),
+        "interrupted_task_json": str(target_json),
+        "interrupted_task_md": str(target_md) if task_md.exists() else "",
+    }
+    write_json(target_json, interrupted)
+    if task_md.exists():
+        shutil.move(str(task_md), str(target_md))
+    lease_path.unlink(missing_ok=True)
+    run_dir = Path(str(lease.get("run_dir") or ""))
+    if str(run_dir):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        write_json(run_dir / "orphaned_interruption.json", interrupted)
+    return {"task_id": task_id, "status": "interrupted", "reason": reason, "target_json": str(target_json)}
+
+
+def reconcile_orphaned_running_tasks(*, max_age_seconds: int = 60) -> list[dict[str, Any]]:
+    ensure_dirs()
+    reconciled: list[dict[str, Any]] = []
+    for lease_path in sorted(RUNNING_DIR.glob("*.json")):
+        lease = read_json_file(lease_path)
+        if not lease:
+            continue
+        orphaned, reason = running_lease_is_orphaned(lease, max_age_seconds=max_age_seconds)
+        if orphaned:
+            reconciled.append(interrupt_running_task(lease_path, lease, reason=reason))
+    return reconciled
 
 
 def git_head() -> str:
@@ -8511,6 +8598,7 @@ def run_loop(args: argparse.Namespace) -> int:
     ensure_dirs()
     completed = 0
     while True:
+        reconcile_orphaned_running_tasks()
         write_daemon_heartbeat("polling", detail=f"completed={completed}")
         task = next_task()
         if not task:
@@ -8710,9 +8798,12 @@ def plan_note(args: argparse.Namespace) -> int:
 
 def status() -> int:
     ensure_dirs()
+    reconciled = reconcile_orphaned_running_tasks()
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
     print(f"running: {len(list(RUNNING_DIR.glob('*.json')))}")
     print(f"done: {len(list(DONE_DIR.glob('*.json')))}")
+    if reconciled:
+        print(f"interrupted_reconciled: {len(reconciled)}")
     latest_summary: dict[str, Any] | None = None
     latest = sorted(RUNS_DIR.glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
     if latest:

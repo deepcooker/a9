@@ -121,6 +121,70 @@ Do the work.
                 mod.QUEUE_DIR = old_queue
                 mod.RUNNING_DIR = old_running
 
+    def test_reconcile_orphaned_running_tasks_interrupts_stale_lease(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_running = mod.RUNNING_DIR
+            old_interrupted = mod.INTERRUPTED_DIR
+            try:
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.INTERRUPTED_DIR = Path(tmp) / "interrupted"
+                mod.RUNNING_DIR.mkdir(parents=True)
+                run_dir = Path(tmp) / "runs" / "run-1"
+                run_dir.mkdir(parents=True)
+                lease_path = mod.RUNNING_DIR / "task-1.json"
+                lease = {
+                    "task_id": "task-1",
+                    "started_at": "2026-06-03T00:00:00+00:00",
+                    "run_dir": str(run_dir),
+                }
+                mod.write_json(lease_path, lease)
+                (mod.RUNNING_DIR / "task-1.md").write_text("do it\n", encoding="utf-8")
+                with mock.patch.object(mod, "running_process_contains", return_value=False):
+                    result = mod.reconcile_orphaned_running_tasks(max_age_seconds=0)
+
+                self.assertEqual(len(result), 1)
+                self.assertFalse(lease_path.exists())
+                self.assertFalse((mod.RUNNING_DIR / "task-1.md").exists())
+                self.assertTrue(list(mod.INTERRUPTED_DIR.glob("task-1-interrupted-*.json")))
+                self.assertTrue(list(mod.INTERRUPTED_DIR.glob("task-1-interrupted-*.md")))
+                interruption = json.loads((run_dir / "orphaned_interruption.json").read_text(encoding="utf-8"))
+                self.assertEqual(interruption["status"], "interrupted")
+                self.assertEqual(interruption["interrupt_reason"], "no_live_worker_process")
+            finally:
+                mod.RUNNING_DIR = old_running
+                mod.INTERRUPTED_DIR = old_interrupted
+
+    def test_reconcile_orphaned_running_tasks_keeps_live_worker_lease(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_running = mod.RUNNING_DIR
+            old_interrupted = mod.INTERRUPTED_DIR
+            try:
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.INTERRUPTED_DIR = Path(tmp) / "interrupted"
+                mod.RUNNING_DIR.mkdir(parents=True)
+                run_dir = Path(tmp) / "runs" / "run-live"
+                run_dir.mkdir(parents=True)
+                lease_path = mod.RUNNING_DIR / "task-live.json"
+                mod.write_json(
+                    lease_path,
+                    {
+                        "task_id": "task-live",
+                        "started_at": "2026-06-03T00:00:00+00:00",
+                        "run_dir": str(run_dir),
+                    },
+                )
+                with mock.patch.object(mod, "running_process_contains", return_value=True):
+                    result = mod.reconcile_orphaned_running_tasks(max_age_seconds=0)
+
+                self.assertEqual(result, [])
+                self.assertTrue(lease_path.exists())
+                self.assertFalse(list(mod.INTERRUPTED_DIR.glob("*.json")))
+            finally:
+                mod.RUNNING_DIR = old_running
+                mod.INTERRUPTED_DIR = old_interrupted
+
     def test_effective_worker_idle_timeout_extends_supervisor_suite(self):
         mod = load_supervisor()
         task = mod.Task(
