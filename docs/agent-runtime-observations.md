@@ -2045,3 +2045,15 @@ Governance lesson:
 - Source-of-truth fields need semantic pressure, not just JSON shape checks.
   This remains a warning because it is quality drift, not a fact-corrupting
   write or skipped declared check.
+
+Validation:
+- Worker run:
+  `.a9/runs/verify-copied-mechanism-semantics-20260604-20260603T174904Z-a1`
+- Result: pass, process governance clean, declared checks passed.
+- The worker correctly set `copied_mechanisms: []` and placed inspected local
+  paths in `files_validated`.
+- The worker also copied exact `supervisor_declared_checks`.
+- Residual observation: `stderr.log` recorded transient tool/app transport
+  errors during the run, but the worker recovered and final process governance
+  stayed clean. This should remain observable because transport instability is
+  different from reasoning or prompt-contract failure.
