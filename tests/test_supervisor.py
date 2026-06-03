@@ -6824,6 +6824,48 @@ Do the work.
         self.assertIn("prefer SEARCH/REPLACE", prompt)
         self.assertIn("search_replace_blocks", prompt)
 
+    def test_repair_next_task_prompt_uses_slim_context_without_active_plan(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="repair-slim-context",
+            prompt="demo",
+            phase="test",
+            checks=["python3 -m py_compile scripts/a9_supervisor.py"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "status": "needs-repair",
+            "run_dir": "/tmp/run",
+            "context_path": "/tmp/run/context.md",
+            "process_governance": {
+                "status": "fail",
+                "findings": [{"kind": "direct_file_change_event", "level": "error"}],
+            },
+            "diff": {"diff_bytes": 0},
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "changed_files": ["scripts/a9_supervisor.py"],
+                        "next_slice": "repair: fix exact blocker",
+                    }
+                }
+            },
+        }
+
+        prompt = mod.next_task_prompt(task, summary, "repair")
+
+        self.assertIn("Slim auto-repair task.", prompt)
+        self.assertIn("direct_file_change_policy: repair", prompt)
+        self.assertIn("Compact repair evidence:", prompt)
+        self.assertIn("direct_file_change_event", prompt)
+        self.assertIn("python3 -m py_compile scripts/a9_supervisor.py", prompt)
+        self.assertIn("scripts/a9_supervisor.py", prompt)
+        self.assertIn("Do not edit files directly", prompt)
+        self.assertNotIn("Active plan contract:", prompt)
+        self.assertNotIn("Copy pipeline phases:", prompt)
+        self.assertNotIn("Continue A9 24-hour automation.", prompt)
+
     def test_build_context_packet_injects_worker_method_packet_for_ai_worker(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="method-context", prompt="implement one decided slice", phase="implement")

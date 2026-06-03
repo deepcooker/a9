@@ -7462,7 +7462,66 @@ def compact_monitor_repair_evidence(summary: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def slim_repair_next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
+    worker_output = worker_output_from_summary(summary)
+    compact_evidence = compact_monitor_repair_evidence(summary)
+    patch_apply = summary.get("patch_apply", {})
+    patch_apply_hint = format_patch_apply_repair_hint(patch_apply, summary.get("git_governance", {}))
+    declared_checks = checks_for_next_phase(phase, task)
+    allowed_paths = task.allowed_paths if task.allowed_paths else []
+    allowed_paths_text = "\n".join(f"- {path}" for path in allowed_paths) if allowed_paths else "- none declared"
+    declared_checks_text = "\n".join(f"- {check}" for check in declared_checks) if declared_checks else "- none declared"
+    repair_hint = f"\n{patch_apply_hint}\n" if patch_apply_hint else ""
+    return f"""strict_worker_envelope: true
+direct_file_change_policy: repair
+decision_status: decided
+
+Slim auto-repair task.
+
+Problem:
+- Previous run status: {summary.get('status', '')}
+- Previous task: {task.task_id}
+- Previous run: {summary.get('run_dir', '')}
+- Repair only the exact blocker shown below. Do not continue the broader pipeline.
+
+Authority:
+- Task frontmatter allowed_paths is the only write scope.
+- Declared checks below are authoritative and are run by the outer supervisor.
+- Worker self-report is evidence only; do not invent changed_files or supervisor_declared_checks.
+- If no file changes are needed, output changed_files: [] and no search_replace_blocks.
+
+Allowed paths:
+{allowed_paths_text}
+
+Declared checks:
+{declared_checks_text}
+
+Compact repair evidence:
+{bounded_inline(json.dumps(compact_evidence, ensure_ascii=False), 1800)}
+
+Previous worker output:
+- next_slice: {bounded_inline(worker_output.get('next_slice', ''), 500)}
+- changed_files_claim: {bounded_inline(json.dumps(worker_output.get('changed_files', []), ensure_ascii=False), 500)}
+- copied_mechanisms: {bounded_inline(json.dumps(worker_output.get('copied_mechanisms', []), ensure_ascii=False), 700)}
+{repair_hint}
+Repair discipline:
+- Before source reads, list exact bounded commands and reasons.
+- Use `rg -n "<anchor>" <allowed-path> | head -n 40` before every sed source read.
+- Each sed source window must be <= 120 lines.
+- Do not read `.a9/runs`, raw sessions, broad docs, or reference projects unless an exact path above requires it.
+- Do not edit files directly. Put SEARCH/REPLACE blocks in `output.search_replace_blocks`.
+- Do not run tests yourself. The outer supervisor runs the declared checks.
+
+Final envelope:
+- Return valid JSON with protocolVersion 1, status ok, worker_commands_run,
+  supervisor_declared_checks copied exactly from the Declared checks section,
+  changed_files matching actual proposed patch paths, copied_mechanisms, and next_slice.
+"""
+
+
 def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
+    if phase == "repair":
+        return slim_repair_next_task_prompt(task, summary, phase)
     focus_lines = "\n".join(f"- {name}: {focus}" for name, focus in PHASE_FOCUS.items())
     worker_output = worker_output_from_summary(summary)
     include_direct_file_change_repair = (

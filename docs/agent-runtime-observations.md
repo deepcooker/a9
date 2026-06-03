@@ -1965,3 +1965,30 @@ Governance lesson:
   prompt includes too much active-plan history. Cost control should shrink the
   repair context shape, not impose arbitrary line/token gates that damage task
   quality.
+
+## 2026-06-04: auto-repair prompt now uses slim context
+
+Change:
+- `next_task_prompt()` now routes `phase == repair` to a slim repair template.
+- The slim template keeps only:
+  - previous task/run/status,
+  - allowed paths,
+  - declared checks,
+  - compact repair evidence,
+  - previous worker output summary,
+  - patch-apply repair hint when present,
+  - deterministic SEARCH/REPLACE discipline.
+- It deliberately omits active plan hydration, goal continuation, copy pipeline
+  phase text, and broad methodology sections.
+
+Why:
+- The failed Spark auto-repair showed that a tiny repair can consume huge token
+  volume and drift into unrelated work when it receives the same context shape
+  as normal continuation.
+- Repair is not strategy work. It should fix the exact blocker, or return a
+  change request if compact evidence is insufficient.
+
+Governance lesson:
+- This follows the user's data-first/performance-second rule: preserve the
+  authoritative repair data shape first, then reduce cost by changing context
+  architecture instead of adding arbitrary hard token limits.
