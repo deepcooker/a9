@@ -52,6 +52,7 @@ These files shape current work but are not global truth forever:
 - `docs/a9-current-decision-packet.md`
 - `docs/a9-current-review-packet.md`
 - `docs/a9-current-role-review.md`
+- `docs/a9-runtime-review-closure-2026-06-03.md`
 - `docs/stage-handoff-2026-06-01.md`
 - `docs/communication-governance-worker-task.md`
 
