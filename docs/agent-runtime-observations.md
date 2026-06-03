@@ -1934,3 +1934,34 @@ Governance lesson:
 - This is the right pattern for current gate policy: facts and authority state
   are protected, but noisy quality signals remain observation-first until the
   review process decides they should become blocking.
+
+## 2026-06-03: auto-repair started correctly but failed execution discipline
+
+Run evidence:
+- Trigger run:
+  `.a9/runs/verify-worker-self-report-drift-20260603-20260603T105334Z-a1`
+- Auto-repair run:
+  `.a9/runs/auto-repair-verify-worker-self-report-drift-20260603-20260603T105434Z-20260603T105445Z-a1`
+
+Observation:
+- The first validation correctly went to `needs-repair` because the worker
+  claimed `changed_files` even though there was no diff or deterministic patch.
+  This is a factual authority issue, so the repair route was correct.
+- A9 then automatically created and ran an auto-repair task, proving the 24h
+  continuation path is active.
+- The repair worker found one useful improvement: normalize declared-check
+  comparison so ordering and edge whitespace do not create noisy mismatch
+  warnings.
+- The repair worker still failed execution discipline: it emitted direct
+  `file_change` events, read a broad docs slice, and consumed about 1M input
+  tokens. The monitor rejected the run result and manually salvaged only the
+  small valid mechanism.
+
+Governance lesson:
+- Auto-repair is operational, but repair prompts need tighter authority shaping:
+  fix the exact blocker, do not broaden into unrelated polish, and do not direct
+  edit under deterministic-apply policy.
+- For Spark workers, tiny repair tasks can still explode token usage when the
+  prompt includes too much active-plan history. Cost control should shrink the
+  repair context shape, not impose arbitrary line/token gates that damage task
+  quality.

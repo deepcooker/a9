@@ -5939,6 +5939,39 @@ Do the work.
             any(finding.get("kind") == "worker_declared_checks_self_report_mismatch" for finding in findings)
         )
 
+    def test_worker_envelope_declared_check_mismatch_ignores_order_and_edge_whitespace(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                (
+                    'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":'
+                    '{"changed_files":[],"worker_commands_run":[],'
+                    '"supervisor_declared_checks":["  pytest tests/test_supervisor.py -q  ",'
+                    '"python3 -m py_compile scripts/a9_supervisor.py"],"copied_mechanisms":[]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-check-self-report-mismatch-normalized",
+                prompt="strict_worker_envelope: true\nDo work.",
+                checks=[
+                    "python3 -m py_compile scripts/a9_supervisor.py",
+                    "pytest tests/test_supervisor.py -q",
+                ],
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "pass")
+        findings = envelope.get("findings", [])
+        self.assertFalse(
+            any(finding.get("kind") == "worker_declared_checks_self_report_mismatch" for finding in findings)
+        )
+
     def test_worker_envelope_status_alias_pass_normalizes_to_ok(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

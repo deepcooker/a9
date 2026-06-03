@@ -2546,15 +2546,16 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
                 )
             elif (
                 isinstance(output.get("supervisor_declared_checks"), list)
-                and output.get("supervisor_declared_checks") != task.checks
+                and normalize_declared_checks_for_worker_envelope(output.get("supervisor_declared_checks"))
+                != normalize_declared_checks_for_worker_envelope(task.checks)
             ):
                 result["findings"].append(
                     {
                         "level": "warn",
                         "kind": "worker_declared_checks_self_report_mismatch",
                         "message": "worker-reported supervisor_declared_checks differ from task checks; task checks remain authoritative",
-                        "expected": task.checks,
-                        "actual": output.get("supervisor_declared_checks"),
+                        "expected": normalize_declared_checks_for_worker_envelope(task.checks),
+                        "actual": normalize_declared_checks_for_worker_envelope(output.get("supervisor_declared_checks")),
                     }
                 )
         has_error_finding = any(item.get("level") == "error" for item in result["findings"])
@@ -2571,6 +2572,11 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
 
     write_json(output_path, result)
     return result
+
+
+def normalize_declared_checks_for_worker_envelope(checks: list[str] | None) -> list[str]:
+    normalized = [str(item).strip() for item in checks or []]
+    return sorted(item for item in normalized if item)
 
 
 def validate_captured_diff(diff: dict[str, Any], worktree: Path, run_dir: Path) -> dict[str, Any]:
