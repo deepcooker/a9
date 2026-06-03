@@ -25,6 +25,9 @@ Governance lesson:
   the parser mistook for a shell pipe.
 - The shell pipeline parser now ignores `|` inside quotes. Replaying the run
   produces no process-governance findings.
+- `status` now prints `latest process replay` when current governance rules
+  classify the latest run differently from the stored historical summary. This
+  keeps raw run evidence immutable while making monitor decisions less stale.
 
 ## 2026-06-03: Begin Patch update blocks now normalize into deterministic apply
 

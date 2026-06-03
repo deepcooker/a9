@@ -3513,7 +3513,13 @@ def effective_direct_file_change_policy(task: Task) -> str:
     return explicit_policy
 
 
-def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Path) -> dict[str, Any]:
+def classify_process_governance(
+    task: Task,
+    worker: dict[str, Any],
+    run_dir: Path,
+    *,
+    write_output: bool = True,
+) -> dict[str, Any]:
     output_path = run_dir / "process_governance.json"
     event_path = Path(str(worker.get("event_summaries_path") or ""))
     findings: list[dict[str, Any]] = []
@@ -3696,8 +3702,35 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         "error_findings_count": len(error_findings),
         "output_path": str(output_path),
     }
-    write_json(output_path, result)
+    if write_output:
+        write_json(output_path, result)
     return result
+
+
+def task_path_for_summary(summary: dict[str, Any]) -> Path | None:
+    task_id = str(summary.get("task_id") or "").strip()
+    if not task_id:
+        return None
+    for directory in (DONE_DIR, RUNNING_DIR, QUEUE_DIR):
+        candidate = directory / f"{task_id}.md"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def replay_process_governance_for_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    run_dir = Path(str(summary.get("run_dir") or ""))
+    worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+    event_path = str(worker.get("event_summaries_path") or "")
+    task_path = task_path_for_summary(summary)
+    if not run_dir.exists() or not event_path or task_path is None:
+        return {"status": "unavailable", "findings": []}
+    return classify_process_governance(
+        parse_task(task_path),
+        {"event_summaries_path": event_path},
+        run_dir,
+        write_output=False,
+    )
 
 
 def decide_status(
@@ -9392,6 +9425,25 @@ def status() -> int:
                 f"findings={process_summary.get('findings_count', 0)} "
                 f"by_kind={by_kind_text}"
             )
+            replay = replay_process_governance_for_summary(data)
+            replay_summary = process_governance_prompt_summary(replay)
+            replay_by_kind = replay_summary.get("by_kind", {})
+            replay_by_kind_text = (
+                ",".join(f"{kind}={count}" for kind, count in sorted(replay_by_kind.items()))
+                if isinstance(replay_by_kind, dict) and replay_by_kind
+                else "none"
+            )
+            if replay_summary.get("status") != "unavailable" and (
+                replay_summary.get("status") != process_summary.get("status")
+                or replay_summary.get("findings_count") != process_summary.get("findings_count")
+                or replay_by_kind_text != by_kind_text
+            ):
+                print(
+                    "latest process replay: "
+                    f"status={replay_summary.get('status', '')} "
+                    f"findings={replay_summary.get('findings_count', 0)} "
+                    f"by_kind={replay_by_kind_text}"
+                )
         cost = data.get("worker_cost_risk") or worker_cost_risk(data)
         reasons = cost.get("reasons", [])
         reasons_text = ",".join(str(reason) for reason in reasons) if reasons else "none"

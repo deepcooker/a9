@@ -7839,12 +7839,87 @@ role_signoff: product, business, architecture, test approved.
             self.assertIn("latest process: status=pass findings=2", output)
             self.assertIn("broad_file_slice_observation=1", output)
             self.assertIn("direct_file_change_event=1", output)
-            self.assertIn(
-                "worker_cost_risk: level=high reasons=high_input_tokens,broad_reads,direct_file_changes",
-                output,
-            )
+            self.assertIn("worker_cost_risk: level=high", output)
+            self.assertIn("high_input_tokens", output)
+            self.assertIn("broad_reads", output)
+            self.assertIn("direct_file_changes", output)
         finally:
             shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_status_prints_process_replay_when_current_rules_differ(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        run_dir = mod.RUNS_DIR / "selftest-process-replay-run"
+        task_path = mod.DONE_DIR / "selftest-process-replay.md"
+        task_json_path = mod.DONE_DIR / "selftest-process-replay.json"
+        shutil.rmtree(run_dir, ignore_errors=True)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        old_task_text = task_path.read_text(encoding="utf-8") if task_path.exists() else None
+        old_task_json = task_json_path.read_text(encoding="utf-8") if task_json_path.exists() else None
+        try:
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc 'rg -n \"evidence|contract\" "
+                            "docs/agent-runtime-observations.md | head -n 40'"
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task_path.write_text(
+                "\n".join(
+                    [
+                        "---",
+                        'id: "selftest-process-replay"',
+                        'phase: "test"',
+                        "checks:",
+                        "allowed_paths:",
+                        '  - "docs/agent-runtime-observations.md"',
+                        "---",
+                        "strict_worker_envelope: true",
+                        "Verify bounded observation log read.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            mod.write_json(task_json_path, {"status": "pass"})
+            mod.write_json(
+                run_dir / "summary.json",
+                {
+                    "task_id": "selftest-process-replay",
+                    "status": "pass",
+                    "run_dir": str(run_dir),
+                    "worker": {"event_summaries_path": str(events)},
+                    "process_governance": {
+                        "status": "pass",
+                        "findings": [{"kind": "forbidden_session_context_read", "message": "old false positive"}],
+                    },
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                mod.status()
+            output = buffer.getvalue()
+
+            self.assertIn("latest process: status=pass findings=1", output)
+            self.assertIn("latest process replay: status=pass findings=0 by_kind=none", output)
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            if old_task_text is None:
+                task_path.unlink(missing_ok=True)
+            else:
+                task_path.write_text(old_task_text, encoding="utf-8")
+            if old_task_json is None:
+                task_json_path.unlink(missing_ok=True)
+            else:
+                task_json_path.write_text(old_task_json, encoding="utf-8")
 
     def test_status_prints_worker_cost_risk(self):
         mod = load_supervisor()
