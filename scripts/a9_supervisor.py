@@ -1705,6 +1705,17 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
     bounded_paths = bounded_read_paths_from_prompt(task.prompt)
     if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
         return {}
+    compound_read_findings = compound_wide_read_command_findings(task, normalized)
+    if compound_read_findings:
+        finding = compound_read_findings[0]
+        return {
+            "kind": finding["kind"],
+            "reason": finding["message"],
+            "command": normalized,
+            "read_count": finding["read_count"],
+            "target_count": finding["target_count"],
+            "broad_read_count": finding["broad_read_count"],
+        }
     if prompt_forbids_rg_files(task.prompt) and "rg --files" in normalized:
         return {}
     if prompt_forbids_ls(task.prompt) and command_runs_ls(normalized):
@@ -2932,6 +2943,75 @@ def command_read_targets(command: str) -> list[str]:
     return targets
 
 
+def command_read_fragments(command: str) -> list[dict[str, Any]]:
+    normalized = normalize_shell_command(command)
+    inner = shell_lc_inner_command(normalized).strip()
+    fragments = [part.strip() for part in re.split(r"\s+(?:&&|;)\s+", inner) if part.strip()]
+    reads: list[dict[str, Any]] = []
+    for fragment in fragments or [inner]:
+        pipe_head = re.split(r"\s+\|\s+", fragment, maxsplit=1)[0].strip()
+        try:
+            parts = shlex.split(pipe_head)
+        except ValueError:
+            continue
+        if not parts:
+            continue
+        name = parts[0]
+        target = ""
+        line_count = 0
+        if name == "sed" and len(parts) >= 4 and parts[1] == "-n":
+            target = parts[3]
+            window = parts[2].strip("'\"")
+            match = re.search(r"^(\d+)\s*,\s*(\d+)p$", window)
+            if match:
+                start = int(match.group(1))
+                end = int(match.group(2))
+                if end >= start:
+                    line_count = end - start + 1
+        elif name in {"tail", "head"} and len(parts) >= 4 and parts[1] == "-n":
+            target = parts[-1]
+            try:
+                line_count = int(parts[2])
+            except ValueError:
+                line_count = 0
+        elif name == "rg":
+            index = 1
+            while index < len(parts) and parts[index].startswith("-"):
+                if parts[index] in {"-m", "--max-count"}:
+                    index += 2
+                    continue
+                index += 1
+            if index < len(parts):
+                target = " ".join(part for part in parts[index + 1 :] if not part.startswith("-"))
+        if target:
+            reads.append({"tool": name, "target": target, "line_count": line_count, "fragment": fragment})
+    return reads
+
+
+def compound_wide_read_command_findings(task: Task, command: str) -> list[dict[str, Any]]:
+    if command_looks_like_test(command):
+        return []
+    reads = command_read_fragments(command)
+    if len(reads) <= 1:
+        return []
+    targets = {str(item.get("target") or "").strip() for item in reads if item.get("target")}
+    broad_reads = [item for item in reads if int(item.get("line_count") or 0) > BROAD_FILE_SLICE_WARN_LINES]
+    if len(targets) <= 1 and not broad_reads:
+        return []
+    return [
+        {
+            "level": "warn",
+            "kind": "compound_wide_read_command",
+            "message": "worker combined multiple source reads or broad read windows in one command; split into bounded single-evidence steps",
+            "command": command,
+            "read_count": len(reads),
+            "target_count": len(targets),
+            "broad_read_count": len(broad_reads),
+            "targets": sorted(targets)[:6],
+        }
+    ]
+
+
 def allowed_read_path_findings(task: Task, command: str) -> list[dict[str, Any]]:
     if not task.allowed_paths or not prompt_enforces_allowed_read_paths(task.prompt):
         return []
@@ -3355,6 +3435,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
                     "command": command,
                 }
             )
+        findings.extend(compound_wide_read_command_findings(task, command))
         if command_directly_writes_workspace(command):
             findings.append(
                 {

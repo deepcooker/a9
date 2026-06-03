@@ -1,5 +1,17 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: compound wide-read commands are now observable
+
+Run evidence:
+- failed worker: `.a9/runs/test-compact-monitor-repair-prompt-contract-20260603-20260603T055851Z-a1`
+- interrupted worker: `.a9/runs/implement-compound-wide-read-command-governance-20260603-20260603T060658Z-a1`
+
+Observation:
+- Workers repeatedly combined multiple `rg` and broad `sed` reads in one shell command.
+- This is not a business gate or fixed token limit; it is runtime hygiene for token-cost architecture.
+- A9 should split evidence reads into small single-purpose steps, and the supervisor should make
+  compound wide-read commands visible before they burn a full turn.
+
 ## 2026-06-03: monitor-blocked repair prompts now inject compact evidence
 
 Run evidence:

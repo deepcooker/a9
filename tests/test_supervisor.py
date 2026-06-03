@@ -4809,6 +4809,42 @@ Do the work.
         self.assertEqual(finding["read_span"], "1-260")
         self.assertEqual(finding["recommendation"], "use rg anchors (grep-like) to locate lines first, then read narrower sed slices")
 
+    def test_process_governance_observes_compound_wide_read_command(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc \"rg -n 'needle' tests/test_supervisor.py && "
+                            "rg -n 'needle' scripts/a9_supervisor.py && "
+                            "sed -n '1,260p' tests/test_supervisor.py && "
+                            "sed -n '1,280p' scripts/a9_supervisor.py\""
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="compound-wide-read",
+                phase="implement",
+                prompt="Use narrow read windows to keep cost stable.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        finding = next(item for item in result["findings"] if item["kind"] == "compound_wide_read_command")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(finding["level"], "warn")
+        self.assertEqual(finding["read_count"], 4)
+        self.assertGreaterEqual(finding["target_count"], 2)
+        self.assertEqual(finding["broad_read_count"], 2)
+
     def test_process_governance_allows_bounded_runtime_evidence_read_without_root_warning(self):
         mod = load_supervisor()
         evidence_path = ".a9/runs/compact-monitor-run/summary.json"
@@ -5150,6 +5186,29 @@ Do the work.
         self.assertEqual(allowed_capped_locator, {})
         self.assertEqual(large_read, {})
         self.assertEqual(allowed_check, {})
+
+    def test_live_worker_flags_compound_wide_read_command(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="compound-wide-read-live", prompt="Use bounded reads.")
+
+        compound_wide_read = mod.live_worker_command_violation(
+            task,
+            (
+                "/bin/bash -lc \"rg -n 'needle' tests/test_supervisor.py && "
+                "rg -n 'needle' scripts/a9_supervisor.py && "
+                "sed -n '1,260p' tests/test_supervisor.py && "
+                "sed -n '1,280p' scripts/a9_supervisor.py\""
+            ),
+        )
+        single_read = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc \"sed -n '1,120p' tests/test_supervisor.py\"",
+        )
+
+        self.assertEqual(compound_wide_read["kind"], "compound_wide_read_command")
+        self.assertEqual(compound_wide_read["read_count"], 4)
+        self.assertGreaterEqual(compound_wide_read["target_count"], 2)
+        self.assertEqual(single_read, {})
 
     def test_live_worker_accepts_bounded_read_colon_prompt_form(self):
         mod = load_supervisor()
