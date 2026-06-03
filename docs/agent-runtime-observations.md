@@ -1,5 +1,30 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: strict worker direct edits now default to repair
+
+Observation:
+- The supervisor prompt already injected `direct_file_change_policy: repair`
+  into the worker evidence/edit contract.
+- Process governance only inspected the raw task prompt, so strict worker runs
+  could still emit direct `file_change` events and be recorded as warnings.
+
+Change:
+- `classify_process_governance()` now uses an effective policy: an explicit
+  repair policy still wins, and strict worker envelope tasks default to repair
+  even when the raw task prompt did not include the injected contract.
+- Non-strict observation tasks can still opt out with
+  `strict_worker_envelope: false`.
+
+Checks:
+- `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
+- `python3 -m unittest tests.test_supervisor.SupervisorTests.test_process_governance_observes_direct_file_change_event_without_blocking tests.test_supervisor.SupervisorTests.test_process_governance_repair_policy_treats_direct_file_change_as_fail tests.test_supervisor.SupervisorTests.test_process_governance_defaults_direct_file_change_repair_for_strict_worker`
+- `python3 -m unittest tests.test_supervisor.SupervisorTests.test_next_task_prompt_infers_direct_file_change_repair_for_deterministic_worker_phases tests.test_supervisor.SupervisorTests.test_next_task_prompt_carries_explicit_direct_file_change_policy_on_non_strict_phase tests.test_supervisor.SupervisorTests.test_next_task_prompt_does_not_default_direct_file_change_policy_for_session_refresh tests.test_supervisor.SupervisorTests.test_schedule_next_task_infers_direct_file_change_policy_for_durable_test_followup tests.test_supervisor.SupervisorTests.test_schedule_next_task_infers_direct_file_change_policy_for_durable_repair_followup`
+
+Governance lesson:
+- This is an authority-state boundary, not an arbitrary quality gate. Code
+  writes in strict worker phases must pass through deterministic apply so the
+  monitor can inspect, repair, and preserve causality.
+
 ## 2026-06-03: tiny code smoke improved reads but still direct-edited
 
 Run evidence:

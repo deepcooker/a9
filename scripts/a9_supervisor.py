@@ -3310,6 +3310,15 @@ def parse_direct_file_change_policy(prompt: str) -> str:
     return "repair" if value == "repair" else "observe"
 
 
+def effective_direct_file_change_policy(task: Task) -> str:
+    explicit_policy = parse_direct_file_change_policy(task.prompt)
+    if explicit_policy == "repair":
+        return explicit_policy
+    if strict_worker_envelope_required(task):
+        return "repair"
+    return explicit_policy
+
+
 def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Path) -> dict[str, Any]:
     output_path = run_dir / "process_governance.json"
     event_path = Path(str(worker.get("event_summaries_path") or ""))
@@ -3329,7 +3338,7 @@ def classify_process_governance(task: Task, worker: dict[str, Any], run_dir: Pat
         "search/replace" in prompt_lower and "deterministic apply" in prompt_lower
     ) or ("strict_worker_envelope: true" in prompt_lower)
     forbids_web = ("do not browse web" in prompt_lower) or ("no web" in prompt_lower)
-    direct_change_policy = parse_direct_file_change_policy(task.prompt)
+    direct_change_policy = effective_direct_file_change_policy(task)
     direct_change_enforce = deterministic_output_required and direct_change_policy == "repair"
     last_agent_rationale = ""
     for event in read_jsonl_file(event_path):
