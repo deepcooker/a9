@@ -1992,3 +1992,26 @@ Governance lesson:
 - This follows the user's data-first/performance-second rule: preserve the
   authoritative repair data shape first, then reduce cost by changing context
   architecture instead of adding arbitrary hard token limits.
+
+Follow-up validation:
+- Worker run:
+  `.a9/runs/verify-slim-auto-repair-prompt-20260604-20260603T173821Z-a1`
+- The validation passed with clean process governance and no file edits.
+- Actual token use dropped from the prior repair run's about 1M input tokens to
+  about 287k input tokens. This is still expensive, but the direction confirms
+  context-shape reduction works better than hard token gates for this class of
+  issue.
+- The worker still left `supervisor_declared_checks` empty and used
+  `commands_run` instead of `worker_commands_run`, which showed that normal
+  worker prompts did not expose task frontmatter checks as a clear authority
+  section.
+
+Change:
+- The bounded context packet now includes a `Task Declared Checks` section.
+- The strict envelope contract now tells workers to copy
+  `supervisor_declared_checks` exactly from that section.
+
+Governance lesson:
+- If we want a structured field to be exact, the authoritative data must be in
+  the prompt as structured data. Do not ask the worker to infer hidden
+  supervisor state.

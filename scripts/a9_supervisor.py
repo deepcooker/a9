@@ -1121,6 +1121,7 @@ LangGraph/mem0/OpenHands/Continue complement persistence:
 
     evidence_edit_contract = truncate_to_token_budget(worker_evidence_and_edit_contract(task), 900)
     task_prompt = truncate_to_token_budget(worker_prompt_with_default_envelope(task), section_budgets["task"], keep="tail")
+    declared_checks_body = "\n".join(f"- {check}" for check in task.checks) if task.checks else "- none"
     contract = truncate_to_token_budget(
         """Run under the A9 supervisor.
 
@@ -1144,6 +1145,7 @@ Hard rules:
   The envelope must be valid JSON only; put file paths and evidence as strings, not Markdown links.
   In output, separate worker_commands_run from supervisor_declared_checks; worker self-report is evidence,
   while supervisor-declared checks in the run summary are authoritative.
+  Copy supervisor_declared_checks exactly from the Task Declared Checks section; use [] only when it says none.
 """,
         section_budgets["contract"],
     )
@@ -1197,6 +1199,14 @@ Hard rules:
                 "budget_tokens": 900,
                 "reference_only": False,
                 "body": evidence_edit_contract,
+            },
+            {
+                "name": "Task Declared Checks",
+                "source": str(task.path),
+                "role": "authority",
+                "budget_tokens": 512,
+                "reference_only": False,
+                "body": declared_checks_body,
             },
             {
                 "name": "Current Task",

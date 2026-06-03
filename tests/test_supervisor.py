@@ -6934,6 +6934,25 @@ Do the work.
         self.assertIn("Keep each `sed -n '<start>,<end>p'` source window <= 120 lines.", packet["prompt"])
         self.assertIn("keep the total requested source lines <= 180", packet["prompt"])
 
+    def test_build_context_packet_injects_task_declared_checks(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="declared-check-context",
+            prompt="validate one decided slice",
+            phase="test",
+            checks=[
+                "python3 -m unittest tests.test_supervisor.SupervisorTests.test_one",
+                "python3 -m py_compile scripts/a9_supervisor.py",
+            ],
+        )
+
+        packet = mod.build_context_packet(task)
+
+        self.assertIn("# Task Declared Checks", packet["prompt"])
+        self.assertIn("python3 -m unittest tests.test_supervisor.SupervisorTests.test_one", packet["prompt"])
+        self.assertIn("python3 -m py_compile scripts/a9_supervisor.py", packet["prompt"])
+
     def test_build_context_packet_routes_compact_decided_test_task_to_execution_next(self):
         mod = load_supervisor()
         task = mod.Task(
