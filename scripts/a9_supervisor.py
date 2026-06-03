@@ -2038,7 +2038,92 @@ def capture_diff(worktree: Path, run_dir: Path) -> dict[str, Any]:
     return {"diff_path": str(diff_path), "diff_bytes": len(diff.encode("utf-8"))}
 
 
-def extract_worker_search_replace_patch(text: str) -> tuple[str, str | None, list[dict[str, Any]]]:
+def normalize_worker_patch_path(raw_path: str, root: Path | None) -> str:
+    path = raw_path.strip()
+    if not path:
+        return ""
+    if root is not None:
+        try:
+            return str(Path(path).resolve().relative_to(root.resolve()))
+        except (OSError, ValueError):
+            pass
+    return path
+
+
+def extract_begin_patch_update_blocks(text: str, root: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
+    begin = text.find("*** Begin Patch")
+    end = text.find("*** End Patch", begin)
+    if begin < 0 or end < 0:
+        return "", []
+    patch_text = text[begin : end + len("*** End Patch")]
+    parts: list[str] = []
+    findings: list[dict[str, Any]] = []
+    current_path = ""
+    search_lines: list[str] = []
+    replace_lines: list[str] = []
+
+    def flush_hunk() -> None:
+        if not current_path or not search_lines and not replace_lines:
+            return
+        search_text = "".join(search_lines)
+        replace_text = "".join(replace_lines)
+        if not search_text:
+            findings.append(
+                {
+                    "level": "warning",
+                    "code": "begin_patch.empty_search_unsupported",
+                    "scope": "final_message.begin_patch",
+                    "message": "ignored Begin Patch hunk without SEARCH-side context",
+                    "path": current_path,
+                }
+            )
+            return
+        parts.append(
+            f"{current_path}\n<<<<<<< SEARCH\n{search_text}=======\n{replace_text}>>>>>>> REPLACE\n"
+        )
+
+    for raw_line in patch_text.splitlines(keepends=True):
+        line = raw_line.rstrip("\n")
+        if line.startswith("*** Update File: "):
+            flush_hunk()
+            current_path = normalize_worker_patch_path(line.split(": ", 1)[1], root)
+            search_lines = []
+            replace_lines = []
+            continue
+        if line.startswith("*** "):
+            flush_hunk()
+            search_lines = []
+            replace_lines = []
+            continue
+        if line.startswith("@@"):
+            flush_hunk()
+            search_lines = []
+            replace_lines = []
+            continue
+        if not current_path:
+            continue
+        if raw_line.startswith("+"):
+            replace_lines.append(raw_line[1:])
+        elif raw_line.startswith("-"):
+            search_lines.append(raw_line[1:])
+        elif raw_line.startswith(" "):
+            search_lines.append(raw_line[1:])
+            replace_lines.append(raw_line[1:])
+
+    if parts:
+        findings.append(
+            {
+                "level": "info",
+                "code": "final_message.begin_patch_update.extracted",
+                "scope": "final_message.begin_patch",
+                "message": "converted fenced Begin Patch update hunks into SEARCH/REPLACE blocks",
+                "count": len(parts),
+            }
+        )
+    return "\n".join(parts), findings
+
+
+def extract_worker_search_replace_patch(text: str, root: Path | None = None) -> tuple[str, str | None, list[dict[str, Any]]]:
     findings: list[dict[str, Any]] = []
     candidates = [item for item in find_json_objects(text) if is_worker_envelope_candidate(item)]
     if candidates:
@@ -2180,6 +2265,12 @@ def extract_worker_search_replace_patch(text: str) -> tuple[str, str | None, lis
         )
         return "\n".join(markdown_parts), "final_message.markdown_search_replace_blocks", findings
 
+    begin_patch_parts, begin_patch_findings = extract_begin_patch_update_blocks(text, root)
+    if begin_patch_parts:
+        findings.extend(begin_patch_findings)
+        return begin_patch_parts, "final_message.begin_patch_update", findings
+    findings.extend(begin_patch_findings)
+
     if "<<<<<<< SEARCH" in text and ">>>>>>> REPLACE" in text:
         return text, "final_message", findings
     return "", None, findings
@@ -2203,7 +2294,7 @@ def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir:
         return result
 
     text = final_path.read_text(encoding="utf-8", errors="backslashreplace")
-    patch_text, patch_source, extraction_findings = extract_worker_search_replace_patch(text)
+    patch_text, patch_source, extraction_findings = extract_worker_search_replace_patch(text, worktree)
     result["patch_source"] = patch_source
     if not patch_text:
         result["findings"].extend(extraction_findings)
