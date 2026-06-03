@@ -2025,3 +2025,23 @@ Validation:
 - Remaining observation: the worker put local A9 files into `copied_mechanisms`.
   That field needs later semantic tightening so it means borrowed external
   mechanisms or source slices, not ordinary files inspected during validation.
+
+## 2026-06-04: copied_mechanisms local-file drift is now observed
+
+Change:
+- `validate_worker_envelope()` now emits a non-blocking warning with kind
+  `worker_copied_mechanisms_local_path_drift` when `copied_mechanisms` contains
+  obvious local project paths.
+- The strict envelope contract now says:
+  `copied_mechanisms` is only for borrowed external mechanisms/source slices;
+  ordinary inspected local files belong in `files_validated`.
+
+Why:
+- The latest validation worker used `copied_mechanisms` as a place to list
+  files it inspected. That pollutes the core A9 "copy mature mechanisms"
+  evidence trail.
+
+Governance lesson:
+- Source-of-truth fields need semantic pressure, not just JSON shape checks.
+  This remains a warning because it is quality drift, not a fact-corrupting
+  write or skipped declared check.

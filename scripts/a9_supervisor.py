@@ -1146,6 +1146,7 @@ Hard rules:
   In output, separate worker_commands_run from supervisor_declared_checks; worker self-report is evidence,
   while supervisor-declared checks in the run summary are authoritative.
   Copy supervisor_declared_checks exactly from the Task Declared Checks section; use [] only when it says none.
+  copied_mechanisms is only for borrowed external mechanisms/source slices; put ordinary inspected local files in files_validated.
 """,
         section_budgets["contract"],
     )
@@ -2568,6 +2569,16 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
                         "actual": normalize_declared_checks_for_worker_envelope(output.get("supervisor_declared_checks")),
                     }
                 )
+            copied_mechanism_drift = local_paths_reported_as_copied_mechanisms(output.get("copied_mechanisms"))
+            if copied_mechanism_drift:
+                result["findings"].append(
+                    {
+                        "level": "warn",
+                        "kind": "worker_copied_mechanisms_local_path_drift",
+                        "message": "copied_mechanisms should name borrowed external mechanisms or source slices, not local files inspected during validation",
+                        "paths": copied_mechanism_drift,
+                    }
+                )
         has_error_finding = any(item.get("level") == "error" for item in result["findings"])
         if has_error_finding:
             result["status"] = "fail"
@@ -2587,6 +2598,34 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
 def normalize_declared_checks_for_worker_envelope(checks: list[str] | None) -> list[str]:
     normalized = [str(item).strip() for item in checks or []]
     return sorted(item for item in normalized if item)
+
+
+def local_paths_reported_as_copied_mechanisms(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    local_roots = ("scripts/", "tests/", "docs/", "archive/", ".a9/")
+    findings: list[str] = []
+    cwd = Path.cwd().resolve()
+    for item in value:
+        text = str(item).strip()
+        if not text:
+            continue
+        if text.startswith(local_roots):
+            findings.append(text)
+            continue
+        path_text = text.split(":", 1)[0]
+        if not Path(path_text).is_absolute():
+            continue
+        try:
+            path = Path(path_text).expanduser().resolve()
+        except (OSError, RuntimeError):
+            continue
+        try:
+            path.relative_to(cwd)
+        except ValueError:
+            continue
+        findings.append(text)
+    return findings
 
 
 def validate_captured_diff(diff: dict[str, Any], worktree: Path, run_dir: Path) -> dict[str, Any]:
