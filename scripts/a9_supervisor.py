@@ -57,6 +57,12 @@ DEFAULT_WORKER_EVENT_BUDGET_MODE = "observe"
 DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
 DEFAULT_REDIS_DEEP_MARK_LIMIT = 80
 DEFAULT_IDLE_GOAL_CONTINUATION_ENABLED = True
+WORKER_COST_OBSERVE_INPUT_TOKENS = 1_000_000
+WORKER_COST_HIGH_INPUT_TOKENS = 2_000_000
+WORKER_COST_OBSERVE_UNCACHED_TOKENS = 120_000
+WORKER_COST_HIGH_UNCACHED_TOKENS = 500_000
+WORKER_COST_OBSERVE_OUTPUT_REASONING_TOKENS = 20_000
+WORKER_COST_HIGH_OUTPUT_REASONING_TOKENS = 100_000
 COMMUNICATION_GATE_HINTS = (
     "gateway runtime",
     "gateway transport",
@@ -6877,6 +6883,88 @@ def process_governance_prompt_summary(process_governance: dict[str, Any]) -> dic
     }
 
 
+def compact_worker_cost_usage(summary: dict[str, Any] | None) -> dict[str, int]:
+    usage: dict[str, Any] = {}
+    if summary:
+        pressure = summary.get("context_pressure", {})
+        if isinstance(pressure, dict):
+            usage = pressure.get("actual_token_usage", {})
+        if not usage:
+            worker = summary.get("worker", {})
+            if isinstance(worker, dict):
+                usage = worker.get("actual_token_usage", {})
+    if not isinstance(usage, dict):
+        usage = {}
+    return {
+        "input_tokens": int(usage.get("input_tokens", 0) or 0),
+        "cached_input_tokens": int(usage.get("cached_input_tokens", 0) or 0),
+        "uncached_input_tokens": int(usage.get("uncached_input_tokens", 0) or 0),
+        "output_tokens": int(usage.get("output_tokens", 0) or 0),
+        "reasoning_output_tokens": int(usage.get("reasoning_output_tokens", 0) or 0),
+    }
+
+
+def worker_cost_usage_reasons(usage: dict[str, int]) -> list[str]:
+    output_reasoning = usage["output_tokens"] + usage["reasoning_output_tokens"]
+    reasons: list[str] = []
+    if usage["input_tokens"] >= WORKER_COST_HIGH_INPUT_TOKENS:
+        reasons.append("high_input_tokens")
+    elif usage["input_tokens"] >= WORKER_COST_OBSERVE_INPUT_TOKENS:
+        reasons.append("observe_input_tokens")
+    if usage["uncached_input_tokens"] >= WORKER_COST_HIGH_UNCACHED_TOKENS:
+        reasons.append("high_uncached_input_tokens")
+    elif usage["uncached_input_tokens"] >= WORKER_COST_OBSERVE_UNCACHED_TOKENS:
+        reasons.append("observe_uncached_input_tokens")
+    if output_reasoning >= WORKER_COST_HIGH_OUTPUT_REASONING_TOKENS:
+        reasons.append("high_output_reasoning_tokens")
+    elif output_reasoning >= WORKER_COST_OBSERVE_OUTPUT_REASONING_TOKENS:
+        reasons.append("observe_output_reasoning_tokens")
+    return reasons
+
+
+def worker_cost_process_reasons(process: dict[str, Any]) -> list[str]:
+    by_kind = process.get("by_kind", {})
+    if not isinstance(by_kind, dict):
+        by_kind = {}
+    reasons: list[str] = []
+    broad_kinds = {
+        "broad_file_slice_observation",
+        "broad_rg_command",
+        "uncapped_rg_command",
+        "compound_wide_read_command",
+        "runtime_evidence_root_read",
+    }
+    if any(int(by_kind.get(kind, 0) or 0) > 0 for kind in broad_kinds):
+        reasons.append("broad_reads")
+    if int(by_kind.get("direct_file_change_event", 0) or 0) > 0:
+        reasons.append("direct_file_changes")
+    if int(process.get("findings_count", 0) or 0) > 0 and not reasons:
+        reasons.append("process_findings")
+    return reasons
+
+
+def worker_cost_risk(summary: dict[str, Any] | None) -> dict[str, Any]:
+    usage = compact_worker_cost_usage(summary)
+    process = process_governance_prompt_summary(summary.get("process_governance", {}) if summary else {})
+    reasons: list[str] = []
+    for reason in worker_cost_usage_reasons(usage) + worker_cost_process_reasons(process):
+        if reason not in reasons:
+            reasons.append(reason)
+    high = any(reason.startswith("high_") for reason in reasons) or any(
+        reason in {"broad_reads", "direct_file_changes"} for reason in reasons
+    )
+    level = "high" if high else "observe" if reasons else "ok"
+    return {
+        "level": level,
+        "reasons": reasons,
+        "actual_token_usage": usage,
+        "process_findings": {
+            "findings_count": int(process.get("findings_count", 0) or 0),
+            "by_kind": process.get("by_kind", {}),
+        },
+    }
+
+
 def latest_process_quality(summary: dict[str, Any] | None) -> dict[str, Any]:
     if not summary:
         return {}
@@ -8023,6 +8111,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "latest_worker_model_source": summary.get("worker", {}).get("worker_model_source", "") if summary else "",
         "latest_monitor_block": summary.get("monitor_block", {}) if summary else {},
         "latest_process_quality": latest_process_quality(summary),
+        "latest_worker_cost_risk": summary.get("worker_cost_risk", worker_cost_risk(summary)) if summary else worker_cost_risk(None),
         "auto_loop_guard": summary.get("auto_loop_guard", read_json_file(AUTO_LOOP_GUARD_PATH)) if summary else read_json_file(AUTO_LOOP_GUARD_PATH),
         "next_task_path": str(existing_next_task_path) if existing_next_task_path else "",
         "auto_next_scheduled": existing_next_task_path is not None,
@@ -8723,6 +8812,7 @@ def run_one(*, auto_next: bool = False) -> int:
         summary["policy_attestation"] = create_policy_attestation(task, run_dir, summary)
         write_json(run_dir / "summary.json", summary)
         summary["context_pressure"] = compact_context_pressure(summary)
+        summary["worker_cost_risk"] = worker_cost_risk(summary)
         summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
@@ -9051,6 +9141,10 @@ def status() -> int:
                 f"findings={process_summary.get('findings_count', 0)} "
                 f"by_kind={by_kind_text}"
             )
+        cost = data.get("worker_cost_risk") or worker_cost_risk(data)
+        reasons = cost.get("reasons", [])
+        reasons_text = ",".join(str(reason) for reason in reasons) if reasons else "none"
+        print(f"worker_cost_risk: level={cost.get('level', 'missing')} reasons={reasons_text}")
     progress = service_progress(latest_summary)
     print(f"24h: {progress['progress_percent']}% {progress['stage']} next={progress['next_task_path']}")
     print(f"runtime_state: {progress['runtime_state']}")

@@ -1,5 +1,34 @@
 # A9 Agent Runtime Observations
 
+## 2026-06-03: cost-risk worker failed checks; monitor salvaged the slice
+
+Run evidence:
+- Failed worker run:
+  `.a9/runs/implement-worker-cost-risk-status-20260603-20260603T072201Z-a1`
+- Auto-repair run:
+  `.a9/runs/auto-repair-implement-worker-cost-risk-status-20260603-20260603T072421Z-20260603T072431Z-a1`
+
+Result:
+- The worker attempted the right compact status idea but the run became
+  `needs-repair` and the patch was rolled back.
+- Actual usage was again too high: input `2523214`, cached input `2415232`,
+  uncached input `107982`, output `18874`, reasoning `9796`.
+- Process governance recorded broad file slices and direct file change events.
+- The generated repair task was monitor-blocked before spending model tokens.
+
+Monitor intervention:
+- The monitor salvaged the small, useful part manually:
+  `worker_cost_risk` is now derived from token usage plus process governance
+  findings and printed in `status()`.
+- The signal is observation-only. It does not block by arbitrary token count.
+- Focused tests and declared checks passed after salvage.
+
+Governance lesson:
+- Review closure gave the worker the right target, but did not fix execution
+  discipline.
+- The next closure should address why execution workers still perform broad
+  reads and direct file changes despite narrow task packets.
+
 ## 2026-06-03: review closure status slice passed, but worker cost was too high
 
 Run evidence:

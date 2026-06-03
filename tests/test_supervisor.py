@@ -7181,6 +7181,66 @@ index 0000000..3e75765
         self.assertEqual(quality["process_governance"]["findings_count"], 3)
         self.assertEqual(quality["process_governance"]["by_kind"]["direct_file_change_event"], 2)
         self.assertEqual(quality["process_governance"]["by_kind"]["broad_file_slice_observation"], 1)
+        risk = progress["latest_worker_cost_risk"]
+        self.assertEqual(risk["level"], "high")
+        self.assertIn("high_input_tokens", risk["reasons"])
+
+    def test_worker_cost_risk_marks_high_for_expensive_noisy_run(self):
+        mod = load_supervisor()
+        summary = {
+            "task_id": "worker-cost-risk-high",
+            "status": "pass",
+            "run_dir": "/tmp/worker-cost-risk-high",
+            "context_pressure": {
+                "actual_token_usage": {
+                    "input_tokens": 2_300_000,
+                    "cached_input_tokens": 2_000_000,
+                    "uncached_input_tokens": 300_000,
+                    "output_tokens": 10_000,
+                    "reasoning_output_tokens": 12_000,
+                }
+            },
+            "process_governance": {
+                "status": "pass",
+                "findings": [
+                    {"kind": "broad_file_slice_observation", "message": "broad read"},
+                    {"kind": "direct_file_change_event", "message": "direct edit"},
+                ],
+            },
+        }
+
+        risk = mod.worker_cost_risk(summary)
+
+        self.assertEqual(risk["level"], "high")
+        self.assertEqual(risk["actual_token_usage"]["input_tokens"], 2_300_000)
+        self.assertIn("high_input_tokens", risk["reasons"])
+        self.assertIn("broad_reads", risk["reasons"])
+        self.assertIn("direct_file_changes", risk["reasons"])
+        self.assertEqual(risk["process_findings"]["findings_count"], 2)
+
+    def test_worker_cost_risk_marks_ok_for_quiet_run(self):
+        mod = load_supervisor()
+        summary = {
+            "task_id": "worker-cost-risk-ok",
+            "status": "pass",
+            "run_dir": "/tmp/worker-cost-risk-ok",
+            "context_pressure": {
+                "actual_token_usage": {
+                    "input_tokens": 5000,
+                    "cached_input_tokens": 4000,
+                    "uncached_input_tokens": 1000,
+                    "output_tokens": 100,
+                    "reasoning_output_tokens": 80,
+                }
+            },
+            "process_governance": {"status": "pass", "findings": []},
+        }
+
+        risk = mod.worker_cost_risk(summary)
+
+        self.assertEqual(risk["level"], "ok")
+        self.assertEqual(risk["reasons"], [])
+        self.assertEqual(risk["process_findings"]["findings_count"], 0)
 
     def test_service_progress_marks_runtime_waiting_for_review_closure_when_no_active_or_complete_evidence(self):
         mod = load_supervisor()
@@ -7376,6 +7436,41 @@ role_signoff: product, business, architecture, test approved.
             self.assertIn("latest process: status=pass findings=2", output)
             self.assertIn("broad_file_slice_observation=1", output)
             self.assertIn("direct_file_change_event=1", output)
+            self.assertIn(
+                "worker_cost_risk: level=high reasons=high_input_tokens,broad_reads,direct_file_changes",
+                output,
+            )
+        finally:
+            shutil.rmtree(run_dir, ignore_errors=True)
+
+    def test_status_prints_worker_cost_risk(self):
+        mod = load_supervisor()
+        mod.ensure_dirs()
+        run_dir = mod.RUNS_DIR / "selftest-worker-cost-risk-run"
+        shutil.rmtree(run_dir, ignore_errors=True)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            mod.write_json(
+                run_dir / "summary.json",
+                {
+                    "task_id": "selftest-worker-cost-risk",
+                    "status": "pass",
+                    "run_dir": str(run_dir),
+                    "worker_cost_risk": {
+                        "level": "high",
+                        "reasons": ["high_input_tokens", "broad_reads"],
+                        "actual_token_usage": {"input_tokens": 2_500_000},
+                        "process_findings": {"findings_count": 1, "by_kind": {}},
+                    },
+                },
+            )
+
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                mod.status()
+            output = buffer.getvalue()
+
+            self.assertIn("worker_cost_risk: level=high reasons=high_input_tokens,broad_reads", output)
         finally:
             shutil.rmtree(run_dir, ignore_errors=True)
 
