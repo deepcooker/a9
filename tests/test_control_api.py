@@ -2843,6 +2843,7 @@ class ControlApiTests(unittest.TestCase):
             original_monitor_status = mod.monitor_status
             original_audit = mod.enqueue_monitor_intervention_audit
             original_supervisor = mod.supervisor
+            original_publish = mod.publish_monitor_intervention_redis
             try:
                 mod.monitor_status = lambda root=root: {
                     "status": "ok",
@@ -2855,6 +2856,11 @@ class ControlApiTests(unittest.TestCase):
                     "changed_files": ["scripts/a9_control_api.py"],
                 }
                 mod.enqueue_monitor_intervention_audit = lambda event, *, root: audit_calls.append((event, root))
+                mod.publish_monitor_intervention_redis = lambda event: {
+                    "status": "ok",
+                    "stream": "a9:monitor:interventions",
+                    "stream_id": "1-0",
+                }
 
                 class FakeSupervisor:
                     @staticmethod
@@ -2890,6 +2896,7 @@ class ControlApiTests(unittest.TestCase):
                 mod.monitor_status = original_monitor_status
                 mod.enqueue_monitor_intervention_audit = original_audit
                 mod.supervisor = original_supervisor
+                mod.publish_monitor_intervention_redis = original_publish
 
         self.assertEqual(blocked["status"], "blocked")
         self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
@@ -2905,6 +2912,69 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(audit_calls[0][0]["status"], "blocked")
         self.assertEqual(audit_calls[1][0]["status"], "recorded")
         self.assertEqual(audit_calls[1][0]["execution_effect"]["mode"], "queue_task")
+        self.assertEqual(audit_calls[1][0]["redis_mirror"]["stream_id"], "1-0")
+        self.assertEqual(result["redis_mirror"]["status"], "ok")
+
+    def test_publish_monitor_intervention_redis_xadds_compact_event(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            def __init__(self, stdout: str = "OK\n", returncode: int = 0):
+                self.stdout = stdout
+                self.returncode = returncode
+
+        def fake_redis(args, *, timeout=2):
+            calls.append(args)
+            if args == ["PING"]:
+                return FakeProc("PONG\n")
+            if args[:2] == ["XADD", "a9:monitor:interventions"]:
+                return FakeProc("1740000010-0\n")
+            return FakeProc()
+
+        original_redis = mod.redis_cli
+        try:
+            mod.redis_cli = fake_redis
+            result = mod.publish_monitor_intervention_redis(
+                {
+                    "kind": "monitor_intervention_audit",
+                    "schema": "a9.monitor_intervention.v1",
+                    "intervention_id": "monitor-1",
+                    "action": "pause",
+                    "status": "recorded",
+                    "task_id": "task-1",
+                    "run_id": "run-1",
+                    "actor": "mobile-operator",
+                    "gate_allowed": True,
+                    "execution_effect": {"mode": "runtime_state"},
+                    "at": "2026-06-04T00:00:00+00:00",
+                }
+            )
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["stream"], "a9:monitor:interventions")
+        self.assertEqual(result["stream_id"], "1740000010-0")
+        xadd = next(call for call in calls if call[:2] == ["XADD", "a9:monitor:interventions"])
+        self.assertIn("intervention_id", xadd)
+        self.assertIn("monitor-1", xadd)
+        self.assertIn("effect_mode", xadd)
+        self.assertIn("runtime_state", xadd)
+        self.assertIn("payload_json", xadd)
+
+    def test_publish_monitor_intervention_redis_skips_when_unavailable(self):
+        mod = load_control_api()
+        original_available = mod.redis_available
+        try:
+            mod.redis_available = lambda: False
+            result = mod.publish_monitor_intervention_redis({"intervention_id": "monitor-1"})
+        finally:
+            mod.redis_available = original_available
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "redis_unavailable")
+        self.assertEqual(result["stream"], "a9:monitor:interventions")
 
     def test_api_monitor_intervention_post_route_calls_handler(self):
         mod = load_control_api()
@@ -9050,6 +9120,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(discovery["runtime"]["monitor_status_contract"])
         self.assertTrue(discovery["runtime"]["monitor_intervention_contract"])
         self.assertTrue(discovery["runtime"]["monitor_intervention_examples"])
+        self.assertEqual(discovery["runtime"]["monitor_intervention_redis_stream"], "a9:monitor:interventions")
         self.assertEqual(discovery["events"]["max_limit"], 1000)
         self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])
 

@@ -509,6 +509,7 @@ EVENTS_STREAM_KEY = "a9:events"
 EVENTS_STREAM_LIMIT_MAX = 1000
 TASKS_STREAM_KEY = "a9:tasks"
 TASKS_STREAM_GROUP = "a9-worker"
+MONITOR_INTERVENTIONS_STREAM_KEY = "a9:monitor:interventions"
 TASKS_STREAM_TOP_CONSUMERS_LIMIT = 3
 GATEWAY_CONTRACT_EVENT_STALE_SECONDS = 300
 SERVICE_PROCESS_MARKERS = {
@@ -2241,6 +2242,52 @@ def monitor_intervention_audit_tail(limit: int = 20, *, root: Path = ROOT) -> di
     return result
 
 
+def publish_monitor_intervention_redis(event: dict[str, Any]) -> dict[str, Any]:
+    if not redis_available():
+        return {"status": "skipped", "reason": "redis_unavailable", "stream": MONITOR_INTERVENTIONS_STREAM_KEY}
+    try:
+        stream = redis_cli(
+            [
+                "XADD",
+                MONITOR_INTERVENTIONS_STREAM_KEY,
+                "*",
+                "kind",
+                str(event.get("kind") or "monitor_intervention_audit"),
+                "schema",
+                str(event.get("schema") or "a9.monitor_intervention.v1"),
+                "intervention_id",
+                str(event.get("intervention_id") or ""),
+                "action",
+                str(event.get("action") or ""),
+                "status",
+                str(event.get("status") or ""),
+                "task_id",
+                str(event.get("task_id") or ""),
+                "run_id",
+                str(event.get("run_id") or ""),
+                "actor",
+                str(event.get("actor") or ""),
+                "gate_allowed",
+                "1" if event.get("gate_allowed") else "0",
+                "effect_mode",
+                str((event.get("execution_effect") or {}).get("mode") if isinstance(event.get("execution_effect"), dict) else ""),
+                "at",
+                str(event.get("at") or utc_now()),
+                "payload_json",
+                json.dumps(event, ensure_ascii=False, separators=(",", ":")),
+            ]
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "failed", "stream": MONITOR_INTERVENTIONS_STREAM_KEY, "error": str(exc)}
+    if stream.returncode != 0:
+        return {
+            "status": "failed",
+            "stream": MONITOR_INTERVENTIONS_STREAM_KEY,
+            "error": stream.stdout.strip() or "redis xadd failed",
+        }
+    return {"status": "ok", "stream": MONITOR_INTERVENTIONS_STREAM_KEY, "stream_id": stream.stdout.strip()}
+
+
 def monitor_intervention_examples(root: Path = ROOT) -> dict[str, Any]:
     status = monitor_status(root)
     latest_run = status.get("latest_run") if isinstance(status.get("latest_run"), dict) else {}
@@ -2412,6 +2459,8 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
         "evidence_refs": command.get("evidence_refs", []),
         "execution_effect": effect,
     }
+    redis_mirror = publish_monitor_intervention_redis(event)
+    event["redis_mirror"] = redis_mirror
     enqueue_monitor_intervention_audit(event, root=root)
     if not gate.get("allowed"):
         return {
@@ -2423,6 +2472,7 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
             "intervention_id": command["intervention_id"],
             "gate": gate,
             "audit_async": True,
+            "redis_mirror": redis_mirror,
             "execution_effect": effect,
         }
     return {
@@ -2436,6 +2486,7 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
         "audit_async": True,
         "command_envelope": command,
         "audit_path": str(monitor_intervention_audit_path(root)),
+        "redis_mirror": redis_mirror,
         "execution_effect": effect,
     }
 
@@ -3035,6 +3086,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_status_contract": True,
             "monitor_intervention_contract": True,
             "monitor_intervention_examples": True,
+            "monitor_intervention_redis_stream": MONITOR_INTERVENTIONS_STREAM_KEY,
             "worker_claim_ready": False,
         },
         "events": {
