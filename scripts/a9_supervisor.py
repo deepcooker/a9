@@ -510,8 +510,18 @@ def runtime_control_blocks_claim() -> dict[str, Any] | None:
 def monitor_intervention_task_prompt(command: dict[str, Any], *, phase: str) -> str:
     evidence_refs = command.get("evidence_refs") if isinstance(command.get("evidence_refs"), list) else []
     evidence_text = "\n".join(f"- {ref}" for ref in evidence_refs[:20])
+    decision_lines: list[str] = []
+    if phase == "repair":
+        decision_lines = [
+            "decision_status: decided",
+            "problem: The referenced run is monitor-blocked and requires bounded repair of the specific failed evidence.",
+            "system_requirement: Execute only the requested monitor repair intervention against the supplied evidence refs.",
+            "out_of_scope: new product scope, broad refactors, unrelated gate changes, and unrelated file edits.",
+            "allowed_execution: inspect supplied evidence refs, produce deterministic SEARCH/REPLACE repair blocks, and rely on supervisor declared checks.",
+        ]
     return "\n".join(
         [
+            *decision_lines,
             f"monitor_intervention_action: {command.get('action')}",
             f"monitor_intervention_id: {command.get('intervention_id')}",
             f"source_task_id: {command.get('task_id') or ''}",
@@ -2203,7 +2213,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             budget_stopped = True
                             budget_stop_kind = "event_count"
                             budget_reason = reason
-                            proc.kill()
+                            if proc.poll() is None:
+                                proc.kill()
                             break
                         if not observed_event_count_budget:
                             observed_event_count_budget = True
@@ -2222,7 +2233,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             budget_stopped = True
                             budget_stop_kind = "event_bytes"
                             budget_reason = reason
-                            proc.kill()
+                            if proc.poll() is None:
+                                proc.kill()
                             break
                         if not observed_event_bytes_budget:
                             observed_event_bytes_budget = True

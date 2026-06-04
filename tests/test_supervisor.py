@@ -11073,7 +11073,12 @@ flow_expected_revision: None
         self.assertEqual(effect["mode"], "queue_task")
         self.assertEqual(effect["queued_task_phase"], "repair")
         self.assertEqual(parsed.phase, "repair")
+        decision = mod.task_decision_packet(parsed)
+        self.assertEqual(decision["route"], "execution_next")
+        self.assertEqual(decision["decision_status"], "decided")
+        self.assertEqual(decision["missing_fields"], [])
         self.assertIn("monitor_intervention_id: monitor-repair-1", text)
+        self.assertIn("decision_status: decided", text)
         self.assertIn("runs/source-run/summary.json", text)
 
     def test_session_refresh_route_runs_without_codex_worker(self):

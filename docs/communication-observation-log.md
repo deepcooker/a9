@@ -2141,3 +2141,45 @@ Next monitoring target:
      Execution is still gated by short-lived phone-control arm, while
      observation, audit, and Redis replay stay available for recovery and
      later evaluator/worker consumption.
+
+98. Repair intervention exposed missing task-shape decision closure.
+   - Trigger:
+     a live `repair` monitor intervention was submitted for a
+     `monitor-blocked` run after the mobile control loop was wired. The
+     intervention gate passed, audit and Redis mirror worked, and supervisor
+     queued an `operator-repair-*` task, but the worker returned a
+     `change_request` instead of repairing. The generated task packet lacked
+     `decision_status`, so the worker method packet routed it to
+     `debate_next`.
+   - Change:
+     `scripts/a9_supervisor.py` now adds `decision_status: decided`,
+     bounded `problem`, `system_requirement`, `out_of_scope`, and
+     `allowed_execution` lines to monitor repair tasks. `route_to_debate`
+     remains intentionally undecided. The repair queue task now enters
+     `execution_next` while still staying bounded to the supplied evidence
+     refs and deterministic SEARCH/REPLACE output.
+   - Verification:
+     `python3 -m py_compile scripts/a9_supervisor.py` passed.
+     Targeted tests passed:
+     `test_monitor_intervention_repair_enqueues_repair_task_with_evidence`,
+     `test_run_worker_event_budget_enforce_ignores_non_json_stdout_for_budget_accounting`,
+     `test_worker_event_budget_defaults_to_observation_not_kill`, and
+     `test_run_worker_real_subprocess_non_json_stdout_lines_are_ignored_by_event_counters`.
+     Full `python3 -m unittest tests.test_supervisor` passed with 328 tests.
+     Live API shape validation stopped supervisor-loop, armed runtime,
+     submitted repair, confirmed the queued task contained
+     `decision_status: decided` and `allowed_execution:`, removed that
+     validation-only queue task to avoid model spend, disarmed phone-control,
+     and restarted supervisor-loop.
+   - Extra repair:
+     the full supervisor suite initially failed a pre-existing event-budget
+     case because enforce mode killed a subprocess that had already naturally
+     finished after emitting the over-budget JSON event. `run_worker` now
+     checks `proc.poll()` before killing on event-count or event-byte budget
+     enforcement, preserving `return_code=0` for already-completed workers
+     while still killing long-running over-budget workers.
+   - Governance lesson:
+     monitor repair is an execution command, not a new requirements debate.
+     If the task-shaping packet is not closed, the 24-hour machine will obey
+     governance correctly but make no progress. This is the right failure
+     mode, and the fix belongs in task formation, not in weakening gates.
