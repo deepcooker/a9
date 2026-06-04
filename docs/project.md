@@ -127,6 +127,19 @@ P7 NZX Technical MVP
 `24h worker + monitor` 和通讯/基座做稳。需求方法论仍然前置：业务/数据建模第一，
 性能第二；没有完成需求博弈、验收和 out_of_scope 的任务不能进入连续执行。
 
+2026-06-04 已落地第一刀 P0 文档包：
+
+- `docs/architecture/a9-runtime-monitor-foundation.md`
+- `docs/decisions/ADR-0001-a9-highest-form.md`
+- `docs/decisions/ADR-0002-runtime-monitor-priority.md`
+- `docs/decisions/ADR-0003-communication-foundation.md`
+- `docs/decisions/ADR-0004-reference-vendor-selection.md`
+- `docs/decisions/ADR-0005-nzx-is-first-business-app.md`
+- `docs/execution_next/0001-runtime-monitor-foundation-packet.md`
+
+下一步在监控者确认后，才进入第一条实现切片：
+`execution_next_0001_runtime_monitor_contract`。
+
 ## 已做背调和分析
 
 已经分析和复制过这些机制：

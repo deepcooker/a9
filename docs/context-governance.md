@@ -27,6 +27,13 @@ These files define the current mainline:
 - `docs/context-governance.md`: this context routing table.
 - `docs/current-mainline.md`: current execution priority and freeze points.
 - `docs/project.md`: current A9 product layers, architecture, progress, next work.
+- `docs/architecture/a9-runtime-monitor-foundation.md`: current P0 foundation
+  architecture for runtime, monitor, and communication.
+- `docs/decisions/ADR-0001-a9-highest-form.md`
+- `docs/decisions/ADR-0002-runtime-monitor-priority.md`
+- `docs/decisions/ADR-0003-communication-foundation.md`
+- `docs/decisions/ADR-0004-reference-vendor-selection.md`
+- `docs/decisions/ADR-0005-nzx-is-first-business-app.md`
 - `原始想法需求.md`: original product philosophy and requirement source.
 - `docs/worker-method-packet.md`: requirements-analysis and worker method.
 - `docs/requirements-review-closure.md`: review completion standard and
@@ -45,12 +52,15 @@ If these files conflict, resolve in this order:
 2. `AGENTS.md`
 3. `docs/context-governance.md`
 4. `docs/current-mainline.md`
-5. `docs/requirements-review-closure.md`
-6. `docs/session-causal-memory.md`
-7. `docs/external-gpt/2026-06-04/intake.md`
-8. `docs/a9-ultimate-architecture-aggregation.md`
-9. `docs/project.md`
-10. `原始想法需求.md`
+5. `docs/architecture/a9-runtime-monitor-foundation.md`
+6. `docs/decisions/ADR-0002-runtime-monitor-priority.md`
+7. `docs/decisions/ADR-0003-communication-foundation.md`
+8. `docs/requirements-review-closure.md`
+9. `docs/session-causal-memory.md`
+10. `docs/external-gpt/2026-06-04/intake.md`
+11. `docs/a9-ultimate-architecture-aggregation.md`
+12. `docs/project.md`
+13. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.
@@ -76,6 +86,9 @@ These files shape current work but are not global truth forever:
 - `docs/current-mainline.md` when the current task could drift into mobile UI,
   NZX implementation, compute RWA, or broad workspace refactor. It is the
   current freeze/priority source.
+- `docs/execution_next/0001-runtime-monitor-foundation-packet.md` is the
+  current first execution packet for monitor review. It does not authorize code
+  implementation until monitor approval creates the next implementation slice.
 
 Task contracts must state whether the route is `debate_next` or
 `execution_next`. If the task contract is stale or contradicts canonical
