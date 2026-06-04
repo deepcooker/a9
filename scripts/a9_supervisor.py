@@ -1155,6 +1155,7 @@ Hard rules:
   while supervisor-declared checks in the run summary are authoritative.
   Copy supervisor_declared_checks exactly from the Task Declared Checks section; use [] only when it says none.
   copied_mechanisms is only for borrowed external mechanisms/source slices; put ordinary inspected local files in files_validated.
+  files_validated is for source/docs validated; put `.git` and runtime metadata evidence in repo_metadata_evidence.
 """,
         section_budgets["contract"],
     )
@@ -2587,6 +2588,16 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
                         "paths": copied_mechanism_drift,
                     }
                 )
+            files_validated_metadata = repo_metadata_paths_reported_as_files_validated(output.get("files_validated"))
+            if files_validated_metadata:
+                result["findings"].append(
+                    {
+                        "level": "warn",
+                        "kind": "worker_files_validated_repo_metadata_drift",
+                        "message": "files_validated should list source/docs validated; repo/runtime metadata belongs in repo_metadata_evidence",
+                        "paths": files_validated_metadata,
+                    }
+                )
         has_error_finding = any(item.get("level") == "error" for item in result["findings"])
         if has_error_finding:
             result["status"] = "fail"
@@ -2633,6 +2644,22 @@ def local_paths_reported_as_copied_mechanisms(value: Any) -> list[str]:
         except ValueError:
             continue
         findings.append(text)
+    return findings
+
+
+def repo_metadata_paths_reported_as_files_validated(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    metadata_parts = {".git", ".a9", ".pytest_cache", "__pycache__"}
+    findings: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if not text:
+            continue
+        path_text = text.split(":", 1)[0]
+        parts = set(Path(path_text).parts)
+        if parts & metadata_parts:
+            findings.append(text)
     return findings
 
 

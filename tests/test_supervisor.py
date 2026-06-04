@@ -6001,6 +6001,34 @@ Do the work.
         self.assertEqual(len(drift), 1)
         self.assertEqual(drift[0]["paths"], ["scripts/a9_supervisor.py"])
 
+    def test_worker_envelope_observes_repo_metadata_in_files_validated(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                (
+                    'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":'
+                    '{"changed_files":[],"worker_commands_run":[],"supervisor_declared_checks":[],'
+                    '"copied_mechanisms":[],"files_validated":["scripts/a9_supervisor.py",".git"]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-files-validated-metadata",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "pass")
+        findings = envelope.get("findings", [])
+        drift = [item for item in findings if item.get("kind") == "worker_files_validated_repo_metadata_drift"]
+        self.assertEqual(len(drift), 1)
+        self.assertEqual(drift[0]["paths"], [".git"])
+
     def test_worker_envelope_status_alias_pass_normalizes_to_ok(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

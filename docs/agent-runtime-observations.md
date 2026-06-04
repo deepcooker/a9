@@ -2108,3 +2108,22 @@ Validation:
   because the worker used `git show` as validation evidence. This is not a copy
   mechanism issue, but future envelope semantics can distinguish repository
   metadata commands from source files validated.
+
+## 2026-06-04: files_validated repo metadata drift is now observed
+
+Change:
+- `validate_worker_envelope()` now emits a non-blocking warning with kind
+  `worker_files_validated_repo_metadata_drift` when `files_validated` contains
+  `.git`, `.a9`, cache directories, or similar metadata paths.
+- The strict envelope contract now says `files_validated` is for source/docs
+  validated, while repository/runtime metadata belongs in `repo_metadata_evidence`.
+
+Why:
+- The status robustness validation worker correctly avoided `copied_mechanisms`
+  pollution, but placed `.git` in `files_validated`. That is smaller drift, but
+  still weakens field meaning for future analytics.
+
+Governance lesson:
+- A9 should keep adding semantic pressure to structured fields as real worker
+  output reveals ambiguity. These remain warnings until the business/review
+  layer decides they should block.
