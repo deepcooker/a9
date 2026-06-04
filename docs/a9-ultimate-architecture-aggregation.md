@@ -75,8 +75,9 @@ A9 的核心产品形态不是普通后台任务系统，而是：
 mobile/control 负责把这条主控入口随时放到手机上
 ```
 
-这里有一个关键产品要求：手机端不是单纯后台管理页，也不是审批入口。它要承接
-“你和 Codex 当前交互窗口”的主控模型。
+这里有一个关键产品要求：手机端不是单纯后台管理页，也不是审批入口。它首先要承接
+“你和 Codex 当前交互窗口”的主控模型，同时也要成为 A9 交易工作台和私有网络能力的
+移动入口。
 
 ### 2.1 24h + monitor 的交互模型
 
@@ -110,8 +111,18 @@ Codex-like chat/control session
 
 ### 2.2 手机端产品选型
 
-手机端是 Agent OS 的第一入口。它要抄 GPT mobile/chat 产品体验，而不是自己发明
-一个传统后台。
+手机端是 Agent OS 的第一入口，也是未来交易功能的移动工作台。它要抄 GPT
+mobile/chat 产品体验，而不是自己发明一个传统后台；但它不能只有对话层。
+
+产品边界：
+
+- 对话层：远程连入私有网络里的 A9/Codex-like server，承接主控对话、任务拆解、
+  24h monitor 和 intervention。
+- 功能层：菜单里可以挂载交易、节点、策略、资产、风控、合规、算力、模型、数据等
+  workspace。
+- 网络层：手机不直接理解服务器细节，通过 A9 gateway / private network / node
+  registry 连接私有网络内的服务。
+- 权限层：不同菜单功能按身份、设备、节点、资金权限和操作风险分级。
 
 明确产品参考：
 
@@ -127,16 +138,20 @@ Codex-like chat/control session
 - `Runs`：24h worker 队列、运行中、完成、失败、repair。
 - `Evidence`：run summary、diff、tests、logs、session close reading。
 - `Nodes`：多机器、SSH/tmux、Tailscale/Headscale/NetBird 状态。
-- `Trading Workspace`：交易工作台入口，先保留壳，后续承接 NZX RWA / 做市 / 风控。
+- `Trading Workspace`：交易工作台入口，不只是壳；后续承接行情、订单、持仓、资产、
+  NZX RWA、做市、风控、对账和告警。
+- `Compute / Models`：GPU 节点、推理服务、训练任务、模型网关和算力资源。
 - `Settings/Policy`：模型、权限、网络、provider、token、approval 策略。
 
 UI 原则：
 
 - 首屏应该像 GPT chat，而不是传统 dashboard。
 - 左侧菜单移动端从右向左/左侧滑入的体验要抄 GPT mobile 的成熟模式。
-- 交易工作台可以是固定菜单项，但不要抢主控 chat 入口。
+- 交易工作台、算力、节点、策略都可以是固定菜单项，但不要抢主控 chat 入口。
 - 页面只是控制面；canonical state 仍来自 A9 API、Redis/MySQL、run evidence 和 session
   evidence，不来自浏览器内存。
+- 手机端可以执行真实交易/运维/算力功能，但高风险操作必须走权限、二次确认、
+  policy attestation、审计和必要的人工确认。
 
 ## 3. 需求方法论是最高层
 
@@ -588,6 +603,8 @@ Stage C: 私有 GPU cluster
 - NZX RWA 是第一条业务主线，不代表 A9 只能做这一条。
 - 算力币/DePIN/RWA 是候选商业飞轮，不是当前已验证的弹性算力技术选型。
 - 手机端控制面必须像 GPT/Codex 主控交互，不是普通后台管理系统。
+- 手机端也是交易和私有网络功能入口，不只是 chat；chat 负责远程连接和主控，
+  菜单承载真实业务 workspace。
 
 ## 12. 给 GPT 网页端重构的问题清单
 
@@ -604,8 +621,9 @@ Stage C: 私有 GPU cluster
 9. 当前 A9 已实现的 24h runtime 哪些保留、哪些重构、哪些删除？
 10. 手机端是否应明确抄 GPT mobile + Codex CLI 交互模型，而不是后台 dashboard？
 11. 24h worker 的 monitor view 应该暴露哪些意图、prompt、session、执行链和介入证据？
-12. 算力币/DePIN/RWA 这条商业飞轮是否进入长期候选？如果进入，法律/合规/资产审计前置条件是什么？
-13. 下一刀应该是继续通信治理、算力调度底座、手机主控入口，还是先统一文档和任务合同？
+12. 手机端交易工作台应该先做哪些真实功能：行情/订单/持仓/资产/风控/告警/做市监控？
+13. 算力币/DePIN/RWA 这条商业飞轮是否进入长期候选？如果进入，法律/合规/资产审计前置条件是什么？
+14. 下一刀应该是继续通信治理、算力调度底座、手机主控入口，还是先统一文档和任务合同？
 
 ## 13. 推荐下一步
 
@@ -626,7 +644,7 @@ Stage C: 私有 GPU cluster
 2. `reference_baseline_scan`：针对 Codex/OpenClaw/Aider/Barter-rs/Hermes/ECC 做底座候选评审。
 3. `compute_scheduler_research`：只评估 GPU Operator/KAI/vLLM/NIM/Dynamo/Ray/KubeRay 和 4090 路线。
 4. `mobile_control_product_packet`：明确 GPT-like chat/control、Codex-like execution view、
-   24h monitor view、Trading Workspace tab。
+   24h monitor view、Trading Workspace tab、Compute/Models tab 和私有网络远程连接模型。
 5. `compute_rwa_candidate_review`：只评审算力币/DePIN/RWA 商业模型的合法性、资产模型、
    proof 和风险，不进入执行。
 6. `noise_cleanup_plan`：删除/归档过期文档和代码噪音，但必须先有保留清单。
