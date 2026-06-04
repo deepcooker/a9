@@ -7937,6 +7937,7 @@ direct_file_change_policy: repair
 decision_status: decided
 
 Slim auto-repair task.
+{("Monitor-blocked repair." if summary.get("status") == "monitor-blocked" else "").strip()}
 
 Problem:
 - Previous run status: {summary.get('status', '')}
@@ -7946,6 +7947,7 @@ Problem:
 
 Authority:
 - Task frontmatter allowed_paths is the only write scope.
+- Declared checks are authoritative.
 - Declared checks below are authoritative and are run by the outer supervisor.
 - Worker self-report is evidence only; do not invent changed_files or supervisor_declared_checks.
 - If no file changes are needed, output changed_files: [] and no search_replace_blocks.
@@ -7957,6 +7959,7 @@ Declared checks:
 {declared_checks_text}
 
 Compact repair evidence:
+compact_monitor_evidence:
 {bounded_inline(json.dumps(compact_evidence, ensure_ascii=False), 1800)}
 
 Previous worker output:
@@ -7965,10 +7968,12 @@ Previous worker output:
 - copied_mechanisms: {bounded_inline(json.dumps(worker_output.get('copied_mechanisms', []), ensure_ascii=False), 700)}
 {repair_hint}
 Repair discipline:
+- Use the compact evidence above first.
 - Before source reads, list exact bounded commands and reasons.
 - Use `rg -n "<anchor>" <allowed-path> | head -n 40` before every sed source read.
 - Each sed source window must be <= 120 lines.
 - Do not read `.a9/runs`, raw sessions, broad docs, or reference projects unless an exact path above requires it.
+- If compact evidence is insufficient, return a change request asking the monitor for the missing bounded evidence.
 - Do not edit files directly. Put SEARCH/REPLACE blocks in `output.search_replace_blocks`.
 - Do not run tests yourself. The outer supervisor runs the declared checks.
 
@@ -8586,6 +8591,12 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         return None
     phase = next_phase_for(summary["status"], task.phase)
     worker_output = worker_output_from_summary(summary)
+    deterministic_record_ready = (
+        phase == "record"
+        and summary["status"] == "pass"
+        and isinstance(summary.get("git_governance"), dict)
+        and str(summary.get("git_governance", {}).get("status") or "") in {"committed", "skip"}
+    )
     if summary["status"] in {"pass", "needs-followup"}:
         if "worker_envelope" in summary and not str(worker_output.get("next_slice", "")).strip():
             summary["auto_next_block"] = {
@@ -8603,7 +8614,12 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
                 "next_slice_source": worker_output.get("next_slice_source", ""),
             }
             return None
-        if not next_slice_is_actionable_for_auto_next(worker_output.get("next_slice")):
+        if (
+            "worker_envelope" in summary
+            and task.phase == "test"
+            and not deterministic_record_ready
+            and not next_slice_is_actionable_for_auto_next(worker_output.get("next_slice"))
+        ):
             summary["auto_next_block"] = {
                 "reason": "next_slice_missing_phase_prefix",
                 "status": summary["status"],

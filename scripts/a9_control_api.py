@@ -2029,9 +2029,14 @@ def append_communication_suggestion_audit(event: dict[str, Any], *, root: Path =
 
 
 def enqueue_communication_suggestion_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    def safe_append() -> None:
+        try:
+            append_communication_suggestion_audit(event, root=root)
+        except OSError:
+            return
+
     thread = threading.Thread(
-        target=append_communication_suggestion_audit,
-        kwargs={"event": event, "root": root},
+        target=safe_append,
         daemon=True,
     )
     thread.start()
@@ -2144,9 +2149,14 @@ def service_control_audit_tail(limit: int = 20, *, root: Path = ROOT) -> dict[st
 
 
 def enqueue_service_control_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    def safe_append() -> None:
+        try:
+            append_service_control_audit(event, root=root)
+        except OSError:
+            return
+
     thread = threading.Thread(
-        target=append_service_control_audit,
-        kwargs={"event": event, "root": root},
+        target=safe_append,
         daemon=True,
     )
     thread.start()
@@ -2164,9 +2174,14 @@ def append_monitor_intervention_audit(event: dict[str, Any], *, root: Path = ROO
 
 
 def enqueue_monitor_intervention_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    def safe_append() -> None:
+        try:
+            append_monitor_intervention_audit(event, root=root)
+        except OSError:
+            return
+
     thread = threading.Thread(
-        target=append_monitor_intervention_audit,
-        kwargs={"event": event, "root": root},
+        target=safe_append,
         daemon=True,
     )
     thread.start()
