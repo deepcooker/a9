@@ -323,6 +323,136 @@ Current status:
 - Next enforcement should make worker task prompts include a bounded evidence
   plan and should observe broad reads against `docs/context-governance.md`.
 
+### 15. Requirements Method Became The Root Of Agent Work
+
+- Problem discovered: even a technically working 24h worker produces poor
+  quality if it lacks a method for understanding requirements, product
+  intention, data model, state flow, exception flow, and acceptance. The user
+  emphasized that enterprise delivery quality often comes from requirements
+  discussion and alignment before engineering, not from more code.
+- Resulting decision: the 20-year requirements analysis method is A9's root
+  method. Copying projects, audit sidecars, Rust/Redis, plan files and graph
+  memory are supporting mechanisms, not replacements for requirements
+  analysis.
+- Evidence: `docs/session-raw-summary.md` turns 455-463 and 489-498,
+  `docs/requirements-guide-close-reading.md`,
+  `docs/worker-method-packet.md`.
+
+Current status:
+
+- Active.
+- Any worker task that starts from a solution name instead of a real problem,
+  data/state model, exception flow and acceptance is not execution-ready.
+
+### 16. Role Memory And Plan Ownership Were Reframed
+
+- Problem discovered: close-reading output does not automatically become role
+  knowledge. A new main Codex window, product role, architecture role, test
+  role and worker all know only what their prompt/handoff/memory packet gives
+  them.
+- Resulting decision: A9 needs shared evidence but role-scoped packets:
+  product/mainline sees the most, architecture sees data/state/boundaries,
+  test sees acceptance and failure modes, execution worker sees bounded task
+  evidence only, and monitor sees drift/quality/execution chain.
+- Further decision: planning-with-files is useful for file-based work memory
+  and recovery, but A9 must not copy its agent-owned plan model. Product,
+  requirements and monitor own the plan contract; worker may append findings,
+  progress, mistakes and change requests.
+- Evidence: `docs/session-raw-summary.md` turns 455-465,
+  `docs/role-memory-governance.md`,
+  `docs/role-memory-reference-scan.md`,
+  `docs/requirements-plan-file-reference-scan.md`,
+  `docs/reference-adoption-decision.md`.
+
+Current status:
+
+- Active as documentation and task discipline.
+- Still missing as a fully enforced supervisor lane.
+- Workers must not silently modify goal, scope, acceptance or plan authority.
+
+### 17. Graph/Wiki Memory Is A Derived Layer, Not Hot Context
+
+- Problem discovered: plan files help current task recovery, but they do not
+  solve long-horizon knowledge, contradictions, stale branches, wiki topics or
+  graph retrieval.
+- Resulting decision: GBrain, GraphRAG, Graphify and LLM-Wiki are long-term
+  derived-memory references. They may compile facts, citations, gaps, schema
+  and contradiction reports from raw evidence. They should not become worker
+  hot-path context or replace raw session/run/git/test evidence.
+- Evidence: `docs/session-raw-summary.md` turns 461-462,
+  `docs/memory-graph-wiki-reference-scan.md`,
+  `docs/reference-adoption-decision.md`.
+
+Current status:
+
+- Reference layer accepted.
+- Implementation deferred until plan lane and role packets are stable.
+
+### 18. Highest Product Shape Expanded To Agent OS Ecosystem
+
+- Problem discovered: A9 was drifting between mobile UI, communication runtime,
+  24h worker and future finance. The user reframed the final product as a
+  broader ecosystem: private top-level network gateway, elastic private
+  networks, private intelligence layer, trading base, 24h worker, mobile app,
+  and compute scheduling.
+- Resulting decision: A9's highest shape is now:
+  `private Agent OS + financial trading infrastructure control plane + private
+  compute/model scheduler + ResearchOps/training data loop`. NZX RWA is the
+  first heavy business line.
+- Evidence: `docs/session-raw-summary.md` turns 569-571,
+  `/mnt/e/WSL_Share/NZX_RWA_Orderbook_Appchain_最终方案 (3).md`,
+  `/mnt/e/WSL_Share/NZX_RWA_技术实现全景图.svg`,
+  `docs/a9-ultimate-architecture-aggregation.md`.
+
+Current status:
+
+- Active aggregation draft, not final architecture decision.
+- Do not let this broaden into feature sprawl before a decision packet closes
+  the next execution slice.
+
+### 19. Mobile Became Control Plus Trading Workspace
+
+- Problem discovered: describing mobile as monitor/approval/control is too
+  narrow. The phone must carry the Codex-like operator conversation, but it
+  also needs real menus for trading, nodes, strategies, assets, risk, compute,
+  models and data.
+- Resulting decision: mobile has two layers:
+  - chat/control layer remotely connects into private-network A9 servers and
+    carries the main operator session.
+  - workspace/menu layer hosts real trading and Agent OS functions, with
+    permission, attestation, audit and confirmation for high-risk actions.
+- Evidence: `docs/session-raw-summary.md` turns 572-574,
+  `docs/a9-ultimate-architecture-aggregation.md`.
+
+Current status:
+
+- Active product requirement.
+- UI should copy GPT mobile/Codex interaction patterns, but canonical state
+  stays in A9 API/Redis/MySQL/run/session evidence.
+
+### 20. Compute Scheduler And Compute RWA Split
+
+- Problem discovered: A9 needs a private compute/model scheduler for 4090,
+  possible multi-GPU expansion, model serving and 200GB+ image/weight startup.
+  Separately, `弹性算力选型.md` introduced a compute-token/DePIN/RWA business
+  flywheel.
+- Resulting decision:
+  - compute scheduler is an infrastructure layer to research: GPU Operator,
+    KAI/Run:ai lineage, vLLM/SGLang/NIM/Dynamo, Ray/KubeRay/Argo, warm pools,
+    local weight cache and image pre-pull.
+  - compute RWA/tokenomics is only a high-risk business candidate requiring
+    legal/compliance, asset audit, proof-of-capacity/proof-of-compute and
+    tokenomics stress testing.
+- Evidence: `docs/session-raw-summary.md` turns 570 and 573,
+  `/mnt/e/WSL_Share/弹性算力选型.md`,
+  `docs/a9-ultimate-architecture-aggregation.md`.
+
+Current status:
+
+- Compute scheduler belongs in highest architecture research.
+- Compute RWA does not enter execution and must not be treated as validated
+  revenue/ROI.
+
 ## Expired Or Downgraded Branches
 
 - "Just build the finance model now": expired for current phase. Finance is a
@@ -344,6 +474,14 @@ Current status:
   governance needs an exclusive/priority lane to avoid drift and duplicate work.
 - "Every markdown file is useful worker context": expired. Docs now need
   canonical/evidence/research/archive/noise routing.
+- "planning-with-files can be copied wholesale": expired. A9 copies recovery
+  and file-memory mechanisms, not worker ownership of plan goals/acceptance.
+- "Graph memory should replace close reading": expired. Graph/wiki memory is a
+  derived index over raw evidence and curated causal memory.
+- "Mobile is only chat/monitor": expired. Mobile is chat/control plus trading
+  and Agent OS workspaces.
+- "Compute tokenomics is compute technical selection": false. It is a business
+  candidate requiring separate compliance and asset review.
 
 ## Active Decisions
 
@@ -364,6 +502,15 @@ Current status:
 10. Context cleanup is a requirements-analysis duty. Noisy docs and stale code
     can bias execution and must be routed, archived, or removed before long-run
     worker execution.
+11. Plan contracts are owned by human/product/requirements/monitor roles.
+    Execution workers can append findings/progress/mistakes/change requests,
+    but cannot silently change goal, scope or acceptance.
+12. A9 highest-shape aggregation is now captured in
+    `docs/a9-ultimate-architecture-aggregation.md`, but remains a draft for
+    debate and GPT/web reconstruction, not a decided implementation plan.
+13. The next architecture decision must account for NZX RWA, mobile trading
+    workspace, private compute scheduler, role-scoped memory, and the original
+    trading-philosophy/data-validation spine together.
 
 ## Required Post-Close-Reading Procedure
 
@@ -389,17 +536,17 @@ After each incremental close-reading batch:
 
 ## Next Bounded Task
 
-Discuss and design the Hermes-like sidecar automation and role-memory routing
-before resuming feature implementation:
+Close the highest-shape architecture decision before resuming feature
+implementation:
 
 ```text
-close-reading evidence
--> causal memory
--> role-scoped memory packets
--> async sidecar evaluators/reviewers
--> monitor decision
+incremental close-reading evidence
+-> causal memory update
+-> A9 ultimate architecture aggregation
+-> GPT/web reconstruction and human debate
+-> decision packet
 -> bounded worker task
 ```
 
-Only after that should A9 resume communication governance or multi-machine
-SSH/Tailscale/tmux stability work.
+Only after that should A9 resume communication governance, mobile control,
+compute scheduler, or multi-machine SSH/Tailscale/tmux stability work.

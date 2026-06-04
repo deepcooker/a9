@@ -8727,3 +8727,187 @@ Execution evidence:
 Assistant preview:
 
 - 已从 293 推到 392 附近，过程中出现一个值得记录的问题：队列里同段 close-reading 任务有重复，这说明 auto-next/session mini-flow 仍有并发/重复调度瑕疵。先让本轮跑到 max-tasks 结束，再做去重和因果记录。
+
+## Manual Close Reading: Turn 455-577
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-455-577.json`
+- approx JSONL lines: `53562-71933`
+- generated_at: `2026-06-04T09:06:xx+00:00`
+
+Boundary:
+
+- deterministic extract was generated first with `a9_session_refresh.py`.
+- this section is a human/monitor close-reading synthesis, not a full transcript.
+- raw wording remains in the extract; this section records causal changes and
+  task implications.
+
+### Turns 455-458: Role Knowledge Must Be Routed
+
+Original user intent:
+
+- line `53562`: confirm whether Hermes-like mechanism means product knows the
+  most, other roles know the relevant overview, and all share a cache layer.
+- line `53586`: the requirements method must be applied to roles; product pulls
+  mainline, architecture starts from data and state, audit should be sidecar.
+- line `53605`: a new main Codex window also needs global understanding; it
+  must know what to read and how to take over.
+- line `53648`: do not self-conclude; inspect reference projects before deciding.
+
+Causal reading:
+
+- Close reading output is not knowledge until it is routed.
+- Product/mainline gets the full causal spine; architecture/test/executor get
+  role-specific projections.
+- New main Codex takeover is itself a role and must read a fixed handoff order.
+- Reference projects are evidence before decision.
+
+Resulting artifacts:
+
+- `docs/role-memory-governance.md`
+- `docs/role-memory-reference-scan.md`
+
+### Turns 459-465: Requirements Method Is Root, Plan Files Are Mechanism
+
+Original user intent:
+
+- line `53746`: the 20-year requirements guide is the method/root; without a
+  method, every agent will improvise and quality is uncontrollable.
+- line `53803`: planning with files.
+- line `53883`: GBrain, GraphRAG, Graphify and LLM-Wiki may be useful, but
+  planning-with-files may not be as strong as the requirements method; after
+  compaction/interruption the agent should restate the current task.
+- line `54009`: evaluate what should enter through multiple rounds of debate.
+- line `54058`: planning-with-files may conflict with roles and must be judged.
+
+Causal reading:
+
+- Requirements method is "dao"; copying projects, audit sidecars and plan files
+  are "techniques".
+- `planning-with-files` can be copied for file-based work memory and recovery,
+  but it cannot own product goals, scope or acceptance in A9.
+- Plan contract authority belongs to human/product/requirements/monitor.
+  Worker can append findings/progress/mistakes/change requests.
+- Graph/wiki projects belong to derived long-term knowledge, not hot worker
+  context.
+
+Resulting artifacts:
+
+- `docs/requirements-plan-file-reference-scan.md`
+- `docs/memory-graph-wiki-reference-scan.md`
+- `docs/reference-adoption-decision.md`
+
+### Turns 489-498: Quality Comes From Requirements Debate Before Execution
+
+Original user intent:
+
+- line `61255`: ask what the 24h worker quality really is.
+- line `61273`: question whether the method was actually given to workers.
+- line `61288`: enterprise systems spend most quality effort in requirement
+  discussion, synchronization, data modeling and architecture alignment; a good
+  requirement can reduce rework by an order of magnitude.
+- line `61296`: even copying requires dozens of rounds of debate and evaluation.
+- line `61304`: 24h can run only if its own requirements analysis is complete.
+- line `61321`: before decision, "next" means debate until all roles are
+  aligned; after decision, 24h worker can run many execution steps safely.
+- line `61329`: worker can automate even requirements-guided work, but half-built
+  products are harder and need reorganization/review.
+
+Causal reading:
+
+- A9's 24h blocker is not raw runtime ability; it is incomplete decision
+  closure and unclear plan authority.
+- `continue` before decision means continue debate/review, not implementation.
+- Product role must pressure, research, overturn and improve; architecture and
+  business must align data/state/use scenarios before execution.
+
+### Turns 509-528: Noise Cleanup And Review Closure
+
+Original user intent:
+
+- line `63092`: after a run, re-analyze the redetermined requirements; clearing
+  stale/noisy docs and code is part of the debate core.
+- line `63133`: too many documents make the mainline hard to grasp.
+- line `65396`: re-review whether the thing was really done.
+- line `65430`: ask whether dozens of rounds of evaluation were really done.
+- line `65441`: without confirmed debate, implementation can be wasted.
+
+Causal reading:
+
+- Noise cleanup is not cosmetic. It protects retrieval and task alignment.
+- Review closure is a real gate at the business/architecture decision level,
+  not a numeric token or line gate.
+
+### Turns 545-568: Reference Pool, Review Closure, Gateway Taxonomy
+
+Original user intent:
+
+- line `67968-67978`: add `https://github.com/affaan-m/ECC` as a local
+  reference project.
+- line `68234-68264`: question whether requirements review and execution are
+  really done; the review flow must close before execution.
+- line `71573`: ask current progress and whether 24h is running.
+- line `71581`: challenge why multi-machine communication shifted from 90% to
+  15%.
+- line `71598`: ask whether barter-rs is a trading gateway and whether
+  OpenClaw is also a gateway.
+
+Causal reading:
+
+- ECC joins the reference pool for cross-harness/operator/plugin context.
+- "90%" and "15%" differed because one was prototype capability and the other
+  product-grade architecture/governance maturity.
+- Barter-rs is a trading/communication/execution-governance reference, not a
+  CLOB core replacement.
+- OpenClaw is an agent workflow/tool-policy gateway reference, not a trading
+  gateway.
+
+### Turns 569-574: Highest Shape Expanded To Ecosystem
+
+Original user intent:
+
+- line `71630`: final business shape looks like a top private network gateway,
+  many elastic private networks, private intelligence layer, trading base and
+  intelligent agent + 24h machine.
+- line `71666`: add private compute server scheduling; support 1x4090, possible
+  2-GPU expansion, NVIDIA ecosystem, large 200GB+ images/weights, and include
+  Codex-like CLI in the highest architecture.
+- line `71696`: aggregate the requirements method too.
+- line `71780`: write 24h + monitor, mobile app selection, GPT style copying and
+  Codex-like interaction model.
+- line `71792`: read `弹性算力选型.md`.
+- line `71842`: mobile is not only interaction; it can host trading functions
+  and menu workspaces. The chat layer connects into private-network servers.
+
+Causal reading:
+
+- Highest shape becomes an ecosystem, not a single agent runtime.
+- Compute scheduler becomes an infrastructure layer.
+- Compute-token/RWA idea is a separate business candidate, not a validated
+  technical selection.
+- Mobile is GPT/Codex-like chat/control plus trading/workspace menus.
+
+Resulting artifact:
+
+- `docs/a9-ultimate-architecture-aggregation.md`
+
+### Turns 576-577: Core Thought Must Be Recovered From Close Reading
+
+Original user intent:
+
+- line `71891`: recall the core chain: trading philosophy first, mature logic
+  copying, multi-project fusion, data validation first, stress testing second,
+  monitor and automation; then the pain points that caused 24h execution,
+  session governance, mobile Agent OS and Rust/Redis/private-network stability.
+- line `71933`: do not patch from memory only; read the whole close reading,
+  run incremental close reading if needed, then supplement.
+
+Causal reading:
+
+- The architecture aggregation must start from the original thought and its
+  causal evolution, not from the latest feature request.
+- The latest supplement must cite the extract and update causal memory before
+  finalizing the aggregation document.

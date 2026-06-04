@@ -940,3 +940,75 @@ mainline.
 - turn 453-454: external session extract `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-453-454.json` lines `53301-53365`.
 - turn 453, line 53301: 你先做这个做完，下一轮我们需要做session增量 精读，因果链想法迭代细节，观测出来的问题问题分析总结，噪音去除
 - turn 454, line 53365: 对的，先做，做完我们要讨论一下如何像hermes旁路自动化，而且我有个大问题，就是我们精读出来的东西我们的 各个角色是否知道呢
+
+
+## Incremental Close Reading 2026-06-04
+
+- source session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- latest extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-455-577.json`
+- turn range: `455-577`
+- approximate JSONL lines: `53562-71933`
+
+### Causal Highlights
+
+1. `turn 455-458`: role memory governance became reference-first. Hermes,
+   Codex, LangGraph, mem0, Aider and OpenClaw were used to validate the rule:
+   shared evidence store, role-scoped memory packets, and no assumption that all
+   roles know the full close reading.
+2. `turn 456-459`: requirements analysis method became the project root method,
+   not only a product role note. Product/mainline, architecture, test, monitor
+   and execution worker must all receive the method in role-specific form.
+3. `turn 459-463`: `planning-with-files` was introduced as a reference for
+   file-based work memory, but explicitly not as a replacement for the 20-year
+   requirements analysis method.
+4. `turn 461-462`: GBrain, GraphRAG, Graphify and LLM-Wiki entered as
+   long-term memory/wiki/graph references. Their role is derived knowledge,
+   contradiction and gap indexing, not worker hot-path context.
+5. `turn 463-465`: planning-with-files needed deeper evaluation because its
+   agent-owned plan model may conflict with A9 role boundaries.
+6. `turn 489-498`: the user re-centered the project on requirements discussion:
+   enterprise-quality work spends most effort on requirement alignment,
+   business/product/architecture/test debate, and data modeling before
+   implementation. A clear plan enables 24h execution; unclear plan makes
+   worker automation drift.
+7. `turn 509-510`: noise cleanup became part of requirements governance. Too
+   many documents and stale code can corrupt mainline retrieval.
+8. `turn 525-528`: review and debate must be confirmed before execution;
+   otherwise implementation may be wasted.
+9. `turn 545-547`: ECC was added as a local reference project and should remain
+   in the reference pool.
+10. `turn 550-568`: the project was still blocked not by runtime ability but by
+    review closure and decision clarity. Barter-rs is a trading/communication
+    gateway reference; OpenClaw is an agent workflow/tool-policy gateway
+    reference.
+11. `turn 569-570`: final business shape was reframed as an ecosystem:
+    private Agent OS, top private network gateway, elastic private networks,
+    private intelligence layer, trading base, 24h worker and a new compute
+    scheduler layer. NZX RWA is the first heavy business line.
+12. `turn 570-571`: private compute scheduling entered the highest shape:
+    1x4090 local path, possible 2-GPU expansion, NVIDIA ecosystem, 200GB+
+    image/weight warm start, and model/inference/training orchestration.
+13. `turn 572-574`: mobile is not just monitoring or approval. It is a
+    GPT/Codex-like main control session plus real trading/workspace menus. The
+    chat layer connects to private-network A9 servers; menus host trading,
+    nodes, strategy, assets, risk, compute and model functions.
+14. `turn 573`: `弹性算力选型.md` was classified as compute RWA/tokenomics
+    business candidate, not a strict compute technical selection.
+15. `turn 576-577`: the user required returning to full close-reading before
+    supplementing architecture docs. The core causal chain must be recovered
+    from the close-reading spine, not only from memory.
+
+### Updated Mainline After Turn 577
+
+```text
+trading philosophy and requirements method
+-> reference-first mechanism copying
+-> role-scoped memory and plan ownership
+-> plan/debate closure before execution
+-> 24h worker as executor
+-> monitor as mainline and quality guard
+-> mobile as GPT/Codex-like control and trading workspace
+-> private network and Rust/Redis gateway as stable substrate
+-> private compute/model scheduler as new infrastructure layer
+-> NZX RWA as first heavy business line
+```
