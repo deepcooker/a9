@@ -2691,6 +2691,21 @@ class ControlApiTests(unittest.TestCase):
             (state_dir / "tasks" / "running").mkdir(parents=True)
             (state_dir / "tasks" / "done").mkdir(parents=True)
             (state_dir / "nodes").mkdir(parents=True)
+            (state_dir / "runtime").mkdir(parents=True)
+            (state_dir / "runtime" / "control_state.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "a9.runtime_control_state.v1",
+                        "paused": True,
+                        "status": "paused",
+                        "reason": "operator inspection",
+                        "updated_at": "2026-06-04T00:00:00+00:00",
+                        "last_intervention": {"intervention_id": "monitor-pause-1", "action": "pause"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             run_dir.mkdir(parents=True)
             summary = {
                 "task_id": "task-1",
@@ -2759,6 +2774,9 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(payload["command_envelope"]["idempotency_key"], "task-1:1")
         self.assertTrue(payload["guardrails"]["page_details_frozen"])
         self.assertEqual(payload["context_pressure"]["remaining_tokens"], 900)
+        self.assertTrue(payload["runtime_control"]["paused"])
+        self.assertEqual(payload["runtime_control"]["status"], "paused")
+        self.assertEqual(payload["runtime_control"]["last_intervention"]["intervention_id"], "monitor-pause-1")
 
     def test_api_monitor_status_endpoint_returns_monitor_payload(self):
         mod = load_control_api()

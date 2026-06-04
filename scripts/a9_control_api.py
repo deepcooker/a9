@@ -44,6 +44,7 @@ COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH = Path(".a9") / "services" / "communic
 COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestion-audit.jsonl"
 SERVICE_CONTROL_AUDIT_REL_PATH = Path(".a9") / "services" / "service-control-audit.jsonl"
 MONITOR_INTERVENTION_AUDIT_REL_PATH = Path(".a9") / "monitor" / "interventions.jsonl"
+RUNTIME_CONTROL_STATE_REL_PATH = Path(".a9") / "runtime" / "control_state.json"
 MONITOR_INTERVENTION_ALLOWED_ACTIONS = {
     "approve",
     "change_request",
@@ -2035,6 +2036,9 @@ def enqueue_communication_suggestion_audit(event: dict[str, Any], *, root: Path 
         except OSError:
             return
 
+    if Path(root) != ROOT:
+        safe_append()
+        return
     thread = threading.Thread(
         target=safe_append,
         daemon=True,
@@ -2155,6 +2159,9 @@ def enqueue_service_control_audit(event: dict[str, Any], *, root: Path = ROOT) -
         except OSError:
             return
 
+    if Path(root) != ROOT:
+        safe_append()
+        return
     thread = threading.Thread(
         target=safe_append,
         daemon=True,
@@ -2180,6 +2187,9 @@ def enqueue_monitor_intervention_audit(event: dict[str, Any], *, root: Path = RO
         except OSError:
             return
 
+    if Path(root) != ROOT:
+        safe_append()
+        return
     thread = threading.Thread(
         target=safe_append,
         daemon=True,
@@ -2290,6 +2300,11 @@ def build_monitor_intervention_command(payload: dict[str, Any], *, root: Path = 
         "run_id": run_id or None,
         "expected_revision": expected_revision,
         "idempotency_key": idempotency_key,
+        "flow_id": str(payload.get("flow_id") or "").strip() or None,
+        "flow_expected_revision": payload.get("flow_expected_revision", payload.get("expected_revision")),
+        "flow_expected_last_seq": payload.get("flow_expected_last_seq"),
+        "flow_sequence": payload.get("flow_sequence"),
+        "evidence_id": str(payload.get("evidence_id") or "").strip() or None,
         "evidence_refs": evidence_refs,
         "proposal": payload.get("proposal"),
         "target": payload.get("target") or "runtime_monitor",
@@ -6309,8 +6324,45 @@ def run_summary(run_id: str | None = None, *, root: Path = ROOT, compact: bool =
     return compact_summary(summary) if compact else summary
 
 
+def runtime_control_state(root: Path = ROOT) -> dict[str, Any]:
+    path = root / RUNTIME_CONTROL_STATE_REL_PATH
+    if not path.exists():
+        return {
+            "schema": "a9.runtime_control_state.v1",
+            "status": "running",
+            "paused": False,
+            "path": str(path),
+            "source": "default",
+        }
+    try:
+        payload = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return {
+            "schema": "a9.runtime_control_state.v1",
+            "status": "unknown",
+            "paused": False,
+            "path": str(path),
+            "source": "unreadable",
+        }
+    if not isinstance(payload, dict):
+        payload = {}
+    return {
+        "schema": payload.get("schema") or "a9.runtime_control_state.v1",
+        "status": payload.get("status") or ("paused" if payload.get("paused") else "running"),
+        "paused": bool(payload.get("paused")),
+        "reason": payload.get("reason", ""),
+        "updated_at": payload.get("updated_at", ""),
+        "last_intervention": payload.get("last_intervention", {}),
+        "last_decision_action": payload.get("last_decision_action", ""),
+        "last_flow_transition": payload.get("last_flow_transition", {}),
+        "path": str(path),
+        "source": "file",
+    }
+
+
 def monitor_status(root: Path = ROOT) -> dict[str, Any]:
     status = supervisor_status(root)
+    control_state = runtime_control_state(root)
     latest_run = status.get("latest_run") if isinstance(status.get("latest_run"), dict) else {}
     contract = latest_run.get("runtime_monitor_contract") if isinstance(latest_run, dict) else {}
     contract = contract if isinstance(contract, dict) else {}
@@ -6354,6 +6406,7 @@ def monitor_status(root: Path = ROOT) -> dict[str, Any]:
             "run_dir": latest_run.get("run_dir"),
         },
         "next_action": next_action,
+        "runtime_control": control_state,
         "monitor": monitor,
         "evidence_refs": evidence_refs,
         "failed_checks": diff_and_checks.get("failed_checks", []),

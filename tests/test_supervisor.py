@@ -10590,6 +10590,79 @@ flow_expected_revision: None
         self.assertIn("Approve next step?", captured_args)
         self.assertIn("worker_needs_approval:policy:abcdef123456", captured_args)
 
+    def test_monitor_intervention_approve_routes_managed_flow_transition(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_control_state = mod.RUNTIME_CONTROL_STATE_PATH
+            original_available = mod.redis_available
+            original_cli = mod.redis_cli
+            captured_args = []
+
+            def fake_available():
+                return True
+
+            def fake_cli(args):
+                captured_args.extend(args)
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout='{"flow_id":"flow-approve","status":"approved","revision":8,"last_seq":13}\n',
+                )
+
+            try:
+                mod.RUNTIME_CONTROL_STATE_PATH = Path(tmp) / "runtime" / "control_state.json"
+                mod.redis_available = fake_available
+                mod.redis_cli = fake_cli
+                result = mod.apply_monitor_intervention_effect(
+                    {
+                        "action": "approve",
+                        "intervention_id": "monitor-approve-1",
+                        "reason": "operator approved worker request",
+                        "actor": "mobile-operator",
+                        "flow_id": "flow-approve",
+                        "flow_expected_revision": 7,
+                        "flow_expected_last_seq": 12,
+                        "flow_sequence": 13,
+                        "evidence_id": "checkpoint-1",
+                    }
+                )
+            finally:
+                mod.RUNTIME_CONTROL_STATE_PATH = old_control_state
+                mod.redis_available = original_available
+                mod.redis_cli = original_cli
+
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(result["mode"], "managed_flow_transition")
+        self.assertEqual(result["flow_transition"]["next_status"], "approved")
+        self.assertIn("transition_flow", captured_args)
+        self.assertIn("a9:flow:flow-approve", captured_args)
+        self.assertIn("approved", captured_args)
+        self.assertIn("checkpoint-1", captured_args)
+
+    def test_monitor_intervention_reject_without_flow_contract_is_decision_only(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_control_state = mod.RUNTIME_CONTROL_STATE_PATH
+            try:
+                mod.RUNTIME_CONTROL_STATE_PATH = Path(tmp) / "runtime" / "control_state.json"
+                result = mod.apply_monitor_intervention_effect(
+                    {
+                        "action": "reject",
+                        "intervention_id": "monitor-reject-1",
+                        "reason": "missing business decision packet",
+                        "actor": "mobile-operator",
+                    }
+                )
+                state = mod.runtime_control_state()
+            finally:
+                mod.RUNTIME_CONTROL_STATE_PATH = old_control_state
+
+        self.assertEqual(result["status"], "recorded")
+        self.assertEqual(result["mode"], "decision_only")
+        self.assertEqual(result["reason"], "missing_flow_contract")
+        self.assertEqual(state["last_decision_action"], "reject")
+        self.assertEqual(state["last_decision_status"], "missing_flow_contract")
+
     def test_failed_flow_transition_blocks_auto_next(self):
         mod = load_supervisor()
         task = mod.Task(

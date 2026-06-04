@@ -525,6 +525,72 @@ def monitor_intervention_task_prompt(command: dict[str, Any], *, phase: str) -> 
     )
 
 
+def optional_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def apply_monitor_approval_effect(
+    command: dict[str, Any],
+    intervention: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    action = str(command.get("action") or "").strip().lower()
+    flow_id = str(command.get("flow_id") or "").strip()
+    expected_revision = optional_int(command.get("flow_expected_revision") or command.get("expected_revision"))
+    if not flow_id or expected_revision is None:
+        updated = write_runtime_control_state(
+            {
+                **state,
+                "last_intervention": intervention,
+                "last_decision_action": action,
+                "last_decision_reason": command.get("reason"),
+                "last_decision_status": "missing_flow_contract",
+            }
+        )
+        return {
+            "status": "recorded",
+            "mode": "decision_only",
+            "action": action,
+            "reason": "missing_flow_contract",
+            "runtime_state_path": str(RUNTIME_CONTROL_STATE_PATH),
+            "state": updated,
+        }
+
+    next_status = "approved" if action == "approve" else "rejected"
+    flow_transition = transition_managed_flow(
+        flow_id=flow_id,
+        expected_revision=expected_revision,
+        expected_last_seq=optional_int(command.get("flow_expected_last_seq")),
+        sequence=optional_int(command.get("flow_sequence")),
+        next_status=next_status,
+        actor=str(command.get("actor") or "monitor"),
+        reason=str(command.get("reason") or f"monitor_{action}"),
+        evidence_id=str(command.get("evidence_id") or command.get("intervention_id") or ""),
+    )
+    updated = write_runtime_control_state(
+        {
+            **state,
+            "last_intervention": intervention,
+            "last_decision_action": action,
+            "last_decision_reason": command.get("reason"),
+            "last_flow_transition": flow_transition,
+        }
+    )
+    return {
+        "status": "applied" if flow_transition.get("status") in {"pass", "skipped"} else "degraded",
+        "mode": "managed_flow_transition",
+        "action": action,
+        "flow_transition": flow_transition,
+        "runtime_state_path": str(RUNTIME_CONTROL_STATE_PATH),
+        "state": updated,
+    }
+
+
 def apply_monitor_intervention_effect(command: dict[str, Any]) -> dict[str, Any]:
     ensure_dirs()
     action = str(command.get("action") or "").strip().lower()
@@ -605,6 +671,8 @@ def apply_monitor_intervention_effect(command: dict[str, Any]) -> dict[str, Any]
             "runtime_state_path": str(RUNTIME_CONTROL_STATE_PATH),
             "state": updated,
         }
+    if action in {"approve", "reject"}:
+        return apply_monitor_approval_effect(command, intervention, state)
     updated = write_runtime_control_state(
         {
             **state,
