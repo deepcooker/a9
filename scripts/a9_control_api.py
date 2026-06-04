@@ -43,6 +43,17 @@ COMMUNICATION_OBSERVATION_REL_PATH = Path(".a9") / "services" / "communication-o
 COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestions.json"
 COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestion-audit.jsonl"
 SERVICE_CONTROL_AUDIT_REL_PATH = Path(".a9") / "services" / "service-control-audit.jsonl"
+MONITOR_INTERVENTION_AUDIT_REL_PATH = Path(".a9") / "monitor" / "interventions.jsonl"
+MONITOR_INTERVENTION_ALLOWED_ACTIONS = {
+    "approve",
+    "change_request",
+    "pause",
+    "reject",
+    "repair",
+    "resume",
+    "rollback_request",
+    "route_to_debate",
+}
 COMMUNICATION_DATA_CONTRACT_VERSION = "v1_draft"
 COMMUNICATION_DATA_CONTRACT_OBJECTS = [
     "operator_session",
@@ -476,6 +487,7 @@ PHONE_CONTROL_GROUPS = {
         "approval.approve",
         "approval.reject",
         "eval.override",
+        "monitor.intervention",
         "services.start",
         "services.restart",
     ],
@@ -2140,6 +2152,196 @@ def enqueue_service_control_audit(event: dict[str, Any], *, root: Path = ROOT) -
     thread.start()
 
 
+def monitor_intervention_audit_path(root: Path = ROOT) -> Path:
+    return root / MONITOR_INTERVENTION_AUDIT_REL_PATH
+
+
+def append_monitor_intervention_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    path = monitor_intervention_audit_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def enqueue_monitor_intervention_audit(event: dict[str, Any], *, root: Path = ROOT) -> None:
+    thread = threading.Thread(
+        target=append_monitor_intervention_audit,
+        kwargs={"event": event, "root": root},
+        daemon=True,
+    )
+    thread.start()
+
+
+def monitor_intervention_audit_tail(limit: int = 20, *, root: Path = ROOT) -> dict[str, Any]:
+    safe_limit = max(1, min(100, int(limit)))
+    path = monitor_intervention_audit_path(root)
+    if not path.exists():
+        return {
+            "status": "missing",
+            "kind": "monitor_intervention_audit_tail",
+            "path": str(path),
+            "events": [],
+            "event_count": 0,
+            "skipped_bad_lines": 0,
+            "reason": "monitor_intervention_audit_file_not_found",
+        }
+
+    skipped_bad_lines = 0
+    events: list[dict[str, Any]] = []
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            skipped_bad_lines += 1
+            continue
+        if not isinstance(payload, dict):
+            skipped_bad_lines += 1
+            continue
+        events.append(payload)
+
+    bounded_events = events[-safe_limit:]
+    result = {
+        "status": "degraded" if skipped_bad_lines else "ok",
+        "kind": "monitor_intervention_audit_tail",
+        "path": str(path),
+        "events": bounded_events,
+        "event_count": len(bounded_events),
+        "skipped_bad_lines": skipped_bad_lines,
+    }
+    if skipped_bad_lines:
+        result["reason"] = "monitor_intervention_audit_tail_bad_lines_skipped"
+    return result
+
+
+def normalize_monitor_intervention_evidence_refs(payload: Any) -> list[str]:
+    refs: list[str] = []
+    if isinstance(payload, dict):
+        iterable: list[Any] = [value for value in payload.values()]
+    elif isinstance(payload, list):
+        iterable = payload
+    elif payload:
+        iterable = [payload]
+    else:
+        iterable = []
+    for item in iterable:
+        ref = str(item or "").strip()
+        if ref and ref not in refs:
+            refs.append(ref)
+    return refs
+
+
+def build_monitor_intervention_command(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    status = monitor_status(root)
+    latest_run = status.get("latest_run") if isinstance(status.get("latest_run"), dict) else {}
+    command_envelope = status.get("command_envelope") if isinstance(status.get("command_envelope"), dict) else {}
+    action = str(payload.get("action") or "").strip().lower()
+    if action not in MONITOR_INTERVENTION_ALLOWED_ACTIONS:
+        raise ValueError(
+            "action must be one of: " + ", ".join(sorted(MONITOR_INTERVENTION_ALLOWED_ACTIONS))
+        )
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise ValueError("reason is required")
+
+    run_id = str(payload.get("run_id") or latest_run.get("run_id") or "").strip()
+    task_id = str(payload.get("task_id") or latest_run.get("task_id") or "").strip()
+    actor = str(payload.get("actor") or "mobile-operator").strip()
+    expected_revision = payload.get("expected_revision", command_envelope.get("expected_revision"))
+    idempotency_key = str(
+        payload.get("idempotency_key")
+        or command_envelope.get("idempotency_key")
+        or f"{action}:{task_id or 'no-task'}:{run_id or 'no-run'}"
+    ).strip()
+    intervention_seed = f"{action}:{task_id}:{run_id}:{idempotency_key}"
+    intervention_slug = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", intervention_seed).strip("-")[:96]
+    evidence_refs = normalize_monitor_intervention_evidence_refs(payload.get("evidence_refs"))
+    for ref in normalize_monitor_intervention_evidence_refs(status.get("evidence_refs")):
+        if ref not in evidence_refs:
+            evidence_refs.append(ref)
+
+    return {
+        "status": "ready",
+        "kind": "monitor_intervention_command",
+        "schema": "a9.monitor_intervention.v1",
+        "command": "monitor.intervention",
+        "intervention_id": f"monitor-{intervention_slug or utc_now().replace(':', '')}",
+        "action": action,
+        "reason": reason,
+        "actor": actor,
+        "task_id": task_id or None,
+        "run_id": run_id or None,
+        "expected_revision": expected_revision,
+        "idempotency_key": idempotency_key,
+        "evidence_refs": evidence_refs,
+        "proposal": payload.get("proposal"),
+        "target": payload.get("target") or "runtime_monitor",
+        "created_at": utc_now(),
+        "monitor_status_snapshot": {
+            "next_action": status.get("next_action"),
+            "latest_run_status": latest_run.get("status"),
+            "failed_checks_count": status.get("failed_checks_count"),
+            "changed_files": status.get("changed_files", []),
+        },
+        "execution_effect": {
+            "mode": "audit_only",
+            "reason": "typed_intervention_contract_first; supervisor_effect_routing_pending",
+        },
+    }
+
+
+def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    command = build_monitor_intervention_command(payload, root=root)
+    gate = command_gate(command["command"], root=root)
+    event = {
+        "at": utc_now(),
+        "schema": command["schema"],
+        "kind": "monitor_intervention_audit",
+        "command": command["command"],
+        "intervention_id": command["intervention_id"],
+        "action": command["action"],
+        "status": "recorded" if gate.get("allowed") else "blocked",
+        "reason": command["reason"] if gate.get("allowed") else gate.get("reason"),
+        "task_id": command.get("task_id"),
+        "run_id": command.get("run_id"),
+        "actor": command.get("actor"),
+        "gate_allowed": bool(gate.get("allowed")),
+        "gate_reason": gate.get("reason") or gate.get("status"),
+        "gate_status": gate.get("status"),
+        "evidence_refs": command.get("evidence_refs", []),
+        "execution_effect": command.get("execution_effect"),
+    }
+    enqueue_monitor_intervention_audit(event, root=root)
+    if not gate.get("allowed"):
+        return {
+            "status": "blocked",
+            "kind": "monitor_intervention",
+            "schema": command["schema"],
+            "command": command["command"],
+            "action": command["action"],
+            "intervention_id": command["intervention_id"],
+            "gate": gate,
+            "audit_async": True,
+            "execution_effect": command["execution_effect"],
+        }
+    return {
+        "status": "recorded",
+        "kind": "monitor_intervention",
+        "schema": command["schema"],
+        "command": command["command"],
+        "action": command["action"],
+        "intervention_id": command["intervention_id"],
+        "gate": gate,
+        "audit_async": True,
+        "command_envelope": command,
+        "audit_path": str(monitor_intervention_audit_path(root)),
+        "execution_effect": command["execution_effect"],
+    }
+
+
 def communication_repair_suggestion_review(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     suggestion_id = str(payload.get("suggestion_id") or "").strip()
@@ -2641,6 +2843,8 @@ def controller_discovery() -> dict[str, Any]:
             "health": "/api/health",
             "status": "/api/status",
             "monitor_status": "/api/monitor/status",
+            "monitor_intervention": "/api/monitor/intervention",
+            "monitor_intervention_audit": "/api/monitor/interventions/audit",
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
             "communication_action_plan": "/api/communication/action-plan",
@@ -2681,6 +2885,7 @@ def controller_discovery() -> dict[str, Any]:
             "gateway_reconnect_governance": True,
             "node_command_recovery_hint_contract": True,
             "monitor_status_contract": True,
+            "monitor_intervention_contract": True,
             "worker_claim_ready": False,
         },
         "events": {
@@ -6757,6 +6962,20 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, supervisor_status())
             elif parsed.path == "/api/monitor/status":
                 self.write_json(200, monitor_status())
+            elif parsed.path == "/api/monitor/interventions/audit":
+                try:
+                    limit = int(query.get("limit", ["20"])[0])
+                except ValueError:
+                    self.write_json(
+                        400,
+                        {
+                            "status": "invalid_request",
+                            "kind": "monitor_intervention_audit_tail",
+                            "error": "limit must be integer",
+                        },
+                    )
+                    return
+                self.write_json(200, monitor_intervention_audit_tail(limit=limit))
             elif parsed.path == "/api/tailscale/status":
                 self.write_json(200, tailscale_status())
             elif parsed.path == "/api/nodes":
@@ -6954,6 +7173,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_run_one(payload))
             elif self.path == "/api/runtime/session-refresh-trial":
                 self.write_json(200, runtime_session_refresh_trial(payload))
+            elif self.path == "/api/monitor/intervention":
+                self.write_json(200, monitor_intervention(payload))
             elif self.path == "/api/services/restart":
                 self.write_json(200, service_restart_action(payload))
             elif self.path == "/api/services/start":

@@ -2786,6 +2786,98 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["kind"], "monitor_status")
         self.assertEqual(captured["payload"]["next_action"], "observe")
 
+    def test_monitor_intervention_requires_arm_and_records_async_audit(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audit_calls = []
+            original_monitor_status = mod.monitor_status
+            original_audit = mod.enqueue_monitor_intervention_audit
+            try:
+                mod.monitor_status = lambda root=root: {
+                    "status": "ok",
+                    "kind": "monitor_status",
+                    "next_action": "repair",
+                    "latest_run": {"task_id": "task-1", "run_id": "run-1", "status": "needs-repair"},
+                    "command_envelope": {"expected_revision": 7, "idempotency_key": "task-1:7"},
+                    "evidence_refs": {"summary_path": "/tmp/run-1/summary.json"},
+                    "failed_checks_count": 1,
+                    "changed_files": ["scripts/a9_control_api.py"],
+                }
+                mod.enqueue_monitor_intervention_audit = lambda event, *, root: audit_calls.append((event, root))
+
+                blocked = mod.monitor_intervention(
+                    {
+                        "action": "repair",
+                        "reason": "failed check needs deterministic repair",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.monitor_intervention(
+                    {
+                        "action": "repair",
+                        "reason": "failed check needs deterministic repair",
+                        "operator_scopes": ["operator.admin"],
+                        "evidence_refs": ["local:operator-note"],
+                    },
+                    root=root,
+                )
+            finally:
+                mod.monitor_status = original_monitor_status
+                mod.enqueue_monitor_intervention_audit = original_audit
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(result["status"], "recorded")
+        self.assertEqual(result["schema"], "a9.monitor_intervention.v1")
+        self.assertEqual(result["command"], "monitor.intervention")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(result["command_envelope"]["task_id"], "task-1")
+        self.assertEqual(result["command_envelope"]["expected_revision"], 7)
+        self.assertIn("local:operator-note", result["command_envelope"]["evidence_refs"])
+        self.assertIn("/tmp/run-1/summary.json", result["command_envelope"]["evidence_refs"])
+        self.assertEqual(len(audit_calls), 2)
+        self.assertEqual(audit_calls[0][0]["status"], "blocked")
+        self.assertEqual(audit_calls[1][0]["status"], "recorded")
+        self.assertEqual(audit_calls[1][0]["execution_effect"]["mode"], "audit_only")
+
+    def test_api_monitor_intervention_post_route_calls_handler(self):
+        mod = load_control_api()
+        original_monitor_intervention = mod.monitor_intervention
+        post_body = json.dumps(
+            {
+                "action": "route_to_debate",
+                "reason": "requirements conflict",
+                "operator_scopes": ["operator.admin"],
+            }
+        ).encode("utf-8")
+        captured = {"status": None, "payload": None, "called_payload": None}
+        try:
+            def fake_monitor_intervention(payload):
+                captured["called_payload"] = payload
+                return {"status": "recorded", "command": "monitor.intervention", "action": payload["action"]}
+
+            mod.monitor_intervention = fake_monitor_intervention
+
+            class DummyMonitorInterventionPostHandler:
+                path = "/api/monitor/intervention"
+                headers = {"Content-Length": str(len(post_body))}
+                rfile = io.BytesIO(post_body)
+
+                def write_json(self, status, payload):
+                    captured["status"] = status
+                    captured["payload"] = payload
+
+            mod.ControlHandler.do_POST(DummyMonitorInterventionPostHandler())
+        finally:
+            mod.monitor_intervention = original_monitor_intervention
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["command"], "monitor.intervention")
+        self.assertEqual(captured["called_payload"]["action"], "route_to_debate")
+
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
         mod = load_control_api()
 
@@ -7887,6 +7979,62 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["events"][0]["status"], "ok")
         self.assertEqual(result["events"][2]["status"], "ok")
 
+    def test_monitor_intervention_audit_tail_bounds_newest_events(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / mod.MONITOR_INTERVENTION_AUDIT_REL_PATH
+            path.parent.mkdir(parents=True)
+            events = [
+                {"at": "2026-06-01T10:00:00Z", "action": "pause", "status": "recorded"},
+                {"at": "2026-06-01T10:01:00Z", "action": "repair", "status": "recorded"},
+                {"at": "2026-06-01T10:02:00Z", "action": "route_to_debate", "status": "recorded"},
+                {"at": "2026-06-01T10:03:00Z", "action": "resume", "status": "blocked"},
+            ]
+            path.write_text("\n".join(json.dumps(item) for item in events) + "\n", encoding="utf-8")
+            result = mod.monitor_intervention_audit_tail(limit=2, root=root)
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["kind"], "monitor_intervention_audit_tail")
+        self.assertEqual(result["event_count"], 2)
+        self.assertEqual(result["events"][0]["action"], "route_to_debate")
+        self.assertEqual(result["events"][1]["action"], "resume")
+
+    def test_api_monitor_intervention_audit_route_passes_limit(self):
+        mod = load_control_api()
+        captured = {}
+        original_handler = mod.monitor_intervention_audit_tail
+
+        def fake_monitor_intervention_audit_tail(limit=20, *, root=mod.ROOT):
+            captured["limit"] = limit
+            captured["root"] = root
+            return {
+                "status": "ok",
+                "kind": "monitor_intervention_audit_tail",
+                "path": str(Path(root) / mod.MONITOR_INTERVENTION_AUDIT_REL_PATH),
+                "events": [],
+                "event_count": 0,
+                "skipped_bad_lines": 0,
+            }
+
+        class DummyMonitorInterventionAuditGetHandler:
+            path = "/api/monitor/interventions/audit?limit=9"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        try:
+            mod.monitor_intervention_audit_tail = fake_monitor_intervention_audit_tail
+            mod.ControlHandler.do_GET(DummyMonitorInterventionAuditGetHandler())
+        finally:
+            mod.monitor_intervention_audit_tail = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["limit"], 9)
+        self.assertEqual(captured["payload"]["kind"], "monitor_intervention_audit_tail")
+
     def test_api_services_control_audit_route_passes_limit(self):
         mod = load_control_api()
         captured = {}
@@ -8659,6 +8807,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["service"], "a9-controller")
         self.assertEqual(discovery["endpoints"]["communication_status"], "/api/communication/status")
         self.assertEqual(discovery["endpoints"]["monitor_status"], "/api/monitor/status")
+        self.assertEqual(discovery["endpoints"]["monitor_intervention"], "/api/monitor/intervention")
+        self.assertEqual(discovery["endpoints"]["monitor_intervention_audit"], "/api/monitor/interventions/audit")
         self.assertEqual(
             discovery["endpoints"]["communication_data_contract_report"], "/api/communication/data-contract-report"
         )
@@ -8691,6 +8841,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(discovery["runtime"]["gateway_reconnect_governance"])
         self.assertTrue(discovery["runtime"]["node_command_recovery_hint_contract"])
         self.assertTrue(discovery["runtime"]["monitor_status_contract"])
+        self.assertTrue(discovery["runtime"]["monitor_intervention_contract"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)
         self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])
 
