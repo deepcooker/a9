@@ -2440,6 +2440,55 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
     }
 
 
+def parse_cli_list(values: list[str] | None) -> list[str]:
+    return [str(item).strip() for item in (values or []) if str(item).strip()]
+
+
+def monitor_intervention_cli_payload(args: argparse.Namespace) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "action": args.action,
+        "reason": args.reason,
+        "operator_scopes": [PHONE_ADMIN_SCOPE],
+    }
+    optional_fields = (
+        "task_id",
+        "run_id",
+        "actor",
+        "flow_id",
+        "flow_expected_revision",
+        "flow_expected_last_seq",
+        "flow_sequence",
+        "evidence_id",
+        "idempotency_key",
+    )
+    for field in optional_fields:
+        value = getattr(args, field, None)
+        if value not in (None, ""):
+            payload[field] = value
+    evidence_refs = parse_cli_list(getattr(args, "evidence_ref", []))
+    if evidence_refs:
+        payload["evidence_refs"] = evidence_refs
+    return payload
+
+
+def monitor_intervention_cli(args: argparse.Namespace) -> int:
+    if args.examples:
+        print(json.dumps(monitor_intervention_examples(), ensure_ascii=False, indent=2))
+        return 0
+    if args.arm_duration:
+        phone_control_arm(
+            {
+                "group": "runtime",
+                "duration": args.arm_duration,
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "source": "monitor-intervention-cli",
+            }
+        )
+    result = monitor_intervention(monitor_intervention_cli_payload(args))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") in {"recorded", "ok"} else 1
+
+
 def communication_repair_suggestion_review(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     suggestion_id = str(payload.get("suggestion_id") or "").strip()
@@ -7402,6 +7451,26 @@ def main(argv: list[str]) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status")
     sub.add_parser("operator-tail").add_argument("--limit", type=int, default=10)
+    monitor_parser = sub.add_parser("monitor-intervention")
+    monitor_parser.add_argument(
+        "action",
+        choices=sorted(MONITOR_INTERVENTION_ALLOWED_ACTIONS),
+        nargs="?",
+        default="pause",
+    )
+    monitor_parser.add_argument("--reason", default="operator cli intervention")
+    monitor_parser.add_argument("--task-id", dest="task_id", default="")
+    monitor_parser.add_argument("--run-id", dest="run_id", default="")
+    monitor_parser.add_argument("--actor", default="cli-operator")
+    monitor_parser.add_argument("--evidence-ref", action="append", default=[])
+    monitor_parser.add_argument("--flow-id", dest="flow_id", default="")
+    monitor_parser.add_argument("--flow-expected-revision", dest="flow_expected_revision", type=int)
+    monitor_parser.add_argument("--flow-expected-last-seq", dest="flow_expected_last_seq", type=int)
+    monitor_parser.add_argument("--flow-sequence", dest="flow_sequence", type=int)
+    monitor_parser.add_argument("--evidence-id", dest="evidence_id", default="")
+    monitor_parser.add_argument("--idempotency-key", dest="idempotency_key", default="")
+    monitor_parser.add_argument("--arm-duration", dest="arm_duration", default="")
+    monitor_parser.add_argument("--examples", action="store_true")
     serve_parser = sub.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8787)
@@ -7412,6 +7481,8 @@ def main(argv: list[str]) -> int:
     if args.command == "operator-tail":
         print(json.dumps(operator_tail(limit=args.limit), ensure_ascii=False, indent=2))
         return 0
+    if args.command == "monitor-intervention":
+        return monitor_intervention_cli(args)
     if args.command == "serve":
         return serve(args)
     raise AssertionError(args.command)

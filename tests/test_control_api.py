@@ -6,6 +6,7 @@ import http.client
 import io
 import os
 import json
+import argparse
 import contextlib
 import sys
 import tempfile
@@ -2990,6 +2991,98 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "monitor_intervention_examples")
         self.assertEqual(captured["payload"]["examples"]["pause"]["action"], "pause")
+
+    def test_monitor_intervention_cli_payload_maps_flags(self):
+        mod = load_control_api()
+        args = argparse.Namespace(
+            action="approve",
+            reason="operator approved",
+            task_id="task-1",
+            run_id="run-1",
+            actor="cli-operator",
+            evidence_ref=["summary.json", "patch.diff"],
+            flow_id="flow-1",
+            flow_expected_revision=3,
+            flow_expected_last_seq=7,
+            flow_sequence=8,
+            evidence_id="checkpoint-1",
+            idempotency_key="approve:flow-1:3",
+        )
+
+        payload = mod.monitor_intervention_cli_payload(args)
+
+        self.assertEqual(payload["action"], "approve")
+        self.assertEqual(payload["operator_scopes"], ["operator.admin"])
+        self.assertEqual(payload["flow_id"], "flow-1")
+        self.assertEqual(payload["flow_expected_revision"], 3)
+        self.assertEqual(payload["evidence_refs"], ["summary.json", "patch.diff"])
+        self.assertEqual(payload["idempotency_key"], "approve:flow-1:3")
+
+    def test_monitor_intervention_cli_calls_handler_and_returns_zero_for_recorded(self):
+        mod = load_control_api()
+        captured = {}
+        original_handler = mod.monitor_intervention
+        original_arm = mod.phone_control_arm
+        try:
+            def fake_arm(payload):
+                captured["arm"] = payload
+                return {"status": "armed"}
+
+            def fake_monitor_intervention(payload):
+                captured["payload"] = payload
+                return {"status": "recorded", "kind": "monitor_intervention", "action": payload["action"]}
+
+            mod.phone_control_arm = fake_arm
+            mod.monitor_intervention = fake_monitor_intervention
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = mod.main(
+                    [
+                        "monitor-intervention",
+                        "repair",
+                        "--reason",
+                        "fix failed check",
+                        "--task-id",
+                        "task-1",
+                        "--run-id",
+                        "run-1",
+                        "--evidence-ref",
+                        "summary.json",
+                        "--arm-duration",
+                        "30s",
+                    ]
+                )
+            output = json.loads(buffer.getvalue())
+        finally:
+            mod.monitor_intervention = original_handler
+            mod.phone_control_arm = original_arm
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["arm"]["group"], "runtime")
+        self.assertEqual(captured["payload"]["action"], "repair")
+        self.assertEqual(captured["payload"]["task_id"], "task-1")
+        self.assertEqual(captured["payload"]["evidence_refs"], ["summary.json"])
+        self.assertEqual(output["status"], "recorded")
+
+    def test_monitor_intervention_cli_examples_prints_examples(self):
+        mod = load_control_api()
+        original_examples = mod.monitor_intervention_examples
+        try:
+            mod.monitor_intervention_examples = lambda: {
+                "status": "ok",
+                "kind": "monitor_intervention_examples",
+                "examples": {"pause": {"action": "pause"}},
+            }
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = mod.main(["monitor-intervention", "--examples"])
+            output = json.loads(buffer.getvalue())
+        finally:
+            mod.monitor_intervention_examples = original_examples
+
+        self.assertEqual(code, 0)
+        self.assertEqual(output["kind"], "monitor_intervention_examples")
+        self.assertEqual(output["examples"]["pause"]["action"], "pause")
 
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
         mod = load_control_api()
