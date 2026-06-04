@@ -2839,6 +2839,7 @@ class ControlApiTests(unittest.TestCase):
         mod = load_control_api()
         original_status = mod.monitor_status
         original_examples = mod.monitor_intervention_examples
+        original_model_policy = mod.worker_model_policy
         try:
             mod.monitor_status = lambda root=mod.ROOT: {
                 "status": "ok",
@@ -2858,17 +2859,55 @@ class ControlApiTests(unittest.TestCase):
                 "kind": "monitor_intervention_examples",
                 "examples": {"pause": {"action": "pause"}},
             }
+            mod.worker_model_policy = lambda root=mod.ROOT: {
+                "status": "ok",
+                "kind": "worker_model_policy",
+                "resolved": {"repair": {"model": "gpt-5.5", "source": "A9_SUPERVISOR_CRITICAL_MODEL"}},
+            }
             payload = mod.monitor_control()
         finally:
             mod.monitor_status = original_status
             mod.monitor_intervention_examples = original_examples
+            mod.worker_model_policy = original_model_policy
 
         self.assertEqual(payload["schema"], "a9.monitor_control.v1")
         self.assertEqual(payload["monitor_status"]["kind"], "monitor_status")
+        self.assertEqual(payload["worker_model_policy"]["resolved"]["repair"]["model"], "gpt-5.5")
         self.assertEqual(payload["intervention_examples"]["examples"]["pause"]["action"], "pause")
         self.assertEqual(payload["intervention_stream"]["stream"], "a9:monitor:interventions")
         self.assertEqual(payload["intervention_stream"]["next_last_id"], "1740000010-0")
         self.assertEqual(payload["actions"]["post_endpoint"], "/api/monitor/intervention")
+
+    def test_worker_model_policy_resolves_supervisor_phase_overrides(self):
+        mod = load_control_api()
+        old_global = os.environ.pop("A9_SUPERVISOR_MODEL", None)
+        old_critical = os.environ.pop("A9_SUPERVISOR_CRITICAL_MODEL", None)
+        old_repair = os.environ.pop("A9_SUPERVISOR_PHASE_MODEL_REPAIR", None)
+        try:
+            os.environ["A9_SUPERVISOR_CRITICAL_MODEL"] = "gpt-5.5"
+            os.environ["A9_SUPERVISOR_PHASE_MODEL_REPAIR"] = "gpt-5.4"
+            payload = mod.worker_model_policy()
+        finally:
+            if old_global is not None:
+                os.environ["A9_SUPERVISOR_MODEL"] = old_global
+            else:
+                os.environ.pop("A9_SUPERVISOR_MODEL", None)
+            if old_critical is not None:
+                os.environ["A9_SUPERVISOR_CRITICAL_MODEL"] = old_critical
+            else:
+                os.environ.pop("A9_SUPERVISOR_CRITICAL_MODEL", None)
+            if old_repair is not None:
+                os.environ["A9_SUPERVISOR_PHASE_MODEL_REPAIR"] = old_repair
+            else:
+                os.environ.pop("A9_SUPERVISOR_PHASE_MODEL_REPAIR", None)
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["schema"], "a9.worker_model_policy.v1")
+        self.assertEqual(payload["configured_env"]["A9_SUPERVISOR_CRITICAL_MODEL"], "gpt-5.5")
+        self.assertEqual(payload["resolved"]["test"]["model"], "gpt-5.5")
+        self.assertEqual(payload["resolved"]["test"]["source"], "A9_SUPERVISOR_CRITICAL_MODEL")
+        self.assertEqual(payload["resolved"]["repair"]["model"], "gpt-5.4")
+        self.assertEqual(payload["resolved"]["repair"]["source"], "A9_SUPERVISOR_PHASE_MODEL_REPAIR")
 
     def test_api_monitor_control_endpoint_returns_payload(self):
         mod = load_control_api()

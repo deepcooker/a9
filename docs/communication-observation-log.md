@@ -2238,3 +2238,27 @@ Next monitoring target:
      Cheap-model optimization is useful for observation/reference work, but
      repair/test reliability must be switchable without editing code or
      changing the whole worker fleet.
+
+101. Monitor control now exposes the effective worker model policy.
+   - Trigger:
+     phase-aware routing only helps operators if the current control plane can
+     show what will actually happen. Without visibility, a phone/operator
+     monitor could see `repair` as the next action but not know whether repair
+     will run on the cheap default, a critical override, or a phase-specific
+     override.
+   - Change:
+     `GET /api/monitor/control` now includes `worker_model_policy` with the
+     global override env, critical-model env, reference-model env, phase-model
+     env prefix, configured env values, and resolved model/source/disabled
+     features for each copy-pipeline phase. The API reuses supervisor
+     `resolved_worker_model()` and `worker_disabled_features_for_model()` so
+     the displayed policy matches worker command construction.
+   - Verification:
+     targeted control-api tests cover monitor-control aggregation and
+     supervisor-backed phase override resolution. Full
+     `python3 -m unittest tests.test_control_api tests.test_supervisor` passed
+     with 597 tests.
+   - Governance lesson:
+     model policy is part of runtime observability. The monitor should not have
+     to infer model routing from old docs, stale session memory, or command
+     scrollback.

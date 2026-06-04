@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import importlib.util
+import os
 import shlex
 import json
 import re
@@ -6553,6 +6554,56 @@ def runtime_control_state(root: Path = ROOT) -> dict[str, Any]:
     }
 
 
+def worker_model_policy(root: Path = ROOT) -> dict[str, Any]:
+    del root
+    phases = [
+        "reference_scan",
+        "mechanism_extract",
+        "vendor_import",
+        "implement",
+        "test",
+        "repair",
+        "record",
+        "session_refresh",
+        "session_close_reading",
+    ]
+    env_keys = [
+        "A9_SUPERVISOR_MODEL",
+        "A9_SUPERVISOR_REFERENCE_MODEL",
+        "A9_SUPERVISOR_CRITICAL_MODEL",
+        *[f"A9_SUPERVISOR_PHASE_MODEL_{phase.upper()}" for phase in phases],
+    ]
+    try:
+        mod = supervisor()
+        resolved = {}
+        for phase in phases:
+            task = mod.Task(path=Path("model-policy.md"), task_id=f"model-policy-{phase}", prompt="", phase=phase)
+            model, source = mod.resolved_worker_model(task)
+            resolved[phase] = {
+                "model": model,
+                "source": source,
+                "disabled_features": mod.worker_disabled_features_for_model(model),
+            }
+        return {
+            "status": "ok",
+            "kind": "worker_model_policy",
+            "schema": "a9.worker_model_policy.v1",
+            "global_override_env": "A9_SUPERVISOR_MODEL",
+            "critical_model_env": "A9_SUPERVISOR_CRITICAL_MODEL",
+            "reference_model_env": "A9_SUPERVISOR_REFERENCE_MODEL",
+            "phase_model_env_prefix": "A9_SUPERVISOR_PHASE_MODEL_",
+            "configured_env": {key: os.getenv(key, "") for key in env_keys if os.getenv(key, "")},
+            "resolved": resolved,
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "kind": "worker_model_policy",
+            "schema": "a9.worker_model_policy.v1",
+            "error": compact_text(str(exc), 1000),
+        }
+
+
 def monitor_status(root: Path = ROOT) -> dict[str, Any]:
     status = supervisor_status(root)
     control_state = runtime_control_state(root)
@@ -6637,6 +6688,7 @@ def monitor_status(root: Path = ROOT) -> dict[str, Any]:
 def monitor_control(root: Path = ROOT) -> dict[str, Any]:
     status = monitor_status(root)
     examples = monitor_intervention_examples(root)
+    model_policy = worker_model_policy(root)
     recent = status.get("recent_interventions") if isinstance(status.get("recent_interventions"), dict) else {}
     next_last_id = ""
     events = recent.get("events") if isinstance(recent, dict) else []
@@ -6648,6 +6700,7 @@ def monitor_control(root: Path = ROOT) -> dict[str, Any]:
         "schema": "a9.monitor_control.v1",
         "generated_at": utc_now(),
         "monitor_status": status,
+        "worker_model_policy": model_policy,
         "intervention_examples": examples,
         "intervention_stream": {
             "stream": MONITOR_INTERVENTIONS_STREAM_KEY,
