@@ -1,0 +1,510 @@
+# A9 最高形态架构聚合稿
+
+> 状态：aggregation_draft，不是最终定案。
+>
+> 用途：把 A9 过去讨论、已做产物、需求方法论、参考项目、算力调度、Agent OS
+> 和 NZX RWA 第一业务主线聚合到一份文件，供后续多轮博弈和 GPT 网页端重构。
+>
+> 日期：2026-06-04
+
+## 0. 一句话
+
+A9 不是单个机器人、单个页面、单个网关，也不是先做量化策略。
+
+A9 的最高形态是：
+
+```text
+私有 Agent OS
++ 金融交易基础设施控制面
++ 私有算力/模型调度层
++ 交易 ResearchOps/训练数据闭环
+```
+
+NZX RWA Orderbook Appchain 是第一条重业务主线。当前 24 小时执行机器、
+mobile/control、session governance、通信网关和参考项目复制流水线，都是为了
+构建这套生态的基础设施。
+
+## 1. 总架构分层
+
+```text
+用户 / 交易员 / 研发 / 运维 / 合规 / 做市商 / 机构 API
+        |
+Web / Mobile / CLI / API Client
+        |
+顶级入口与网关层
+  Pingora/Rust Gateway, Auth, Rate Limit, Policy, REST, SSE, WebSocket
+        |
+私有网络与多机器接入层
+  Headscale/NetBird/WireGuard, SSH/tmux fallback, node onboarding
+        |
+私有 Agent OS 智能层
+  A9 supervisor, 24h worker, Codex-like client, OpenClaw-like workflow,
+  session governance, memory commit, MoE review, evidence store
+        |
+私有算力与模型调度层
+  GPU node pool, image/cache orchestration, inference/training jobs,
+  model gateway, eval/datagen, 1-2x 4090 local path, cloud burst path
+        |
+金融交易业务服务层
+  Rust CLOB, WAL, Risk, Account, Market Maker, Broker Adapter, Market Data
+        |
+Appchain 与资产结算层
+  Arbitrum Orbit + Stylus/Rust, Vault, wNZX, Settlement, proof
+        |
+数据与审计层
+  MySQL/PostgreSQL, Redis/Valkey/Dragonfly, Databend, Object Store,
+  OpenTelemetry, Prometheus/Grafana/Loki/Tempo
+```
+
+关键边界：
+
+- Agent/AI 不进交易热路径。
+- 交易热路径必须是确定性系统：`Gateway -> Risk -> Rust CLOB -> WAL -> Settlement`。
+- AI 做旁路：研发、评审、监控、异常归因、策略研究、做市参数建议、合规材料整理、
+  运维辅助、训练数据沉淀。
+- Mobile 是控制面入口，不是稳定性架构。
+- 私有网络是基础设施，不是最终金融产品卖点。
+
+## 2. 需求方法论是最高层
+
+A9 不能靠“继续”驱动长期质量。大型任务进入执行前，必须先完成需求博弈和评审闭环。
+
+来自 `docs/requirements-guide-close-reading.md` 和 `docs/worker-method-packet.md` 的核心：
+
+```text
+识别真实业务问题
+-> 区分用户需求和系统需求
+-> 业务对象/数据模型
+-> 状态流/异常流
+-> 参考项目机制
+-> 架构边界
+-> 验收标准
+-> out_of_scope
+-> 执行切片
+```
+
+核心判断：
+
+- 需求讨论和同步占质量的 70% 以上，执行只是后半段。
+- 产品/业务/架构/测试角色必须先同频，再让 24h worker 连续执行。
+- 数据第一，性能第二。数据模型代表真实业务结构；性能代表系统厚度和深度。
+- 门禁不应在业务和数据形态未定时写死。早期应以观测、证据和异常分类为主。
+- 成本和 token 优化应来自架构、上下文治理、缓存和任务切片，不是随意数字限制。
+
+### 2.1 角色职责
+
+Product / Mainline：
+
+- 保持主线，不让 UI、工程优化、模型训练、交易业务互相污染。
+- 逼问“真实问题是什么”，能推翻普通方案。
+- 查资料、看竞品、找成熟项目，决定抄、改、缝合或拒绝。
+- 强调业务逻辑优先于工程实现。
+
+Business：
+
+- 给真实场景、角色、规则、权限、外部流程。
+- 验证数据模型是否反映真实业务。
+
+Architecture：
+
+- 数据第一：对象、字段、状态、事件、权威源。
+- 性能第二：延迟、吞吐、稳定性、恢复、成本。
+- 审计旁路，除非审计本身就是核心业务状态。
+
+Test / Acceptance：
+
+- 验数据模型和状态流，不只验接口。
+- 覆盖正常流、异常流、权限、审计、超时、重试、回滚。
+
+Execution Worker：
+
+- 只执行已决定的切片。
+- 先看参考项目，抄机制，魔改实现，跑测试，记录证据。
+- 不自行改产品定义、数据合同、验收标准。
+
+## 3. A9 当前已经做了什么
+
+当前 A9 已完成的是 24h agent runtime MVP，不是最终产品。
+
+已实现能力：
+
+- `scripts/a9_supervisor.py`：队列、run-loop、auto-next、worktree、检查、状态分类、
+  prompt budget、repo map、event summary、context pressure、patch/scope guard、
+  deterministic SEARCH/REPLACE apply、git governance、rollback-aware repair。
+- `scripts/a9_checkpoint.py`：checkpoint lineage、channel history、copy-session。
+- `scripts/a9_memory.py`：mem0 形状 memory adapter。
+- `scripts/a9_session_refresh.py`：外部 Codex/operator session 索引和 bounded turn 抽取。
+- `phase: session_close_reading`：把外部 session extract 转成 raw 精读证据。
+- `scripts/a9_control_api.py`：最小 HTTP control API，暴露 status、run summary、
+  operator session tail、submit command。
+- `crates/a9-gateway`：Redis Streams submit/lease/ack/fail/heartbeat/status 原型。
+- `crates/a9-worker`：Rust worker wrapper。
+- `crates/a9-client`：Rust 客户端入口。
+- 24h supervisor MVP 状态：可用，但应该按 `bounded_ready` 小步执行，不等于生产级无人值守。
+
+当前文档主线：
+
+- `原始想法需求.md`：原始想法主线。
+- `docs/project.md`：A9 项目说明。
+- `docs/worker-method-packet.md`：worker 方法包。
+- `docs/requirements-review-closure.md`：需求评审闭环。
+- `docs/communication-governance-framework.md`：通信治理框架。
+- `docs/reference-selection-reassessment.md`：参考项目优先级重评。
+- `docs/session-raw-close-reading.md` / `docs/session-raw-summary.md`：session 精读与总结。
+- `docs/private-model-strategy.md`：私有模型路线。
+
+## 4. 最终业务主线：NZX RWA Orderbook Appchain
+
+外部文件：
+
+- `/mnt/e/WSL_Share/NZX_RWA_Orderbook_Appchain_最终方案 (3).md`
+- `/mnt/e/WSL_Share/NZX_RWA_技术实现全景图.svg`
+
+第一阶段不是普通 DEX、不是普通券商、不是纯 VPN 网关，也不是高杠杆合约，而是：
+
+```text
+NZX 真实股票/ETF
+-> SPV/信托/托管账户
+-> 1:1 wNZX RWA 代币
+-> Appchain 资金托管与结算
+-> Rust CLOB 订单薄
+-> 做市商二级市场深度
+-> 券商 API 异步对冲/补库存
+-> Databend 留痕审计
+```
+
+业务关键：
+
+- 用户第一阶段买 `wNZX-XXX` RWA，不是直接登记在自己 CSN 名下的 NZX 股票。
+- Orderbook 和做市商是核心，否则只是代购/申购赎回平台。
+- Rust CLOB 是权威交易状态机。
+- Redis/Valkey/Dragonfly 是可重建热缓存、状态镜像、行情分发、KYT 缓存、限流、
+  非最终事件缓冲，不是撮合核心。
+- 不改官方 Redis 源码作为主线。
+- 不做暗箱 VIP 插队、不透明 Last Look、CRDT 双活订单薄。
+
+交易热路径建议：
+
+```text
+用户链上入金
+-> 可用余额镜像
+-> 用户签名订单
+-> Pingora Gateway
+-> Risk Engine
+-> Rust CLOB
+-> Semantic WAL
+-> Batch Settlement on Appchain
+```
+
+灾备：
+
+```text
+单主撮合
+-> 热备重放 WAL
+-> epoch fencing
+-> 故障切换
+```
+
+## 5. 顶级网关与私有网络
+
+A9 的网关不是单纯 HTTP server，而是 Agent OS 和金融交易系统共同的入口。
+
+目标栈：
+
+```text
+Phone / Web / CLI operator
+-> HTTPS REST typed commands
+-> SSE event tail first
+-> WebSocket later for terminal/chat
+-> Rust a9-gateway hot path
+-> Redis Streams / Functions / JSON / TimeSeries / Search / Bloom
+-> Python supervisor/model/business logic
+-> MySQL/PostgreSQL canonical durable state
+-> Headscale/NetBird/WireGuard private network
+-> SSH/tmux fallback takeover
+```
+
+抄的方向：
+
+- Codex：事件是事实源，compact 是派生提示态。
+- OpenClaw/Lobster：managed flow、expected revision、approval wait/resume、strict envelope、
+  policy attestation。
+- Barter-rs：重连 backoff、typed stream/connect error action、reconnecting stream lifecycle、
+  audit state replica、external command boundary、disconnect strategy。
+- Redis ecosystem：Streams、Functions、JSON、TimeSeries、Search、Bloom。
+
+通信状态机：
+
+```text
+online -> stale -> offline -> degraded -> reconnecting -> online
+```
+
+命令必须有：
+
+```text
+command_id
+target_node
+expected_revision
+ttl
+created_by
+policy_attestation
+idempotency_key
+evidence_path
+```
+
+## 6. 私有算力与模型调度层
+
+这是当前 A9 架构里缺的一层，必须进入最高形态。
+
+需求不是“能跑一个模型”，而是：
+
+```text
+私有 GPU 节点池
+-> 秒级/近秒级拉起可复用推理服务
+-> 训练/微调/评审/数据生成任务可调度
+-> 1 台 4090 可跑，2 卡可扩展
+-> 本地优先，云端可突发
+-> 大镜像/大权重有预热、缓存、分层和节点亲和
+```
+
+### 6.1 候选技术选型
+
+当前建议的最高形态候选：
+
+| 层 | 候选 | 作用 | A9 初步判断 |
+| --- | --- | --- | --- |
+| GPU 节点管理 | Kubernetes + NVIDIA GPU Operator | GPU driver、device plugin、container toolkit、DCGM monitoring | 生产级主线候选 |
+| GPU 调度 | KAI Scheduler / Run:ai lineage | AI/ML workload GPU allocation、fairness、gang/topology scheduling | 多 GPU/多任务后重点评估 |
+| 推理服务 | vLLM / SGLang / NVIDIA NIM / Dynamo | batching、prefix cache、OpenAI-compatible API、分布式推理 | MVP 可 vLLM，生产对比 NIM/Dynamo |
+| 任务编排 | Ray/KubeRay / Argo Workflows / Kubernetes Jobs | 训练、评测、数据生成、批任务 | 训练/datagen 层候选 |
+| 镜像/权重缓存 | registry mirror、pre-pull daemonset、lazy image、local NVMe cache | 解决 200GB+ 镜像/权重启动慢 | 必须专项评估 |
+| 模型网关 | A9 model gateway | provider 路由、成本、缓存、fallback、policy | A9 自己做控制面 |
+| 本地单机 | systemd/docker compose + GPU runtime | 1x4090 开发、低成本推理、judge/editor | 第一阶段现实路线 |
+
+外部公开依据：
+
+- NVIDIA GPU Operator 官方文档说明它在 Kubernetes 中自动管理 NVIDIA driver、
+  device plugin、container toolkit、DCGM monitoring 等 GPU 软件组件。
+- KAI Scheduler README 说明它是 Kubernetes 原生 AI workload scheduler，
+  面向大规模 GPU cluster、动态分配 GPU、兼顾 training/inference 和 fairness。
+- NVIDIA NIM 是 NVIDIA 的模型推理/部署产品线候选。
+- Dynamo 是 datacenter scale distributed inference serving framework 候选。
+- vLLM 是开源推理 serving 主候选之一。
+
+### 6.2 A9 的算力原则
+
+- 4090 路线不是裸模型通杀 GPT-5.5，而是在 A9 的金融工程闭环里系统胜利。
+- 4090 先承担本地低延迟推理、judge/editor、小模型、LoRA/QLoRA/蒸馏、快速试错。
+- 两卡扩展要先验证真实任务：并行 worker、推理吞吐、评审模型、训练小批次。
+- 大镜像不能每次冷拉。必须做：
+  - 节点预热。
+  - 权重本地缓存。
+  - 镜像分层优化。
+  - 常驻 warm pool。
+  - 任务 admission。
+  - GPU memory health/fragmentation 观测。
+- 算力调度不能影响交易热路径。模型和 agent 任务走旁路。
+
+## 7. 私有模型与训练闭环
+
+A9 的私有模型路线不是先训练大模型，而是先造数据机器：
+
+```text
+顶级参考项目机制
+-> A9 worker 执行轨迹
+-> diff / tests / failures / repair / monitor intervention
+-> session close reading / causal memory commit
+-> role review / MoE verdict
+-> eval store / training label
+-> 私有金融交易工程模型
+```
+
+目标模型不是通用聊天模型，而是金融交易工程 agent：
+
+- RepoReader
+- DiffEditor
+- RiskAuditor
+- TradeInfraEngineer
+- DataValidationAgent
+- MarketMakerOpsAgent
+- ComplianceEvidenceAgent
+
+训练数据必须包含：
+
+- 原始任务。
+- 参考项目来源。
+- 抄的机制。
+- 数据/状态模型。
+- patch。
+- 测试和失败日志。
+- 修复过程。
+- monitor 介入原因。
+- 最终验收和残留风险。
+
+## 8. 参考项目池和候选底座
+
+本地参考项目已下载到 `reference-projects/`。当前扫描到：
+
+| 项目 | 本地 commit | 主要用途 |
+| --- | --- | --- |
+| codex | `0b4f86095c80` | coding agent loop、context、compact、sandbox、tool execution |
+| openclaw | `229490a48924` | always-on gateway、managed flow、policy、memory、plugin |
+| aider | `6435cb8b1e88` | repo map、SEARCH/REPLACE、diff/edit 纪律 |
+| barter-rs | `33e56188e209` | 交易级 Rust 通信治理、做市/行情/对冲参考 |
+| hermes-agent | `a1eaad2fc0bf` | trajectory、self-improvement、datagen、agent runtime |
+| ecc | `99baa8250096` | cross-harness operator、plugins、contexts、skills、token optimization |
+| langgraph | `aa322c13cd5f` | checkpoint、channel history、graph workflow |
+| mem0 | `606ede7c0aed` | memory add/search/get/history API shape |
+| gbrain | `eefe8b5741c2` | skill/agent knowledge structure reference |
+| graphrag | `6d02c2355c3f` | graph memory / retrieval reference |
+| graphify | `4b17f199afd3` | graph extraction/reference |
+| llm-wiki | `7e9bd0adf0eb` | wiki-style knowledge organization |
+| planning-with-files | `6f94643bd2b7` | file-based planning reference |
+| cline | `2a351ffdd5cb` | IDE/webview agent UX, tool boundary |
+| continue | `cb273098d968` | IDE assistant, context/provider abstraction |
+| roo-code | `b867ec914575` | coding agent UX/workflow reference |
+| openhands | `9a7e3edd67eb` | execution harness, coding agent runtime |
+| swe-agent | `0f4f3bba990e` | issue-to-patch eval harness |
+| aichat | `82976d349ad9` | Rust CLI/provider/tools |
+| opencode | `7566cfe602e8` | terminal agent product/reference |
+| gemini-cli | `906f8a31513d` | CLI agent/product reference |
+| autogen | `027ecf0a379b` | multi-agent orchestration |
+
+注意：
+
+- 参考项目不是 prompt 原料库，不能整仓塞给 worker。
+- 复制源码必须记录 source/commit/license。
+- 未确认开源许可证的产品只能作产品参考，不可复制源码。
+
+## 9. 底座选择建议
+
+### 9.1 Agent OS 底座
+
+主底座不应该只选一个项目。A9 应缝合：
+
+```text
+Codex local coding loop
++ OpenClaw managed gateway/workflow
++ Aider edit/repo-map discipline
++ LangGraph checkpoint lineage
++ mem0/OpenClaw memory governance
++ Hermes trajectory/datagen
++ Redis hot control plane
+```
+
+第一刀底座建议：
+
+- Codex：agent loop/context/compact/tool execution。
+- OpenClaw：flow/revision/approval/policy/envelope。
+- Aider：deterministic edit apply。
+- Redis：hot event bus and state transitions。
+
+### 9.2 通信/网关底座
+
+```text
+Pingora/Rust gateway
++ Redis Streams/Functions/JSON/TimeSeries/Search/Bloom
++ Barter-rs reconnect/error/audit mechanism
++ OpenClaw policy and flow envelope
++ Headscale/NetBird/WireGuard private network
++ SSH/tmux fallback
+```
+
+Barter-rs 在这里不是“普通参考”，而是交易级通信稳定性和异常治理的强参考。
+
+### 9.3 交易底座
+
+NZX RWA 交易底座应以 Rust CLOB 为权威状态机：
+
+```text
+Rust CLOB
++ semantic WAL
++ account/risk engine
++ market maker engine using barter-rs mechanisms
++ broker adapter
++ Appchain settlement
++ Redis mirror
++ Databend audit
+```
+
+Barter-rs 更适合做：
+
+- market data stream。
+- reconnecting socket。
+- strategy/market maker framework。
+- broker/exchange adapter 思路。
+- audit state replica。
+
+不建议直接把 barter-rs 当 CLOB 内核。
+
+### 9.4 算力/模型底座
+
+阶段化：
+
+```text
+Stage A: 单机 4090
+  Docker/systemd + NVIDIA container runtime + vLLM/SGLang + A9 model gateway
+
+Stage B: 2 卡 / 多任务
+  pre-pull image + local NVMe weight cache + model warm pool + job admission
+
+Stage C: 私有 GPU cluster
+  Kubernetes + NVIDIA GPU Operator + KAI Scheduler/Run:ai lineage
+  + vLLM/NIM/Dynamo + Ray/KubeRay/Argo
+```
+
+## 10. 当前不要混淆的边界
+
+不要混成一坨：
+
+- 24h worker 是执行基础设施，不是最终金融交易产品。
+- Mobile 是入口，不是稳定性架构。
+- 私有网络是节点连接和控制面基础设施，不是合规金融产品卖点。
+- Redis 是 hot control/cache/event mirror，不是交易权威账本。
+- AI/Agent 是研发和运营旁路，不是撮合热路径。
+- 私有模型是数据闭环结果，不是第一天先训练。
+- NZX RWA 是第一条业务主线，不代表 A9 只能做这一条。
+
+## 11. 给 GPT 网页端重构的问题清单
+
+请基于本聚合稿做顶级重构，重点博弈：
+
+1. A9 最高形态是否应定义为“私有 Agent OS + 金融交易基础设施控制面 + 私有算力调度层”？
+2. NZX RWA 作为第一业务主线是否合理？它和 A9 Agent OS 如何分层？
+3. 参考项目底座应该如何选：Codex、OpenClaw、Aider、Barter-rs、Hermes、ECC、LangGraph、mem0 哪些进入第一刀？
+4. Barter-rs 应作为交易/通信/做市哪一层的主参考？哪些不能直接抄？
+5. GPU/算力层应该选 Kubernetes + NVIDIA GPU Operator + KAI/Run:ai lineage，还是先用单机 Docker/systemd + vLLM？
+6. 200GB+ 训练/推理镜像和大权重如何做秒级/近秒级启动？需要哪些缓存、预热、镜像和节点调度机制？
+7. 需求方法论如何落入每个 agent/worker prompt，而不是只存在文档里？
+8. MoE 评审角色是否应按 Product/Business/Architecture/Test/Security/Ops/Cost/Data 建模？
+9. 当前 A9 已实现的 24h runtime 哪些保留、哪些重构、哪些删除？
+10. 下一刀应该是继续通信治理、算力调度底座、还是先统一文档和任务合同？
+
+## 12. 推荐下一步
+
+下一步不是马上写大代码，而是做一次需求/架构博弈闭环：
+
+```text
+本聚合稿
+-> GPT 网页端重构
+-> 人类/主监控评审
+-> 形成 A9 最高形态 decision packet
+-> 切出第一刀 execution_next
+-> 交给 24h worker 小步实做
+```
+
+第一刀候选：
+
+1. `architecture_decision_packet`：定 A9 最高形态、分层、边界、底座选择。
+2. `reference_baseline_scan`：针对 Codex/OpenClaw/Aider/Barter-rs/Hermes/ECC 做底座候选评审。
+3. `compute_scheduler_research`：只评估 GPU Operator/KAI/vLLM/NIM/Dynamo/Ray/KubeRay 和 4090 路线。
+4. `noise_cleanup_plan`：删除/归档过期文档和代码噪音，但必须先有保留清单。
+
+## 13. 外部资料索引
+
+- NVIDIA GPU Operator: <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/index.html>
+- KAI Scheduler: <https://github.com/kai-scheduler/KAI-Scheduler>
+- NVIDIA NIM: <https://docs.nvidia.com/nim/index.html>
+- NVIDIA Dynamo: <https://github.com/ai-dynamo/dynamo>
+- vLLM docs: <https://docs.vllm.ai/>
+
