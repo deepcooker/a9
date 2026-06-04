@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1200" viewBox="0 0 1800 1200">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <style>
+      .title{font:700 34px Arial, sans-serif; fill:#111}
+      .subtitle{font:400 18px Arial, sans-serif; fill:#333}
+      .box{rx:18; ry:18; stroke:#1f2937; stroke-width:2.2; fill:#ffffff}
+      .layer{rx:22; ry:22; stroke:#0f172a; stroke-width:3; fill:#f8fafc}
+      .h{font:700 22px Arial, sans-serif; fill:#111827}
+      .t{font:400 16px Arial, sans-serif; fill:#1f2937}
+      .small{font:400 14px Arial, sans-serif; fill:#374151}
+      .line{stroke:#333; stroke-width:2.2; fill:none; marker-end:url(#arrow)}
+      .dash{stroke:#555; stroke-width:2; fill:none; stroke-dasharray:8 7; marker-end:url(#arrow)}
+      .tag{font:700 14px Arial, sans-serif; fill:#0f172a}
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1800" height="1200" fill="#eef2f7"/>
+  <text x="60" y="58" class="title">A9 AgentOS 金融交易环境全景图</text>
+  <text x="60" y="88" class="subtitle">底座：AgentOS + 金融交易控制面 + 私有算力/模型调度 + NZX RWA 第一业务应用</text>
+
+  <!-- client layer -->
+  <rect x="50" y="120" width="360" height="980" class="layer" fill="#ecfeff"/>
+  <text x="80" y="160" class="h">入口 / 操作端</text>
+  <rect x="85" y="200" width="290" height="95" class="box" fill="#ffffff"/>
+  <text x="110" y="232" class="h">Mobile App</text>
+  <text x="110" y="260" class="t">GPT-like Chat / Command</text>
+  <text x="110" y="282" class="small">Runs / Evidence / Nodes / Trading</text>
+  <rect x="85" y="330" width="290" height="95" class="box" fill="#ffffff"/>
+  <text x="110" y="362" class="h">Web Console</text>
+  <text x="110" y="390" class="t">监控、证据、运维、策略</text>
+  <rect x="85" y="460" width="290" height="95" class="box" fill="#ffffff"/>
+  <text x="110" y="492" class="h">CLI / TUI</text>
+  <text x="110" y="520" class="t">Codex-like 执行交互端</text>
+  <rect x="85" y="590" width="290" height="95" class="box" fill="#ffffff"/>
+  <text x="110" y="622" class="h">Institution API</text>
+  <text x="110" y="650" class="t">做市商 / 机构 / 内部系统</text>
+
+  <!-- gateway/network -->
+  <rect x="450" y="120" width="390" height="980" class="layer" fill="#f0fdf4"/>
+  <text x="480" y="160" class="h">A9 控制面 / 私有网络</text>
+  <rect x="485" y="200" width="320" height="120" class="box"/>
+  <text x="510" y="232" class="h">Pingora Rust Gateway</text>
+  <text x="510" y="260" class="t">REST / SSE / WebSocket</text>
+  <text x="510" y="284" class="small">Auth / Rate Limit / Policy</text>
+  <text x="510" y="306" class="small">Command Envelope / Idempotency</text>
+  <rect x="485" y="360" width="320" height="115" class="box"/>
+  <text x="510" y="392" class="h">Private Network</text>
+  <text x="510" y="420" class="t">Headscale or NetBird</text>
+  <text x="510" y="444" class="small">WireGuard / mTLS / Node Registry</text>
+  <rect x="485" y="515" width="320" height="105" class="box"/>
+  <text x="510" y="547" class="h">Fallback Control</text>
+  <text x="510" y="575" class="t">SSH / tmux / Node Health</text>
+
+  <!-- agent os -->
+  <rect x="880" y="120" width="410" height="980" class="layer" fill="#fff7ed"/>
+  <text x="910" y="160" class="h">A9 AgentOS 智能层</text>
+  <rect x="915" y="200" width="340" height="105" class="box"/>
+  <text x="940" y="232" class="h">A9 Supervisor / Runtime</text>
+  <text x="940" y="260" class="t">24h Worker / Run Loop</text>
+  <text x="940" y="284" class="small">Queue / Status / Repair</text>
+  <rect x="915" y="335" width="340" height="120" class="box"/>
+  <text x="940" y="367" class="h">Executor 组合体</text>
+  <text x="940" y="395" class="t">Codex-like Agent Loop</text>
+  <text x="940" y="419" class="small">Aider Edit / OpenClaw Flow</text>
+  <rect x="915" y="485" width="340" height="120" class="box"/>
+  <text x="940" y="517" class="h">Plan / Memory / Evidence</text>
+  <text x="940" y="545" class="t">Plan Contract / Session Governance</text>
+  <text x="940" y="569" class="small">mem0-like Memory / Run Evidence</text>
+  <rect x="915" y="635" width="340" height="105" class="box"/>
+  <text x="940" y="667" class="h">MoE Review</text>
+  <text x="940" y="695" class="t">Product / Biz / Arch / Test</text>
+  <text x="940" y="719" class="small">Security / Ops / Cost / Data</text>
+
+  <!-- compute -->
+  <rect x="1325" y="120" width="420" height="455" class="layer" fill="#eef2ff"/>
+  <text x="1355" y="160" class="h">私有算力 / 模型调度</text>
+  <rect x="1360" y="200" width="340" height="95" class="box"/>
+  <text x="1385" y="232" class="h">A9 Model Gateway</text>
+  <text x="1385" y="260" class="t">Provider Router / Policy / Cache</text>
+  <rect x="1360" y="325" width="340" height="100" class="box"/>
+  <text x="1385" y="357" class="h">Inference / Eval</text>
+  <text x="1385" y="385" class="t">vLLM / SGLang / NIM / Dynamo</text>
+  <rect x="1360" y="455" width="340" height="90" class="box"/>
+  <text x="1385" y="487" class="h">GPU Warm Pool</text>
+  <text x="1385" y="515" class="t">4090 → Cluster / Weight Cache</text>
+
+  <!-- trading -->
+  <rect x="1325" y="615" width="420" height="485" class="layer" fill="#fef2f2"/>
+  <text x="1355" y="655" class="h">金融交易运行时 / NZX 应用</text>
+  <rect x="1360" y="690" width="340" height="95" class="box"/>
+  <text x="1385" y="722" class="h">Rust CLOB</text>
+  <text x="1385" y="750" class="t">Price-Time Priority / Market Shards</text>
+  <rect x="1360" y="815" width="340" height="95" class="box"/>
+  <text x="1385" y="847" class="h">Risk / Account / WAL</text>
+  <text x="1385" y="875" class="t">Limits / Semantic Events / Replay</text>
+  <rect x="1360" y="940" width="340" height="95" class="box"/>
+  <text x="1385" y="972" class="h">Market Maker + Broker</text>
+  <text x="1385" y="1000" class="t">barter-rs / NZX Broker Adapter</text>
+
+  <!-- chain/data bottom -->
+  <rect x="450" y="830" width="390" height="270" class="layer" fill="#fdf4ff"/>
+  <text x="480" y="870" class="h">Appchain / 结算层</text>
+  <rect x="485" y="905" width="320" height="70" class="box"/>
+  <text x="510" y="935" class="h">Arbitrum Orbit + Stylus</text>
+  <text x="510" y="960" class="small">Vault / wNZX / Settlement Batch</text>
+  <rect x="485" y="995" width="320" height="70" class="box"/>
+  <text x="510" y="1025" class="h">Proof-of-Reserve</text>
+  <text x="510" y="1050" class="small">SPV / Custody / NZX Broker Confirm</text>
+
+  <rect x="880" y="785" width="410" height="315" class="layer" fill="#f1f5f9"/>
+  <text x="910" y="825" class="h">数据 / 审计 / 监控</text>
+  <rect x="915" y="860" width="340" height="70" class="box"/>
+  <text x="940" y="890" class="h">Redis / Valkey</text>
+  <text x="940" y="915" class="small">Hot Mirror / Streams / Cache</text>
+  <rect x="915" y="950" width="340" height="70" class="box"/>
+  <text x="940" y="980" class="h">PostgreSQL + Databend</text>
+  <text x="940" y="1005" class="small">Users / KYC / Audit / BI</text>
+  <rect x="915" y="1040" width="340" height="45" class="box"/>
+  <text x="940" y="1068" class="h">OTel / Prometheus / Grafana</text>
+
+  <!-- arrows -->
+  <path class="line" d="M375 247 C420 247 430 247 485 247"/>
+  <path class="line" d="M375 377 C420 377 430 377 485 260"/>
+  <path class="line" d="M375 507 C420 507 430 507 485 260"/>
+  <path class="line" d="M805 260 C850 260 865 260 915 252"/>
+  <path class="line" d="M805 418 C850 418 865 418 915 395"/>
+  <path class="line" d="M1255 252 C1300 252 1310 252 1360 247"/>
+  <path class="line" d="M1255 395 C1310 520 1325 680 1360 735"/>
+  <path class="line" d="M1700 737 C1740 790 1740 975 1700 987"/>
+  <path class="line" d="M1360 735 C1240 735 1160 830 1085 860"/>
+  <path class="line" d="M1360 862 C1260 862 1260 890 1255 890"/>
+  <path class="line" d="M1360 987 C1180 1010 980 1010 805 1030"/>
+  <path class="line" d="M840 950 C860 950 875 950 915 895"/>
+  <path class="dash" d="M805 1030 C1000 1140 1280 1110 1530 1035"/>
+  <path class="dash" d="M1530 690 C1530 615 1530 585 1530 545"/>
+
+  <!-- key notes -->
+  <rect x="60" y="1125" width="1680" height="45" rx="12" ry="12" fill="#111827"/>
+  <text x="85" y="1153" class="tag" fill="#fff">硬边界：AI/Agent 不进入撮合热路径；Redis 不是交易权威账本；NZX 是第一业务应用；barter-rs 做行情/信号/做市/对冲，不做 CLOB 内核；算力层旁路服务 AgentOS。</text>
+</svg>

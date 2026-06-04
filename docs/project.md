@@ -91,8 +91,14 @@ agent 稳定后的垂直化训练和数据项目。
 + 交易 ResearchOps / 训练数据闭环
 ```
 
-当前讨论入口是 `docs/a9-ultimate-architecture-aggregation.md`。它是最高形态聚合草案，
-用于 GPT/web 重构和人类评审，不是已经定案的执行计划。它把几个层级统一到一张图：
+当前讨论入口已经升级为：
+
+- `docs/a9-ultimate-architecture-aggregation.md`：A9 内部最高形态聚合草案。
+- `docs/external-gpt/2026-06-04/A9_AgentOS_金融交易环境重构决策包.md`：
+  GPT/web 外部重构后的决策包输入。
+- `docs/external-gpt/2026-06-04/intake.md`：A9 对 GPT 决策包的吸收结论。
+
+这些文件仍不是直接开工许可。它们把几个层级统一到一张图：
 
 - 原始根主线：交易哲学优先、成熟机制复制、数据验证第一、压测第二、监控和自动化。
 - 运行时基建：24h worker、session governance、role-scoped memory、plan ownership。
@@ -102,8 +108,19 @@ agent 稳定后的垂直化训练和数据项目。
 - 第一重业务线：NZX RWA Orderbook Appchain。
 - 高风险候选：compute RWA/tokenomics，只能进入法律、合规、资产审计和压力测试评审。
 
-下一步不是直接实现所有层，而是先把这个聚合稿做成 decision packet，再切
-`execution_next` 给 24h worker。
+下一步不是直接实现所有层，而是先把 GPT 决策包和 A9 聚合稿做成 ADR decision
+packet，再切 `execution_next` 给 24h worker。默认优先级已经调整为：
+
+```text
+P0 Architecture Decision Packet
+P1 Reference Baseline Scan + Vendor Manifest
+P2 A9 Core Contract
+P3 Gateway / Bus refactor
+P4 AgentOS Runtime
+P5 Mobile / Remote Control Packet
+P6 Compute Stage A
+P7 NZX Technical MVP
+```
 
 ## 已做背调和分析
 

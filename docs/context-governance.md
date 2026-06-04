@@ -34,6 +34,9 @@ These files define the current mainline:
 - `docs/a9-ultimate-architecture-aggregation.md`: current highest-shape
   aggregation draft for human/GPT debate. It is current context for architecture
   discussion, but not an implementation decision packet.
+- `docs/external-gpt/2026-06-04/intake.md`: accepted intake of the GPT review
+  package. It upgrades the next default route to P0 architecture decision
+  packet before further runtime/mobile/communication implementation.
 
 If these files conflict, resolve in this order:
 
@@ -42,9 +45,10 @@ If these files conflict, resolve in this order:
 3. `docs/context-governance.md`
 4. `docs/requirements-review-closure.md`
 5. `docs/session-causal-memory.md`
-6. `docs/a9-ultimate-architecture-aggregation.md`
-7. `docs/project.md`
-8. `原始想法需求.md`
+6. `docs/external-gpt/2026-06-04/intake.md`
+7. `docs/a9-ultimate-architecture-aggregation.md`
+8. `docs/project.md`
+9. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.
@@ -64,6 +68,9 @@ These files shape current work but are not global truth forever:
   architecture debate, GPT/web reconstruction, or highest-shape decision
   closure. It must not be treated as permission to implement every listed
   layer.
+- `docs/external-gpt/2026-06-04/A9_AgentOS_金融交易环境重构决策包.md`
+  when the current task is P0/P1/P2 route planning. Its implementation
+  suggestions are candidates until converted into ADRs and task contracts.
 
 Task contracts must state whether the route is `debate_next` or
 `execution_next`. If the task contract is stale or contradicts canonical
