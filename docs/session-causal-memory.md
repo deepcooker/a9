@@ -35,14 +35,21 @@ original trading/philosophy idea
 -> discover monitor quality depends on a real methodology, not score labels
 -> refactor MoE monitor into a lightweight requirements review council
 -> lock product acceptance as data first, performance second
+-> route close-reading into role-scoped memory and plan ownership
+-> reframe mobile as Codex-like control plus trading/Agent OS workspace
+-> expand highest shape to private Agent OS + financial infrastructure control
+   plane + private compute/model scheduler
+-> treat NZX RWA as first heavy business line, not the current worker task
 ```
 
 Immediate active constraint:
 
 ```text
-Communication work may resume only as bounded slices observed by the new
-requirements-review monitor. Each slice must prove data/state/event/schema
-correctness first and performance/stability second.
+Do not resume feature implementation from old communication/mobile momentum
+until the highest-shape architecture aggregation is reviewed into a decision
+packet. The next decision must account for requirements method, role memory,
+plan ownership, NZX RWA, mobile trading workspace, private network gateway,
+private compute scheduler, and compute RWA as a separate high-risk candidate.
 ```
 
 ## Causal Timeline
@@ -240,7 +247,7 @@ Current status:
 
 Current status:
 
-- Deterministic extraction now covers turns 293-454 with approximate line
+- Deterministic extraction now covers turns 293-577 with approximate line
   anchors in `docs/session-raw-summary.md` and
   `docs/session-raw-close-reading.md`.
 - This deterministic extraction is only an index. The monitor still has to

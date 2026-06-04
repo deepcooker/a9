@@ -82,6 +82,29 @@ agent 稳定后的垂直化训练和数据项目。
   可工作流、可写代码、可治理上下文。
 - 垂直产品：金融 Codex，目标是基于平台 agent 和金融场景数据训练/沉淀能力。
 
+2026-06-04 增量精读后最高形态已经扩展为：
+
+```text
+私有 Agent OS
++ 金融交易基础设施控制面
++ 私有算力/模型调度层
++ 交易 ResearchOps / 训练数据闭环
+```
+
+当前讨论入口是 `docs/a9-ultimate-architecture-aggregation.md`。它是最高形态聚合草案，
+用于 GPT/web 重构和人类评审，不是已经定案的执行计划。它把几个层级统一到一张图：
+
+- 原始根主线：交易哲学优先、成熟机制复制、数据验证第一、压测第二、监控和自动化。
+- 运行时基建：24h worker、session governance、role-scoped memory、plan ownership。
+- 移动入口：GPT/Codex-like 主控对话 + 交易/节点/策略/资产/风控/算力 workspace。
+- 私有网络/网关：Rust/Redis/Headscale/NetBird/WireGuard/SSH/tmux 的稳定连接底座。
+- 算力调度：4090、本地/多卡/集群、模型 serving、镜像/权重缓存和 warm pool。
+- 第一重业务线：NZX RWA Orderbook Appchain。
+- 高风险候选：compute RWA/tokenomics，只能进入法律、合规、资产审计和压力测试评审。
+
+下一步不是直接实现所有层，而是先把这个聚合稿做成 decision packet，再切
+`execution_next` 给 24h worker。
+
 ## 已做背调和分析
 
 已经分析和复制过这些机制：

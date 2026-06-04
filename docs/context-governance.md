@@ -31,6 +31,9 @@ These files define the current mainline:
 - `docs/requirements-review-closure.md`: review completion standard and
   debate-to-execution closure gate.
 - `docs/session-causal-memory.md`: causal changes, stale branches, current decision memory.
+- `docs/a9-ultimate-architecture-aggregation.md`: current highest-shape
+  aggregation draft for human/GPT debate. It is current context for architecture
+  discussion, but not an implementation decision packet.
 
 If these files conflict, resolve in this order:
 
@@ -39,8 +42,9 @@ If these files conflict, resolve in this order:
 3. `docs/context-governance.md`
 4. `docs/requirements-review-closure.md`
 5. `docs/session-causal-memory.md`
-6. `docs/project.md`
-7. `原始想法需求.md`
+6. `docs/a9-ultimate-architecture-aggregation.md`
+7. `docs/project.md`
+8. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.
@@ -56,6 +60,10 @@ These files shape current work but are not global truth forever:
 - `docs/a9-worker-cost-discipline-closure-2026-06-03.md`
 - `docs/stage-handoff-2026-06-01.md`
 - `docs/communication-governance-worker-task.md`
+- `docs/a9-ultimate-architecture-aggregation.md` when the current task is
+  architecture debate, GPT/web reconstruction, or highest-shape decision
+  closure. It must not be treated as permission to implement every listed
+  layer.
 
 Task contracts must state whether the route is `debate_next` or
 `execution_next`. If the task contract is stale or contradicts canonical
