@@ -2640,6 +2640,7 @@ def controller_discovery() -> dict[str, Any]:
         "endpoints": {
             "health": "/api/health",
             "status": "/api/status",
+            "monitor_status": "/api/monitor/status",
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
             "communication_action_plan": "/api/communication/action-plan",
@@ -2679,6 +2680,7 @@ def controller_discovery() -> dict[str, Any]:
             "gateway_transport_contract": True,
             "gateway_reconnect_governance": True,
             "node_command_recovery_hint_contract": True,
+            "monitor_status_contract": True,
             "worker_claim_ready": False,
         },
         "events": {
@@ -6084,6 +6086,83 @@ def run_summary(run_id: str | None = None, *, root: Path = ROOT, compact: bool =
     return compact_summary(summary) if compact else summary
 
 
+def monitor_status(root: Path = ROOT) -> dict[str, Any]:
+    status = supervisor_status(root)
+    latest_run = status.get("latest_run") if isinstance(status.get("latest_run"), dict) else {}
+    contract = latest_run.get("runtime_monitor_contract") if isinstance(latest_run, dict) else {}
+    contract = contract if isinstance(contract, dict) else {}
+    monitor = contract.get("monitor", {}) if isinstance(contract.get("monitor"), dict) else {}
+    evidence_refs = contract.get("evidence_refs", {}) if isinstance(contract.get("evidence_refs"), dict) else {}
+    diff_and_checks = contract.get("diff_and_checks", {}) if isinstance(contract.get("diff_and_checks"), dict) else {}
+    context_pressure = latest_run.get("context_pressure") if isinstance(latest_run.get("context_pressure"), dict) else {}
+    service_observation = status.get("service_observation") if isinstance(status.get("service_observation"), dict) else {}
+    nodes = status.get("nodes") if isinstance(status.get("nodes"), dict) else {}
+    next_action = str(monitor.get("next_action") or "")
+    if not next_action:
+        if latest_run.get("status") in {"needs-repair", "monitor-blocked"}:
+            next_action = "repair"
+        elif latest_run.get("status") == "needs-approval":
+            next_action = "approve_or_reject"
+        elif latest_run.get("status") == "pass":
+            next_action = "continue"
+        elif latest_run:
+            next_action = "route_to_debate"
+        else:
+            next_action = "observe"
+    queue_depth = int(status.get("queued") or 0)
+    running_count = int(status.get("running") or 0)
+    return {
+        "status": "ok",
+        "kind": "monitor_status",
+        "schema": "a9.monitor_status.v1",
+        "generated_at": utc_now(),
+        "queue": {
+            "queued": queue_depth,
+            "running": running_count,
+            "done": int(status.get("done") or 0),
+            "queue_tail": status.get("queue", []),
+            "running_tasks": status.get("running_tasks", []),
+        },
+        "latest_run": {
+            "task_id": latest_run.get("task_id"),
+            "run_id": contract.get("run", {}).get("run_id") if isinstance(contract.get("run"), dict) else None,
+            "status": latest_run.get("status"),
+            "phase": latest_run.get("phase"),
+            "run_dir": latest_run.get("run_dir"),
+        },
+        "next_action": next_action,
+        "monitor": monitor,
+        "evidence_refs": evidence_refs,
+        "failed_checks": diff_and_checks.get("failed_checks", []),
+        "failed_checks_count": diff_and_checks.get("failed_checks_count", 0),
+        "changed_files": diff_and_checks.get("changed_files", []),
+        "context_pressure": {
+            "prompt_approx_tokens": context_pressure.get("prompt_approx_tokens"),
+            "prompt_budget_tokens": context_pressure.get("prompt_budget_tokens"),
+            "budget_ratio": context_pressure.get("budget_ratio"),
+            "remaining_tokens": context_pressure.get("remaining_tokens"),
+            "over_budget": context_pressure.get("over_budget"),
+        },
+        "worker_prompt": contract.get("worker_prompt", {}),
+        "worker_intent": contract.get("worker_intent", {}),
+        "command_envelope": contract.get("command_envelope", {}),
+        "guardrails": contract.get("guardrails", {}),
+        "intervention_options": monitor.get("intervention_options", []),
+        "service_observation": {
+            "status": service_observation.get("status"),
+            "missing_count": service_observation.get("observed", {}).get("missing_count")
+            if isinstance(service_observation.get("observed"), dict)
+            else None,
+        },
+        "nodes": {
+            "status": nodes.get("status"),
+            "count": nodes.get("count"),
+            "online_count": nodes.get("online_count"),
+            "stale_count": nodes.get("stale_count"),
+        },
+    }
+
+
 def read_evidence_file(path_value: str, *, root: Path = ROOT, max_bytes: int = 8000) -> dict[str, Any]:
     if not path_value:
         raise ValueError("path is required")
@@ -6676,6 +6755,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, controller_discovery())
             elif parsed.path == "/api/status":
                 self.write_json(200, supervisor_status())
+            elif parsed.path == "/api/monitor/status":
+                self.write_json(200, monitor_status())
             elif parsed.path == "/api/tailscale/status":
                 self.write_json(200, tailscale_status())
             elif parsed.path == "/api/nodes":

@@ -2681,6 +2681,111 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(status["service_observation"]["observed"]["missing_count"], 0)
         self.assertEqual(status["service_observation"]["observed"]["next_action"], "observe")
 
+    def test_monitor_status_projects_runtime_contract_for_monitor(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / ".a9"
+            run_dir = state_dir / "runs" / "run-1"
+            (state_dir / "tasks" / "queue").mkdir(parents=True)
+            (state_dir / "tasks" / "running").mkdir(parents=True)
+            (state_dir / "tasks" / "done").mkdir(parents=True)
+            (state_dir / "nodes").mkdir(parents=True)
+            run_dir.mkdir(parents=True)
+            summary = {
+                "task_id": "task-1",
+                "status": "needs-repair",
+                "phase": "implement",
+                "run_dir": str(run_dir),
+                "context_pressure": {
+                    "prompt_approx_tokens": 100,
+                    "prompt_budget_tokens": 1000,
+                    "budget_ratio": 0.1,
+                    "remaining_tokens": 900,
+                    "over_budget": False,
+                },
+                "runtime_monitor_contract": {
+                    "schema": "a9.runtime_monitor_contract.v1",
+                    "task": {"task_id": "task-1", "phase": "implement", "route": "execution_next"},
+                    "run": {"run_id": "run-1", "status": "needs-repair", "attempt": 1, "run_dir": str(run_dir)},
+                    "worker_intent": {"status": "visible", "phase_focus": "Implement", "reference_gate_status": "pass"},
+                    "worker_prompt": {
+                        "prompt_path": str(run_dir / "prompt.md"),
+                        "raw_task_path": str(run_dir / "raw_task.md"),
+                        "prompt_approx_tokens": 100,
+                        "prompt_budget_tokens": 1000,
+                    },
+                    "command_envelope": {
+                        "command_id": "task-1",
+                        "target_node": "local-supervisor",
+                        "expected_revision": 1,
+                        "idempotency_key": "task-1:1",
+                        "evidence_path": str(run_dir / "evidence.jsonl"),
+                    },
+                    "diff_and_checks": {
+                        "changed_files": ["scripts/a9_supervisor.py"],
+                        "failed_checks_count": 1,
+                        "failed_checks": [{"command": "python3 -m unittest tests.test_supervisor", "return_code": 1}],
+                        "diff_path": str(run_dir / "patch.diff"),
+                    },
+                    "monitor": {
+                        "next_action": "repair",
+                        "recommended_action": "repair",
+                        "decision_model": "requirements_review_council_v1",
+                        "score": 0.4,
+                        "intervention_options": ["pause", "repair", "route_to_debate"],
+                        "block": {"blocked": True, "reason": "failed_check"},
+                    },
+                    "evidence_refs": {
+                        "runtime_monitor_contract_path": str(run_dir / "runtime_monitor_contract.json"),
+                        "summary_path": str(run_dir / "summary.json"),
+                        "execution_chain_path": str(run_dir / "execution_chain.json"),
+                        "evidence_path": str(run_dir / "evidence.jsonl"),
+                        "state_path": str(run_dir / "state.json"),
+                    },
+                    "guardrails": {"page_details_frozen": True, "no_nzx_business_code": True},
+                },
+            }
+            (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False) + "\n", encoding="utf-8")
+
+            payload = mod.monitor_status(root)
+
+        self.assertEqual(payload["schema"], "a9.monitor_status.v1")
+        self.assertEqual(payload["latest_run"]["task_id"], "task-1")
+        self.assertEqual(payload["latest_run"]["run_id"], "run-1")
+        self.assertEqual(payload["next_action"], "repair")
+        self.assertEqual(payload["failed_checks_count"], 1)
+        self.assertEqual(payload["changed_files"], ["scripts/a9_supervisor.py"])
+        self.assertEqual(payload["command_envelope"]["idempotency_key"], "task-1:1")
+        self.assertTrue(payload["guardrails"]["page_details_frozen"])
+        self.assertEqual(payload["context_pressure"]["remaining_tokens"], 900)
+
+    def test_api_monitor_status_endpoint_returns_monitor_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+
+        class DummyMonitorStatusGetHandler:
+            path = "/api/monitor/status"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for /api/monitor/status")
+
+        original_monitor_status = mod.monitor_status
+        try:
+            mod.monitor_status = lambda: {"status": "ok", "kind": "monitor_status", "next_action": "observe"}
+            mod.ControlHandler.do_GET(DummyMonitorStatusGetHandler())
+        finally:
+            mod.monitor_status = original_monitor_status
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "monitor_status")
+        self.assertEqual(captured["payload"]["next_action"], "observe")
+
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
         mod = load_control_api()
 
@@ -8553,6 +8658,7 @@ class ControlApiTests(unittest.TestCase):
         discovery = mod.controller_discovery()
         self.assertEqual(discovery["service"], "a9-controller")
         self.assertEqual(discovery["endpoints"]["communication_status"], "/api/communication/status")
+        self.assertEqual(discovery["endpoints"]["monitor_status"], "/api/monitor/status")
         self.assertEqual(
             discovery["endpoints"]["communication_data_contract_report"], "/api/communication/data-contract-report"
         )
@@ -8584,6 +8690,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertTrue(discovery["runtime"]["gateway_reconnect_governance"])
         self.assertTrue(discovery["runtime"]["node_command_recovery_hint_contract"])
+        self.assertTrue(discovery["runtime"]["monitor_status_contract"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)
         self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])
 
