@@ -2127,3 +2127,16 @@ Governance lesson:
 - A9 should keep adding semantic pressure to structured fields as real worker
   output reveals ambiguity. These remain warnings until the business/review
   layer decides they should block.
+
+Validation:
+- Worker run:
+  `.a9/runs/verify-files-validated-semantics-20260604-20260604T072627Z-a1`
+- Result: pass, process governance clean, declared checks passed.
+- The worker correctly kept:
+  - `copied_mechanisms: []`,
+  - `files_validated`: only `scripts/`, `tests/`, and `docs/` source/doc paths,
+  - `repo_metadata_evidence: []`,
+  - exact `supervisor_declared_checks`.
+- Remaining minor observation: the worker duplicated one `rg` command in
+  `worker_commands_run`; this is harmless evidence noise, not a field semantics
+  problem.
