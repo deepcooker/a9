@@ -52,7 +52,23 @@ NZX RWA Orderbook Appchain = first heavy business application
 - Direct source copy requires source URL, commit, license, NOTICE/dependency
   review, copied paths, purpose, and a vendor manifest.
 
-## Accepted Priority Order
+## Accepted Priority Order With Current Correction
+
+The GPT package gives a useful high-level order, but the current human decision
+narrows the first engineering focus:
+
+```text
+P0 Requirements/ADR closure for 24h worker + monitor + communication foundation
+P1 24h worker + monitor reliability path
+P2 Communication foundation and private node/base connectivity
+P3 A9 core contracts that support P1/P2
+P4 Reference/vendor baseline needed by P1/P2
+P5 Mobile/control product packet, page details frozen for now
+P6 Compute Stage A
+P7 NZX Technical MVP
+```
+
+The original GPT order is retained as architectural background:
 
 ```text
 P0 Architecture Decision Packet
@@ -65,8 +81,8 @@ P6 Compute Stage A
 P7 NZX Technical MVP
 ```
 
-This priority is now the default route unless a newer human decision overrides
-it.
+The corrected priority above is now the default route unless a newer human
+decision overrides it.
 
 ## Needs Human/Monitor Review Before Implementation
 
@@ -83,30 +99,35 @@ it.
 
 ## Next Execution Candidate
 
-First bounded worker task should be:
+First bounded worker task should be narrowed to:
 
 ```yaml
-task_id: execution_next_0001_architecture_packet
+task_id: execution_next_0001_runtime_monitor_foundation_packet
 route: execution_next
-goal: convert the external GPT review and A9 aggregation draft into ADRs and
-  a first execution task list
+goal: convert the external GPT review, A9 aggregation draft, and current
+  human correction into a decision packet for 24h worker, monitor, and
+  communication foundation
 scope:
   - create docs/architecture/a9-agentos-financial-foundation.md
+  - create docs/architecture/a9-runtime-monitor-foundation.md
   - create docs/decisions/ADR-0001-a9-highest-form.md
-  - create docs/decisions/ADR-0002-reference-vendor-selection.md
-  - create docs/decisions/ADR-0003-nzx-is-first-business-app.md
-  - create docs/decisions/ADR-0004-ai-not-in-trading-hot-path.md
-  - create docs/decisions/ADR-0005-redis-not-trading-ledger.md
-  - create docs/decisions/ADR-0006-compute-layer-roadmap.md
+  - create docs/decisions/ADR-0002-runtime-monitor-priority.md
+  - create docs/decisions/ADR-0003-communication-foundation.md
+  - create docs/decisions/ADR-0004-reference-vendor-selection.md
+  - create docs/decisions/ADR-0005-nzx-is-first-business-app.md
 out_of_scope:
   - no production trading code
   - no broker API
   - no smart contract deployment
   - no mobile UI implementation
   - no source vendor copy
+  - no broad workspace crate migration
 acceptance:
   - A9 vs NZX layer boundary is explicit
-  - direct-copy vs mechanism-copy table exists
+  - 24h worker + monitor guarantees are explicit
+  - monitor visibility and intervention model is explicit
+  - communication foundation boundary is explicit
+  - direct-copy vs mechanism-copy table exists for runtime/communication needs
   - current code keep/rewrite/archive table exists
   - first five execution_next tasks are listed
   - every direct-copy candidate is marked pending license/vendor manifest
@@ -114,7 +135,7 @@ acceptance:
 
 ## Guardrail For 24h Worker
 
-The worker must not start P2/P3/P4 implementation from this review alone. It
-must first produce the P0 decision packet, then wait for monitor/human review or
-an explicit next task contract.
-
+The worker must not start mobile UI changes, NZX implementation, compute RWA,
+or broad crate migration from this review alone. It must first produce the
+runtime/monitor/communication decision packet, then wait for monitor/human
+review or an explicit next task contract.

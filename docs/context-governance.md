@@ -25,6 +25,7 @@ These files define the current mainline:
 
 - `AGENTS.md`: top-level agent rules, phase model, hard constraints.
 - `docs/context-governance.md`: this context routing table.
+- `docs/current-mainline.md`: current execution priority and freeze points.
 - `docs/project.md`: current A9 product layers, architecture, progress, next work.
 - `原始想法需求.md`: original product philosophy and requirement source.
 - `docs/worker-method-packet.md`: requirements-analysis and worker method.
@@ -43,12 +44,13 @@ If these files conflict, resolve in this order:
 1. newest explicit human direction in the current operator session
 2. `AGENTS.md`
 3. `docs/context-governance.md`
-4. `docs/requirements-review-closure.md`
-5. `docs/session-causal-memory.md`
-6. `docs/external-gpt/2026-06-04/intake.md`
-7. `docs/a9-ultimate-architecture-aggregation.md`
-8. `docs/project.md`
-9. `原始想法需求.md`
+4. `docs/current-mainline.md`
+5. `docs/requirements-review-closure.md`
+6. `docs/session-causal-memory.md`
+7. `docs/external-gpt/2026-06-04/intake.md`
+8. `docs/a9-ultimate-architecture-aggregation.md`
+9. `docs/project.md`
+10. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.
@@ -71,6 +73,9 @@ These files shape current work but are not global truth forever:
 - `docs/external-gpt/2026-06-04/A9_AgentOS_金融交易环境重构决策包.md`
   when the current task is P0/P1/P2 route planning. Its implementation
   suggestions are candidates until converted into ADRs and task contracts.
+- `docs/current-mainline.md` when the current task could drift into mobile UI,
+  NZX implementation, compute RWA, or broad workspace refactor. It is the
+  current freeze/priority source.
 
 Task contracts must state whether the route is `debate_next` or
 `execution_next`. If the task contract is stale or contradicts canonical

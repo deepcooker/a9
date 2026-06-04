@@ -108,19 +108,24 @@ agent 稳定后的垂直化训练和数据项目。
 - 第一重业务线：NZX RWA Orderbook Appchain。
 - 高风险候选：compute RWA/tokenomics，只能进入法律、合规、资产审计和压力测试评审。
 
-下一步不是直接实现所有层，而是先把 GPT 决策包和 A9 聚合稿做成 ADR decision
-packet，再切 `execution_next` 给 24h worker。默认优先级已经调整为：
+下一步不是直接实现所有层，而是先把 GPT 决策包、A9 聚合稿和当前主线校准做成
+ADR decision packet，再切 `execution_next` 给 24h worker。当前校准后的工程
+优先级是：
 
 ```text
-P0 Architecture Decision Packet
-P1 Reference Baseline Scan + Vendor Manifest
-P2 A9 Core Contract
-P3 Gateway / Bus refactor
-P4 AgentOS Runtime
-P5 Mobile / Remote Control Packet
+P0 Requirements/ADR closure for 24h worker + monitor + communication foundation
+P1 24h worker + monitor reliability path
+P2 Communication foundation and private node/base connectivity
+P3 A9 core contracts that support P1/P2
+P4 Reference/vendor baseline needed by P1/P2
+P5 Mobile/control product packet, page details frozen for now
 P6 Compute Stage A
 P7 NZX Technical MVP
 ```
+
+页面逻辑先冻结。金融交易框架是最高承载形态，但第一工程主线仍然是把
+`24h worker + monitor` 和通讯/基座做稳。需求方法论仍然前置：业务/数据建模第一，
+性能第二；没有完成需求博弈、验收和 out_of_scope 的任务不能进入连续执行。
 
 ## 已做背调和分析
 
