@@ -2286,8 +2286,8 @@ def build_monitor_intervention_command(payload: dict[str, Any], *, root: Path = 
             "changed_files": status.get("changed_files", []),
         },
         "execution_effect": {
-            "mode": "audit_only",
-            "reason": "typed_intervention_contract_first; supervisor_effect_routing_pending",
+            "mode": "supervisor_routed",
+            "reason": "typed_intervention_contract_with_supervisor_effect_routing",
         },
     }
 
@@ -2296,6 +2296,9 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
     require_phone_admin(payload)
     command = build_monitor_intervention_command(payload, root=root)
     gate = command_gate(command["command"], root=root)
+    effect = command.get("execution_effect", {})
+    if gate.get("allowed"):
+        effect = supervisor().apply_monitor_intervention_effect(command)
     event = {
         "at": utc_now(),
         "schema": command["schema"],
@@ -2312,7 +2315,7 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
         "gate_reason": gate.get("reason") or gate.get("status"),
         "gate_status": gate.get("status"),
         "evidence_refs": command.get("evidence_refs", []),
-        "execution_effect": command.get("execution_effect"),
+        "execution_effect": effect,
     }
     enqueue_monitor_intervention_audit(event, root=root)
     if not gate.get("allowed"):
@@ -2325,7 +2328,7 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
             "intervention_id": command["intervention_id"],
             "gate": gate,
             "audit_async": True,
-            "execution_effect": command["execution_effect"],
+            "execution_effect": effect,
         }
     return {
         "status": "recorded",
@@ -2338,7 +2341,7 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
         "audit_async": True,
         "command_envelope": command,
         "audit_path": str(monitor_intervention_audit_path(root)),
-        "execution_effect": command["execution_effect"],
+        "execution_effect": effect,
     }
 
 

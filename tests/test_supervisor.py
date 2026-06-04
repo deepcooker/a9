@@ -10922,6 +10922,87 @@ flow_expected_revision: None
             finally:
                 mod.QUEUE_DIR = old_queue
 
+    def test_monitor_intervention_pause_blocks_task_claim_until_resume(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
+            old_control_state = mod.RUNTIME_CONTROL_STATE_PATH
+            try:
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNNING_DIR = base / "running"
+                mod.RUNTIME_CONTROL_STATE_PATH = base / "runtime" / "control_state.json"
+                mod.ensure_dirs()
+                mod.enqueue_task_file("claim-paused", "Do work.", phase="implement")
+
+                pause = mod.apply_monitor_intervention_effect(
+                    {
+                        "action": "pause",
+                        "intervention_id": "monitor-pause-1",
+                        "reason": "operator inspection",
+                        "actor": "mobile-operator",
+                        "task_id": "claim-paused",
+                    }
+                )
+                blocked = mod.claim_next_task()
+                resume = mod.apply_monitor_intervention_effect(
+                    {
+                        "action": "resume",
+                        "intervention_id": "monitor-resume-1",
+                        "reason": "inspection complete",
+                        "actor": "mobile-operator",
+                    }
+                )
+                claimed = mod.claim_next_task()
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
+                mod.RUNTIME_CONTROL_STATE_PATH = old_control_state
+
+        self.assertEqual(pause["status"], "applied")
+        self.assertTrue(pause["paused"])
+        self.assertIsNone(blocked)
+        self.assertEqual(resume["status"], "applied")
+        self.assertFalse(resume["paused"])
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.task_id, "claim-paused")
+
+    def test_monitor_intervention_repair_enqueues_repair_task_with_evidence(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_queue = mod.QUEUE_DIR
+            old_control_state = mod.RUNTIME_CONTROL_STATE_PATH
+            try:
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNTIME_CONTROL_STATE_PATH = base / "runtime" / "control_state.json"
+                mod.ensure_dirs()
+                effect = mod.apply_monitor_intervention_effect(
+                    {
+                        "action": "repair",
+                        "intervention_id": "monitor-repair-1",
+                        "reason": "failed declared check",
+                        "actor": "mobile-operator",
+                        "task_id": "source-task",
+                        "run_id": "source-run",
+                        "evidence_refs": ["runs/source-run/summary.json", "runs/source-run/patch.diff"],
+                    }
+                )
+                queued = Path(effect["queued_task_path"])
+                parsed = mod.parse_task(queued)
+                text = queued.read_text(encoding="utf-8")
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNTIME_CONTROL_STATE_PATH = old_control_state
+
+        self.assertEqual(effect["status"], "applied")
+        self.assertEqual(effect["mode"], "queue_task")
+        self.assertEqual(effect["queued_task_phase"], "repair")
+        self.assertEqual(parsed.phase, "repair")
+        self.assertIn("monitor_intervention_id: monitor-repair-1", text)
+        self.assertIn("runs/source-run/summary.json", text)
+
     def test_session_refresh_route_runs_without_codex_worker(self):
         mod = load_supervisor()
         mod.ensure_dirs()

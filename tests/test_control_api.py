@@ -2793,6 +2793,7 @@ class ControlApiTests(unittest.TestCase):
             audit_calls = []
             original_monitor_status = mod.monitor_status
             original_audit = mod.enqueue_monitor_intervention_audit
+            original_supervisor = mod.supervisor
             try:
                 mod.monitor_status = lambda root=root: {
                     "status": "ok",
@@ -2805,6 +2806,18 @@ class ControlApiTests(unittest.TestCase):
                     "changed_files": ["scripts/a9_control_api.py"],
                 }
                 mod.enqueue_monitor_intervention_audit = lambda event, *, root: audit_calls.append((event, root))
+
+                class FakeSupervisor:
+                    @staticmethod
+                    def apply_monitor_intervention_effect(command):
+                        return {
+                            "status": "applied",
+                            "mode": "queue_task",
+                            "action": command["action"],
+                            "queued_task_path": "/tmp/a9/task.md",
+                        }
+
+                mod.supervisor = lambda: FakeSupervisor
 
                 blocked = mod.monitor_intervention(
                     {
@@ -2827,6 +2840,7 @@ class ControlApiTests(unittest.TestCase):
             finally:
                 mod.monitor_status = original_monitor_status
                 mod.enqueue_monitor_intervention_audit = original_audit
+                mod.supervisor = original_supervisor
 
         self.assertEqual(blocked["status"], "blocked")
         self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
@@ -2841,7 +2855,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(len(audit_calls), 2)
         self.assertEqual(audit_calls[0][0]["status"], "blocked")
         self.assertEqual(audit_calls[1][0]["status"], "recorded")
-        self.assertEqual(audit_calls[1][0]["execution_effect"]["mode"], "audit_only")
+        self.assertEqual(audit_calls[1][0]["execution_effect"]["mode"], "queue_task")
 
     def test_api_monitor_intervention_post_route_calls_handler(self):
         mod = load_control_api()

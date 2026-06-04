@@ -48,6 +48,7 @@ EVAL_STORE_OVERRIDES_DIR = EVAL_STORE_DIR / "overrides"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
+RUNTIME_CONTROL_STATE_PATH = STATE_DIR / "runtime" / "control_state.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
 DEFAULT_REFERENCE_SCAN_WORKER_MODEL = ""
@@ -376,6 +377,7 @@ def ensure_dirs() -> None:
         EVAL_STORE_DIR,
         EVAL_STORE_RUNS_DIR,
         EVAL_STORE_OVERRIDES_DIR,
+        RUNTIME_CONTROL_STATE_PATH.parent,
     ]:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -453,8 +455,177 @@ def next_task() -> Task | None:
     return parse_task(tasks[0]) if tasks else None
 
 
+def runtime_control_state() -> dict[str, Any]:
+    ensure_dirs()
+    if not RUNTIME_CONTROL_STATE_PATH.exists():
+        return {
+            "schema": "a9.runtime_control_state.v1",
+            "paused": False,
+            "status": "running",
+            "updated_at": "",
+            "last_intervention": {},
+        }
+    data = read_json_file(RUNTIME_CONTROL_STATE_PATH)
+    if not data:
+        return {
+            "schema": "a9.runtime_control_state.v1",
+            "paused": False,
+            "status": "running",
+            "updated_at": "",
+            "last_intervention": {},
+            "state_error": "unreadable_runtime_control_state",
+        }
+    return data
+
+
+def write_runtime_control_state(state: dict[str, Any]) -> dict[str, Any]:
+    ensure_dirs()
+    payload = {
+        "schema": "a9.runtime_control_state.v1",
+        **state,
+        "updated_at": utc_now(),
+    }
+    write_json(RUNTIME_CONTROL_STATE_PATH, payload)
+    return payload
+
+
+def runtime_control_paused() -> bool:
+    state = runtime_control_state()
+    return bool(state.get("paused"))
+
+
+def runtime_control_blocks_claim() -> dict[str, Any] | None:
+    state = runtime_control_state()
+    if not state.get("paused"):
+        return None
+    return {
+        "status": "paused",
+        "reason": state.get("reason") or "monitor_intervention_pause",
+        "intervention_id": state.get("last_intervention", {}).get("intervention_id")
+        if isinstance(state.get("last_intervention"), dict)
+        else None,
+    }
+
+
+def monitor_intervention_task_prompt(command: dict[str, Any], *, phase: str) -> str:
+    evidence_refs = command.get("evidence_refs") if isinstance(command.get("evidence_refs"), list) else []
+    evidence_text = "\n".join(f"- {ref}" for ref in evidence_refs[:20])
+    return "\n".join(
+        [
+            f"monitor_intervention_action: {command.get('action')}",
+            f"monitor_intervention_id: {command.get('intervention_id')}",
+            f"source_task_id: {command.get('task_id') or ''}",
+            f"source_run_id: {command.get('run_id') or ''}",
+            f"reason: {command.get('reason') or ''}",
+            "mainline_requirement: Execute only the requested monitor intervention. Keep business/data model first, performance second. Do not add hard gates unless the requirement is already stable.",
+            f"phase_intent: {phase}",
+            "evidence_refs:",
+            evidence_text or "- none",
+        ]
+    )
+
+
+def apply_monitor_intervention_effect(command: dict[str, Any]) -> dict[str, Any]:
+    ensure_dirs()
+    action = str(command.get("action") or "").strip().lower()
+    intervention = {
+        "intervention_id": command.get("intervention_id"),
+        "action": action,
+        "reason": command.get("reason"),
+        "actor": command.get("actor"),
+        "task_id": command.get("task_id"),
+        "run_id": command.get("run_id"),
+        "idempotency_key": command.get("idempotency_key"),
+        "applied_at": utc_now(),
+    }
+    state = runtime_control_state()
+    if action == "pause":
+        updated = write_runtime_control_state(
+            {
+                **state,
+                "paused": True,
+                "status": "paused",
+                "reason": command.get("reason") or "monitor_intervention_pause",
+                "last_intervention": intervention,
+            }
+        )
+        return {
+            "status": "applied",
+            "mode": "runtime_state",
+            "action": action,
+            "runtime_state_path": str(RUNTIME_CONTROL_STATE_PATH),
+            "paused": True,
+            "state": updated,
+        }
+    if action == "resume":
+        updated = write_runtime_control_state(
+            {
+                **state,
+                "paused": False,
+                "status": "running",
+                "reason": command.get("reason") or "monitor_intervention_resume",
+                "last_intervention": intervention,
+            }
+        )
+        return {
+            "status": "applied",
+            "mode": "runtime_state",
+            "action": action,
+            "runtime_state_path": str(RUNTIME_CONTROL_STATE_PATH),
+            "paused": False,
+            "state": updated,
+        }
+    if action in {"repair", "route_to_debate"}:
+        phase = "repair" if action == "repair" else "mechanism_extract"
+        task_prefix = "operator-repair" if action == "repair" else "operator-debate"
+        task_ref = compact_task_ref(str(command.get("task_id") or command.get("run_id") or command.get("intervention_id") or "monitor"))
+        queued = enqueue_task_file(
+            f"{task_prefix}-{task_ref}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+            monitor_intervention_task_prompt(command, phase=phase),
+            phase=phase,
+            checks=[],
+            timeout_seconds=3600,
+            idle_timeout_seconds=300,
+            max_attempts=1,
+        )
+        updated = write_runtime_control_state(
+            {
+                **state,
+                "last_intervention": intervention,
+                "last_queued_task_path": str(queued),
+                "last_queued_task_phase": phase,
+            }
+        )
+        return {
+            "status": "applied",
+            "mode": "queue_task",
+            "action": action,
+            "queued_task_path": str(queued),
+            "queued_task_phase": phase,
+            "runtime_state_path": str(RUNTIME_CONTROL_STATE_PATH),
+            "state": updated,
+        }
+    updated = write_runtime_control_state(
+        {
+            **state,
+            "last_intervention": intervention,
+            "last_decision_action": action,
+            "last_decision_reason": command.get("reason"),
+        }
+    )
+    return {
+        "status": "recorded",
+        "mode": "decision_only",
+        "action": action,
+        "runtime_state_path": str(RUNTIME_CONTROL_STATE_PATH),
+        "state": updated,
+    }
+
+
 def claim_next_task() -> Task | None:
     ensure_dirs()
+    if runtime_control_paused():
+        return None
     for path in sorted(QUEUE_DIR.glob("*.md")):
         claimed = RUNNING_DIR / path.name
         try:
@@ -9539,6 +9710,14 @@ def run_loop(args: argparse.Namespace) -> int:
     while True:
         reconcile_orphaned_running_tasks()
         write_daemon_heartbeat("polling", detail=f"completed={completed}")
+        pause_gate = runtime_control_blocks_claim()
+        if pause_gate:
+            detail = str(pause_gate.get("reason") or "monitor_intervention_pause")
+            write_daemon_heartbeat("paused", detail=detail)
+            if args.max_tasks and completed >= args.max_tasks:
+                return 0
+            time.sleep(args.sleep_seconds)
+            continue
         task = next_task()
         if not task:
             if args.auto_next:
@@ -9738,9 +9917,11 @@ def plan_note(args: argparse.Namespace) -> int:
 def status() -> int:
     ensure_dirs()
     reconciled = reconcile_orphaned_running_tasks()
+    control_state = runtime_control_state()
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
     print(f"running: {len(list(RUNNING_DIR.glob('*.json')))}")
     print(f"done: {len(list(DONE_DIR.glob('*.json')))}")
+    print(f"runtime_control: {control_state.get('status', 'running')}")
     if reconciled:
         print(f"interrupted_reconciled: {len(reconciled)}")
     latest_summary: dict[str, Any] | None = None
