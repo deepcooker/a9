@@ -3062,6 +3062,7 @@ def controller_discovery() -> dict[str, Any]:
         "endpoints": {
             "health": "/api/health",
             "status": "/api/status",
+            "monitor_control": "/api/monitor/control",
             "monitor_status": "/api/monitor/status",
             "monitor_intervention": "/api/monitor/intervention",
             "monitor_intervention_audit": "/api/monitor/interventions/audit",
@@ -3106,6 +3107,7 @@ def controller_discovery() -> dict[str, Any]:
             "gateway_transport_contract": True,
             "gateway_reconnect_governance": True,
             "node_command_recovery_hint_contract": True,
+            "monitor_control_contract": True,
             "monitor_status_contract": True,
             "monitor_intervention_contract": True,
             "monitor_intervention_examples": True,
@@ -6632,6 +6634,37 @@ def monitor_status(root: Path = ROOT) -> dict[str, Any]:
     }
 
 
+def monitor_control(root: Path = ROOT) -> dict[str, Any]:
+    status = monitor_status(root)
+    examples = monitor_intervention_examples(root)
+    recent = status.get("recent_interventions") if isinstance(status.get("recent_interventions"), dict) else {}
+    next_last_id = ""
+    events = recent.get("events") if isinstance(recent, dict) else []
+    if isinstance(events, list) and events:
+        next_last_id = str(events[-1].get("stream_id") or events[-1].get("redis_mirror", {}).get("stream_id") or "")
+    return {
+        "status": "ok",
+        "kind": "monitor_control",
+        "schema": "a9.monitor_control.v1",
+        "generated_at": utc_now(),
+        "monitor_status": status,
+        "intervention_examples": examples,
+        "intervention_stream": {
+            "stream": MONITOR_INTERVENTIONS_STREAM_KEY,
+            "events_endpoint": "/api/monitor/interventions/events",
+            "sse_endpoint": "/api/monitor/interventions/events?format=sse",
+            "recent_event_count": int(recent.get("event_count") or 0) if isinstance(recent, dict) else 0,
+            "next_last_id": next_last_id,
+            "reconnect_hint": "Use Last-Event-ID header or last_id query parameter.",
+        },
+        "actions": {
+            "post_endpoint": "/api/monitor/intervention",
+            "examples_endpoint": "/api/monitor/intervention/examples",
+            "requires_phone_control": "runtime group with monitor.intervention",
+        },
+    }
+
+
 def read_evidence_file(path_value: str, *, root: Path = ROOT, max_bytes: int = 8000) -> dict[str, Any]:
     if not path_value:
         raise ValueError("path is required")
@@ -7224,6 +7257,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, controller_discovery())
             elif parsed.path == "/api/status":
                 self.write_json(200, supervisor_status())
+            elif parsed.path == "/api/monitor/control":
+                self.write_json(200, monitor_control())
             elif parsed.path == "/api/monitor/status":
                 self.write_json(200, monitor_status())
             elif parsed.path == "/api/monitor/intervention/examples":

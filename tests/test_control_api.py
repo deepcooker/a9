@@ -2835,6 +2835,66 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["payload"]["kind"], "monitor_status")
         self.assertEqual(captured["payload"]["next_action"], "observe")
 
+    def test_monitor_control_aggregates_status_examples_and_stream_hint(self):
+        mod = load_control_api()
+        original_status = mod.monitor_status
+        original_examples = mod.monitor_intervention_examples
+        try:
+            mod.monitor_status = lambda root=mod.ROOT: {
+                "status": "ok",
+                "kind": "monitor_status",
+                "recent_interventions": {
+                    "event_count": 1,
+                    "events": [
+                        {
+                            "intervention_id": "monitor-1",
+                            "redis_mirror": {"stream_id": "1740000010-0"},
+                        }
+                    ],
+                },
+            }
+            mod.monitor_intervention_examples = lambda root=mod.ROOT: {
+                "status": "ok",
+                "kind": "monitor_intervention_examples",
+                "examples": {"pause": {"action": "pause"}},
+            }
+            payload = mod.monitor_control()
+        finally:
+            mod.monitor_status = original_status
+            mod.monitor_intervention_examples = original_examples
+
+        self.assertEqual(payload["schema"], "a9.monitor_control.v1")
+        self.assertEqual(payload["monitor_status"]["kind"], "monitor_status")
+        self.assertEqual(payload["intervention_examples"]["examples"]["pause"]["action"], "pause")
+        self.assertEqual(payload["intervention_stream"]["stream"], "a9:monitor:interventions")
+        self.assertEqual(payload["intervention_stream"]["next_last_id"], "1740000010-0")
+        self.assertEqual(payload["actions"]["post_endpoint"], "/api/monitor/intervention")
+
+    def test_api_monitor_control_endpoint_returns_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+        original_control = mod.monitor_control
+
+        class DummyMonitorControlGetHandler:
+            path = "/api/monitor/control"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for monitor control")
+
+        try:
+            mod.monitor_control = lambda: {"status": "ok", "kind": "monitor_control"}
+            mod.ControlHandler.do_GET(DummyMonitorControlGetHandler())
+        finally:
+            mod.monitor_control = original_control
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "monitor_control")
+
     def test_monitor_intervention_requires_arm_and_records_async_audit(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -9183,6 +9243,7 @@ class ControlApiTests(unittest.TestCase):
         discovery = mod.controller_discovery()
         self.assertEqual(discovery["service"], "a9-controller")
         self.assertEqual(discovery["endpoints"]["communication_status"], "/api/communication/status")
+        self.assertEqual(discovery["endpoints"]["monitor_control"], "/api/monitor/control")
         self.assertEqual(discovery["endpoints"]["monitor_status"], "/api/monitor/status")
         self.assertEqual(discovery["endpoints"]["monitor_intervention"], "/api/monitor/intervention")
         self.assertEqual(discovery["endpoints"]["monitor_intervention_audit"], "/api/monitor/interventions/audit")
@@ -9219,6 +9280,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(discovery["runtime"]["gateway_transport_contract"])
         self.assertTrue(discovery["runtime"]["gateway_reconnect_governance"])
         self.assertTrue(discovery["runtime"]["node_command_recovery_hint_contract"])
+        self.assertTrue(discovery["runtime"]["monitor_control_contract"])
         self.assertTrue(discovery["runtime"]["monitor_status_contract"])
         self.assertTrue(discovery["runtime"]["monitor_intervention_contract"])
         self.assertTrue(discovery["runtime"]["monitor_intervention_examples"])
