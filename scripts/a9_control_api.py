@@ -675,13 +675,19 @@ def parse_xrange_events(output: str) -> list[dict[str, Any]]:
     return events
 
 
-def read_events(last_id: str | None = None, *, count: int = 100, limit: int | None = None) -> dict[str, Any]:
+def read_redis_stream(
+    stream_key: str,
+    last_id: str | None = None,
+    *,
+    count: int = 100,
+    limit: int | None = None,
+) -> dict[str, Any]:
     requested_raw = limit if limit is not None else count
     requested = max(1, min(EVENTS_STREAM_LIMIT_MAX, int(requested_raw)))
     if last_id is not None and not _looks_like_stream_id(last_id):
         return {
             "status": "degraded",
-            "stream": EVENTS_STREAM_KEY,
+            "stream": stream_key,
             "error": "invalid last_id format, expected stream-id like 1740000000-0",
             "last_id": last_id,
             "requested_count": requested,
@@ -690,11 +696,11 @@ def read_events(last_id: str | None = None, *, count: int = 100, limit: int | No
 
     start = "-" if not last_id else f"({last_id}"
     try:
-        proc = redis_cli(["--raw", "XRANGE", EVENTS_STREAM_KEY, start, "+", "COUNT", str(requested)])
+        proc = redis_cli(["--raw", "XRANGE", stream_key, start, "+", "COUNT", str(requested)])
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
             "status": "degraded",
-            "stream": EVENTS_STREAM_KEY,
+            "stream": stream_key,
             "error": str(exc),
             "last_id": last_id,
             "requested_count": requested,
@@ -704,7 +710,7 @@ def read_events(last_id: str | None = None, *, count: int = 100, limit: int | No
     if proc.returncode != 0:
         return {
             "status": "degraded",
-            "stream": EVENTS_STREAM_KEY,
+            "stream": stream_key,
             "error": proc.stdout.strip() or "redis command failed",
             "last_id": last_id,
             "requested_count": requested,
@@ -716,12 +722,12 @@ def read_events(last_id: str | None = None, *, count: int = 100, limit: int | No
         # Detect replay cursor gaps after stream trim/rotation: client cursor is valid
         # syntax but points outside the currently replayable window.
         try:
-            oldest_proc = redis_cli(["--raw", "XRANGE", EVENTS_STREAM_KEY, "-", "+", "COUNT", "1"])
-            newest_proc = redis_cli(["--raw", "XREVRANGE", EVENTS_STREAM_KEY, "+", "-", "COUNT", "1"])
+            oldest_proc = redis_cli(["--raw", "XRANGE", stream_key, "-", "+", "COUNT", "1"])
+            newest_proc = redis_cli(["--raw", "XREVRANGE", stream_key, "+", "-", "COUNT", "1"])
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {
                 "status": "degraded",
-                "stream": EVENTS_STREAM_KEY,
+                "stream": stream_key,
                 "error": str(exc),
                 "last_id": last_id,
                 "requested_count": requested,
@@ -747,13 +753,29 @@ def read_events(last_id: str | None = None, *, count: int = 100, limit: int | No
                 }
     return {
         "status": "ok",
-        "stream": EVENTS_STREAM_KEY,
+        "stream": stream_key,
         "count": len(events),
         "requested_count": requested,
         "last_id": last_id,
         "events": events,
         "next_last_id": events[-1]["id"] if events else (last_id or ""),
     }
+
+
+def read_events(last_id: str | None = None, *, count: int = 100, limit: int | None = None) -> dict[str, Any]:
+    return read_redis_stream(EVENTS_STREAM_KEY, last_id, count=count, limit=limit)
+
+
+def read_monitor_intervention_events(
+    last_id: str | None = None,
+    *,
+    count: int = 100,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    payload = read_redis_stream(MONITOR_INTERVENTIONS_STREAM_KEY, last_id, count=count, limit=limit)
+    payload["kind"] = "monitor_intervention_events"
+    payload["schema"] = "a9.monitor_intervention_events.v1"
+    return payload
 
 
 def event_replay_reset_decision(response: dict[str, Any]) -> dict[str, Any]:
@@ -3043,6 +3065,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_status": "/api/monitor/status",
             "monitor_intervention": "/api/monitor/intervention",
             "monitor_intervention_audit": "/api/monitor/interventions/audit",
+            "monitor_intervention_events": "/api/monitor/interventions/events",
             "monitor_intervention_examples": "/api/monitor/intervention/examples",
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
@@ -7205,6 +7228,25 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, monitor_status())
             elif parsed.path == "/api/monitor/intervention/examples":
                 self.write_json(200, monitor_intervention_examples())
+            elif parsed.path == "/api/monitor/interventions/events":
+                last_id = _resolve_event_last_id(query.get("last_id", [None])[0], self.headers.get("Last-Event-ID"))
+                try:
+                    limit = int(query.get("limit", query.get("count", ["100"]))[0])
+                except ValueError:
+                    self.write_json(
+                        400,
+                        {
+                            "status": "invalid_request",
+                            "kind": "monitor_intervention_events",
+                            "error": "limit must be integer",
+                        },
+                    )
+                    return
+                payload = read_monitor_intervention_events(last_id, limit=limit)
+                if str(query.get("format", ["json"])[0]).lower() == "sse":
+                    self.write_sse(200, payload)
+                else:
+                    self.write_json(200, payload)
             elif parsed.path == "/api/monitor/interventions/audit":
                 try:
                     limit = int(query.get("limit", ["20"])[0])

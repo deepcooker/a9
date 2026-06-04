@@ -2976,6 +2976,107 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["reason"], "redis_unavailable")
         self.assertEqual(result["stream"], "a9:monitor:interventions")
 
+    def test_read_monitor_intervention_events_uses_monitor_stream(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeProc:
+            returncode = 0
+            stdout = "1740000010-0\nintervention_id\nmonitor-1\naction\npause\n"
+
+        original_redis = mod.redis_cli
+        try:
+            def fake_redis(args, *, timeout=2):
+                calls.append(args)
+                return FakeProc()
+
+            mod.redis_cli = fake_redis
+            payload = mod.read_monitor_intervention_events("1740000009-0", limit=2)
+        finally:
+            mod.redis_cli = original_redis
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["kind"], "monitor_intervention_events")
+        self.assertEqual(payload["stream"], "a9:monitor:interventions")
+        self.assertEqual(payload["events"][0]["fields"]["intervention_id"], "monitor-1")
+        self.assertEqual(calls[0][:3], ["--raw", "XRANGE", "a9:monitor:interventions"])
+
+    def test_api_monitor_intervention_events_get_endpoint_returns_json(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+        calls = []
+        original_reader = mod.read_monitor_intervention_events
+
+        class DummyMonitorInterventionEventsGetHandler:
+            path = "/api/monitor/interventions/events?limit=3&last_id=1740000001-0"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used without format=sse")
+
+        try:
+            def fake_reader(last_id, limit=100):
+                calls.append((last_id, limit))
+                return {
+                    "status": "ok",
+                    "kind": "monitor_intervention_events",
+                    "stream": "a9:monitor:interventions",
+                    "events": [{"id": "1740000002-0", "fields": {"action": "pause"}}],
+                    "next_last_id": "1740000002-0",
+                }
+
+            mod.read_monitor_intervention_events = fake_reader
+            mod.ControlHandler.do_GET(DummyMonitorInterventionEventsGetHandler())
+        finally:
+            mod.read_monitor_intervention_events = original_reader
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "monitor_intervention_events")
+        self.assertEqual(calls, [("1740000001-0", 3)])
+
+    def test_api_monitor_intervention_events_sse_uses_last_event_id_header(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None, "content_type": None}
+        calls = []
+        original_reader = mod.read_monitor_intervention_events
+
+        class DummyMonitorInterventionEventsSSEGetHandler:
+            path = "/api/monitor/interventions/events?format=sse&limit=2"
+            headers = {"Last-Event-ID": "1740000010-0"}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+                captured["content_type"] = "text/event-stream"
+
+        try:
+            def fake_reader(last_id, limit=100):
+                calls.append((last_id, limit))
+                return {
+                    "status": "ok",
+                    "kind": "monitor_intervention_events",
+                    "stream": "a9:monitor:interventions",
+                    "events": [],
+                    "next_last_id": last_id,
+                }
+
+            mod.read_monitor_intervention_events = fake_reader
+            mod.ControlHandler.do_GET(DummyMonitorInterventionEventsSSEGetHandler())
+        finally:
+            mod.read_monitor_intervention_events = original_reader
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["content_type"], "text/event-stream")
+        self.assertEqual(calls, [("1740000010-0", 2)])
+
     def test_api_monitor_intervention_post_route_calls_handler(self):
         mod = load_control_api()
         original_monitor_intervention = mod.monitor_intervention
@@ -9085,6 +9186,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["monitor_status"], "/api/monitor/status")
         self.assertEqual(discovery["endpoints"]["monitor_intervention"], "/api/monitor/intervention")
         self.assertEqual(discovery["endpoints"]["monitor_intervention_audit"], "/api/monitor/interventions/audit")
+        self.assertEqual(discovery["endpoints"]["monitor_intervention_events"], "/api/monitor/interventions/events")
         self.assertEqual(discovery["endpoints"]["monitor_intervention_examples"], "/api/monitor/intervention/examples")
         self.assertEqual(
             discovery["endpoints"]["communication_data_contract_report"], "/api/communication/data-contract-report"
