@@ -2530,6 +2530,101 @@ Do the work.
 
         self.assertEqual(worker["return_code"], 0)
 
+    def test_run_worker_stops_on_transport_exhausted_event(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="transport-exhausted",
+                prompt="Run one bounded command.",
+                timeout_seconds=30,
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import json, time; "
+                    "print(json.dumps({'type':'error','message':'Reconnecting... 5/5 "
+                    "(timeout waiting for child process to exit)'}), flush=True); "
+                    "time.sleep(30)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                worker = mod.run_worker(task, worktree, run_dir)
+
+            failure = mod.classify_worker_failure(worker)
+
+            self.assertTrue(worker["transport_stopped"])
+            self.assertIn("worker transport exhausted", worker["transport_reason"])
+            self.assertFalse(worker["timed_out"])
+            self.assertFalse(worker["idle_timed_out"])
+            self.assertEqual(worker["event_counts"], {"error": 1})
+            self.assertEqual(failure["status"], "retryable-worker-transport")
+            self.assertEqual(failure["category"], "transport")
+
+    def test_run_worker_stops_on_transport_exhausted_stderr(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="transport-exhausted-stderr",
+                prompt="Run one bounded command.",
+                timeout_seconds=30,
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import sys, time; "
+                    "print('2026-06-04T14:24:18Z ERROR codex_models_manager::manager: "
+                    "failed to refresh available models: timeout waiting for child process to exit', "
+                    "file=sys.stderr, flush=True); "
+                    "time.sleep(30)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                worker = mod.run_worker(task, worktree, run_dir)
+
+            failure = mod.classify_worker_failure(worker)
+
+            self.assertTrue(worker["transport_stopped"])
+            self.assertIn("failed to refresh available models", worker["transport_reason"])
+            self.assertEqual(worker["event_count"], 0)
+            self.assertEqual(failure["status"], "retryable-worker-transport")
+            self.assertEqual(failure["category"], "transport")
+
     def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

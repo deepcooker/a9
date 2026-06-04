@@ -296,6 +296,10 @@ WORKER_TRANSPORT_OBSERVATION_PATTERNS = [
     re.compile(r"\bexec_command failed\b", re.I),
     re.compile(r"\brmcp::transport::worker\b", re.I),
 ]
+WORKER_TRANSPORT_EXHAUSTED_PATTERNS = [
+    re.compile(r"\bReconnecting\.\.\.\s*5/5\b.*\btimeout waiting for child process to exit\b", re.I | re.S),
+    re.compile(r"\bfailed to refresh available models:\s*timeout waiting for child process to exit\b", re.I),
+]
 
 
 def utc_now() -> str:
@@ -1767,6 +1771,36 @@ def resolved_worker_model(task: Task) -> tuple[str, str]:
     return DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"
 
 
+def worker_transport_exhausted_reason(payload: dict[str, Any]) -> str:
+    return worker_transport_exhausted_text_reason(json_compact(payload))
+
+
+def worker_transport_exhausted_text_reason(text: str) -> str:
+    for pattern in WORKER_TRANSPORT_EXHAUSTED_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return f"worker transport exhausted: {bounded_inline(match.group(0), 240)}"
+    return ""
+
+
+def worker_transport_exhausted_stderr_reason(path: Path, *, limit: int = 12000) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8", errors="backslashreplace")
+    if len(text) > limit:
+        text = text[-limit:]
+    return worker_transport_exhausted_text_reason(text)
+
+
+def kill_process_if_still_running(proc: subprocess.Popen[str], *, grace_seconds: float = 0.05) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        proc.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
 def prepare_worker_codex_home() -> None:
     """Give nested Codex workers a writable home inside ignored A9 state."""
     ensure_dirs()
@@ -2129,6 +2163,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     budget_stopped = False
     budget_reason = ""
     budget_stop_kind = ""
+    transport_stopped = False
+    transport_reason = ""
     event_count = 0
     event_bytes = 0
     max_events = worker_budget_limit("A9_WORKER_MAX_EVENTS", DEFAULT_MAX_WORKER_EVENTS)
@@ -2161,6 +2197,13 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                 proc.kill()
                 break
 
+            stderr_exhausted_reason = worker_transport_exhausted_stderr_reason(stderr_path)
+            if stderr_exhausted_reason:
+                transport_stopped = True
+                transport_reason = stderr_exhausted_reason
+                kill_process_if_still_running(proc)
+                break
+
             ready, _, _ = select.select([proc.stdout], [], [], 1.0)
             if ready:
                 line = proc.stdout.readline()
@@ -2176,6 +2219,12 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                     event_type = payload.get("type") or payload.get("event") or payload.get("msg", {}).get("type")
                     if event_type:
                         event_counts[str(event_type)] = event_counts.get(str(event_type), 0) + 1
+                    exhausted_reason = worker_transport_exhausted_reason(payload)
+                    if exhausted_reason:
+                        transport_stopped = True
+                        transport_reason = exhausted_reason
+                        kill_process_if_still_running(proc)
+                        break
                     event_summary = summarize_thread_event(payload)
                     if event_summary:
                         fingerprint = json_compact(event_summary)
@@ -2213,8 +2262,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             budget_stopped = True
                             budget_stop_kind = "event_count"
                             budget_reason = reason
-                            if proc.poll() is None:
-                                proc.kill()
+                            kill_process_if_still_running(proc)
                             break
                         if not observed_event_count_budget:
                             observed_event_count_budget = True
@@ -2233,8 +2281,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             budget_stopped = True
                             budget_stop_kind = "event_bytes"
                             budget_reason = reason
-                            if proc.poll() is None:
-                                proc.kill()
+                            kill_process_if_still_running(proc)
                             break
                         if not observed_event_bytes_budget:
                             observed_event_bytes_budget = True
@@ -2274,6 +2321,8 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "budget_stopped": budget_stopped,
         "budget_stop_kind": budget_stop_kind,
         "budget_reason": budget_reason,
+        "transport_stopped": transport_stopped,
+        "transport_reason": transport_reason,
         "event_count": event_count,
         "event_bytes": event_bytes,
         "event_budget": {
@@ -6291,7 +6340,7 @@ def read_text_if_exists(path: Path, limit: int = 4000) -> str:
 
 def worker_failure_text(worker: dict[str, Any], limit: int = 12000) -> str:
     parts: list[str] = []
-    for key in ("budget_reason",):
+    for key in ("budget_reason", "transport_reason"):
         if worker.get(key):
             parts.append(str(worker[key]))
     for key in ("event_summaries_path", "stderr_path", "final_path"):
@@ -6335,6 +6384,13 @@ def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
             "reason": "prompt-declared reference paths missing from worker worktree",
             "matched_pattern": "reference_gate_missing",
             "missing_paths": reference_gate.get("missing_paths", []),
+        }
+    if worker.get("transport_stopped"):
+        return {
+            "status": "retryable-worker-transport",
+            "category": "transport",
+            "reason": worker.get("transport_reason", "worker transport exhausted"),
+            "matched_pattern": "transport_exhausted",
         }
     if worker.get("budget_stopped"):
         if worker.get("budget_stop_kind") == "command_bounds":

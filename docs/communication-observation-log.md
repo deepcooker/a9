@@ -2183,3 +2183,34 @@ Next monitoring target:
      If the task-shaping packet is not closed, the 24-hour machine will obey
      governance correctly but make no progress. This is the right failure
      mode, and the fix belongs in task formation, not in weakening gates.
+
+99. Worker transport exhaustion now releases the 24-hour running slot quickly.
+   - Trigger:
+     after repair task shaping was fixed, a real monitor repair smoke queued a
+     correctly decided `operator-repair-*` task. The worker entered
+     `execution_next`, but nested Codex emitted `Reconnecting... 5/5 (timeout
+     waiting for child process to exit)` and stderr reported `failed to refresh
+     available models: timeout waiting for child process to exit`. The task
+     shape was no longer the problem; the worker transport could hold the
+     running slot until the broader idle timeout.
+   - Change:
+     `scripts/a9_supervisor.py` now detects transport-exhausted worker events
+     in both the JSON event stream and the stderr side channel, stops the
+     subprocess with a short grace period, and returns `transport_stopped` /
+     `transport_reason`. Worker failure classification reports
+     `retryable-worker-transport` with category `transport`, separate from
+     token/event budget and command-boundary governance. The same short grace
+     helper is used for event-budget enforce stops so workers that already
+     naturally exited are not misreported as killed.
+   - Verification:
+     `python3 -m py_compile scripts/a9_supervisor.py` passed. Targeted tests
+     passed for transport-exhausted event stop, transport-exhausted stderr
+     stop, event-budget enforce accounting, and monitor repair task shaping.
+     Full `python3 -m unittest tests.test_supervisor` passed with 330 tests.
+   - Governance lesson:
+     this is transport failure governance, not a new quality gate. The worker
+     should not be allowed to block 24-hour execution after the underlying
+     Codex transport has already declared reconnect exhaustion. The right
+     action is to preserve evidence, classify the failure as retryable
+     transport, and let the monitor/supervisor continue repair or model-policy
+     decisions.
