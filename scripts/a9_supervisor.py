@@ -790,6 +790,61 @@ def interrupt_running_task(
     if str(run_dir):
         run_dir.mkdir(parents=True, exist_ok=True)
         write_json(run_dir / "orphaned_interruption.json", interrupted)
+        status = "retryable-worker-interrupted"
+        summary = {
+            **lease,
+            "finished_at": utc_now(),
+            "status": status,
+            "phase": lease.get("phase", ""),
+            "task_path": str(task_md),
+            "worker": {
+                "return_code": None,
+                "timed_out": False,
+                "idle_timed_out": False,
+                "transport_stopped": False,
+                "event_count": 0,
+                "event_bytes": 0,
+                "stderr_path": str(run_dir / "stderr.log"),
+                "events_path": str(run_dir / "events.jsonl"),
+            },
+            "worker_failure": {
+                "status": status,
+                "category": "interrupted",
+                "reason": reason,
+                "matched_pattern": "orphaned_running_task",
+            },
+            "checks": [],
+            "guard_summary": {},
+            "context_pressure": {},
+            "interrupted": interrupted,
+            "persistence": {"mysql": {"status": "skipped"}, "redis": {"status": "skipped"}},
+        }
+        write_json(run_dir / "summary.json", summary)
+        write_json(
+            run_dir / "state.json",
+            {
+                "schema": "a9.run_state.v1",
+                "task_id": task_id,
+                "status": status,
+                "checkpoint_id": f"{task_id}:interrupted:{suffix}",
+                "interrupted": interrupted,
+            },
+        )
+        with (run_dir / "evidence.jsonl").open("a", encoding="utf-8") as evidence_file:
+            evidence_file.write(
+                json.dumps(
+                    {
+                        "schema": "a9.evidence.v1",
+                        "kind": "orphaned_interruption",
+                        "task_id": task_id,
+                        "status": status,
+                        "reason": reason,
+                        "interrupted_at": interrupted["interrupted_at"],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
     return {"task_id": task_id, "status": "interrupted", "reason": reason, "target_json": str(target_json)}
 
 

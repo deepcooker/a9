@@ -152,6 +152,14 @@ Do the work.
                 interruption = json.loads((run_dir / "orphaned_interruption.json").read_text(encoding="utf-8"))
                 self.assertEqual(interruption["status"], "interrupted")
                 self.assertEqual(interruption["interrupt_reason"], "no_live_worker_process")
+                summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+                self.assertEqual(summary["status"], "retryable-worker-interrupted")
+                self.assertEqual(summary["worker_failure"]["category"], "interrupted")
+                self.assertEqual(summary["worker_failure"]["reason"], "no_live_worker_process")
+                state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
+                self.assertEqual(state["status"], "retryable-worker-interrupted")
+                evidence_text = (run_dir / "evidence.jsonl").read_text(encoding="utf-8")
+                self.assertIn("orphaned_interruption", evidence_text)
             finally:
                 mod.RUNNING_DIR = old_running
                 mod.INTERRUPTED_DIR = old_interrupted

@@ -2262,3 +2262,27 @@ Next monitoring target:
      model policy is part of runtime observability. The monitor should not have
      to infer model routing from old docs, stale session memory, or command
      scrollback.
+
+102. Real 24-hour smoke exposed orphaned-interruption visibility.
+   - Trigger:
+     a live queued record task was consumed by `a9-supervisor-loop`. The first
+     run used the default Spark model and failed before reasoning with
+     `retryable-worker-transport`; the new transport exhaustion handling made
+     this visible quickly with zero token usage. A retry with
+     `A9_SUPERVISOR_PHASE_MODEL_RECORD=gpt-5.5` avoided the Spark model policy
+     path but the nested Node/Codex process crashed during startup/teardown
+     before producing a final worker summary.
+   - Change:
+     orphaned running-task reconciliation now writes a minimal `summary.json`,
+     `state.json`, and `evidence.jsonl` beside `orphaned_interruption.json`.
+     The summary uses `retryable-worker-interrupted` and
+     `worker_failure.category=interrupted`, so monitor/control surfaces can see
+     the latest failed run instead of silently showing an older summary.
+   - Verification:
+     targeted supervisor tests cover summary/state/evidence creation during
+     orphaned running-task reconciliation.
+   - Governance lesson:
+     automatic execution is blocked less by business logic now and more by
+     runtime failure observability. Every lease-ending path must leave a
+     monitor-visible summary, even when the worker crashes before emitting
+     events or final output.
