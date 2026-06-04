@@ -1910,6 +1910,86 @@ Do the work.
         self.assertEqual(commit["next_tasks"][0]["text"], "build deterministic memory commit writer")
         self.assertEqual(commit["evidence_paths"]["execution_chain_path"], str(execution_chain))
 
+    def test_runtime_monitor_contract_exposes_worker_monitor_and_command_contract(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            task_path = run_dir / "task.md"
+            task_path.write_text("Read reference-projects/codex/README.md and implement contract.\n", encoding="utf-8")
+            task = mod.Task(
+                path=task_path,
+                task_id="runtime-contract-test",
+                phase="implement",
+                prompt="Read reference-projects/codex/README.md and implement contract.",
+                checks=["python3 -m py_compile scripts/a9_supervisor.py"],
+                allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            )
+            summary = {
+                "task_id": task.task_id,
+                "attempt": 1,
+                "run_dir": str(run_dir),
+                "worktree": str(run_dir),
+                "status": "pass",
+                "phase": "implement",
+                "started_at": "2026-06-04T00:00:00+00:00",
+                "finished_at": "2026-06-04T00:01:00+00:00",
+                "worker": {
+                    "worker_model": "gpt-5.3-codex-spark",
+                    "worker_model_source": "default",
+                    "return_code": 0,
+                    "timed_out": False,
+                    "idle_timed_out": False,
+                    "event_count": 2,
+                    "event_bytes": 200,
+                    "raw_task_path": str(run_dir / "raw_task.md"),
+                    "events_path": str(run_dir / "events.jsonl"),
+                    "event_summaries_path": str(run_dir / "event_summaries.jsonl"),
+                    "final_path": str(run_dir / "final.md"),
+                    "prompt_approx_tokens": 120,
+                    "prompt_budget_tokens": 24000,
+                    "prompt_section_budgets": {"task": 4000},
+                    "context_router": {"strategy": "test"},
+                    "reference_gate": {"status": "pass", "output_path": str(run_dir / "reference_gate.json")},
+                },
+                "worker_envelope": {"status": "pass", "output_path": str(run_dir / "worker_envelope.json")},
+                "patch_apply": {"status": "skip"},
+                "diff": {
+                    "changed_files": ["scripts/a9_supervisor.py"],
+                    "diff_path": str(run_dir / "patch.diff"),
+                    "diff_bytes": 12,
+                },
+                "patch_guard": {"status": "pass"},
+                "scope_guard": {"status": "pass"},
+                "checks": [{"command": "python3 -m py_compile scripts/a9_supervisor.py", "return_code": 0}],
+                "monitor_score": {
+                    "decision_model": "requirements_review_council_v1",
+                    "recommended_action": "continue",
+                    "score": 0.88,
+                    "output_path": str(run_dir / "monitor_score.json"),
+                },
+                "monitor_block": {"blocked": False},
+                "policy_attestation": {"attestation_hash": "abc"},
+                "context_pressure": {"prompt_approx_tokens": 120, "prompt_budget_tokens": 24000},
+                "execution_chain_path": str(run_dir / "execution_chain.json"),
+                "evidence_path": str(run_dir / "evidence.jsonl"),
+                "state_path": str(run_dir / "state.json"),
+                "deep_marks_path": str(run_dir / "deep_marks.jsonl"),
+                "context_path": str(run_dir / "context.md"),
+            }
+
+            path = mod.write_runtime_monitor_contract_artifact(task, run_dir, summary)
+            contract = json.loads(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(summary["runtime_monitor_contract_path"], str(path))
+        self.assertEqual(contract["schema"], "a9.runtime_monitor_contract.v1")
+        self.assertEqual(contract["task"]["route"], "execution_next")
+        self.assertEqual(contract["worker_intent"]["status"], "visible")
+        self.assertEqual(contract["command_envelope"]["command_id"], "runtime-contract-test")
+        self.assertEqual(contract["command_envelope"]["idempotency_key"], "runtime-contract-test:1")
+        self.assertEqual(contract["monitor"]["next_action"], "continue")
+        self.assertTrue(contract["guardrails"]["page_details_frozen"])
+        self.assertTrue(contract["guardrails"]["no_nzx_business_code"])
+
     def test_eval_store_record_persists_failed_expert_samples_and_index(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

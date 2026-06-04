@@ -4183,6 +4183,184 @@ def write_execution_chain_artifact(task: Task, run_dir: Path, summary: dict[str,
     return output_path
 
 
+def runtime_monitor_action(summary: dict[str, Any]) -> str:
+    status = str(summary.get("status") or "")
+    monitor_block = summary.get("monitor_block", {}) if isinstance(summary.get("monitor_block"), dict) else {}
+    worker_failure = summary.get("worker_failure", {}) if isinstance(summary.get("worker_failure"), dict) else {}
+    if monitor_block.get("blocked"):
+        return "repair"
+    if status in {"needs-repair", "monitor-blocked"}:
+        return "repair"
+    if status == "needs-approval":
+        return "approve_or_reject"
+    if status.startswith("retryable-") or worker_failure.get("status"):
+        return "repair"
+    if status == "pass":
+        return "continue"
+    return "route_to_debate"
+
+
+def build_runtime_monitor_contract(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+    context_pressure = summary.get("context_pressure") or compact_context_pressure(summary)
+    execution_chain_path = str(summary.get("execution_chain_path") or run_dir / "execution_chain.json")
+    evidence_path = str(summary.get("evidence_path") or run_dir / "evidence.jsonl")
+    state_path = str(summary.get("state_path") or run_dir / "state.json")
+    deep_marks_path = str(summary.get("deep_marks_path") or run_dir / "deep_marks.jsonl")
+    worker_prompt_path = str(run_dir / "prompt.md")
+    raw_task_path = str(worker.get("raw_task_path") or run_dir / "raw_task.md")
+    monitor_score = summary.get("monitor_score", {}) if isinstance(summary.get("monitor_score"), dict) else {}
+    monitor_block = summary.get("monitor_block", {}) if isinstance(summary.get("monitor_block"), dict) else {}
+    worker_envelope = summary.get("worker_envelope", {}) if isinstance(summary.get("worker_envelope"), dict) else {}
+    patch_apply = summary.get("patch_apply", {}) if isinstance(summary.get("patch_apply"), dict) else {}
+    diff = summary.get("diff", {}) if isinstance(summary.get("diff"), dict) else {}
+    checks = summary.get("checks", []) if isinstance(summary.get("checks"), list) else []
+    failed_checks = [item for item in checks if isinstance(item, dict) and item.get("return_code") != 0]
+    reference_gate = worker.get("reference_gate", {}) if isinstance(worker.get("reference_gate"), dict) else {}
+    command_envelope = {
+        "status": "derived_from_task",
+        "command_id": summary.get("task_id") or task.task_id,
+        "target_node": "local-supervisor",
+        "expected_revision": summary.get("attempt"),
+        "ttl": task.timeout_seconds,
+        "created_by": "a9_supervisor",
+        "policy_attestation": summary.get("policy_attestation", {}),
+        "idempotency_key": f"{task.task_id}:{summary.get('attempt', 1)}",
+        "evidence_path": evidence_path,
+    }
+    return {
+        "schema": "a9.runtime_monitor_contract.v1",
+        "task": {
+            "task_id": task.task_id,
+            "task_path": str(task.path),
+            "phase": task.phase,
+            "route": "execution_next" if task.phase in AI_WORKER_PHASES else task.phase,
+            "plan_revision": summary.get("flow_transition", {}).get("revision")
+            if isinstance(summary.get("flow_transition"), dict)
+            else "",
+            "allowed_paths": task.allowed_paths,
+            "declared_checks": task.checks,
+            "timeout_seconds": task.timeout_seconds,
+            "idle_timeout_seconds": task.idle_timeout_seconds,
+            "max_attempts": task.max_attempts,
+        },
+        "run": {
+            "run_id": Path(str(summary.get("run_dir") or run_dir)).name,
+            "run_dir": str(summary.get("run_dir") or run_dir),
+            "attempt": summary.get("attempt"),
+            "status": summary.get("status"),
+            "started_at": summary.get("started_at"),
+            "finished_at": summary.get("finished_at"),
+            "worktree": summary.get("worktree", ""),
+        },
+        "worker_intent": {
+            "status": "visible",
+            "phase_focus": PHASE_FOCUS.get(task.phase, ""),
+            "prompt_preview": truncate_to_token_budget(task.prompt, 700, keep="head"),
+            "reference_gate_status": reference_gate.get("status"),
+            "reference_gate_output_path": reference_gate.get("output_path"),
+        },
+        "worker_prompt": {
+            "prompt_path": worker_prompt_path,
+            "raw_task_path": raw_task_path,
+            "prompt_approx_tokens": worker.get("prompt_approx_tokens"),
+            "prompt_budget_tokens": worker.get("prompt_budget_tokens"),
+            "section_budgets": worker.get("prompt_section_budgets", {}),
+            "context_router": worker.get("context_router", {}),
+        },
+        "reference_slices": {
+            "declared_reference_paths": prompt_reference_paths(task.prompt),
+            "reference_gate": reference_gate,
+        },
+        "command_envelope": command_envelope,
+        "execution": {
+            "worker_model": worker.get("worker_model"),
+            "worker_model_source": worker.get("worker_model_source"),
+            "return_code": worker.get("return_code"),
+            "timed_out": worker.get("timed_out", False),
+            "idle_timed_out": worker.get("idle_timed_out", False),
+            "event_count": worker.get("event_count", 0),
+            "event_bytes": worker.get("event_bytes", 0),
+            "budget_stopped": worker.get("budget_stopped", False),
+            "budget_reason": worker.get("budget_reason", ""),
+        },
+        "diff_and_checks": {
+            "changed_files": diff.get("changed_files", []),
+            "diff_path": diff.get("diff_path", ""),
+            "diff_bytes": diff.get("diff_bytes", 0),
+            "patch_apply_status": patch_apply.get("status"),
+            "patch_guard_status": summary.get("patch_guard", {}).get("status")
+            if isinstance(summary.get("patch_guard"), dict)
+            else None,
+            "scope_guard_status": summary.get("scope_guard", {}).get("status")
+            if isinstance(summary.get("scope_guard"), dict)
+            else None,
+            "checks_count": len(checks),
+            "failed_checks_count": len(failed_checks),
+            "failed_checks": failed_checks[:10],
+        },
+        "monitor": {
+            "score": monitor_score.get("score"),
+            "decision_model": monitor_score.get("decision_model"),
+            "recommended_action": monitor_score.get("recommended_action"),
+            "block": monitor_block,
+            "next_action": runtime_monitor_action(summary),
+            "intervention_options": [
+                "pause",
+                "resume",
+                "repair",
+                "change_request",
+                "approve",
+                "reject",
+                "rollback_request",
+                "route_to_debate",
+            ],
+        },
+        "context_pressure": context_pressure,
+        "session_links": {
+            "operator_session": "external_session_link_pending",
+            "previous_context_path": worker.get("previous_context_path", ""),
+            "context_path": summary.get("context_path", ""),
+        },
+        "evidence_refs": {
+            "summary_path": str(run_dir / "summary.json"),
+            "runtime_monitor_contract_path": str(run_dir / "runtime_monitor_contract.json"),
+            "execution_chain_path": execution_chain_path,
+            "evidence_path": evidence_path,
+            "state_path": state_path,
+            "deep_marks_path": deep_marks_path,
+            "events_path": worker.get("events_path", ""),
+            "event_summaries_path": worker.get("event_summaries_path", ""),
+            "final_path": worker.get("final_path", ""),
+            "worker_envelope_path": worker_envelope.get("output_path", ""),
+            "monitor_score_path": monitor_score.get("output_path", ""),
+        },
+        "guardrails": {
+            "page_details_frozen": True,
+            "no_nzx_business_code": True,
+            "no_compute_rwa": True,
+            "no_broad_workspace_migration": True,
+            "no_source_vendor_copy": True,
+        },
+    }
+
+
+def write_runtime_monitor_contract_artifact(task: Task, run_dir: Path, summary: dict[str, Any]) -> Path:
+    output_path = run_dir / "runtime_monitor_contract.json"
+    contract = build_runtime_monitor_contract(task, run_dir, summary)
+    write_json(output_path, contract)
+    summary["runtime_monitor_contract_path"] = str(output_path)
+    summary["runtime_monitor_contract"] = {
+        "schema": contract["schema"],
+        "task": contract["task"],
+        "run": contract["run"],
+        "monitor": contract["monitor"],
+        "evidence_refs": contract["evidence_refs"],
+        "guardrails": contract["guardrails"],
+    }
+    return output_path
+
+
 def monitor_findings(summary: dict[str, Any]) -> list[dict[str, Any]]:
     monitor_score = summary.get("monitor_score", {})
     findings = monitor_score.get("findings", []) if isinstance(monitor_score, dict) else []
@@ -6265,8 +6443,9 @@ EXECUTION_DECISION_REQUIRED_FIELDS = (
 )
 
 
-def decision_required_fields_for_task(task: Task) -> tuple[str, ...]:
-    if task.phase in {"test", "repair"}:
+def decision_required_fields_for_task(task: Task, fields: dict[str, str] | None = None) -> tuple[str, ...]:
+    fields = fields or {}
+    if task.phase in {"test", "repair"} and "decision_status" in fields:
         return ("decision_status",)
     return EXECUTION_DECISION_REQUIRED_FIELDS
 
@@ -6274,7 +6453,7 @@ def decision_required_fields_for_task(task: Task) -> tuple[str, ...]:
 def task_decision_packet(task: Task) -> dict[str, Any]:
     fields = parse_leading_key_value_prompt(task.prompt)
     decision_status = str(fields.get("decision_status", "")).strip().lower()
-    required_fields = decision_required_fields_for_task(task)
+    required_fields = decision_required_fields_for_task(task, fields)
     missing = [name for name in required_fields if not str(fields.get(name, "")).strip()]
     decided = decision_status in DECIDED_STATUS_VALUES and not missing
     if decided:
@@ -9298,6 +9477,7 @@ def run_one(*, auto_next: bool = False) -> int:
         summary["evidence_path"] = str(evidence_path)
         summary["state_path"] = str(state_path)
         summary["deep_marks_path"] = str(deep_marks_path)
+        write_runtime_monitor_contract_artifact(task, run_dir, summary)
         summary["persistence"] = persist_run_state(task, summary, evidence, state, deep_marks)
         task_flow = parse_task_flow_spec(task.prompt)
         if status == "needs-approval":

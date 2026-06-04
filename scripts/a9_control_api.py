@@ -920,6 +920,85 @@ def latest_run_summary(root: Path = ROOT) -> dict[str, Any] | None:
     return read_json(summaries[-1])
 
 
+def compact_runtime_monitor_contract(contract: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(contract, dict):
+        return {}
+    task = contract.get("task", {}) if isinstance(contract.get("task"), dict) else {}
+    run = contract.get("run", {}) if isinstance(contract.get("run"), dict) else {}
+    monitor = contract.get("monitor", {}) if isinstance(contract.get("monitor"), dict) else {}
+    command_envelope = contract.get("command_envelope", {}) if isinstance(contract.get("command_envelope"), dict) else {}
+    evidence_refs = contract.get("evidence_refs", {}) if isinstance(contract.get("evidence_refs"), dict) else {}
+    guardrails = contract.get("guardrails", {}) if isinstance(contract.get("guardrails"), dict) else {}
+    worker_intent = contract.get("worker_intent", {}) if isinstance(contract.get("worker_intent"), dict) else {}
+    worker_prompt = contract.get("worker_prompt", {}) if isinstance(contract.get("worker_prompt"), dict) else {}
+    diff_and_checks = contract.get("diff_and_checks", {}) if isinstance(contract.get("diff_and_checks"), dict) else {}
+    execution = contract.get("execution", {}) if isinstance(contract.get("execution"), dict) else {}
+    return {
+        "schema": contract.get("schema"),
+        "task": {
+            "task_id": task.get("task_id"),
+            "phase": task.get("phase"),
+            "route": task.get("route"),
+            "plan_revision": task.get("plan_revision"),
+            "allowed_paths": task.get("allowed_paths", []),
+            "declared_checks": task.get("declared_checks", []),
+        },
+        "run": {
+            "run_id": run.get("run_id"),
+            "status": run.get("status"),
+            "attempt": run.get("attempt"),
+            "run_dir": run.get("run_dir"),
+        },
+        "worker_intent": {
+            "status": worker_intent.get("status"),
+            "phase_focus": worker_intent.get("phase_focus"),
+            "reference_gate_status": worker_intent.get("reference_gate_status"),
+        },
+        "worker_prompt": {
+            "prompt_path": worker_prompt.get("prompt_path"),
+            "raw_task_path": worker_prompt.get("raw_task_path"),
+            "prompt_approx_tokens": worker_prompt.get("prompt_approx_tokens"),
+            "prompt_budget_tokens": worker_prompt.get("prompt_budget_tokens"),
+        },
+        "command_envelope": {
+            "command_id": command_envelope.get("command_id"),
+            "target_node": command_envelope.get("target_node"),
+            "expected_revision": command_envelope.get("expected_revision"),
+            "idempotency_key": command_envelope.get("idempotency_key"),
+            "evidence_path": command_envelope.get("evidence_path"),
+        },
+        "execution": {
+            "worker_model": execution.get("worker_model"),
+            "return_code": execution.get("return_code"),
+            "timed_out": execution.get("timed_out"),
+            "idle_timed_out": execution.get("idle_timed_out"),
+            "budget_stopped": execution.get("budget_stopped"),
+        },
+        "diff_and_checks": {
+            "changed_files": diff_and_checks.get("changed_files", []),
+            "checks_count": diff_and_checks.get("checks_count"),
+            "failed_checks_count": diff_and_checks.get("failed_checks_count"),
+            "diff_path": diff_and_checks.get("diff_path"),
+        },
+        "monitor": {
+            "next_action": monitor.get("next_action"),
+            "recommended_action": monitor.get("recommended_action"),
+            "decision_model": monitor.get("decision_model"),
+            "score": monitor.get("score"),
+            "intervention_options": monitor.get("intervention_options", []),
+            "block": monitor.get("block", {}),
+        },
+        "evidence_refs": {
+            "runtime_monitor_contract_path": evidence_refs.get("runtime_monitor_contract_path"),
+            "summary_path": evidence_refs.get("summary_path"),
+            "execution_chain_path": evidence_refs.get("execution_chain_path"),
+            "evidence_path": evidence_refs.get("evidence_path"),
+            "state_path": evidence_refs.get("state_path"),
+        },
+        "guardrails": guardrails,
+    }
+
+
 def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
     if not summary:
         return None
@@ -932,6 +1011,7 @@ def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
     router_sections = router.get("sections", [])
     section_count = len(router_sections) if isinstance(router_sections, list) else 0
     monitor_score = summary.get("monitor_score", {})
+    runtime_monitor_contract = compact_runtime_monitor_contract(summary.get("runtime_monitor_contract"))
     return {
         "task_id": summary.get("task_id"),
         "status": summary.get("status"),
@@ -961,6 +1041,7 @@ def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
             "gates": monitor_score.get("gates", {}),
             "findings": monitor_score.get("findings", []),
         },
+        "runtime_monitor_contract": runtime_monitor_contract,
         "context_pressure": context_pressure,
         "context_router": {
             "strategy": router.get("strategy"),

@@ -79,6 +79,70 @@ class ControlApiTests(unittest.TestCase):
                 ],
             },
             "context_pressure": {"budget_ratio": 0.25},
+            "runtime_monitor_contract": {
+                "schema": "a9.runtime_monitor_contract.v1",
+                "task": {
+                    "task_id": "task-1",
+                    "phase": "implement",
+                    "route": "execution_next",
+                    "plan_revision": 3,
+                    "allowed_paths": ["scripts/"],
+                    "declared_checks": ["python3 -m py_compile scripts/a9_supervisor.py"],
+                },
+                "run": {
+                    "run_id": "run-1",
+                    "status": "pass",
+                    "attempt": 1,
+                    "run_dir": "/tmp/run",
+                },
+                "worker_intent": {
+                    "status": "visible",
+                    "phase_focus": "Implement",
+                    "reference_gate_status": "pass",
+                },
+                "worker_prompt": {
+                    "prompt_path": "/tmp/run/prompt.md",
+                    "raw_task_path": "/tmp/run/raw_task.md",
+                    "prompt_approx_tokens": 100,
+                    "prompt_budget_tokens": 24000,
+                },
+                "command_envelope": {
+                    "command_id": "task-1",
+                    "target_node": "local-supervisor",
+                    "expected_revision": 1,
+                    "idempotency_key": "task-1:1",
+                    "evidence_path": "/tmp/run/evidence.jsonl",
+                },
+                "execution": {
+                    "worker_model": "gpt-5.3-codex-spark",
+                    "return_code": 0,
+                    "timed_out": False,
+                    "idle_timed_out": False,
+                    "budget_stopped": False,
+                },
+                "diff_and_checks": {
+                    "changed_files": ["scripts/a9_supervisor.py"],
+                    "checks_count": 1,
+                    "failed_checks_count": 0,
+                    "diff_path": "/tmp/run/patch.diff",
+                },
+                "monitor": {
+                    "next_action": "continue",
+                    "recommended_action": "continue",
+                    "decision_model": "requirements_review_council",
+                    "score": 0.9,
+                    "intervention_options": ["pause", "repair"],
+                    "block": {"blocked": False},
+                },
+                "evidence_refs": {
+                    "runtime_monitor_contract_path": "/tmp/run/runtime_monitor_contract.json",
+                    "summary_path": "/tmp/run/summary.json",
+                    "execution_chain_path": "/tmp/run/execution_chain.json",
+                    "evidence_path": "/tmp/run/evidence.jsonl",
+                    "state_path": "/tmp/run/state.json",
+                },
+                "guardrails": {"page_details_frozen": True, "no_nzx_business_code": True},
+            },
         }
         summary["context_pressure"]["context_router"] = {
             "strategy": "hermes_context_router_v1",
@@ -102,6 +166,12 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(compact["evidence_path"], "/tmp/run/evidence.jsonl")
         self.assertEqual(compact["context_router"]["strategy"], "hermes_context_router_v1")
         self.assertEqual(compact["context_router"]["blocked_sections"], 2)
+        runtime_contract = compact["runtime_monitor_contract"]
+        self.assertEqual(runtime_contract["schema"], "a9.runtime_monitor_contract.v1")
+        self.assertEqual(runtime_contract["task"]["route"], "execution_next")
+        self.assertEqual(runtime_contract["command_envelope"]["idempotency_key"], "task-1:1")
+        self.assertEqual(runtime_contract["monitor"]["next_action"], "continue")
+        self.assertTrue(runtime_contract["guardrails"]["page_details_frozen"])
 
     def test_compact_summary_falls_back_to_worker_context_router(self):
         mod = load_control_api()
