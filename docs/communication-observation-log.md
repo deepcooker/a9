@@ -2101,3 +2101,43 @@ Next monitoring target:
      audit and evaluation are sidecar paths. They produce evidence and
      operator state, but the fast communication read/repair path remains
      bounded and does not wait on audit I/O.
+
+97. Mobile monitor control now closes the pause/resume intervention loop.
+   - Trigger:
+     phone control could show runtime, node, and recovery state, but it could
+     not yet operate the typed monitor-intervention contract exposed by
+     `/api/monitor/control`. A stale control-api process also proved that a
+     running service is not enough; the process must be restarted onto the
+     current code before mobile can consume new contracts.
+   - Change:
+     `/mnt/d/root/a9_mobile_agent_lab/store/useA9ControlStore.ts` now reads
+     `GET /api/monitor/control` during refresh and exposes
+     `submitMonitorIntervention(action, reason)`. The Agent tab renders a
+     `MonitorControlCard` showing `next_action`, runtime pause state, latest
+     run, queue counts, failed checks, token pressure, recent interventions,
+     and action buttons for arm runtime, pause/resume, repair, and
+     route-to-debate. The mobile smoke script now waits for
+     `domcontentloaded` instead of `networkidle` and asserts
+     `a9-monitor-control-card`; Expo dev mode keeps connections open and made
+     `networkidle` a false failure.
+   - Verification:
+     `npx tsc --noEmit` passed in `/mnt/d/root/a9_mobile_agent_lab`.
+     `npm run smoke:mobile` passed after adding the monitor card assertion.
+     The current `/root/a9` control API was restarted in tmux as
+     `a9-control-api`, and the mobile web service was restarted in tmux as
+     `a9-mobile-agent-lab`. Live API smoke returned
+     `schema=a9.monitor_control.v1`.
+   - Live closed-loop evidence:
+     phone-control was armed for the `runtime` group, then
+     `POST /api/monitor/intervention` recorded `pause` and `resume` actions.
+     `STATUS_AFTER_PAUSE` showed `runtime_control.paused=true`;
+     `STATUS_AFTER_RESUME` showed `runtime_control.paused=false`.
+     Both events were written to `.a9/monitor/interventions.jsonl` and mirrored
+     to Redis stream `a9:monitor:interventions` with ids
+     `1780579059834-0` and `1780579061515-0`. The smoke arm was then disarmed,
+     and `GET /api/phone-control/status` returned `armed=false`.
+   - Governance lesson:
+     mobile is now a real monitor control plane, not a passive status page.
+     Execution is still gated by short-lived phone-control arm, while
+     observation, audit, and Redis replay stay available for recovery and
+     later evaluator/worker consumption.
