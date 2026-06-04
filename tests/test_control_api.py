@@ -2706,6 +2706,34 @@ class ControlApiTests(unittest.TestCase):
                 + "\n",
                 encoding="utf-8",
             )
+            intervention_audit = state_dir / "monitor" / "interventions.jsonl"
+            intervention_audit.parent.mkdir(parents=True)
+            intervention_audit.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "at": "2026-06-04T00:00:01+00:00",
+                                "kind": "monitor_intervention_audit",
+                                "action": "pause",
+                                "status": "recorded",
+                                "intervention_id": "monitor-pause-1",
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "at": "2026-06-04T00:00:02+00:00",
+                                "kind": "monitor_intervention_audit",
+                                "action": "repair",
+                                "status": "recorded",
+                                "intervention_id": "monitor-repair-1",
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             run_dir.mkdir(parents=True)
             summary = {
                 "task_id": "task-1",
@@ -2777,6 +2805,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(payload["runtime_control"]["paused"])
         self.assertEqual(payload["runtime_control"]["status"], "paused")
         self.assertEqual(payload["runtime_control"]["last_intervention"]["intervention_id"], "monitor-pause-1")
+        self.assertEqual(payload["recent_interventions"]["event_count"], 2)
+        self.assertEqual(payload["recent_interventions"]["events"][1]["intervention_id"], "monitor-repair-1")
 
     def test_api_monitor_status_endpoint_returns_monitor_payload(self):
         mod = load_control_api()
@@ -2909,6 +2939,57 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["command"], "monitor.intervention")
         self.assertEqual(captured["called_payload"]["action"], "route_to_debate")
+
+    def test_monitor_intervention_examples_use_latest_status_context(self):
+        mod = load_control_api()
+        original_monitor_status = mod.monitor_status
+        try:
+            mod.monitor_status = lambda root=mod.ROOT: {
+                "status": "ok",
+                "kind": "monitor_status",
+                "latest_run": {"task_id": "task-1", "run_id": "run-1"},
+                "evidence_refs": {"summary_path": "/tmp/run-1/summary.json"},
+            }
+            payload = mod.monitor_intervention_examples()
+        finally:
+            mod.monitor_status = original_monitor_status
+
+        self.assertEqual(payload["schema"], "a9.monitor_intervention_examples.v1")
+        self.assertEqual(payload["endpoint"], "/api/monitor/intervention")
+        self.assertEqual(payload["requires"]["phone_control_command"], "monitor.intervention")
+        self.assertEqual(payload["examples"]["repair"]["task_id"], "task-1")
+        self.assertIn("/tmp/run-1/summary.json", payload["examples"]["repair"]["evidence_refs"])
+        self.assertEqual(payload["examples"]["approve"]["flow_expected_revision"], 1)
+
+    def test_api_monitor_intervention_examples_endpoint_returns_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+        original_examples = mod.monitor_intervention_examples
+
+        class DummyMonitorInterventionExamplesGetHandler:
+            path = "/api/monitor/intervention/examples"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for monitor intervention examples")
+
+        try:
+            mod.monitor_intervention_examples = lambda: {
+                "status": "ok",
+                "kind": "monitor_intervention_examples",
+                "examples": {"pause": {"action": "pause"}},
+            }
+            mod.ControlHandler.do_GET(DummyMonitorInterventionExamplesGetHandler())
+        finally:
+            mod.monitor_intervention_examples = original_examples
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "monitor_intervention_examples")
+        self.assertEqual(captured["payload"]["examples"]["pause"]["action"], "pause")
 
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
         mod = load_control_api()
@@ -8841,6 +8922,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["monitor_status"], "/api/monitor/status")
         self.assertEqual(discovery["endpoints"]["monitor_intervention"], "/api/monitor/intervention")
         self.assertEqual(discovery["endpoints"]["monitor_intervention_audit"], "/api/monitor/interventions/audit")
+        self.assertEqual(discovery["endpoints"]["monitor_intervention_examples"], "/api/monitor/intervention/examples")
         self.assertEqual(
             discovery["endpoints"]["communication_data_contract_report"], "/api/communication/data-contract-report"
         )
@@ -8874,6 +8956,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(discovery["runtime"]["node_command_recovery_hint_contract"])
         self.assertTrue(discovery["runtime"]["monitor_status_contract"])
         self.assertTrue(discovery["runtime"]["monitor_intervention_contract"])
+        self.assertTrue(discovery["runtime"]["monitor_intervention_examples"])
         self.assertEqual(discovery["events"]["max_limit"], 1000)
         self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])
 

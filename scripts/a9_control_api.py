@@ -2241,6 +2241,71 @@ def monitor_intervention_audit_tail(limit: int = 20, *, root: Path = ROOT) -> di
     return result
 
 
+def monitor_intervention_examples(root: Path = ROOT) -> dict[str, Any]:
+    status = monitor_status(root)
+    latest_run = status.get("latest_run") if isinstance(status.get("latest_run"), dict) else {}
+    evidence_refs = status.get("evidence_refs") if isinstance(status.get("evidence_refs"), dict) else {}
+    evidence_list = normalize_monitor_intervention_evidence_refs(evidence_refs)
+    task_id = latest_run.get("task_id") or "latest-task"
+    run_id = latest_run.get("run_id") or "latest-run"
+    return {
+        "status": "ok",
+        "kind": "monitor_intervention_examples",
+        "schema": "a9.monitor_intervention_examples.v1",
+        "endpoint": "/api/monitor/intervention",
+        "requires": {
+            "operator_scopes": [PHONE_ADMIN_SCOPE],
+            "phone_control_group": "runtime",
+            "phone_control_command": "monitor.intervention",
+        },
+        "examples": {
+            "pause": {
+                "action": "pause",
+                "reason": "operator inspection before next claim",
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "task_id": task_id,
+                "run_id": run_id,
+            },
+            "resume": {
+                "action": "resume",
+                "reason": "inspection complete",
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+            },
+            "repair": {
+                "action": "repair",
+                "reason": "failed check needs deterministic repair",
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "task_id": task_id,
+                "run_id": run_id,
+                "evidence_refs": evidence_list[:5],
+            },
+            "route_to_debate": {
+                "action": "route_to_debate",
+                "reason": "requirements or architecture decision needs review",
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "task_id": task_id,
+                "run_id": run_id,
+            },
+            "approve": {
+                "action": "approve",
+                "reason": "operator approved worker request",
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "flow_id": "flow-id-from-task-frontmatter",
+                "flow_expected_revision": 1,
+                "evidence_id": "checkpoint-or-intervention-id",
+            },
+            "reject": {
+                "action": "reject",
+                "reason": "operator rejected worker request",
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "flow_id": "flow-id-from-task-frontmatter",
+                "flow_expected_revision": 1,
+                "evidence_id": "checkpoint-or-intervention-id",
+            },
+        },
+    }
+
+
 def normalize_monitor_intervention_evidence_refs(payload: Any) -> list[str]:
     refs: list[str] = []
     if isinstance(payload, dict):
@@ -2878,6 +2943,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_status": "/api/monitor/status",
             "monitor_intervention": "/api/monitor/intervention",
             "monitor_intervention_audit": "/api/monitor/interventions/audit",
+            "monitor_intervention_examples": "/api/monitor/intervention/examples",
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
             "communication_action_plan": "/api/communication/action-plan",
@@ -2919,6 +2985,7 @@ def controller_discovery() -> dict[str, Any]:
             "node_command_recovery_hint_contract": True,
             "monitor_status_contract": True,
             "monitor_intervention_contract": True,
+            "monitor_intervention_examples": True,
             "worker_claim_ready": False,
         },
         "events": {
@@ -6363,6 +6430,7 @@ def runtime_control_state(root: Path = ROOT) -> dict[str, Any]:
 def monitor_status(root: Path = ROOT) -> dict[str, Any]:
     status = supervisor_status(root)
     control_state = runtime_control_state(root)
+    intervention_audit = monitor_intervention_audit_tail(limit=5, root=root)
     latest_run = status.get("latest_run") if isinstance(status.get("latest_run"), dict) else {}
     contract = latest_run.get("runtime_monitor_contract") if isinstance(latest_run, dict) else {}
     contract = contract if isinstance(contract, dict) else {}
@@ -6407,6 +6475,7 @@ def monitor_status(root: Path = ROOT) -> dict[str, Any]:
         },
         "next_action": next_action,
         "runtime_control": control_state,
+        "recent_interventions": intervention_audit,
         "monitor": monitor,
         "evidence_refs": evidence_refs,
         "failed_checks": diff_and_checks.get("failed_checks", []),
@@ -7033,6 +7102,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, supervisor_status())
             elif parsed.path == "/api/monitor/status":
                 self.write_json(200, monitor_status())
+            elif parsed.path == "/api/monitor/intervention/examples":
+                self.write_json(200, monitor_intervention_examples())
             elif parsed.path == "/api/monitor/interventions/audit":
                 try:
                     limit = int(query.get("limit", ["20"])[0])
