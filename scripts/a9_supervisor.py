@@ -52,6 +52,7 @@ RUNTIME_CONTROL_STATE_PATH = STATE_DIR / "runtime" / "control_state.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
 DEFAULT_REFERENCE_SCAN_WORKER_MODEL = ""
+DEFAULT_CRITICAL_WORKER_MODEL = ""
 DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
 DEFAULT_WORKER_EVENT_BUDGET_MODE = "observe"
@@ -1764,6 +1765,14 @@ def resolved_worker_model(task: Task) -> tuple[str, str]:
     global_model = os.getenv("A9_SUPERVISOR_MODEL", "").strip()
     if global_model:
         return global_model, "A9_SUPERVISOR_MODEL"
+    phase_model_env = f"A9_SUPERVISOR_PHASE_MODEL_{task.phase.upper()}"
+    phase_model = os.getenv(phase_model_env, "").strip()
+    if phase_model:
+        return phase_model, phase_model_env
+    if task.phase in {"repair", "test"}:
+        critical_model = os.getenv("A9_SUPERVISOR_CRITICAL_MODEL", DEFAULT_CRITICAL_WORKER_MODEL).strip()
+        if critical_model:
+            return critical_model, "A9_SUPERVISOR_CRITICAL_MODEL"
     if task.phase == "reference_scan":
         reference_model = os.getenv("A9_SUPERVISOR_REFERENCE_MODEL", DEFAULT_REFERENCE_SCAN_WORKER_MODEL).strip()
         if reference_model:

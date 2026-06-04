@@ -285,8 +285,12 @@ Do the work.
         mod = load_supervisor()
         reference_task = mod.Task(path=Path("task.md"), task_id="reference-model", prompt="demo", phase="reference_scan")
         implement_task = mod.Task(path=Path("task.md"), task_id="implement-model", prompt="demo", phase="implement")
+        repair_task = mod.Task(path=Path("task.md"), task_id="repair-model", prompt="demo", phase="repair")
+        test_task = mod.Task(path=Path("task.md"), task_id="test-model", prompt="demo", phase="test")
         old_model = os.environ.pop("A9_SUPERVISOR_MODEL", None)
         old_reference_model = os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
+        old_critical_model = os.environ.pop("A9_SUPERVISOR_CRITICAL_MODEL", None)
+        old_phase_repair_model = os.environ.pop("A9_SUPERVISOR_PHASE_MODEL_REPAIR", None)
         try:
             self.assertEqual(mod.resolved_worker_model(reference_task), (mod.DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"))
             os.environ["A9_SUPERVISOR_REFERENCE_MODEL"] = "gpt-5.3-codex-spark"
@@ -295,8 +299,18 @@ Do the work.
                 ("gpt-5.3-codex-spark", "A9_SUPERVISOR_REFERENCE_MODEL"),
             )
             self.assertEqual(mod.resolved_worker_model(implement_task), (mod.DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"))
+            self.assertEqual(mod.resolved_worker_model(repair_task), (mod.DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"))
+            self.assertEqual(mod.resolved_worker_model(test_task), (mod.DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"))
+            os.environ["A9_SUPERVISOR_CRITICAL_MODEL"] = "gpt-5.5"
+            self.assertEqual(mod.resolved_worker_model(repair_task), ("gpt-5.5", "A9_SUPERVISOR_CRITICAL_MODEL"))
+            self.assertEqual(mod.resolved_worker_model(test_task), ("gpt-5.5", "A9_SUPERVISOR_CRITICAL_MODEL"))
+            self.assertEqual(mod.resolved_worker_model(implement_task), (mod.DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"))
+            os.environ["A9_SUPERVISOR_PHASE_MODEL_REPAIR"] = "gpt-5.4"
+            self.assertEqual(mod.resolved_worker_model(repair_task), ("gpt-5.4", "A9_SUPERVISOR_PHASE_MODEL_REPAIR"))
+            self.assertEqual(mod.resolved_worker_model(test_task), ("gpt-5.5", "A9_SUPERVISOR_CRITICAL_MODEL"))
             os.environ["A9_SUPERVISOR_MODEL"] = "gpt-5.5"
             self.assertEqual(mod.resolved_worker_model(reference_task), ("gpt-5.5", "A9_SUPERVISOR_MODEL"))
+            self.assertEqual(mod.resolved_worker_model(repair_task), ("gpt-5.5", "A9_SUPERVISOR_MODEL"))
         finally:
             if old_model is not None:
                 os.environ["A9_SUPERVISOR_MODEL"] = old_model
@@ -306,6 +320,14 @@ Do the work.
                 os.environ["A9_SUPERVISOR_REFERENCE_MODEL"] = old_reference_model
             else:
                 os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
+            if old_critical_model is not None:
+                os.environ["A9_SUPERVISOR_CRITICAL_MODEL"] = old_critical_model
+            else:
+                os.environ.pop("A9_SUPERVISOR_CRITICAL_MODEL", None)
+            if old_phase_repair_model is not None:
+                os.environ["A9_SUPERVISOR_PHASE_MODEL_REPAIR"] = old_phase_repair_model
+            else:
+                os.environ.pop("A9_SUPERVISOR_PHASE_MODEL_REPAIR", None)
 
     def test_spark_worker_disables_unsupported_image_generation_tool(self):
         mod = load_supervisor()

@@ -2214,3 +2214,27 @@ Next monitoring target:
      action is to preserve evidence, classify the failure as retryable
      transport, and let the monitor/supervisor continue repair or model-policy
      decisions.
+
+100. Worker model routing is now phase-aware instead of one global bet.
+   - Trigger:
+     the transport-exhaustion repair proved that model availability and
+     stability are runtime facts. Earlier evidence also conflicted over the
+     right default: stable `gpt-5.3-codex` was preferred for unattended work,
+     but the current ChatGPT-backed Codex account reported it unsupported,
+     while Spark can run but has startup/tool/transport instability.
+   - Change:
+     `scripts/a9_supervisor.py::resolved_worker_model()` now supports layered
+     routing. `A9_SUPERVISOR_MODEL` remains the global override. A
+     phase-specific variable such as `A9_SUPERVISOR_PHASE_MODEL_REPAIR`
+     overrides one phase. `A9_SUPERVISOR_CRITICAL_MODEL` applies to `repair`
+     and `test` only. `A9_SUPERVISOR_REFERENCE_MODEL` remains limited to
+     `reference_scan`. If none are set, the current default model is unchanged.
+   - Verification:
+     targeted model-routing tests cover global override, phase-specific repair
+     override, critical repair/test override, reference-scan override, and
+     default fallback.
+   - Governance lesson:
+     model choice should be a control-plane policy, not a hardcoded ideology.
+     Cheap-model optimization is useful for observation/reference work, but
+     repair/test reliability must be switchable without editing code or
+     changing the whole worker fleet.
