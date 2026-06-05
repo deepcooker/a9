@@ -2612,3 +2612,28 @@ Next monitoring target:
      items were queued, the older fallback would have generated generic work.
      For the mainline, decided backlog must override defaults; fallback is only
      for plans that have not yet adopted structured execution backlog.
+
+115. Debate worker final output can now append structured execution backlog.
+   - Trigger:
+     `plan-backlog-add` proved the storage model, but the 24h requirements
+     debate lane still needed an automatic bridge from a debate worker's final
+     decision artifact into durable `execution_backlog.items`.
+   - Change:
+     `plan-debate-next` now asks workers to include one JSON object shaped as
+     `{"execution_backlog":{"items":[...]}}` when proposing execution slices.
+     `update_active_plan_from_run()` now only for `route: debate_next` parses
+     the worker final artifact, extracts backlog items, de-duplicates them by
+     title/phase/prompt, and appends ready items to the active plan with
+     `source=debate_final_json` and `source_run`.
+   - Verification:
+     targeted tests cover automatic append from a debate final and refusal to
+     mutate backlog from an `execution_next` final. Full
+     `python3 -m unittest tests.test_supervisor` passed with 341 tests. A live
+     smoke created a temporary debate final JSON, confirmed one ready backlog
+     item appeared in `a9-plan-lane-runtime`, then restored the active plan and
+     removed the smoke run directory.
+   - Governance lesson:
+     this is a narrow bridge, not free-form self-evolution. Requirements debate
+     may propose execution backlog, but only via a machine-readable final
+     artifact and only on the debate route; execution workers cannot mutate the
+     backlog by mentioning future work.

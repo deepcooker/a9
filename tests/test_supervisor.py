@@ -3591,6 +3591,132 @@ Do the work.
         self.assertIn("Implement structured backlog persistence and queue handoff.", first)
         self.assertIn("No execution backlog generated.", second_buffer.getvalue())
 
+    def test_update_active_plan_from_debate_final_appends_execution_backlog(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-debate-backlog",
+                    goal_id="goal-debate-backlog",
+                    contract={
+                        "problem": "Need debate output to become execution backlog.",
+                        "why_now": "Manual backlog add is not enough for 24h automation.",
+                        "must": "Extract structured backlog from debate final output.",
+                        "system_requirement": "debate_next final JSON appends execution_backlog.items.",
+                        "data_shape": "plan execution_backlog items with source_run.",
+                        "normal_flow": "debate worker final -> plan update -> backlog ready.",
+                        "exception_flow": "invalid JSON -> skip without blocking run.",
+                        "acceptance": "ready backlog item appears in plan.json.",
+                        "out_of_scope": "do not enqueue in update_active_plan_from_run.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "Codex final artifact plus planning-with-files backlog packet.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "debate-run"
+                run_dir.mkdir(parents=True)
+                final_path = run_dir / "final.md"
+                final_path.write_text(
+                    """
+Findings are ready.
+{
+  "execution_backlog": {
+    "items": [
+      {
+        "title": "Wire debate backlog extraction",
+        "phase": "implement",
+        "prompt": "Extract execution backlog JSON from debate final and persist it.",
+        "allowed_paths": ["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        "checks": ["python3 -m unittest tests.test_supervisor"]
+      }
+    ]
+  }
+}
+""",
+                    encoding="utf-8",
+                )
+                task = mod.Task(
+                    path=tmp_path / "task.md",
+                    task_id="debate-task",
+                    phase="reference_scan",
+                    prompt="decision_status: not_decided\nroute: debate_next\nplan_id: plan-debate-backlog\n",
+                )
+                summary = {
+                    "run_dir": str(run_dir),
+                    "status": "pass",
+                    "worker": {"final_path": str(final_path)},
+                    "git_governance": {},
+                }
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = mod.load_plan("plan-debate-backlog")
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(result["execution_backlog_update"]["status"], "appended")
+        self.assertEqual(result["execution_backlog_update"]["added_count"], 1)
+        item = stored["execution_backlog"]["items"][0]
+        self.assertEqual(item["status"], "ready")
+        self.assertEqual(item["source"], "debate_final_json")
+        self.assertEqual(item["title"], "Wire debate backlog extraction")
+        self.assertIn("scripts/a9_supervisor.py", item["allowed_paths"])
+
+    def test_update_active_plan_ignores_execution_backlog_json_outside_debate_route(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-nondebate-backlog",
+                    goal_id="goal-nondebate-backlog",
+                    contract={
+                        "problem": "Non-debate output must not mutate backlog.",
+                        "why_now": "Execution workers may mention future work.",
+                        "must": "Ignore backlog JSON unless route is debate_next.",
+                        "system_requirement": "Only debate route can append backlog.",
+                        "data_shape": "empty execution_backlog.",
+                        "normal_flow": "execution task -> no backlog mutation.",
+                        "exception_flow": "none.",
+                        "acceptance": "items stay empty.",
+                        "out_of_scope": "no debate extraction.",
+                        "allowed_execution": "scripts/a9_supervisor.py",
+                        "reference_entry": "route boundary.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "exec-run"
+                run_dir.mkdir(parents=True)
+                final_path = run_dir / "final.md"
+                final_path.write_text('{"execution_backlog":{"items":[{"title":"Bad","prompt":"Do not add"}]}}', encoding="utf-8")
+                task = mod.Task(
+                    path=tmp_path / "task.md",
+                    task_id="exec-task",
+                    phase="implement",
+                    prompt="decision_status: decided\nroute: execution_next\nplan_id: plan-nondebate-backlog\n",
+                )
+                summary = {"run_dir": str(run_dir), "status": "pass", "worker": {"final_path": str(final_path)}}
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = mod.load_plan("plan-nondebate-backlog")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["execution_backlog_update"]["reason"], "not_debate_next")
+        self.assertEqual(stored["execution_backlog"]["items"], [])
+
     def test_update_active_plan_from_run_records_refs_and_progress(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

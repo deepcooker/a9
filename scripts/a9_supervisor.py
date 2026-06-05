@@ -7811,6 +7811,7 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
     for value in ref_values:
         if isinstance(evidence_refs, list) and value and str(value) not in evidence_refs:
             evidence_refs.append(str(value))
+    backlog_update = append_execution_backlog_items_from_debate_run(plan, task, run_dir, summary)
     plan_dir = write_plan_files(plan, activate=True)
     commit = summary.get("git_governance", {}).get("commit", "") if isinstance(summary.get("git_governance"), dict) else ""
     next_task_path = str(summary.get("next_task_path") or "")
@@ -7821,12 +7822,22 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
             f"status={summary.get('status', '')} commit={str(commit)[:12]} next={next_task_path}"
         ),
     )
+    if backlog_update.get("status") == "appended":
+        append_plan_progress(
+            plan_dir,
+            (
+                f"- {utc_now()} run={run_id} task={task.task_id} "
+                f"execution_backlog_from_debate added={backlog_update.get('added_count', 0)} "
+                f"items={', '.join(str(item) for item in backlog_update.get('item_ids', []))}"
+            ),
+        )
     return {
         "status": "updated",
         "plan_id": plan_id,
         "plan_dir": str(plan_dir),
         "run_id": run_id,
         "evidence_refs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
+        "execution_backlog_update": backlog_update,
     }
 
 
@@ -10552,6 +10563,8 @@ def plan_debate_next(args: argparse.Namespace) -> int:
         "- Produce a decision packet draft only when the missing fields are supported by evidence.",
         "- Do not implement production code in this task.",
         "- If the stage is ready, propose candidate execution_next backlog slices with allowed paths and checks.",
+        "- When proposing execution slices, include one JSON object with this shape:",
+        '  {"execution_backlog":{"items":[{"title":"...","phase":"reference_scan|mechanism_extract|implement|test|record","prompt":"...","allowed_paths":["..."],"checks":["..."]}]}}',
     ]
     if args.extra:
         prompt_lines.extend(["", "Extra operator direction:", str(args.extra).strip()])
@@ -10802,6 +10815,116 @@ def append_execution_backlog_item(
     plan_dir = write_plan_files(plan)
     append_plan_progress(plan_dir, f"execution_backlog_add: {item['id']} phase={item['phase']} title={item['title']}")
     return {"status": "appended", "path": str(plan_dir / "plan.json"), "item": item}
+
+
+def extract_execution_backlog_payload(value: dict[str, Any]) -> list[dict[str, Any]]:
+    raw: Any = None
+    if isinstance(value.get("execution_backlog"), dict):
+        raw = value["execution_backlog"].get("items")
+    elif isinstance(value.get("execution_backlog"), list):
+        raw = value.get("execution_backlog")
+    elif isinstance(value.get("execution_backlog_items"), list):
+        raw = value.get("execution_backlog_items")
+    elif isinstance(value.get("backlog_items"), list):
+        raw = value.get("backlog_items")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
+def extract_execution_backlog_items_from_final(final_path: Path) -> list[dict[str, Any]]:
+    if not final_path.exists():
+        return []
+    text = final_path.read_text(encoding="utf-8", errors="backslashreplace")
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for value in find_json_objects(text):
+        for item in extract_execution_backlog_payload(value):
+            title = str(item.get("title") or item.get("objective") or "").strip()
+            prompt = str(item.get("prompt") or item.get("objective") or "").strip()
+            phase = str(item.get("phase") or "implement").strip()
+            fingerprint = hashlib.sha256(f"{title}\n{phase}\n{prompt}".encode("utf-8")).hexdigest()
+            if fingerprint in seen:
+                continue
+            seen.add(fingerprint)
+            items.append(item)
+    return items
+
+
+def append_execution_backlog_items_from_debate_run(
+    plan: dict[str, Any],
+    task: Task,
+    run_dir: Path,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    fields = parse_key_value_prompt(task.prompt)
+    if str(fields.get("route") or "").strip() != "debate_next":
+        return {"status": "skipped", "reason": "not_debate_next"}
+    if str(summary.get("status") or "") not in {"pass", "needs-followup"}:
+        return {"status": "skipped", "reason": "run_not_pass"}
+    worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+    final_path_text = str(worker.get("final_path") or "").strip()
+    if not final_path_text:
+        return {"status": "skipped", "reason": "final_path_missing"}
+    extracted = extract_execution_backlog_items_from_final(Path(final_path_text))
+    if not extracted:
+        return {"status": "skipped", "reason": "no_execution_backlog_json"}
+    backlog = execution_backlog_state(plan)
+    items = backlog.get("items")
+    if not isinstance(items, list):
+        items = []
+        backlog["items"] = items
+    existing_fingerprints = {
+        hashlib.sha256(
+            (
+                str(item.get("title") or item.get("objective") or "")
+                + "\n"
+                + str(item.get("phase") or "implement")
+                + "\n"
+                + str(item.get("prompt") or item.get("objective") or "")
+            ).encode("utf-8")
+        ).hexdigest()
+        for item in items
+        if isinstance(item, dict)
+    }
+    added: list[dict[str, Any]] = []
+    for raw in extracted:
+        title = str(raw.get("title") or raw.get("objective") or "").strip()
+        prompt = str(raw.get("prompt") or raw.get("objective") or "").strip()
+        phase = str(raw.get("phase") or "implement").strip() or "implement"
+        if not title or not prompt:
+            continue
+        fingerprint = hashlib.sha256(f"{title}\n{phase}\n{prompt}".encode("utf-8")).hexdigest()
+        if fingerprint in existing_fingerprints:
+            continue
+        existing_fingerprints.add(fingerprint)
+        item_index = len([item for item in items if isinstance(item, dict)]) + 1
+        item = {
+            "id": str(raw.get("id") or raw.get("backlog_id") or f"backlog-{item_index:03d}-{slugify(title)[:40]}"),
+            "title": title,
+            "phase": phase,
+            "prompt": prompt,
+            "allowed_paths": [str(path).strip() for path in raw.get("allowed_paths", []) if str(path).strip()]
+            if isinstance(raw.get("allowed_paths"), list)
+            else extract_allowed_paths_from_execution_text(str(raw.get("allowed_execution") or "")),
+            "checks": [str(check).strip() for check in raw.get("checks", []) if str(check).strip()]
+            if isinstance(raw.get("checks"), list)
+            else [],
+            "status": "ready",
+            "source": "debate_final_json",
+            "source_run": str(run_dir),
+            "created_at": utc_now(),
+        }
+        if str(raw.get("task_id") or "").strip():
+            item["task_id"] = str(raw.get("task_id")).strip()
+        items.append(item)
+        added.append(item)
+    return {
+        "status": "appended" if added else "skipped",
+        "reason": "" if added else "no_new_valid_items",
+        "added_count": len(added),
+        "item_ids": [str(item.get("id") or "") for item in added],
+    }
 
 
 def plan_backlog_add(args: argparse.Namespace) -> int:
