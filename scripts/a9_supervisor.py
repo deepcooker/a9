@@ -8206,6 +8206,36 @@ def append_plan_change_request(
     return {"status": "appended", "plan_id": plan_id, "request_id": request_id, "path": str(path)}
 
 
+def extract_contract_change_requests_from_summary(summary: dict[str, Any]) -> list[dict[str, str]]:
+    worker = worker_output_from_summary(summary)
+    raw: Any = None
+    for key in ("contract_change_request", "contract_change_requests", "contract_update", "contract_updates"):
+        value = worker.get(key)
+        if value:
+            raw = value
+            break
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, list) else [raw]
+    requests: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field") or item.get("contract_field") or "").strip()
+        proposal = str(item.get("proposal") or item.get("value") or item.get("proposed_value") or "").strip()
+        reason = str(item.get("reason") or item.get("why") or "").strip()
+        if not field or not proposal:
+            continue
+        requests.append(
+            {
+                "field": field,
+                "proposal": proposal,
+                "reason": reason or "worker proposed contract change during run",
+            }
+        )
+    return requests
+
+
 def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
     plan = active_plan()
     if not plan:
@@ -8227,8 +8257,21 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
     for value in ref_values:
         if isinstance(evidence_refs, list) and value and str(value) not in evidence_refs:
             evidence_refs.append(str(value))
+    contract_change_requests = extract_contract_change_requests_from_summary(summary)
     backlog_update = append_execution_backlog_items_from_debate_run(plan, task, run_dir, summary)
     plan_dir = write_plan_files(plan, activate=True)
+    appended_change_requests: list[dict[str, str]] = []
+    for request in contract_change_requests:
+        appended = append_plan_change_request(
+            plan_id=plan_id,
+            field=request["field"],
+            proposal=request["proposal"],
+            reason=request["reason"],
+            actor="worker",
+            evidence_refs=[str(run_dir / "summary.json")],
+        )
+        if appended.get("status") == "appended":
+            appended_change_requests.append(appended)
     commit = summary.get("git_governance", {}).get("commit", "") if isinstance(summary.get("git_governance"), dict) else ""
     next_task_path = str(summary.get("next_task_path") or "")
     append_plan_progress(
@@ -8254,6 +8297,7 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
         "run_id": run_id,
         "evidence_refs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
         "execution_backlog_update": backlog_update,
+        "contract_change_requests": appended_change_requests,
     }
 
 

@@ -4180,6 +4180,60 @@ Findings are ready.
         self.assertIn("status=pass", progress)
         self.assertIn("commit=abcdef123456", progress)
 
+    def test_update_active_plan_from_run_routes_contract_update_to_change_request(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-contract-drift",
+                    goal_id="goal-contract-drift",
+                    contract={
+                        "problem": "Original problem stays authoritative.",
+                        "acceptance": "Original acceptance stays authoritative.",
+                    },
+                )
+                plan_dir = mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "run-contract-drift"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "needs-followup",
+                    "phase": "implement",
+                    "run_dir": str(run_dir),
+                    "worker_envelope": {
+                        "envelope": {
+                            "output": {
+                                "contract_update": {
+                                    "field": "acceptance",
+                                    "proposal": "Replace acceptance from worker output.",
+                                    "reason": "Worker found a more specific assertion.",
+                                },
+                                "next_slice": "test: verify contract drift routing",
+                            }
+                        }
+                    },
+                }
+                task = mod.Task(path=Path("task.md"), task_id="contract-drift-task", prompt="demo", phase="implement")
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                change_request = (plan_dir / "change_request.md").read_text(encoding="utf-8")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(stored["contract"]["acceptance"], "Original acceptance stays authoritative.")
+        self.assertEqual(len(result["contract_change_requests"]), 1)
+        self.assertIn("field: acceptance", change_request)
+        self.assertIn("proposal: Replace acceptance from worker output.", change_request)
+        self.assertIn("reason: Worker found a more specific assertion.", change_request)
+        self.assertIn(str(run_dir / "summary.json"), change_request)
+
     def test_update_active_plan_from_run_recovers_plan_from_prompt_when_local_state_missing(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

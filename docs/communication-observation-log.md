@@ -3407,3 +3407,25 @@ Next monitoring target:
      debate can produce analysis continuation automatically, but implementation
      must remain explicit, bounded, and backed by reviewed acceptance and
      allowed execution.
+
+146. Worker contract drift is now routed to change_request.
+   - Trigger:
+     the real Spark mechanism extraction recommended adding deterministic
+     verification that contract drift routes to `change_request` before any
+     contract mutation. The prior protection was mostly prompt wording plus
+     `append_plan_change_request`; `update_active_plan_from_run` did not have a
+     concrete worker-output routing contract.
+   - Change:
+     `update_active_plan_from_run` now extracts worker output keys such as
+     `contract_update`, `contract_updates`, `contract_change_request`, and
+     `contract_change_requests`. Valid proposals are appended to
+     `change_request.md` with the run summary as evidence. The active
+     `plan.json.contract` remains unchanged.
+   - Verification:
+     added regression coverage where a worker proposes replacing `acceptance`;
+     the test proves `plan.json.contract.acceptance` keeps the original value
+     and the proposal is recorded in `change_request.md`.
+   - Governance lesson:
+     contract authority should be enforced by deterministic runtime behavior,
+     not only by prompt instructions. Workers may propose contract changes, but
+     they do not silently mutate the decision packet.
