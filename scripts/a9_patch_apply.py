@@ -180,7 +180,28 @@ def replace_leading_whitespace(current: str, search: str, replace: str) -> tuple
 
 
 def replace_with_strategy(current: str, search: str, replace: str) -> tuple[str, dict[str, Any]] | None:
-    return replace_exact(current, search, replace) or replace_leading_whitespace(current, search, replace)
+    direct = replace_exact(current, search, replace) or replace_leading_whitespace(current, search, replace)
+    if direct:
+        return direct
+    if "\\\\" not in search:
+        return None
+    normalized_search = search.replace("\\\\", "\\")
+    normalized_replace = replace.replace("\\\\", "\\")
+    normalized = replace_exact(current, normalized_search, normalized_replace) or replace_leading_whitespace(
+        current,
+        normalized_search,
+        normalized_replace,
+    )
+    if not normalized:
+        return None
+    new_content, meta = normalized
+    meta = {
+        **meta,
+        "match_strategy": f"{meta.get('match_strategy', 'unknown')}+windows_backslash_unescape",
+        "normalization": "windows_backslash_unescape",
+        "fuzz_level": max(int(meta.get("fuzz_level") or 0), 1),
+    }
+    return new_content, meta
 
 
 def normalize_wrapped_text(text: str, path: str, section: str) -> tuple[str, list[str]]:

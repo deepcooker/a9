@@ -2912,3 +2912,40 @@ Next monitoring target:
      transport recovery should be an explicit observable action. A9 can now
      prove the worker backend is healthy before reopening the queue, instead of
      editing runtime health state by hand.
+
+127. Real 24h mobile workspace worker exposed transport and gate gaps.
+   - Trigger:
+     repeated real mobile workspace tasks failed before model output with
+     `timeout waiting for child process to exit`, while direct foreground probes
+     could succeed.
+   - Findings:
+     the tmux supervisor loop did not inherit `HTTP_PROXY`/`HTTPS_PROXY`, which
+     made Codex websocket/model refresh startup unreliable. Codex also attempted
+     startup plugin sync through `https://github.com/openai/plugins.git`; worker
+     transport must disable plugins for automation slices. Passing the prompt as
+     `codex exec ... - < prompt.md` avoids long argv and prompt-plus-stdin
+     ambiguity.
+   - Change:
+     the active worker transport policy now uses a clean isolated Codex home,
+     `--ignore-user-config`, `--disable plugins`, stdin-dash prompt delivery,
+     and file-spooled event replay. The supervisor loop was restarted with the
+     proxy environment. Bounded implement tasks with `allowed_paths` and declared
+     checks now route to `execution_next` via task metadata instead of being
+     blocked as missing full requirements-decision packets.
+   - Apply lesson:
+     worker envelopes may cite the original external workspace absolute path.
+     Supervisor now normalizes absolute paths under `workspace_root` to
+     worktree-relative paths before deterministic SEARCH/REPLACE apply, while
+     other absolute paths remain blocked. The apply engine also handles
+     double-escaped Windows backslashes when exact match fails.
+   - Gate lesson:
+     `npx tsc --noEmit` was an invalid gate for this docs-only mobile task
+     because the mobile project does not currently install `typescript`. The
+     correct acceptance for this slice was the three declared document `rg`
+     checks. TypeScript baseline setup should be a separate task, not a hidden
+     blocker for documentation path correction.
+   - Verification:
+     `mobile-doc-canonical-control-rgonly-20260605` passed through the 24h
+     supervisor loop. Patch apply, scope guard, and the three document checks
+     passed. The mobile workspace was updated by cherry-pick to commit
+     `97e02cf7e7fbc1ff048ecdf1d2370a038b1f855c`.

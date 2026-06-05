@@ -47,6 +47,32 @@ gamma
             self.assertEqual(result["applied_count"], 1)
             self.assertEqual(target.read_text(encoding="utf-8"), "gamma\nbeta\n")
 
+    def test_applies_search_replace_with_double_escaped_windows_backslashes(self):
+        mod = load_patch_apply()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "DEPLOYMENT_GUIDE.md"
+            target.write_text("path `d:\\root\\a9_mobile\\`\n", encoding="utf-8")
+
+            patch = "\n".join(
+                [
+                    "DEPLOYMENT_GUIDE.md",
+                    "<" * 7 + " SEARCH",
+                    r"path `d:\\root\\a9_mobile\\`",
+                    "=" * 7,
+                    r"path `d:\\root\\a9_mobile_agent_lab\\`",
+                    ">" * 7 + " REPLACE",
+                    "",
+                ]
+            )
+
+            result = mod.apply_search_replace(patch, root)
+
+            self.assertEqual(result["status"], "pass")
+            self.assertEqual(result["applied_count"], 1)
+            self.assertIn("windows_backslash_unescape", result["applied"][0]["match_strategy"])
+            self.assertEqual(target.read_text(encoding="utf-8"), "path `d:\\root\\a9_mobile_agent_lab\\`\n")
+
     def test_rejects_ambiguous_match_without_writing(self):
         mod = load_patch_apply()
         with tempfile.TemporaryDirectory() as tmp:

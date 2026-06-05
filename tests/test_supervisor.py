@@ -2859,6 +2859,40 @@ Do the work.
         self.assertEqual(health["cooldown_until"], "")
         self.assertIsNone(gate)
 
+    def test_worker_transport_probe_skipped_clears_cooldown_without_failure(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = mod.WORKER_TRANSPORT_HEALTH_PATH
+            mod.WORKER_TRANSPORT_HEALTH_PATH = Path(tmp) / "worker_transport_health.json"
+            try:
+                future = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                mod.write_json(
+                    mod.WORKER_TRANSPORT_HEALTH_PATH,
+                    {
+                        "schema": "a9.worker_transport_health.v1",
+                        "status": "cooldown",
+                        "failure_count": 2,
+                        "consecutive_failures": 2,
+                        "cooldown_until": future,
+                    },
+                )
+                health = mod.update_worker_transport_health_from_probe(
+                    {
+                        "status": "skipped",
+                        "backend": "custom_command",
+                        "reason": "live probe currently supports codex_exec only",
+                        "probe_dir": "/tmp/probe",
+                    }
+                )
+                gate = mod.worker_transport_cooldown_gate()
+            finally:
+                mod.WORKER_TRANSPORT_HEALTH_PATH = old_path
+
+        self.assertEqual(health["status"], "skipped")
+        self.assertEqual(health["consecutive_failures"], 0)
+        self.assertEqual(health["cooldown_until"], "")
+        self.assertIsNone(gate)
+
     def test_run_loop_observes_transport_cooldown_without_claiming_task(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4669,6 +4703,55 @@ Findings are ready.
         self.assertEqual(result["touched_files"], ["docs/mistakes.md"])
         self.assertEqual(result["patch_source"], "worker_envelope.output.search_replace_blocks")
         self.assertTrue(any("output.search_replace_blocks" in item.get("message", "") for item in result["findings"]))
+
+    def test_apply_worker_search_replace_normalizes_source_workspace_absolute_path(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "worktree"
+            source_root = Path(tmp) / "source"
+            run_dir = Path(tmp) / "run"
+            root.mkdir()
+            source_root.mkdir()
+            run_dir.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            (root / "docs").mkdir()
+            (root / "docs" / "mistakes.md").write_text("alpha\n", encoding="utf-8")
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            subprocess.run(
+                ["git", "-c", "user.email=test@example.invalid", "-c", "user.name=Test", "commit", "-m", "base"],
+                cwd=root,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            final = run_dir / "final.md"
+            final.write_text(
+                json.dumps(
+                    {
+                        "protocolVersion": 1,
+                        "ok": True,
+                        "status": "ok",
+                        "output": {
+                            "search_replace_blocks": [
+                                {
+                                    "path": str(source_root / "docs" / "mistakes.md"),
+                                    "search": "alpha\n",
+                                    "replace": "gamma\n",
+                                }
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = mod.apply_worker_search_replace({"final_path": str(final)}, root, run_dir, source_root)
+            content = (root / "docs" / "mistakes.md").read_text(encoding="utf-8")
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["applied_count"], 1)
+        self.assertEqual(result["touched_files"], ["docs/mistakes.md"])
+        self.assertEqual(content, "gamma\n")
 
     def test_apply_worker_search_replace_extracts_envelope_search_replace_fields(self):
         mod = load_supervisor()
@@ -8091,6 +8174,26 @@ Findings are ready.
         self.assertIn("route: execution_next", packet["prompt"])
         self.assertIn("decided: true", packet["prompt"])
         self.assertIn("missing_fields: none", packet["prompt"])
+
+    def test_build_context_packet_routes_bounded_task_metadata_to_execution_next(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="bounded-metadata-decision",
+            prompt="Update only DEPLOYMENT_GUIDE.md with the canonical mobile path.",
+            phase="implement",
+            allowed_paths=["DEPLOYMENT_GUIDE.md"],
+            checks=["rg -n 'a9_mobile_agent_lab' DEPLOYMENT_GUIDE.md"],
+        )
+
+        packet = mod.build_context_packet(task)
+
+        self.assertIn("Task Decision Packet", packet["prompt"])
+        self.assertIn("route: execution_next", packet["prompt"])
+        self.assertIn("decision_status: decided", packet["prompt"])
+        self.assertIn("decided: true", packet["prompt"])
+        self.assertIn("missing_fields: none", packet["prompt"])
+        self.assertIn("required_fields: bounded_task_metadata", packet["prompt"])
 
     def test_build_context_packet_injects_evidence_and_edit_contract_for_worker(self):
         mod = load_supervisor()

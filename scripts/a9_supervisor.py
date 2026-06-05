@@ -764,11 +764,11 @@ def update_worker_transport_health_from_summary(summary: dict[str, Any]) -> dict
 
 def update_worker_transport_health_from_probe(probe: dict[str, Any]) -> dict[str, Any]:
     previous = worker_transport_health_state()
-    if probe.get("status") == "ok":
+    if probe.get("status") in {"ok", "skipped"}:
         payload = {
             **previous,
             "schema": "a9.worker_transport_health.v1",
-            "status": "ok",
+            "status": "ok" if probe.get("status") == "ok" else "skipped",
             "consecutive_failures": 0,
             "cooldown_until": "",
             "last_probe": probe,
@@ -2931,10 +2931,17 @@ def capture_diff(worktree: Path, run_dir: Path) -> dict[str, Any]:
     return {"diff_path": str(diff_path), "diff_bytes": len(diff.encode("utf-8"))}
 
 
-def normalize_worker_patch_path(raw_path: str, root: Path | None) -> str:
+def normalize_worker_patch_path(raw_path: str, root: Path | None, source_root: Path | None = None) -> str:
     path = raw_path.strip()
     if not path:
         return ""
+    if source_root is not None:
+        candidate = Path(path)
+        if candidate.is_absolute():
+            try:
+                return str(candidate.resolve().relative_to(source_root.resolve()))
+            except (OSError, ValueError):
+                pass
     if root is not None:
         try:
             return str(Path(path).resolve().relative_to(root.resolve()))
@@ -2943,7 +2950,11 @@ def normalize_worker_patch_path(raw_path: str, root: Path | None) -> str:
     return path
 
 
-def normalize_worker_search_replace_text(text: str, root: Path | None = None) -> str:
+def normalize_worker_search_replace_text(
+    text: str,
+    root: Path | None = None,
+    source_root: Path | None = None,
+) -> str:
     lines = text.strip().splitlines()
     normalized: list[str] = []
     for line in lines:
@@ -2951,13 +2962,17 @@ def normalize_worker_search_replace_text(text: str, root: Path | None = None) ->
         if stripped.upper() == "SEARCH/REPLACE":
             continue
         if stripped.startswith("*** Update File: "):
-            normalized.append(normalize_worker_patch_path(stripped.split(": ", 1)[1], root))
+            normalized.append(normalize_worker_patch_path(stripped.split(": ", 1)[1], root, source_root))
             continue
         normalized.append(line)
     return "\n".join(normalized).strip() + "\n" if normalized else ""
 
 
-def extract_begin_patch_update_blocks(text: str, root: Path | None = None) -> tuple[str, list[dict[str, Any]]]:
+def extract_begin_patch_update_blocks(
+    text: str,
+    root: Path | None = None,
+    source_root: Path | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
     begin = text.find("*** Begin Patch")
     end = text.find("*** End Patch", begin)
     if begin < 0 or end < 0:
@@ -2993,7 +3008,7 @@ def extract_begin_patch_update_blocks(text: str, root: Path | None = None) -> tu
         line = raw_line.rstrip("\n")
         if line.startswith("*** Update File: "):
             flush_hunk()
-            current_path = normalize_worker_patch_path(line.split(": ", 1)[1], root)
+            current_path = normalize_worker_patch_path(line.split(": ", 1)[1], root, source_root)
             search_lines = []
             replace_lines = []
             continue
@@ -3030,7 +3045,11 @@ def extract_begin_patch_update_blocks(text: str, root: Path | None = None) -> tu
     return "\n".join(parts), findings
 
 
-def extract_worker_search_replace_patch(text: str, root: Path | None = None) -> tuple[str, str | None, list[dict[str, Any]]]:
+def extract_worker_search_replace_patch(
+    text: str,
+    root: Path | None = None,
+    source_root: Path | None = None,
+) -> tuple[str, str | None, list[dict[str, Any]]]:
     findings: list[dict[str, Any]] = []
     candidates = [item for item in find_json_objects(text) if is_worker_envelope_candidate(item)]
     if candidates:
@@ -3062,7 +3081,11 @@ def extract_worker_search_replace_patch(text: str, root: Path | None = None) -> 
                         block = f"<<<<<<< SEARCH\n{search_text}=======\n{replace_text}>>>>>>> REPLACE"
                     return block
 
-                path = str(item.get("path") or item.get("file") or "").strip()
+                path = normalize_worker_patch_path(
+                    str(item.get("path") or item.get("file") or "").strip(),
+                    root,
+                    source_root,
+                )
                 nested_blocks = item.get("blocks")
                 if isinstance(nested_blocks, list):
                     for sub_index, sub_item in enumerate(nested_blocks, start=1):
@@ -3078,7 +3101,11 @@ def extract_worker_search_replace_patch(text: str, root: Path | None = None) -> 
                                 }
                             )
                             continue
-                        sub_path = str(sub_item.get("path") or sub_item.get("file") or path).strip()
+                        sub_path = normalize_worker_patch_path(
+                            str(sub_item.get("path") or sub_item.get("file") or path).strip(),
+                            root,
+                            source_root,
+                        )
                         block = _build_patch_block(sub_item)
                         if not sub_path or "<<<<<<< SEARCH" not in block or ">>>>>>> REPLACE" not in block:
                             findings.append(
@@ -3124,7 +3151,7 @@ def extract_worker_search_replace_patch(text: str, root: Path | None = None) -> 
             for field_name in ("documentation_patch", "patch"):
                 patch_value = output.get(field_name)
                 if isinstance(patch_value, str) and "<<<<<<< SEARCH" in patch_value and ">>>>>>> REPLACE" in patch_value:
-                    normalized_patch = normalize_worker_search_replace_text(patch_value, root)
+                    normalized_patch = normalize_worker_search_replace_text(patch_value, root, source_root)
                     findings.append(
                         {
                             "level": "info",
@@ -3187,18 +3214,23 @@ def extract_worker_search_replace_patch(text: str, root: Path | None = None) -> 
         )
         return "\n".join(markdown_parts), "final_message.markdown_search_replace_blocks", findings
 
-    begin_patch_parts, begin_patch_findings = extract_begin_patch_update_blocks(text, root)
+    begin_patch_parts, begin_patch_findings = extract_begin_patch_update_blocks(text, root, source_root)
     if begin_patch_parts:
         findings.extend(begin_patch_findings)
         return begin_patch_parts, "final_message.begin_patch_update", findings
     findings.extend(begin_patch_findings)
 
     if "<<<<<<< SEARCH" in text and ">>>>>>> REPLACE" in text:
-        return normalize_worker_search_replace_text(text, root), "final_message", findings
+        return normalize_worker_search_replace_text(text, root, source_root), "final_message", findings
     return "", None, findings
 
 
-def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir: Path) -> dict[str, Any]:
+def apply_worker_search_replace(
+    worker: dict[str, Any],
+    worktree: Path,
+    run_dir: Path,
+    source_root: Path | None = None,
+) -> dict[str, Any]:
     output_path = run_dir / "patch_apply.json"
     patch_path = run_dir / "model_patch.search_replace"
     final_path = Path(worker["final_path"])
@@ -3216,7 +3248,7 @@ def apply_worker_search_replace(worker: dict[str, Any], worktree: Path, run_dir:
         return result
 
     text = final_path.read_text(encoding="utf-8", errors="backslashreplace")
-    patch_text, patch_source, extraction_findings = extract_worker_search_replace_patch(text, worktree)
+    patch_text, patch_source, extraction_findings = extract_worker_search_replace_patch(text, worktree, source_root)
     result["patch_source"] = patch_source
     if not patch_text:
         result["findings"].extend(extraction_findings)
@@ -7364,6 +7396,16 @@ def decision_required_fields_for_task(task: Task, fields: dict[str, str] | None 
 def task_decision_packet(task: Task) -> dict[str, Any]:
     fields = parse_leading_key_value_prompt(task.prompt)
     decision_status = str(fields.get("decision_status", "")).strip().lower()
+    if not decision_status and task.phase == "implement" and task.allowed_paths and task.checks:
+        return {
+            "route": "execution_next",
+            "recommendation": "execute_bounded_task_metadata",
+            "decision_status": "decided",
+            "decided": True,
+            "missing_fields": [],
+            "required_fields": ["bounded_task_metadata"],
+            "decision_source": "task_metadata.allowed_paths_and_checks",
+        }
     required_fields = decision_required_fields_for_task(task, fields)
     missing = [name for name in required_fields if not str(fields.get(name, "")).strip()]
     decided = decision_status in DECIDED_STATUS_VALUES and not missing
@@ -10621,7 +10663,7 @@ def run_one(*, auto_next: bool = False) -> int:
 
         worker = run_worker(task, worktree, run_dir)
         worker_envelope = validate_worker_envelope(task, worker, run_dir)
-        patch_apply = apply_worker_search_replace(worker, worktree, run_dir)
+        patch_apply = apply_worker_search_replace(worker, worktree, run_dir, workspace_root)
         diff = capture_diff(worktree, run_dir)
         patch_guard = validate_captured_diff(diff, worktree, run_dir)
         scope_guard = validate_scope(diff, task, run_dir)
