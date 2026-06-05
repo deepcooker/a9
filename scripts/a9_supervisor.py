@@ -7262,6 +7262,109 @@ def active_plan() -> dict[str, Any]:
     return load_plan(active_plan_id())
 
 
+REQUIREMENTS_DEBATE_STAGES: tuple[dict[str, Any], ...] = (
+    {
+        "stage_id": "requirement_audit",
+        "label": "Demand audit and true problem framing",
+        "required_contract_fields": ("problem", "why_now", "out_of_scope"),
+        "prompt": (
+            "Audit the requirement source. Distinguish the real problem from proposed implementation, "
+            "name why this is the current mainline, and name stale or out-of-scope branches."
+        ),
+    },
+    {
+        "stage_id": "preparation_reference_scan",
+        "label": "Preparation and reference scan",
+        "required_contract_fields": ("reference_entry",),
+        "prompt": (
+            "Prepare for requirements debate: inspect current system evidence and local reference projects, "
+            "then list mechanisms worth copying, rejected mechanisms, source paths, and open questions."
+        ),
+    },
+    {
+        "stage_id": "system_requirement_translation",
+        "label": "Translate user demand into system requirement",
+        "required_contract_fields": ("must", "system_requirement"),
+        "prompt": (
+            "Translate the user/product demand into system requirements. Separate must/should/could, "
+            "scope, system behavior, and risks. Do not implement."
+        ),
+    },
+    {
+        "stage_id": "data_state_model",
+        "label": "Data model, state flow, exception flow",
+        "required_contract_fields": ("data_shape", "normal_flow", "exception_flow"),
+        "prompt": (
+            "Model the business/system objects, fields, authoritative states, normal transitions, "
+            "exception transitions, audit facts, and recovery behavior."
+        ),
+    },
+    {
+        "stage_id": "acceptance_and_backlog",
+        "label": "Acceptance and execution backlog shaping",
+        "required_contract_fields": ("acceptance", "allowed_execution"),
+        "prompt": (
+            "Turn the reviewed requirement into verifiable acceptance and a bounded execution backlog. "
+            "Generate candidate execution_next slices, allowed files, commands, tests, and repair conditions."
+        ),
+    },
+)
+
+
+def default_requirements_debate_state() -> dict[str, Any]:
+    return {
+        "schema": "a9.requirements_debate_state.v1",
+        "status": "debating",
+        "current_stage": REQUIREMENTS_DEBATE_STAGES[0]["stage_id"],
+        "stages": [
+            {
+                "stage_id": str(stage["stage_id"]),
+                "label": str(stage["label"]),
+                "status": "pending",
+                "required_contract_fields": list(stage["required_contract_fields"]),
+            }
+            for stage in REQUIREMENTS_DEBATE_STAGES
+        ],
+        "generated_execution_next_count": 0,
+    }
+
+
+def requirements_debate_progress(plan: dict[str, Any]) -> dict[str, Any]:
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    stages: list[dict[str, Any]] = []
+    current_stage = ""
+    missing_total: list[str] = []
+    for spec in REQUIREMENTS_DEBATE_STAGES:
+        required = [str(item) for item in spec["required_contract_fields"]]
+        missing = [field for field in required if not str(contract.get(field) or "").strip()]
+        if missing and not current_stage:
+            current_stage = str(spec["stage_id"])
+        missing_total.extend(missing)
+        stages.append(
+            {
+                "stage_id": str(spec["stage_id"]),
+                "label": str(spec["label"]),
+                "status": "done" if not missing else "open",
+                "missing_fields": missing,
+                "required_contract_fields": required,
+            }
+        )
+    return {
+        "schema": "a9.requirements_debate_progress.v1",
+        "status": "ready_for_execution_backlog" if not missing_total else "debating",
+        "current_stage": current_stage or "execution_backlog_generation",
+        "missing_fields": missing_total,
+        "stages": stages,
+    }
+
+
+def requirements_debate_stage_spec(stage_id: str) -> dict[str, Any]:
+    for stage in REQUIREMENTS_DEBATE_STAGES:
+        if stage["stage_id"] == stage_id:
+            return stage
+    return REQUIREMENTS_DEBATE_STAGES[-1]
+
+
 def parse_active_plan_from_prompt(prompt: str) -> dict[str, Any]:
     if not prompt:
         return {}
@@ -7380,6 +7483,25 @@ def write_plan_markdown(plan: dict[str, Any]) -> str:
         "allowed_execution",
     ]:
         lines.extend([f"### {key}", "", str(contract.get(key) or "").strip() or "TBD", ""])
+    debate = requirements_debate_progress(plan)
+    lines.extend(["## Requirements Debate", ""])
+    lines.extend(
+        [
+            f"- status: {debate.get('status', '')}",
+            f"- current_stage: {debate.get('current_stage', '')}",
+            f"- missing_fields: {', '.join(debate.get('missing_fields', [])) if isinstance(debate.get('missing_fields'), list) else ''}",
+            "",
+        ]
+    )
+    for stage in debate.get("stages", []):
+        if not isinstance(stage, dict):
+            continue
+        missing = stage.get("missing_fields", [])
+        lines.append(
+            f"- {stage.get('stage_id', '')}: {stage.get('status', '')}"
+            + (f" missing={', '.join(str(item) for item in missing)}" if missing else "")
+        )
+    lines.append("")
     lines.extend(
         [
             "## Authority",
@@ -7415,6 +7537,7 @@ def create_plan_payload(
         "source": source,
         "status": "active",
         "contract": contract,
+        "requirements_debate": default_requirements_debate_state(),
         "created_at": now,
         "updated_at": now,
     }
@@ -10321,6 +10444,11 @@ def plan_status(args: argparse.Namespace) -> int:
     print(f"system_requirement: {bounded_inline(contract.get('system_requirement', ''), 260)}")
     print(f"data_shape: {bounded_inline(contract.get('data_shape', ''), 260)}")
     print(f"acceptance: {bounded_inline(contract.get('acceptance', ''), 260)}")
+    debate = requirements_debate_progress(plan)
+    missing = debate.get("missing_fields", [])
+    print(f"requirements_debate_status: {debate.get('status', '')}")
+    print(f"requirements_debate_current_stage: {debate.get('current_stage', '')}")
+    print(f"requirements_debate_missing_fields: {', '.join(str(item) for item in missing) if isinstance(missing, list) else ''}")
     last_progress = tail_recovery_line(plan_dir / "progress.md")
     last_findings = tail_recovery_line(plan_dir / "findings.md")
     last_mistake = tail_recovery_line(plan_dir / "mistakes.md")
@@ -10348,6 +10476,76 @@ def plan_status(args: argparse.Namespace) -> int:
     print("- why_next_action: keeps continuation/handoff based on durable runtime evidence instead of chat memory.")
     print(f"- not_doing_now: {bounded_inline(contract.get('out_of_scope', ''), 260)}")
     print("- out_of_scope: do not let worker mutate contract fields; use change_request.")
+    return 0
+
+
+def plan_debate_next(args: argparse.Namespace) -> int:
+    ensure_dirs()
+    plan_id = str(args.plan_id or "").strip() or active_plan_id()
+    if not plan_id:
+        print("No active plan.")
+        return 1
+    plan = load_plan(plan_id)
+    if not plan:
+        print(f"Plan not found: {plan_id}")
+        return 1
+    debate = requirements_debate_progress(plan)
+    stage_id = str(args.stage or "").strip() or str(debate.get("current_stage") or "")
+    if not stage_id:
+        stage_id = "execution_backlog_generation"
+    stage = requirements_debate_stage_spec(stage_id)
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    task_id = str(args.task_id or "").strip()
+    if not task_id:
+        task_id = f"debate-{stage_id}-{compact_task_ref(plan_id, limit=48)}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    missing = [
+        field
+        for field in stage.get("required_contract_fields", [])
+        if not str(contract.get(str(field)) or "").strip()
+    ]
+    prompt_lines = [
+        "decision_status: not_decided",
+        "route: debate_next",
+        f"plan_id: {plan_id}",
+        f"goal_id: {plan.get('goal_id', '')}",
+        f"debate_stage: {stage_id}",
+        f"debate_stage_label: {stage.get('label', '')}",
+        f"missing_contract_fields: {', '.join(str(item) for item in missing)}",
+        f"problem: {contract.get('problem', '')}",
+        f"why_now: {contract.get('why_now', '')}",
+        f"system_requirement: {contract.get('system_requirement', '')}",
+        f"data_shape: {contract.get('data_shape', '')}",
+        f"normal_flow: {contract.get('normal_flow', '')}",
+        f"exception_flow: {contract.get('exception_flow', '')}",
+        f"acceptance: {contract.get('acceptance', '')}",
+        f"out_of_scope: {contract.get('out_of_scope', '')}",
+        "",
+        "Debate task:",
+        str(stage.get("prompt", "")),
+        "",
+        "Output requirements:",
+        "- Append findings/progress/change_request to the active plan if evidence changes the contract.",
+        "- Produce a decision packet draft only when the missing fields are supported by evidence.",
+        "- Do not implement production code in this task.",
+        "- If the stage is ready, propose candidate execution_next backlog slices with allowed paths and checks.",
+    ]
+    if args.extra:
+        prompt_lines.extend(["", "Extra operator direction:", str(args.extra).strip()])
+    path = enqueue_task_file(
+        task_id,
+        "\n".join(prompt_lines),
+        phase=str(args.phase or "reference_scan"),
+        checks=[],
+        timeout_seconds=args.timeout_seconds,
+        idle_timeout_seconds=args.idle_timeout_seconds,
+        max_attempts=1,
+        allowed_paths=[],
+        auto_next=False,
+    )
+    print(path)
+    print(f"requirements_debate_status: {debate.get('status', '')}")
+    print(f"requirements_debate_current_stage: {debate.get('current_stage', '')}")
+    print(f"task_auto_next: false")
     return 0
 
 
@@ -10576,6 +10774,15 @@ def main(argv: list[str]) -> int:
     plan_status_parser = sub.add_parser("plan-status")
     plan_status_parser.add_argument("--plan-id", default="")
 
+    plan_debate_parser = sub.add_parser("plan-debate-next")
+    plan_debate_parser.add_argument("--plan-id", default="")
+    plan_debate_parser.add_argument("--stage", default="")
+    plan_debate_parser.add_argument("--phase", default="reference_scan")
+    plan_debate_parser.add_argument("--task-id", default="")
+    plan_debate_parser.add_argument("--extra", default="")
+    plan_debate_parser.add_argument("--timeout-seconds", type=int, default=3600)
+    plan_debate_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
+
     change_request_parser = sub.add_parser("plan-change-request")
     change_request_parser.add_argument("--plan-id", default="")
     change_request_parser.add_argument("--field", required=True)
@@ -10613,6 +10820,8 @@ def main(argv: list[str]) -> int:
         return plan_create(args)
     if args.command == "plan-status":
         return plan_status(args)
+    if args.command == "plan-debate-next":
+        return plan_debate_next(args)
     if args.command == "plan-change-request":
         return plan_change_request(args)
     if args.command == "plan-note":

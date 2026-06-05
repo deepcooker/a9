@@ -3323,6 +3323,103 @@ Do the work.
         self.assertIn("should: Show advisory guidance without mutating contract authority.", text)
         self.assertIn("could: Record broader ideas as next_slice observations only.", text)
 
+    def test_plan_payload_and_status_expose_requirements_debate_progress(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-debate-progress",
+                    goal_id="goal-debate-progress",
+                    contract={
+                        "problem": "Need automated requirements debate before execution.",
+                        "why_now": "Execution-only 24h runtime drifts without design-first debate.",
+                    },
+                )
+                plan_dir = mod.write_plan_files(plan)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                plan_md = (plan_dir / "plan.md").read_text(encoding="utf-8")
+                args = type("Args", (), {"plan_id": "plan-debate-progress"})()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_status(args)
+                text = buffer.getvalue()
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(code, 0)
+        self.assertEqual(stored["requirements_debate"]["schema"], "a9.requirements_debate_state.v1")
+        self.assertIn("## Requirements Debate", plan_md)
+        self.assertIn("requirements_debate_status: debating", text)
+        self.assertIn("requirements_debate_current_stage: requirement_audit", text)
+        self.assertIn("out_of_scope", text)
+
+    def test_plan_debate_next_enqueues_bounded_debate_task_without_auto_next(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-debate-next",
+                    goal_id="goal-debate-next",
+                    contract={
+                        "problem": "Need debate task generation.",
+                        "why_now": "Debate must become runtime work.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "plan_id": "plan-debate-next",
+                        "stage": "",
+                        "phase": "reference_scan",
+                        "task_id": "debate-next-test",
+                        "extra": "Focus on the requirement guide method.",
+                        "timeout_seconds": 120,
+                        "idle_timeout_seconds": 30,
+                    },
+                )()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_debate_next(args)
+                text = buffer.getvalue()
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+                task_text = queued[0].read_text(encoding="utf-8")
+                parsed = mod.parse_task(queued[0])
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(queued), 1)
+        self.assertIn("requirements_debate_current_stage: requirement_audit", text)
+        self.assertIn("decision_status: not_decided", task_text)
+        self.assertIn("route: debate_next", task_text)
+        self.assertIn("debate_stage: requirement_audit", task_text)
+        self.assertIn("task_auto_next: false", text)
+        self.assertFalse(parsed.auto_next_allowed)
+        self.assertEqual(parsed.phase, "reference_scan")
+
     def test_update_active_plan_from_run_records_refs_and_progress(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

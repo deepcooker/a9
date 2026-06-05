@@ -2532,3 +2532,33 @@ Next monitoring target:
      long-running A9 services and repository tests share the same runtime
      queue. Production loop validation is good, but full test suites need daemon
      isolation or a dedicated test queue namespace.
+
+112. Requirements debate is now a first-class runtime stage, not just a document rule.
+   - Trigger:
+     the operator corrected the direction: A9's 24-hour flow is not only
+     execution. The intended flow is automated requirements debate/review/decision
+     first, then execution backlog generation and continuous worker execution.
+   - Change:
+     `plan.json` now carries a `requirements_debate` state, and
+     `requirements_debate_progress()` derives the current open stage from the
+     active plan contract. The stages follow the requirements-analysis guide:
+     demand audit, preparation/reference scan, system requirement translation,
+     data/state/exception modeling, and acceptance/backlog shaping.
+   - Runtime command:
+     added `python3 scripts/a9_supervisor.py plan-debate-next`. It reads the
+     active plan, picks the current debate stage, and enqueues a bounded
+     `decision_status: not_decided` / `route: debate_next` task with
+     `auto_next: false`. The task is analysis work only: it may append findings,
+     progress, and change requests, and it may draft execution_next slices, but
+     it may not implement production code.
+   - Verification:
+     targeted tests passed for debate progress exposure and debate task
+     generation. Full `python3 -m unittest tests.test_supervisor` passed with
+     336 tests. A live smoke generated and then removed
+     `live-debate-next-smoke-20260605`; the active plan currently reports
+     `requirements_debate_status=ready_for_execution_backlog`, so the generated
+     debate task targets execution backlog shaping rather than production code.
+   - Governance lesson:
+     the hard part is automating the 70%-80% requirements communication/debate
+     work. This commit is the first runtime hook for that lane; it does not yet
+     auto-generate thousands of execution_next tasks.
