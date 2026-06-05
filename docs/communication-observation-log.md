@@ -2840,3 +2840,30 @@ Next monitoring target:
      memory. This keeps the 24h worker compatible with mobile, runtime, and
      future private-network workspaces without weakening default A9 repo
      governance.
+
+124. First real mobile workspace worker smoke reached transport, not code failure.
+   - Trigger:
+     after external workspace support landed, a bounded task was queued with
+     `workspace_root=/mnt/d/root/a9_mobile_agent_lab`, allowed path
+     `DEPLOYMENT_GUIDE.md`, and no auto-next.
+   - Observation:
+     the supervisor claimed the task, created a worker worktree under
+     `.a9/worktrees`, and recorded the mobile repo base head
+     `dd4a4f2781cbddbfdf75d97ac54b2c263f42d6e4`. No mobile file was changed and
+     mobile git status stayed clean.
+   - Failure:
+     worker status was `retryable-worker-transport`. `codex_exec` stderr said
+     `failed to refresh available models: timeout waiting for child process to
+     exit`. The final message was empty, so deterministic apply skipped and git
+     governance had no diff to integrate.
+   - Retry:
+     a second queued task with `max_attempts=2` produced the same
+     `retryable-worker-transport` result on both attempts. Both attempts reached
+     the mobile workspace worktree and produced no diff, no checks, and no
+     mobile repository change.
+   - Governance lesson:
+     external workspace routing is ready enough for worker tasks, but the next
+     reliability issue is Codex transport startup/model-refresh timeout. This is
+     an execution transport problem, not a mobile workspace or scope-guard
+     problem. The next repair should focus on transport health/preflight or
+     backend fallback before queueing more real worker tasks.
