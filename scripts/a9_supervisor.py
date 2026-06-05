@@ -51,8 +51,10 @@ DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
 RUNTIME_CONTROL_STATE_PATH = STATE_DIR / "runtime" / "control_state.json"
 WORKER_MODEL_POLICY_PATH = STATE_DIR / "runtime" / "worker_model_policy.json"
+WORKER_TRANSPORT_POLICY_PATH = STATE_DIR / "runtime" / "worker_transport_policy.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
+DEFAULT_WORKER_TRANSPORT_BACKEND = "codex_exec"
 DEFAULT_REFERENCE_SCAN_WORKER_MODEL = ""
 DEFAULT_CRITICAL_WORKER_MODEL = ""
 DEFAULT_MAX_WORKER_EVENTS = 80
@@ -541,6 +543,47 @@ def write_worker_model_phase_override(
         },
     }
     write_json(WORKER_MODEL_POLICY_PATH, payload)
+    return payload
+
+
+def worker_transport_policy_state() -> dict[str, Any]:
+    ensure_dirs()
+    data = read_json_file(WORKER_TRANSPORT_POLICY_PATH)
+    if not data:
+        data = {}
+    backend = str(data.get("backend") or DEFAULT_WORKER_TRANSPORT_BACKEND).strip() or DEFAULT_WORKER_TRANSPORT_BACKEND
+    if backend not in {"codex_exec", "custom_command"}:
+        backend = DEFAULT_WORKER_TRANSPORT_BACKEND
+    return {
+        "schema": data.get("schema") or "a9.worker_transport_policy_state.v1",
+        "backend": backend,
+        "custom_command_template": str(data.get("custom_command_template") or ""),
+        "updated_at": str(data.get("updated_at") or ""),
+        "last_update": data.get("last_update", {}) if isinstance(data.get("last_update"), dict) else {},
+    }
+
+
+def write_worker_transport_policy(
+    *,
+    backend: str,
+    custom_command_template: str = "",
+    reason: str,
+) -> dict[str, Any]:
+    if backend not in {"codex_exec", "custom_command"}:
+        raise ValueError(f"unsupported worker transport backend: {backend}")
+    payload = {
+        "schema": "a9.worker_transport_policy_state.v1",
+        "backend": backend,
+        "custom_command_template": custom_command_template,
+        "updated_at": utc_now(),
+        "last_update": {
+            "kind": "worker_transport_policy_update",
+            "backend": backend,
+            "reason": reason,
+            "updated_at": utc_now(),
+        },
+    }
+    write_json(WORKER_TRANSPORT_POLICY_PATH, payload)
     return payload
 
 
@@ -1825,15 +1868,14 @@ def build_worker_cmd(
     final_path: Path,
     prompt_text: str,
 ) -> list[str]:
-    override = os.getenv("A9_SUPERVISOR_WORKER_CMD")
-    prompt_file = run_dir / "prompt.md"
-    if override:
-        formatted = (
-            override.replace("{prompt_file}", shlex.quote(str(prompt_file)))
-            .replace("{run_dir}", shlex.quote(str(run_dir)))
-            .replace("{worktree}", shlex.quote(str(worktree)))
-        )
-        return ["bash", "-lc", formatted]
+    transport = resolved_worker_transport(task)
+    if transport["backend"] == "custom_command":
+        template = str(transport.get("custom_command_template") or "")
+        if not template:
+            reason = "worker transport custom_command selected without custom_command_template"
+            return ["bash", "-lc", f"echo {shlex.quote(reason)} >&2; exit 97"]
+        return ["bash", "-lc", format_worker_command_template(template, task, worktree, run_dir, final_path)]
+
     model, _source = resolved_worker_model(task)
     prepare_worker_codex_home()
     cmd = [
@@ -1857,6 +1899,71 @@ def build_worker_cmd(
         insert_at = cmd.index("-C")
         cmd[insert_at:insert_at] = ["--disable", feature]
     return cmd
+
+
+def format_worker_command_template(
+    template: str,
+    task: Task,
+    worktree: Path,
+    run_dir: Path,
+    final_path: Path,
+) -> str:
+    prompt_file = run_dir / "prompt.md"
+    replacements = {
+        "prompt_file": shlex.quote(str(prompt_file)),
+        "run_dir": shlex.quote(str(run_dir)),
+        "worktree": shlex.quote(str(worktree)),
+        "final_path": shlex.quote(str(final_path)),
+        "task_id": shlex.quote(task.task_id),
+        "phase": shlex.quote(task.phase),
+    }
+    formatted = template
+    for key, value in replacements.items():
+        formatted = formatted.replace("{" + key + "}", value)
+    return formatted
+
+
+def resolved_worker_transport(task: Task | None = None) -> dict[str, Any]:
+    override = os.getenv("A9_SUPERVISOR_WORKER_CMD")
+    if override:
+        return {
+            "backend": "custom_command",
+            "source": "A9_SUPERVISOR_WORKER_CMD",
+            "status": "ok",
+            "custom_command_template": override,
+            "task_phase": task.phase if task else "",
+        }
+    env_backend = os.getenv("A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND", "").strip()
+    env_template = os.getenv("A9_SUPERVISOR_WORKER_CMD_TEMPLATE", "")
+    if env_backend:
+        if env_backend not in {"codex_exec", "custom_command"}:
+            return {
+                "backend": DEFAULT_WORKER_TRANSPORT_BACKEND,
+                "source": "A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND",
+                "status": "invalid_backend_fallback_to_codex_exec",
+                "configured_backend": env_backend,
+                "custom_command_template": env_template,
+                "task_phase": task.phase if task else "",
+            }
+        return {
+            "backend": env_backend,
+            "source": "A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND",
+            "status": "ok" if env_backend == "codex_exec" or env_template else "missing_custom_command_template",
+            "custom_command_template": env_template,
+            "task_phase": task.phase if task else "",
+        }
+    policy = worker_transport_policy_state()
+    backend = str(policy.get("backend") or DEFAULT_WORKER_TRANSPORT_BACKEND)
+    template = str(policy.get("custom_command_template") or "")
+    return {
+        "backend": backend,
+        "source": "worker_transport_policy.backend",
+        "status": "ok" if backend == "codex_exec" or template else "missing_custom_command_template",
+        "custom_command_template": template,
+        "policy_path": str(WORKER_TRANSPORT_POLICY_PATH),
+        "policy_state": policy,
+        "task_phase": task.phase if task else "",
+    }
 
 
 def worker_disabled_features_for_model(model: str) -> list[str]:
@@ -2223,6 +2330,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
     prompt_path.write_text(context_packet["prompt"], encoding="utf-8")
     reference_gate = validate_worker_reference_gate(task, worktree, run_dir)
     worker_model, worker_model_source = resolved_worker_model(task)
+    worker_transport = resolved_worker_transport(task)
 
     cmd = build_worker_cmd(task, worktree, run_dir, final_path, context_packet["prompt"])
     if reference_gate["status"] == "fail":
@@ -2245,6 +2353,9 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
             "command": cmd,
             "worker_model": worker_model,
             "worker_model_source": worker_model_source,
+            "worker_transport": worker_transport,
+            "worker_transport_backend": worker_transport.get("backend", ""),
+            "worker_transport_source": worker_transport.get("source", ""),
             "return_code": 0,
             "timed_out": False,
             "idle_timed_out": False,
@@ -2448,6 +2559,9 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
         "command": cmd,
         "worker_model": worker_model,
         "worker_model_source": worker_model_source,
+        "worker_transport": worker_transport,
+        "worker_transport_backend": worker_transport.get("backend", ""),
+        "worker_transport_source": worker_transport.get("source", ""),
         "return_code": return_code,
         "timed_out": timed_out,
         "idle_timed_out": idle_timed_out,

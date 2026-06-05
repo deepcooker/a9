@@ -2295,3 +2295,31 @@ Next monitoring target:
      runtime failure observability. Every lease-ending path must leave a
      monitor-visible summary, even when the worker crashes before emitting
      events or final output.
+
+103. Worker transport is now a control-plane policy, not only a Codex exec assumption.
+   - Trigger:
+     the live fallback smoke proved that changing worker model is not enough.
+     The default Spark path failed with `retryable-worker-transport`, and the
+     `gpt-5.5` phase fallback still hit Codex exec model-refresh/child-process
+     transport instability before doing useful work. That means A9 needs a
+     worker transport seam before it can claim stable 24-hour execution.
+   - Change:
+     `scripts/a9_supervisor.py` now has persistent
+     `.a9/runtime/worker_transport_policy.json`. The default backend remains
+     `codex_exec`; `custom_command` can be selected by persistent policy or
+     env (`A9_SUPERVISOR_WORKER_CMD` / `A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND`
+     plus `A9_SUPERVISOR_WORKER_CMD_TEMPLATE`). Worker runs now record
+     `worker_transport`, `worker_transport_backend`, and
+     `worker_transport_source`. `GET /api/monitor/control` exposes
+     `worker_transport_policy`, so phone/control surfaces can see whether A9 is
+     still on Codex exec or has switched to a custom/remote worker.
+   - Verification:
+     full `python3 -m unittest tests.test_supervisor tests.test_control_api`
+     passed with 600 tests. The running control API returned
+     `worker_transport_policy.resolved.backend=codex_exec`, queue `0`, running
+     `0`.
+   - Governance lesson:
+     A9 should keep using Codex first when it works, but the runtime must not
+     be trapped behind one CLI transport. OpenHands/aider/remote self-hosted
+     workers can now plug in through a deterministic transport policy instead
+     of requiring supervisor rewrites.

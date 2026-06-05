@@ -2840,6 +2840,7 @@ class ControlApiTests(unittest.TestCase):
         original_status = mod.monitor_status
         original_examples = mod.monitor_intervention_examples
         original_model_policy = mod.worker_model_policy
+        original_transport_policy = mod.worker_transport_policy
         try:
             mod.monitor_status = lambda root=mod.ROOT: {
                 "status": "ok",
@@ -2864,15 +2865,22 @@ class ControlApiTests(unittest.TestCase):
                 "kind": "worker_model_policy",
                 "resolved": {"repair": {"model": "gpt-5.5", "source": "A9_SUPERVISOR_CRITICAL_MODEL"}},
             }
+            mod.worker_transport_policy = lambda root=mod.ROOT: {
+                "status": "ok",
+                "kind": "worker_transport_policy",
+                "resolved": {"backend": "codex_exec", "source": "worker_transport_policy.backend"},
+            }
             payload = mod.monitor_control()
         finally:
             mod.monitor_status = original_status
             mod.monitor_intervention_examples = original_examples
             mod.worker_model_policy = original_model_policy
+            mod.worker_transport_policy = original_transport_policy
 
         self.assertEqual(payload["schema"], "a9.monitor_control.v1")
         self.assertEqual(payload["monitor_status"]["kind"], "monitor_status")
         self.assertEqual(payload["worker_model_policy"]["resolved"]["repair"]["model"], "gpt-5.5")
+        self.assertEqual(payload["worker_transport_policy"]["resolved"]["backend"], "codex_exec")
         self.assertEqual(payload["intervention_examples"]["examples"]["pause"]["action"], "pause")
         self.assertEqual(payload["intervention_stream"]["stream"], "a9:monitor:interventions")
         self.assertEqual(payload["intervention_stream"]["next_last_id"], "1740000010-0")
@@ -2880,14 +2888,22 @@ class ControlApiTests(unittest.TestCase):
 
     def test_worker_model_policy_resolves_supervisor_phase_overrides(self):
         mod = load_control_api()
+        sup = mod.supervisor()
+        original_supervisor = mod.supervisor
+        old_model_policy_path = sup.WORKER_MODEL_POLICY_PATH
         old_global = os.environ.pop("A9_SUPERVISOR_MODEL", None)
         old_critical = os.environ.pop("A9_SUPERVISOR_CRITICAL_MODEL", None)
         old_repair = os.environ.pop("A9_SUPERVISOR_PHASE_MODEL_REPAIR", None)
         try:
-            os.environ["A9_SUPERVISOR_CRITICAL_MODEL"] = "gpt-5.5"
-            os.environ["A9_SUPERVISOR_PHASE_MODEL_REPAIR"] = "gpt-5.4"
-            payload = mod.worker_model_policy()
+            with tempfile.TemporaryDirectory() as tmp:
+                sup.WORKER_MODEL_POLICY_PATH = Path(tmp) / "worker_model_policy.json"
+                mod.supervisor = lambda: sup
+                os.environ["A9_SUPERVISOR_CRITICAL_MODEL"] = "gpt-5.5"
+                os.environ["A9_SUPERVISOR_PHASE_MODEL_REPAIR"] = "gpt-5.4"
+                payload = mod.worker_model_policy()
         finally:
+            sup.WORKER_MODEL_POLICY_PATH = old_model_policy_path
+            mod.supervisor = original_supervisor
             if old_global is not None:
                 os.environ["A9_SUPERVISOR_MODEL"] = old_global
             else:
@@ -2908,6 +2924,46 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(payload["resolved"]["test"]["source"], "A9_SUPERVISOR_CRITICAL_MODEL")
         self.assertEqual(payload["resolved"]["repair"]["model"], "gpt-5.4")
         self.assertEqual(payload["resolved"]["repair"]["source"], "A9_SUPERVISOR_PHASE_MODEL_REPAIR")
+
+    def test_worker_transport_policy_exposes_supervisor_policy(self):
+        mod = load_control_api()
+        sup = mod.supervisor()
+        original_supervisor = mod.supervisor
+        old_policy_path = sup.WORKER_TRANSPORT_POLICY_PATH
+        old_override = os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+        old_backend = os.environ.pop("A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND", None)
+        old_template = os.environ.pop("A9_SUPERVISOR_WORKER_CMD_TEMPLATE", None)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                sup.WORKER_TRANSPORT_POLICY_PATH = Path(tmp) / "worker_transport_policy.json"
+                mod.supervisor = lambda: sup
+                sup.write_worker_transport_policy(
+                    backend="custom_command",
+                    custom_command_template="echo ok > {final_path}",
+                    reason="control-api-test",
+                )
+                payload = mod.worker_transport_policy()
+        finally:
+            sup.WORKER_TRANSPORT_POLICY_PATH = old_policy_path
+            mod.supervisor = original_supervisor
+            if old_override is None:
+                os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+            else:
+                os.environ["A9_SUPERVISOR_WORKER_CMD"] = old_override
+            if old_backend is None:
+                os.environ.pop("A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND", None)
+            else:
+                os.environ["A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND"] = old_backend
+            if old_template is None:
+                os.environ.pop("A9_SUPERVISOR_WORKER_CMD_TEMPLATE", None)
+            else:
+                os.environ["A9_SUPERVISOR_WORKER_CMD_TEMPLATE"] = old_template
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["schema"], "a9.worker_transport_policy.v1")
+        self.assertEqual(payload["policy_state"]["backend"], "custom_command")
+        self.assertEqual(payload["resolved"]["backend"], "custom_command")
+        self.assertEqual(payload["resolved"]["source"], "worker_transport_policy.backend")
 
     def test_api_monitor_control_endpoint_returns_payload(self):
         mod = load_control_api()

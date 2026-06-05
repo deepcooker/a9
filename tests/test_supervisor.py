@@ -258,7 +258,9 @@ Do the work.
             old_model = os.environ.pop("A9_SUPERVISOR_MODEL", None)
             old_reference_model = os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
             old_override = os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+            old_transport_policy_path = mod.WORKER_TRANSPORT_POLICY_PATH
             try:
+                mod.WORKER_TRANSPORT_POLICY_PATH = run_dir / "worker_transport_policy.json"
                 cmd = mod.build_worker_cmd(task, Path("/tmp/worktree"), run_dir, final_path, "prompt")
                 self.assertEqual(cmd[0], "env")
                 self.assertIn(f"CODEX_HOME={mod.WORKER_CODEX_HOME}", cmd)
@@ -288,6 +290,53 @@ Do the work.
                     os.environ["A9_SUPERVISOR_WORKER_CMD"] = old_override
                 else:
                     os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+                mod.WORKER_TRANSPORT_POLICY_PATH = old_transport_policy_path
+
+    def test_worker_transport_policy_can_persist_custom_command_backend(self):
+        mod = load_supervisor()
+        task = mod.Task(path=Path("task.md"), task_id="transport-test", prompt="demo", phase="record")
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            final_path = run_dir / "final.md"
+            old_override = os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+            old_backend = os.environ.pop("A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND", None)
+            old_template = os.environ.pop("A9_SUPERVISOR_WORKER_CMD_TEMPLATE", None)
+            old_policy_path = mod.WORKER_TRANSPORT_POLICY_PATH
+            try:
+                mod.WORKER_TRANSPORT_POLICY_PATH = run_dir / "worker_transport_policy.json"
+                self.assertEqual(mod.resolved_worker_transport(task)["backend"], "codex_exec")
+
+                mod.write_worker_transport_policy(
+                    backend="custom_command",
+                    custom_command_template="echo {task_id} {phase} > {final_path}",
+                    reason="test-custom-backend",
+                )
+                resolved = mod.resolved_worker_transport(task)
+                cmd = mod.build_worker_cmd(task, worktree, run_dir, final_path, "prompt")
+            finally:
+                if old_override is None:
+                    os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+                else:
+                    os.environ["A9_SUPERVISOR_WORKER_CMD"] = old_override
+                if old_backend is None:
+                    os.environ.pop("A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND", None)
+                else:
+                    os.environ["A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND"] = old_backend
+                if old_template is None:
+                    os.environ.pop("A9_SUPERVISOR_WORKER_CMD_TEMPLATE", None)
+                else:
+                    os.environ["A9_SUPERVISOR_WORKER_CMD_TEMPLATE"] = old_template
+                mod.WORKER_TRANSPORT_POLICY_PATH = old_policy_path
+
+        self.assertEqual(resolved["backend"], "custom_command")
+        self.assertEqual(resolved["source"], "worker_transport_policy.backend")
+        self.assertEqual(cmd[0:2], ["bash", "-lc"])
+        self.assertIn("transport-test", cmd[2])
+        self.assertIn("record", cmd[2])
+        self.assertIn(str(final_path), cmd[2])
 
     def test_reference_scan_model_can_be_overridden_without_changing_default(self):
         mod = load_supervisor()

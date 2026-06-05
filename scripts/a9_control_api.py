@@ -6607,6 +6607,41 @@ def worker_model_policy(root: Path = ROOT) -> dict[str, Any]:
         }
 
 
+def worker_transport_policy(root: Path = ROOT) -> dict[str, Any]:
+    del root
+    try:
+        mod = supervisor()
+        task = mod.Task(path=Path("transport-policy.md"), task_id="transport-policy", prompt="", phase="record")
+        resolved = mod.resolved_worker_transport(task)
+        return {
+            "status": "ok",
+            "kind": "worker_transport_policy",
+            "schema": "a9.worker_transport_policy.v1",
+            "backend_env": "A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND",
+            "custom_command_env": "A9_SUPERVISOR_WORKER_CMD",
+            "custom_command_template_env": "A9_SUPERVISOR_WORKER_CMD_TEMPLATE",
+            "configured_env": {
+                key: os.getenv(key, "")
+                for key in [
+                    "A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND",
+                    "A9_SUPERVISOR_WORKER_CMD",
+                    "A9_SUPERVISOR_WORKER_CMD_TEMPLATE",
+                ]
+                if os.getenv(key, "")
+            },
+            "policy_state": mod.worker_transport_policy_state(),
+            "policy_path": str(mod.WORKER_TRANSPORT_POLICY_PATH),
+            "resolved": resolved,
+        }
+    except Exception as exc:
+        return {
+            "status": "error",
+            "kind": "worker_transport_policy",
+            "schema": "a9.worker_transport_policy.v1",
+            "error": compact_text(str(exc), 1000),
+        }
+
+
 def monitor_status(root: Path = ROOT) -> dict[str, Any]:
     status = supervisor_status(root)
     control_state = runtime_control_state(root)
@@ -6692,6 +6727,7 @@ def monitor_control(root: Path = ROOT) -> dict[str, Any]:
     status = monitor_status(root)
     examples = monitor_intervention_examples(root)
     model_policy = worker_model_policy(root)
+    transport_policy = worker_transport_policy(root)
     recent = status.get("recent_interventions") if isinstance(status.get("recent_interventions"), dict) else {}
     next_last_id = ""
     events = recent.get("events") if isinstance(recent, dict) else []
@@ -6704,6 +6740,7 @@ def monitor_control(root: Path = ROOT) -> dict[str, Any]:
         "generated_at": utc_now(),
         "monitor_status": status,
         "worker_model_policy": model_policy,
+        "worker_transport_policy": transport_policy,
         "intervention_examples": examples,
         "intervention_stream": {
             "stream": MONITOR_INTERVENTIONS_STREAM_KEY,
