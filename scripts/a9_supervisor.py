@@ -404,6 +404,7 @@ class Task:
     checks: list[str] = field(default_factory=list)
     allowed_paths: list[str] = field(default_factory=list)
     auto_next_allowed: bool = True
+    task_quality_warnings: list[str] = field(default_factory=list)
 
 
 def effective_worker_idle_timeout_seconds(task: Task) -> int:
@@ -450,6 +451,7 @@ def parse_task(path: Path) -> Task:
     task_id = slugify(str(meta.get("id") or path.stem))
     checks = [str(item) for item in meta.get("checks", [])]
     allowed_paths = [str(item) for item in meta.get("allowed_paths", [])]
+    task_quality_warnings = [str(item) for item in meta.get("task_quality_warnings", [])]
     auto_next_allowed = bool(meta.get("auto_next", True))
     if bool(meta.get("no_auto_next", False)):
         auto_next_allowed = False
@@ -464,6 +466,7 @@ def parse_task(path: Path) -> Task:
         checks=checks,
         allowed_paths=allowed_paths,
         auto_next_allowed=auto_next_allowed,
+        task_quality_warnings=task_quality_warnings,
     )
 
 
@@ -8866,6 +8869,23 @@ def auto_loop_guard_blocks_next(summary: dict[str, Any] | None = None) -> bool:
     return state.get("status") == "tripped"
 
 
+def task_quality_warnings_for_enqueue(*, phase: str, checks: list[str], allowed_paths: list[str]) -> list[str]:
+    warnings: list[str] = []
+    if strict_worker_envelope_required_for_phase(phase):
+        for path in allowed_paths:
+            normalized = str(path).strip().replace("\\", "/")
+            if normalized == ".a9" or normalized.startswith(".a9/"):
+                if "write_scope_runtime_ignored_path:.a9" not in warnings:
+                    warnings.append("write_scope_runtime_ignored_path:.a9")
+    shell_test_re = re.compile(r"""^\s*test\s+["'][^"'$()]+["']\s*[!=]=?\s*""")
+    for check in checks:
+        text = str(check).strip()
+        if shell_test_re.search(text) and "$(" not in text and "`" not in text:
+            if "declared_check_maybe_shell_expanded:test_literal" not in warnings:
+                warnings.append("declared_check_maybe_shell_expanded:test_literal")
+    return warnings
+
+
 def enqueue_task_file(
     task_id: str,
     prompt: str,
@@ -8891,6 +8911,8 @@ def enqueue_task_file(
         prompt = f"strict_worker_envelope: true\n{prompt.strip()}"
     checks_text = "\n".join(f'  - "{item}"' for item in checks)
     allowed_paths_text = "\n".join(f'  - "{item}"' for item in allowed_paths)
+    quality_warnings = task_quality_warnings_for_enqueue(phase=phase, checks=checks, allowed_paths=allowed_paths)
+    quality_warnings_text = "\n".join(f'  - "{item}"' for item in quality_warnings)
     frontmatter = [
         "---",
         f'id: "{path.stem}"',
@@ -8903,6 +8925,8 @@ def enqueue_task_file(
         checks_text,
         "allowed_paths:",
         allowed_paths_text,
+        "task_quality_warnings:",
+        quality_warnings_text,
         "---",
         "",
         prompt.strip(),

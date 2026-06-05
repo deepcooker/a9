@@ -71,6 +71,8 @@ checks:
 allowed_paths:
   - "scripts/"
   - "tests/*.py"
+task_quality_warnings:
+  - "declared_check_maybe_shell_expanded:test_literal"
 ---
 Do the work.
 """,
@@ -84,6 +86,7 @@ Do the work.
         self.assertEqual(task.max_attempts, 4)
         self.assertEqual(task.checks, ["python --version"])
         self.assertEqual(task.allowed_paths, ["scripts/", "tests/*.py"])
+        self.assertEqual(task.task_quality_warnings, ["declared_check_maybe_shell_expanded:test_literal"])
         self.assertFalse(task.auto_next_allowed)
         self.assertEqual(task.prompt, "Do the work.")
 
@@ -9281,6 +9284,47 @@ role_signoff: product, business, architecture, test approved.
 
         self.assertIn("strict_worker_envelope: true", text)
         self.assertTrue(parsed.prompt.startswith("strict_worker_envelope: true"))
+
+    def test_enqueue_task_file_records_quality_warnings_for_runtime_write_scope_and_expanded_check(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                queued = mod.enqueue_task_file(
+                    "quality-warning",
+                    "Do implementation work.",
+                    phase="implement",
+                    allowed_paths=[".a9/smoke/file.txt"],
+                    checks=['test "alpha" = beta'],
+                )
+                parsed = mod.parse_task(queued)
+                text = queued.read_text(encoding="utf-8")
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertIn("task_quality_warnings:", text)
+        self.assertIn("write_scope_runtime_ignored_path:.a9", parsed.task_quality_warnings)
+        self.assertIn("declared_check_maybe_shell_expanded:test_literal", parsed.task_quality_warnings)
+
+    def test_enqueue_task_file_does_not_warn_for_tracked_path_and_quoted_shell_substitution_check(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                queued = mod.enqueue_task_file(
+                    "quality-ok",
+                    "Do implementation work.",
+                    phase="implement",
+                    allowed_paths=["tests/fixtures/worker_patch_discipline.txt"],
+                    checks=['test "$(cat tests/fixtures/worker_patch_discipline.txt)" = beta'],
+                )
+                parsed = mod.parse_task(queued)
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertEqual(parsed.task_quality_warnings, [])
 
     def test_build_context_packet_injects_default_strict_envelope_for_worker_phase(self):
         mod = load_supervisor()

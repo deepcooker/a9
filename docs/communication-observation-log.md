@@ -2779,3 +2779,23 @@ Next monitoring target:
      real e2e tasks must target tracked files visible in worker worktrees, not
      runtime ignored paths. Shell quoting of declared checks is also part of
      task quality; commands with `$()` must be single-quoted at enqueue time.
+
+121. Enqueued tasks now carry quality warnings for two e2e pitfalls.
+   - Trigger:
+     the patch-discipline e2e showed two task-generation mistakes: using a
+     `.a9/` runtime path as execution write scope, and letting the shell expand
+     `$(cat ...)` before enqueueing the declared check.
+   - Change:
+     `enqueue_task_file()` now computes `task_quality_warnings` and writes them
+     into task frontmatter. For strict worker phases, allowed paths under `.a9/`
+     get `write_scope_runtime_ignored_path:.a9`. Literal shell tests such as
+     `test "alpha" = beta` get
+     `declared_check_maybe_shell_expanded:test_literal`.
+   - Verification:
+     added tests for parse roundtrip, runtime ignored write scope warning,
+     expanded-check warning, and no warning for a tracked path with a correctly
+     quoted `$()` check.
+   - Governance lesson:
+     these are warnings, not hard gates. They surface bad task construction
+     early without blocking legitimate runtime evidence tasks; the monitor can
+     decide whether to stop, rewrite, or allow the task.
