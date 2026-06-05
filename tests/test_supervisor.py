@@ -3747,9 +3747,12 @@ Do the work.
 
         items = mod.plan_execution_backlog_items(plan, count=2)
 
-        self.assertEqual([item["phase"] for item in items], ["mechanism_extract", "implement"])
+        self.assertEqual([item["phase"] for item in items], ["mechanism_extract"])
         self.assertEqual(items[0]["task_id"], "exec-002-mechanism_extract-plan-completed-custom-backlog")
         self.assertEqual(items[0]["source"], "plan.execution_backlog.items")
+
+        backlog["generated_task_ids"].append("exec-002-mechanism_extract-plan-completed-custom-backlog")
+        self.assertEqual(mod.plan_execution_backlog_items(plan, count=2), [])
 
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()

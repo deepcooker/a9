@@ -11145,9 +11145,6 @@ def plan_debate_next(args: argparse.Namespace) -> int:
 EXECUTION_BACKLOG_PHASES: tuple[tuple[str, str], ...] = (
     ("reference_scan", "Re-check the exact reference mechanisms for this decided slice before implementation."),
     ("mechanism_extract", "Extract the concrete mechanism, contracts, failure modes, and A9 adaptation plan."),
-    ("implement", "Implement the smallest bounded change that satisfies the decided slice."),
-    ("test", "Add or run focused verification for the decided slice."),
-    ("record", "Record evidence, copied mechanisms, pass/fail state, residual risks, and the next repair condition."),
 )
 
 

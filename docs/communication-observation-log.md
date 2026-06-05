@@ -3368,3 +3368,42 @@ Next monitoring target:
      24h continuation should come from durable plan/backlog state first, goal
      state second, and never from chat memory. Smoke workers must not create
      production-looking next tasks unless explicitly configured to do so.
+
+145. Real Spark continuation proved the loop but exposed generic backlog risk.
+   - Trigger:
+     after local no-model smoke passed, the monitor ran one real
+     `gpt-5.3-codex-spark` continuation through
+     `run-loop --auto-next --max-tasks 1`. The idle scheduler correctly chose
+     `idle-backlog-exec-002-mechanism_extract-a9-plan-lane-runtime` from the
+     active plan.
+   - Evidence:
+     run evidence is under
+     `.a9/runs/idle-backlog-exec-002-mechanism_extract-a9-plan-lane-runtime-20260605T175803Z-a1`.
+     The worker returned a valid strict envelope, status `needs-followup`, and
+     no repository diff. It consumed about 865k input tokens, 812k cached input
+     tokens, 13k output tokens, and 9.8k reasoning tokens. Process governance
+     recorded one broad sed slice observation, and worker cost risk was high.
+   - Quality finding:
+     the worker extracted useful plan-contract mechanics, but its next
+     recommendation was not phase-prefixed and was correctly blocked as
+     `operator_handoff_next_slice_requires_monitor`. The monitor score also
+     recommended `block_and_rewrite_task` because the task lacked explicit
+     tradeoff framing and observable reference learning.
+   - Change:
+     default generated execution backlog phases now stop at
+     `reference_scan` and `mechanism_extract`. The scheduler no longer
+     auto-generates generic `implement`, `test`, or `record` tasks after a
+     virtual/default backlog sequence. Those later execution tasks must come
+     from an explicit reviewed backlog item or a concrete phase-prefixed
+     next-slice.
+   - Verification:
+     focused tests confirm completed custom backlog fallback only schedules the
+     remaining analysis phase and then stops; active-plan idle scheduling still
+     chooses plan backlog before goal fallback; `py_compile` passed. A read-only
+     check against the current active plan returned no more auto-generated
+     backlog items after the real mechanism extraction.
+   - Governance lesson:
+     "24h" does not mean blindly continuing into implementation. Requirements
+     debate can produce analysis continuation automatically, but implementation
+     must remain explicit, bounded, and backed by reviewed acceptance and
+     allowed execution.
