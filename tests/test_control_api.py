@@ -3077,6 +3077,50 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(applied["after"]["backend"], "custom_command")
         self.assertIn("/root/a9/scripts/a9_openai_compatible_worker.py", applied["after"]["custom_command_template"])
 
+    def test_update_worker_transport_policy_codex_preset_clears_custom_template(self):
+        mod = load_control_api()
+        sup = mod.supervisor()
+        original_supervisor = mod.supervisor
+        original_audit = mod.enqueue_monitor_intervention_audit
+        old_policy_path = sup.WORKER_TRANSPORT_POLICY_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "root"
+                root.mkdir()
+                sup.WORKER_TRANSPORT_POLICY_PATH = Path(tmp) / "worker_transport_policy.json"
+                mod.supervisor = lambda: sup
+                mod.enqueue_monitor_intervention_audit = lambda event, *, root: None
+                mod.phone_control_arm(
+                    {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                mod.update_worker_transport_policy(
+                    {
+                        "preset": "local_envelope_smoke",
+                        "reason": "switch to local smoke worker",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+                restored = mod.update_worker_transport_policy(
+                    {
+                        "preset": "codex_exec",
+                        "reason": "restore codex exec worker",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+        finally:
+            sup.WORKER_TRANSPORT_POLICY_PATH = old_policy_path
+            mod.supervisor = original_supervisor
+            mod.enqueue_monitor_intervention_audit = original_audit
+
+        self.assertEqual(restored["status"], "applied")
+        self.assertEqual(restored["preset"], "codex_exec")
+        self.assertEqual(restored["after"]["backend"], "codex_exec")
+        self.assertEqual(restored["after"]["custom_command_template"], "")
+        self.assertEqual(restored["resolved"]["custom_command_template"], "")
+
     def test_api_worker_transport_policy_post_route_calls_handler(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None, "request": None}

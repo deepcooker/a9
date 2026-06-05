@@ -2470,3 +2470,38 @@ Next monitoring target:
      worker backend switching is now visible where the operator actually
      controls the system. The mobile page should show readiness and missing
      configuration before asking the operator to arm and mutate runtime state.
+
+110. Controlled 24-hour loop smoke proved the supervisor loop, and exposed two governance edges.
+   - Trigger:
+     the main line needed a real answer to whether the 24-hour worker loop can
+     run unattended instead of only being manually driven through `run-one`.
+   - Change:
+     armed runtime, switched worker transport to `local_envelope_smoke`, and
+     enqueued three no-edit strict-envelope smoke tasks:
+     `controlled-24h-loop-smoke-20260605-1`,
+     `controlled-24h-loop-smoke-20260605-2`, and
+     `controlled-24h-loop-smoke-20260605-3`. The existing
+     `a9-supervisor-loop` tmux session consumed them automatically.
+   - Verification:
+     all three controlled tasks passed with `worker_transport_backend=custom_command`
+     and declared check `rc=0`. The loop then generated and ran one
+     `auto-reference_scan` follow-up, which also passed. Queue returned to
+     `queued=0`, `running=0`. Runtime was resumed, phone-control was disarmed,
+     and worker transport was restored to `codex_exec`.
+   - Findings:
+     the loop is alive for controlled tasks, but `--auto-next` can expand after
+     a smoke task unless the task or loop has a clear goal boundary. Deep-mark
+     RedisJSON writes were also visible as a latency point after worker
+     completion. The first restore to `codex_exec` left the old local smoke
+     command template in policy state; `update_worker_transport_policy` now
+     treats preset values as authoritative even when the preset template is an
+     empty string.
+   - Verification after repair:
+     live `/api/monitor/control` shows `transport.backend=codex_exec`,
+     `custom_command_template=""`, queue `0`, running `0`, runtime `running`,
+     and phone-control `disarmed`. Regression coverage:
+     `test_update_worker_transport_policy_codex_preset_clears_custom_template`.
+   - Governance lesson:
+     24-hour mode is not just "keep running". It needs bounded task expansion,
+     visible transport readiness, and fast side-path persistence so observation
+     does not become the bottleneck.

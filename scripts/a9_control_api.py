@@ -6735,11 +6735,12 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
     if preset_name and not preset:
         raise ValueError("unknown worker transport preset: " + preset_name)
     backend = str(payload.get("backend") or (preset or {}).get("backend") or before.get("backend") or "").strip()
-    custom_command_template = str(
-        payload.get("custom_command_template")
-        if payload.get("custom_command_template") is not None
-        else (preset or {}).get("custom_command_template") or before.get("custom_command_template") or ""
-    )
+    if payload.get("custom_command_template") is not None:
+        custom_command_template = str(payload.get("custom_command_template") or "")
+    elif preset is not None:
+        custom_command_template = str(preset.get("custom_command_template") or "")
+    else:
+        custom_command_template = str(before.get("custom_command_template") or "")
     reason = str(payload.get("reason") or "").strip()
     if not reason:
         raise ValueError("reason is required")
