@@ -6822,6 +6822,19 @@ def worker_transport_preset_by_name(name: str) -> dict[str, Any] | None:
     return None
 
 
+def openai_compatible_custom_command_template(config: dict[str, Any]) -> str:
+    openai_worker = ROOT / "scripts" / "a9_openai_compatible_worker.py"
+    return (
+        f"python3 {shlex.quote(str(openai_worker))} "
+        "--prompt-file {prompt_file} --final-path {final_path} "
+        "--task-id {task_id} --phase {phase} "
+        f"--model {shlex.quote(str(config.get('model') or ''))} "
+        f"--base-url {shlex.quote(str(config.get('base_url') or ''))} "
+        f"--api-key-env {shlex.quote(str(config.get('api_key_env') or 'A9_LLM_WORKER_API_KEY'))} "
+        f"--timeout-seconds {int(config.get('timeout_seconds') or 30)}"
+    )
+
+
 def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     command = "worker.transport.update"
@@ -6871,10 +6884,15 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
     if backend == "custom_command" and not custom_command_template.strip():
         raise ValueError("custom_command_template is required for custom_command backend")
     probe: dict[str, Any] = {}
+    config: dict[str, Any] = {}
+    if preset_name == "openai_compatible":
+        config = openai_compatible_worker_config(payload, root=root)
+        if config.get("model") and config.get("base_url") and config.get("api_key_env"):
+            custom_command_template = openai_compatible_custom_command_template(config)
     if bool(payload.get("require_probe_pass")):
         if preset_name != "openai_compatible":
             raise ValueError("require_probe_pass is only supported for preset=openai_compatible")
-        config = openai_compatible_worker_config(payload, root=root)
+        config = config or openai_compatible_worker_config(payload, root=root)
         if config.get("missing"):
             return {
                 "status": "not_configured",

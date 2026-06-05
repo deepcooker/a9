@@ -3124,6 +3124,46 @@ Do risky work.
         self.assertEqual(applied["after"]["backend"], "custom_command")
         self.assertIn("/root/a9/scripts/a9_openai_compatible_worker.py", applied["after"]["custom_command_template"])
 
+    def test_update_worker_transport_policy_materializes_openai_config_in_command(self):
+        mod = load_control_api()
+        sup = mod.supervisor()
+        original_supervisor = mod.supervisor
+        original_audit = mod.enqueue_monitor_intervention_audit
+        old_policy_path = sup.WORKER_TRANSPORT_POLICY_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "root"
+                root.mkdir()
+                sup.WORKER_TRANSPORT_POLICY_PATH = Path(tmp) / "worker_transport_policy.json"
+                mod.supervisor = lambda: sup
+                mod.enqueue_monitor_intervention_audit = lambda event, *, root: None
+                mod.phone_control_arm(
+                    {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                applied = mod.update_worker_transport_policy(
+                    {
+                        "preset": "openai_compatible",
+                        "model": "gateway-model",
+                        "base_url": "http://127.0.0.1:8000/v1",
+                        "api_key_env": "A9_GATEWAY_KEY",
+                        "timeout_seconds": 11,
+                        "reason": "switch with materialized gateway config",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+        finally:
+            sup.WORKER_TRANSPORT_POLICY_PATH = old_policy_path
+            mod.supervisor = original_supervisor
+            mod.enqueue_monitor_intervention_audit = original_audit
+
+        command = applied["after"]["custom_command_template"]
+        self.assertIn("--model gateway-model", command)
+        self.assertIn("--base-url http://127.0.0.1:8000/v1", command)
+        self.assertIn("--api-key-env A9_GATEWAY_KEY", command)
+        self.assertIn("--timeout-seconds 11", command)
+
     def test_update_worker_transport_policy_requires_probe_pass_before_openai_switch(self):
         mod = load_control_api()
         sup = mod.supervisor()
@@ -3193,6 +3233,7 @@ Do risky work.
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(applied["probe"]["status"], "pass")
         self.assertEqual(applied["after"]["backend"], "custom_command")
+        self.assertIn("--model test-model", applied["after"]["custom_command_template"])
         self.assertEqual([event["status"] for event in audit_events], ["probe_failed", "applied"])
 
     def test_update_worker_transport_policy_codex_preset_clears_custom_template(self):

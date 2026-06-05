@@ -3223,3 +3223,27 @@ Next monitoring target:
      stable backend operations need durable configuration, but credential
      material must remain outside repo/runtime JSON. A9 should persist where to
      look for the secret, not the secret itself.
+
+139. OpenAI-compatible policy must materialize gateway config into the worker command.
+   - Trigger:
+     `.a9/runtime/llm_worker_config.json` made model-gateway defaults durable,
+     but the `openai_compatible` transport preset still wrote a generic command
+     that only called `a9_openai_compatible_worker.py`. If the supervisor process
+     did not share the same transient environment or payload values, the worker
+     could still start without `model` or `base_url`.
+   - Change:
+     when `preset=openai_compatible` is applied, the control API now resolves
+     effective config and materializes `--model`, `--base-url`, `--api-key-env`,
+     and `--timeout-seconds` into the stored `custom_command_template`. The
+     command stores only the name of the key environment variable, not the key
+     value. Probe-gated switches use the same materialized template after the
+     probe passes.
+   - Verification:
+     regression coverage confirms that direct OpenAI-compatible policy updates
+     and probe-gated switches both persist a command containing the expected
+     gateway arguments.
+   - Governance lesson:
+     configuration is not truly stable until it reaches the process that will
+     execute the task. Runtime policy should capture non-secret execution
+     defaults explicitly instead of assuming every daemon has the same shell
+     environment as the operator.
