@@ -49,6 +49,7 @@ PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
 RUNTIME_CONTROL_STATE_PATH = STATE_DIR / "runtime" / "control_state.json"
+WORKER_MODEL_POLICY_PATH = STATE_DIR / "runtime" / "worker_model_policy.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
 DEFAULT_REFERENCE_SCAN_WORKER_MODEL = ""
@@ -59,6 +60,7 @@ DEFAULT_WORKER_EVENT_BUDGET_MODE = "observe"
 DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
 DEFAULT_REDIS_DEEP_MARK_LIMIT = 80
 DEFAULT_IDLE_GOAL_CONTINUATION_ENABLED = True
+DEFAULT_WORKER_MODEL_FALLBACK = "gpt-5.5"
 WORKER_COST_OBSERVE_INPUT_TOKENS = 1_000_000
 WORKER_COST_HIGH_INPUT_TOKENS = 2_000_000
 WORKER_COST_OBSERVE_UNCACHED_TOKENS = 120_000
@@ -491,6 +493,53 @@ def write_runtime_control_state(state: dict[str, Any]) -> dict[str, Any]:
         "updated_at": utc_now(),
     }
     write_json(RUNTIME_CONTROL_STATE_PATH, payload)
+    return payload
+
+
+def worker_model_policy_state() -> dict[str, Any]:
+    ensure_dirs()
+    data = read_json_file(WORKER_MODEL_POLICY_PATH)
+    if not data:
+        data = {}
+    phase_models = data.get("phase_models") if isinstance(data.get("phase_models"), dict) else {}
+    return {
+        "schema": data.get("schema") or "a9.worker_model_policy_state.v1",
+        "global_model": str(data.get("global_model") or ""),
+        "critical_model": str(data.get("critical_model") or ""),
+        "reference_model": str(data.get("reference_model") or ""),
+        "phase_models": {str(key): str(value) for key, value in phase_models.items() if str(value).strip()},
+        "updated_at": str(data.get("updated_at") or ""),
+        "last_update": data.get("last_update", {}) if isinstance(data.get("last_update"), dict) else {},
+    }
+
+
+def write_worker_model_phase_override(
+    phase: str,
+    model: str,
+    *,
+    reason: str,
+    task_id: str = "",
+    run_dir: str = "",
+) -> dict[str, Any]:
+    state = worker_model_policy_state()
+    phase_models = dict(state.get("phase_models", {}))
+    phase_models[phase] = model
+    payload = {
+        **state,
+        "schema": "a9.worker_model_policy_state.v1",
+        "phase_models": phase_models,
+        "updated_at": utc_now(),
+        "last_update": {
+            "kind": "phase_model_override",
+            "phase": phase,
+            "model": model,
+            "reason": reason,
+            "task_id": task_id,
+            "run_dir": run_dir,
+            "updated_at": utc_now(),
+        },
+    }
+    write_json(WORKER_MODEL_POLICY_PATH, payload)
     return payload
 
 
@@ -1817,21 +1866,35 @@ def worker_disabled_features_for_model(model: str) -> list[str]:
 
 
 def resolved_worker_model(task: Task) -> tuple[str, str]:
+    policy = worker_model_policy_state()
     global_model = os.getenv("A9_SUPERVISOR_MODEL", "").strip()
     if global_model:
         return global_model, "A9_SUPERVISOR_MODEL"
+    policy_global_model = str(policy.get("global_model") or "").strip()
+    if policy_global_model:
+        return policy_global_model, "worker_model_policy.global_model"
     phase_model_env = f"A9_SUPERVISOR_PHASE_MODEL_{task.phase.upper()}"
     phase_model = os.getenv(phase_model_env, "").strip()
     if phase_model:
         return phase_model, phase_model_env
+    policy_phase_models = policy.get("phase_models", {}) if isinstance(policy.get("phase_models"), dict) else {}
+    policy_phase_model = str(policy_phase_models.get(task.phase) or "").strip()
+    if policy_phase_model:
+        return policy_phase_model, f"worker_model_policy.phase_models.{task.phase}"
     if task.phase in {"repair", "test"}:
         critical_model = os.getenv("A9_SUPERVISOR_CRITICAL_MODEL", DEFAULT_CRITICAL_WORKER_MODEL).strip()
         if critical_model:
             return critical_model, "A9_SUPERVISOR_CRITICAL_MODEL"
+        policy_critical_model = str(policy.get("critical_model") or "").strip()
+        if policy_critical_model:
+            return policy_critical_model, "worker_model_policy.critical_model"
     if task.phase == "reference_scan":
         reference_model = os.getenv("A9_SUPERVISOR_REFERENCE_MODEL", DEFAULT_REFERENCE_SCAN_WORKER_MODEL).strip()
         if reference_model:
             return reference_model, "A9_SUPERVISOR_REFERENCE_MODEL"
+        policy_reference_model = str(policy.get("reference_model") or "").strip()
+        if policy_reference_model:
+            return policy_reference_model, "worker_model_policy.reference_model"
     return DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"
 
 
@@ -8416,6 +8479,46 @@ def worker_failure_short_circuits_checks(worker_failure: dict[str, Any]) -> bool
     return status == "monitor-blocked"
 
 
+def worker_model_fallback_model() -> str:
+    return os.getenv("A9_SUPERVISOR_FALLBACK_MODEL", DEFAULT_WORKER_MODEL_FALLBACK).strip()
+
+
+def maybe_apply_worker_model_fallback(task: Task, summary: dict[str, Any]) -> dict[str, Any]:
+    worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+    worker_failure = summary.get("worker_failure", {}) if isinstance(summary.get("worker_failure"), dict) else {}
+    failure_status = str(worker_failure.get("status") or summary.get("status") or "")
+    worker_model = str(worker.get("worker_model") or "")
+    worker_model_source = str(worker.get("worker_model_source") or "")
+    fallback = worker_model_fallback_model()
+    if failure_status != "retryable-worker-transport":
+        return {"status": "skipped", "reason": "not_transport_failure"}
+    if worker_model != DEFAULT_WORKER_MODEL or worker_model_source != "DEFAULT_WORKER_MODEL":
+        return {
+            "status": "skipped",
+            "reason": "worker_model_not_default",
+            "worker_model": worker_model,
+            "worker_model_source": worker_model_source,
+        }
+    if not fallback or fallback == worker_model:
+        return {"status": "skipped", "reason": "missing_or_same_fallback_model", "fallback_model": fallback}
+    state = write_worker_model_phase_override(
+        task.phase,
+        fallback,
+        reason="retryable_worker_transport_from_default_model",
+        task_id=task.task_id,
+        run_dir=str(summary.get("run_dir") or ""),
+    )
+    return {
+        "status": "applied",
+        "phase": task.phase,
+        "previous_model": worker_model,
+        "fallback_model": fallback,
+        "source": f"worker_model_policy.phase_models.{task.phase}",
+        "policy_path": str(WORKER_MODEL_POLICY_PATH),
+        "policy_updated_at": state.get("updated_at", ""),
+    }
+
+
 def update_auto_loop_guard(summary: dict[str, Any]) -> dict[str, Any]:
     ensure_dirs()
     kind = auto_loop_failure_kind(summary)
@@ -8753,6 +8856,30 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         return None
     if auto_loop_guard_blocks_next(summary):
         return None
+    fallback = maybe_apply_worker_model_fallback(task, summary)
+    summary["worker_model_fallback"] = fallback
+    if fallback.get("status") == "applied":
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        parent_ref = compact_task_ref(task.task_id)
+        task_id = f"auto-retry-model-fallback-{parent_ref}-{timestamp}"
+        retry_prompt = (
+            task.prompt
+            + "\n\nA9 supervisor retry note:\n"
+            + f"- previous_status: {summary.get('status')}\n"
+            + f"- previous_worker_failure: {summary.get('worker_failure', {}).get('reason', '') if isinstance(summary.get('worker_failure'), dict) else ''}\n"
+            + f"- model_fallback: {fallback.get('previous_model')} -> {fallback.get('fallback_model')}\n"
+            + f"- policy_path: {fallback.get('policy_path')}\n"
+        )
+        return enqueue_task_file(
+            task_id,
+            retry_prompt,
+            phase=task.phase,
+            checks=task.checks,
+            timeout_seconds=task.timeout_seconds,
+            idle_timeout_seconds=task.idle_timeout_seconds,
+            max_attempts=1,
+            allowed_paths=task.allowed_paths,
+        )
     if task.phase == SESSION_REFRESH_PHASE:
         return schedule_next_session_refresh_task(task, summary)
     if task.phase == SESSION_CLOSE_READING_PHASE:

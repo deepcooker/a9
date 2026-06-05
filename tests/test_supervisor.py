@@ -299,7 +299,16 @@ Do the work.
         old_reference_model = os.environ.pop("A9_SUPERVISOR_REFERENCE_MODEL", None)
         old_critical_model = os.environ.pop("A9_SUPERVISOR_CRITICAL_MODEL", None)
         old_phase_repair_model = os.environ.pop("A9_SUPERVISOR_PHASE_MODEL_REPAIR", None)
+        old_policy_path = mod.WORKER_MODEL_POLICY_PATH
         try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mod.WORKER_MODEL_POLICY_PATH = Path(tmp) / "worker_model_policy.json"
+                mod.write_worker_model_phase_override("implement", "gpt-5.4", reason="test")
+                self.assertEqual(
+                    mod.resolved_worker_model(implement_task),
+                    ("gpt-5.4", "worker_model_policy.phase_models.implement"),
+                )
+                mod.WORKER_MODEL_POLICY_PATH.unlink()
             self.assertEqual(mod.resolved_worker_model(reference_task), (mod.DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"))
             os.environ["A9_SUPERVISOR_REFERENCE_MODEL"] = "gpt-5.3-codex-spark"
             self.assertEqual(
@@ -336,6 +345,7 @@ Do the work.
                 os.environ["A9_SUPERVISOR_PHASE_MODEL_REPAIR"] = old_phase_repair_model
             else:
                 os.environ.pop("A9_SUPERVISOR_PHASE_MODEL_REPAIR", None)
+            mod.WORKER_MODEL_POLICY_PATH = old_policy_path
 
     def test_spark_worker_disables_unsupported_image_generation_tool(self):
         mod = load_supervisor()
@@ -10468,6 +10478,59 @@ role_signoff: product, business, architecture, test approved.
         }
 
         self.assertIsNone(mod.schedule_next_task(task, summary))
+
+    def test_schedule_next_task_applies_model_fallback_for_default_transport_failure(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            old_policy_path = mod.WORKER_MODEL_POLICY_PATH
+            old_fallback = os.environ.get("A9_SUPERVISOR_FALLBACK_MODEL")
+            mod.QUEUE_DIR = Path(tmp) / "queue"
+            mod.WORKER_MODEL_POLICY_PATH = Path(tmp) / "runtime" / "worker_model_policy.json"
+            mod.QUEUE_DIR.mkdir(parents=True)
+            os.environ["A9_SUPERVISOR_FALLBACK_MODEL"] = "gpt-5.5"
+            try:
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="transport-fallback",
+                    prompt="strict_worker_envelope: true\nRecord smoke.",
+                    phase="record",
+                    checks=["git diff --check"],
+                    allowed_paths=["docs/communication-observation-log.md"],
+                )
+                summary = {
+                    "task_id": task.task_id,
+                    "status": "retryable-worker-transport",
+                    "run_dir": "/tmp/run-transport",
+                    "worker": {
+                        "worker_model": mod.DEFAULT_WORKER_MODEL,
+                        "worker_model_source": "DEFAULT_WORKER_MODEL",
+                    },
+                    "worker_failure": {
+                        "status": "retryable-worker-transport",
+                        "reason": "worker transport exhausted",
+                    },
+                    "auto_loop_guard": {"status": "watching"},
+                }
+
+                next_path = mod.schedule_next_task(task, summary)
+                policy = mod.worker_model_policy_state()
+
+                self.assertIsNotNone(next_path)
+                assert next_path is not None
+                self.assertTrue(next_path.exists())
+                self.assertEqual(policy["phase_models"]["record"], "gpt-5.5")
+                self.assertEqual(summary["worker_model_fallback"]["status"], "applied")
+                text = next_path.read_text(encoding="utf-8")
+                self.assertIn("model_fallback", text)
+                self.assertIn('phase: "record"', text)
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.WORKER_MODEL_POLICY_PATH = old_policy_path
+                if old_fallback is None:
+                    os.environ.pop("A9_SUPERVISOR_FALLBACK_MODEL", None)
+                else:
+                    os.environ["A9_SUPERVISOR_FALLBACK_MODEL"] = old_fallback
 
     def test_session_refresh_prompt_parser_accepts_key_value_spec(self):
         mod = load_supervisor()

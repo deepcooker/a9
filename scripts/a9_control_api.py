@@ -6575,6 +6575,7 @@ def worker_model_policy(root: Path = ROOT) -> dict[str, Any]:
     ]
     try:
         mod = supervisor()
+        policy_state = mod.worker_model_policy_state()
         resolved = {}
         for phase in phases:
             task = mod.Task(path=Path("model-policy.md"), task_id=f"model-policy-{phase}", prompt="", phase=phase)
@@ -6593,6 +6594,8 @@ def worker_model_policy(root: Path = ROOT) -> dict[str, Any]:
             "reference_model_env": "A9_SUPERVISOR_REFERENCE_MODEL",
             "phase_model_env_prefix": "A9_SUPERVISOR_PHASE_MODEL_",
             "configured_env": {key: os.getenv(key, "") for key in env_keys if os.getenv(key, "")},
+            "policy_state": policy_state,
+            "policy_path": str(mod.WORKER_MODEL_POLICY_PATH),
             "resolved": resolved,
         }
     except Exception as exc:

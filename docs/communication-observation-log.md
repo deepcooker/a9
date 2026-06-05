@@ -2278,9 +2278,15 @@ Next monitoring target:
      The summary uses `retryable-worker-interrupted` and
      `worker_failure.category=interrupted`, so monitor/control surfaces can see
      the latest failed run instead of silently showing an older summary.
+     Supervisor model routing also has a persistent
+     `.a9/runtime/worker_model_policy.json`; when the default worker model hits
+     `retryable-worker-transport`, `schedule_next_task()` writes a phase-level
+     fallback model and queues an `auto-retry-model-fallback-*` task with the
+     same scope and declared checks.
    - Verification:
      targeted supervisor tests cover summary/state/evidence creation during
-     orphaned running-task reconciliation.
+     orphaned running-task reconciliation, persistent phase model policy
+     resolution, and automatic fallback retry task creation.
    - Governance lesson:
      automatic execution is blocked less by business logic now and more by
      runtime failure observability. Every lease-ending path must leave a
