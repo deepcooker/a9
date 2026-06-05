@@ -10500,6 +10500,33 @@ def plan_status(args: argparse.Namespace) -> int:
     print(f"requirements_debate_status: {debate.get('status', '')}")
     print(f"requirements_debate_current_stage: {debate.get('current_stage', '')}")
     print(f"requirements_debate_missing_fields: {', '.join(str(item) for item in missing) if isinstance(missing, list) else ''}")
+    backlog = execution_backlog_state(plan)
+    backlog_items = backlog.get("items", [])
+    if not isinstance(backlog_items, list):
+        backlog_items = []
+    ready_count = 0
+    queued_count = 0
+    latest_queued_task_id = ""
+    for item in backlog_items:
+        if not isinstance(item, dict):
+            continue
+        item_status = str(item.get("status") or "ready").strip().lower()
+        if item_status in {"", "ready", "pending"}:
+            ready_count += 1
+        if item_status == "queued":
+            queued_count += 1
+            queued_task_id = str(item.get("queued_task_id") or "").strip()
+            if queued_task_id:
+                latest_queued_task_id = queued_task_id
+    generated_task_ids = backlog.get("generated_task_ids", [])
+    if not isinstance(generated_task_ids, list):
+        generated_task_ids = []
+    print(f"execution_backlog_item_count: {len(backlog_items)}")
+    print(f"execution_backlog_ready_count: {ready_count}")
+    print(f"execution_backlog_queued_count: {queued_count}")
+    print(f"execution_backlog_generated_task_ids_count: {len(generated_task_ids)}")
+    if latest_queued_task_id:
+        print(f"execution_backlog_latest_queued_task_id: {latest_queued_task_id}")
     last_progress = tail_recovery_line(plan_dir / "progress.md")
     last_findings = tail_recovery_line(plan_dir / "findings.md")
     last_mistake = tail_recovery_line(plan_dir / "mistakes.md")

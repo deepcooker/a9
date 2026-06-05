@@ -3362,6 +3362,50 @@ Do the work.
         self.assertIn("requirements_debate_current_stage: requirement_audit", text)
         self.assertIn("out_of_scope", text)
 
+    def test_plan_status_prints_execution_backlog_summary(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-execution-backlog-summary",
+                    goal_id="goal-execution-backlog-summary",
+                    contract={"problem": "Need backlog status in plan recovery output."},
+                )
+                plan["execution_backlog"] = {
+                    "schema": "a9.execution_backlog.v1",
+                    "items": [
+                        {"status": "ready", "task_id": "ready-1"},
+                        {"status": "pending", "task_id": "pending-1"},
+                        {"status": "queued", "queued_task_id": "queued-older"},
+                        {"status": "queued", "queued_task_id": "queued-newest"},
+                    ],
+                    "generated_task_ids": ["queued-older", "queued-newest"],
+                }
+                mod.write_plan_files(plan)
+                args = type("Args", (), {"plan_id": "plan-execution-backlog-summary"})()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_status(args)
+                text = buffer.getvalue()
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(code, 0)
+        self.assertIn("execution_backlog_item_count: 4", text)
+        self.assertIn("execution_backlog_ready_count: 2", text)
+        self.assertIn("execution_backlog_queued_count: 2", text)
+        self.assertIn("execution_backlog_generated_task_ids_count: 2", text)
+        self.assertIn("execution_backlog_latest_queued_task_id: queued-newest", text)
+
     def test_plan_debate_next_enqueues_bounded_debate_task_without_auto_next(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

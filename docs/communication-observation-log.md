@@ -2689,3 +2689,38 @@ Next monitoring target:
      decision packet as not ready while emitting a safe smoke backlog item, which
      means the bridge can move safe execution slices without pretending all
      requirements debate is complete.
+
+118. First non-smoke debate-to-execution trial exposed worker discipline gaps.
+   - Trigger:
+     after the smoke closed loop passed, the next validation was a real bounded
+     feature slice: expose execution backlog counts in `plan-status` so monitor
+     recovery can see ready/queued backlog state without opening plan JSON.
+   - Run:
+     enqueued `real-debate-plan-status-backlog-summary-20260605` with
+     `plan-debate-next --allow-auto-next`. The debate worker did not edit code,
+     produced a valid `execution_backlog` item, and the supervisor automatically
+     queued `auto-backlog-exec-001-implement-backlog-001-Expose-execution-97b474c726`.
+   - Observation:
+     the execution worker had the right implementation idea, but failed runtime
+     discipline. It emitted direct file changes instead of deterministic
+     SEARCH/REPLACE output, and its declared check targeted
+     `test_plan_status_prints_execution_backlog_summary` while the worker's own
+     proposed tests used different names. Process governance marked
+     direct-file-change findings, the declared check failed, and git governance
+     rolled the attempted changes back.
+   - Monitor intervention:
+     removed the auto-repair queue to avoid spending another worker turn on a
+     known discipline issue, then implemented the bounded slice manually:
+     `plan-status` now prints execution backlog item count, ready count, queued
+     count, generated task id count, and latest queued task id. Added focused
+     test `test_plan_status_prints_execution_backlog_summary`. The active plan
+     backlog item was marked `done` with `completed_by=monitor_intervention` so
+     monitor recovery does not see a stale queued task.
+   - Verification:
+     targeted declared check passed:
+     `python3 -m unittest tests.test_supervisor.SupervisorTests.test_plan_status_prints_execution_backlog_summary`.
+     Related plan-status/backlog tests passed, and static checks passed.
+   - Governance lesson:
+     the debate-to-backlog bridge quality is acceptable; the execution worker
+     still needs stronger deterministic patch-output enforcement and declared
+     check consistency before it can run unattended for long stretches.
