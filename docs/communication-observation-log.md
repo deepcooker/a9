@@ -2562,3 +2562,27 @@ Next monitoring target:
      the hard part is automating the 70%-80% requirements communication/debate
      work. This commit is the first runtime hook for that lane; it does not yet
      auto-generate thousands of execution_next tasks.
+
+113. Ready requirements can now generate bounded execution_next backlog tasks.
+   - Trigger:
+     after `plan-debate-next`, the next missing runtime step was converting a
+     plan whose requirements debate is ready into concrete worker tasks instead
+     of asking the worker to invent execution scope from chat context.
+   - Change:
+     added `python3 scripts/a9_supervisor.py plan-backlog-next`. It requires
+     `requirements_debate_status=ready_for_execution_backlog`, then generates a
+     deterministic execution pipeline: `reference_scan`, `mechanism_extract`,
+     `implement`, `test`, and `record`. Each task carries
+     `decision_status: decided`, `route: execution_next`, the plan contract,
+     and task frontmatter `allowed_paths` extracted from `allowed_execution`.
+   - Verification:
+     targeted tests passed for not-ready plans and ready backlog generation.
+     Full `python3 -m unittest tests.test_supervisor` passed with 338 tests. A
+     live smoke generated two `live-smoke-exec-*` tasks from
+     `a9-plan-lane-runtime`, verified their decided packet and allowed paths,
+     then removed them without running workers.
+   - Governance lesson:
+     this is the first mechanical bridge from requirements debate into worker
+     execution. It is intentionally deterministic and small; future work should
+     let debate outputs append richer candidate backlog slices before generating
+     large task batches.

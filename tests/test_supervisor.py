@@ -3420,6 +3420,87 @@ Do the work.
         self.assertFalse(parsed.auto_next_allowed)
         self.assertEqual(parsed.phase, "reference_scan")
 
+    def test_plan_execution_backlog_items_require_ready_debate(self):
+        mod = load_supervisor()
+        plan = mod.create_plan_payload(
+            plan_id="plan-not-ready",
+            goal_id="goal-not-ready",
+            contract={"problem": "Missing required debate fields."},
+        )
+
+        items = mod.plan_execution_backlog_items(plan)
+
+        self.assertEqual(items, [])
+
+    def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-backlog-ready",
+                    goal_id="goal-backlog-ready",
+                    contract={
+                        "problem": "Need execution backlog after requirements debate.",
+                        "why_now": "The debate stage is complete.",
+                        "must": "Generate deterministic execution tasks.",
+                        "system_requirement": "plan-backlog-next writes decided tasks.",
+                        "data_shape": "plan contract plus queued task frontmatter.",
+                        "normal_flow": "ready debate -> backlog generation -> worker execution.",
+                        "exception_flow": "wrong contract -> change_request.",
+                        "acceptance": "queued tasks contain decision packet and allowed paths.",
+                        "out_of_scope": "no production execution in backlog generation.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py docs/communication-observation-log.md",
+                        "reference_entry": "requirements guide and planning-with-files.",
+                        "change_record": "Debate ready; generate backlog.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "plan_id": "plan-backlog-ready",
+                        "count": 2,
+                        "prefix": "smoke",
+                        "timeout_seconds": 120,
+                        "idle_timeout_seconds": 30,
+                        "no_auto_next": True,
+                    },
+                )()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_backlog_next(args)
+                text = buffer.getvalue()
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+                first = queued[0].read_text(encoding="utf-8")
+                parsed = mod.parse_task(queued[0])
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(queued), 2)
+        self.assertIn("execution_backlog_created: 2", text)
+        self.assertIn("task_auto_next: false", text)
+        self.assertIn("decision_status: decided", first)
+        self.assertIn("route: execution_next", first)
+        self.assertIn("data_contract: plan contract plus queued task frontmatter.", first)
+        self.assertIn("role_signoff: requirements debate pipeline reached ready_for_execution_backlog.", first)
+        self.assertIn("scripts/a9_supervisor.py", parsed.allowed_paths)
+        self.assertIn("tests/test_supervisor.py", parsed.allowed_paths)
+        self.assertFalse(parsed.auto_next_allowed)
+
     def test_update_active_plan_from_run_records_refs_and_progress(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

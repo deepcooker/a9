@@ -10549,6 +10549,127 @@ def plan_debate_next(args: argparse.Namespace) -> int:
     return 0
 
 
+EXECUTION_BACKLOG_PHASES: tuple[tuple[str, str], ...] = (
+    ("reference_scan", "Re-check the exact reference mechanisms for this decided slice before implementation."),
+    ("mechanism_extract", "Extract the concrete mechanism, contracts, failure modes, and A9 adaptation plan."),
+    ("implement", "Implement the smallest bounded change that satisfies the decided slice."),
+    ("test", "Add or run focused verification for the decided slice."),
+    ("record", "Record evidence, copied mechanisms, pass/fail state, residual risks, and the next repair condition."),
+)
+
+
+def extract_allowed_paths_from_execution_text(text: str) -> list[str]:
+    file_re = re.compile(r"[\w./-]+\.(?:py|rs|ts|tsx|js|jsx|md|toml|yml|yaml|sql|json|sh)")
+    paths: list[str] = []
+    for match in file_re.finditer(str(text or "")):
+        candidate = match.group(0).strip().strip(".,;:")
+        if candidate.startswith("/"):
+            continue
+        if candidate.startswith(".a9/") or candidate.startswith("vendor-src/"):
+            continue
+        if candidate not in paths:
+            paths.append(candidate)
+    return paths
+
+
+def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> list[dict[str, Any]]:
+    debate = requirements_debate_progress(plan)
+    if debate.get("status") != "ready_for_execution_backlog":
+        return []
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
+    selected_phases = list(EXECUTION_BACKLOG_PHASES)
+    if count > 0:
+        selected_phases = selected_phases[:count]
+    plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
+    items: list[dict[str, Any]] = []
+    for index, (phase, purpose) in enumerate(selected_phases, start=1):
+        task_id = f"exec-{index:03d}-{phase}-{plan_ref}"
+        prompt = "\n".join(
+            [
+                "decision_status: decided",
+                "route: execution_next",
+                f"plan_id: {plan.get('plan_id', '')}",
+                f"goal_id: {plan.get('goal_id', '')}",
+                f"problem: {contract.get('problem', '')}",
+                f"system_requirement: {contract.get('system_requirement', '')}",
+                f"data_contract: {contract.get('data_shape', '')}",
+                f"state_flow: {contract.get('normal_flow', '')}",
+                f"exception_flow: {contract.get('exception_flow', '')}",
+                f"acceptance: {contract.get('acceptance', '')}",
+                f"out_of_scope: {contract.get('out_of_scope', '')}",
+                f"allowed_execution: {contract.get('allowed_execution', '')}",
+                f"change_record: {contract.get('change_record', '') or 'Generated from requirements debate ready_for_execution_backlog.'}",
+                "role_signoff: requirements debate pipeline reached ready_for_execution_backlog.",
+                f"execution_backlog_index: {index}",
+                f"execution_backlog_phase: {phase}",
+                "",
+                "Execution slice:",
+                purpose,
+                "",
+                "Rules:",
+                "- Execute only this bounded phase.",
+                "- Use reference-first copying where the phase requires it.",
+                "- Do not change product scope, data contract, state flow, acceptance, or out_of_scope.",
+                "- If the contract is wrong, append a plan change_request instead of silently changing it.",
+            ]
+        )
+        items.append(
+            {
+                "task_id": task_id,
+                "phase": phase,
+                "prompt": prompt,
+                "allowed_paths": allowed_paths,
+                "checks": [],
+            }
+        )
+    return items
+
+
+def plan_backlog_next(args: argparse.Namespace) -> int:
+    ensure_dirs()
+    plan_id = str(args.plan_id or "").strip() or active_plan_id()
+    if not plan_id:
+        print("No active plan.")
+        return 1
+    plan = load_plan(plan_id)
+    if not plan:
+        print(f"Plan not found: {plan_id}")
+        return 1
+    debate = requirements_debate_progress(plan)
+    if debate.get("status") != "ready_for_execution_backlog":
+        print(f"requirements_debate_status: {debate.get('status', '')}")
+        print(f"requirements_debate_current_stage: {debate.get('current_stage', '')}")
+        print("No execution backlog generated.")
+        return 1
+    items = plan_execution_backlog_items(plan, count=max(0, int(args.count or 0)))
+    if not items:
+        print("No execution backlog generated.")
+        return 1
+    created: list[Path] = []
+    for item in items:
+        task_id = str(item["task_id"])
+        if args.prefix:
+            task_id = f"{args.prefix}-{task_id}"
+        path = enqueue_task_file(
+            task_id,
+            str(item["prompt"]),
+            phase=str(item["phase"]),
+            checks=[str(check) for check in item.get("checks", [])],
+            timeout_seconds=args.timeout_seconds,
+            idle_timeout_seconds=args.idle_timeout_seconds,
+            max_attempts=1,
+            allowed_paths=[str(path) for path in item.get("allowed_paths", [])],
+            auto_next=not args.no_auto_next,
+        )
+        created.append(path)
+        print(path)
+    print(f"requirements_debate_status: {debate.get('status', '')}")
+    print(f"execution_backlog_created: {len(created)}")
+    print(f"task_auto_next: {str(not args.no_auto_next).lower()}")
+    return 0
+
+
 def plan_change_request(args: argparse.Namespace) -> int:
     ensure_dirs()
     plan_id = str(args.plan_id or "").strip() or active_plan_id()
@@ -10783,6 +10904,14 @@ def main(argv: list[str]) -> int:
     plan_debate_parser.add_argument("--timeout-seconds", type=int, default=3600)
     plan_debate_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
 
+    plan_backlog_parser = sub.add_parser("plan-backlog-next")
+    plan_backlog_parser.add_argument("--plan-id", default="")
+    plan_backlog_parser.add_argument("--count", type=int, default=0)
+    plan_backlog_parser.add_argument("--prefix", default="")
+    plan_backlog_parser.add_argument("--timeout-seconds", type=int, default=3600)
+    plan_backlog_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
+    plan_backlog_parser.add_argument("--no-auto-next", action="store_true")
+
     change_request_parser = sub.add_parser("plan-change-request")
     change_request_parser.add_argument("--plan-id", default="")
     change_request_parser.add_argument("--field", required=True)
@@ -10822,6 +10951,8 @@ def main(argv: list[str]) -> int:
         return plan_status(args)
     if args.command == "plan-debate-next":
         return plan_debate_next(args)
+    if args.command == "plan-backlog-next":
+        return plan_backlog_next(args)
     if args.command == "plan-change-request":
         return plan_change_request(args)
     if args.command == "plan-note":
