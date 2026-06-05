@@ -2446,3 +2446,27 @@ Next monitoring target:
      configuration visibility should be cheap and safe, but active probes that
      may call a model endpoint are runtime actions. This gives the mobile
      operator a preflight step before switching the 24-hour worker fleet.
+
+109. Mobile control now surfaces worker transport presets and preflight state.
+   - Trigger:
+     transport presets and preflight checks existed in the control API, but the
+     phone operator still could not see whether the 24-hour worker was on
+     Codex exec, whether the OpenAI-compatible backup was configured, or which
+     guarded action would switch presets.
+   - Change:
+     updated `/mnt/d/root/a9_mobile_agent_lab` to load
+     `/api/worker/transport-presets` and `/api/worker/transport-check` during
+     refresh. The Agent tab now includes a Worker transport card below Monitor
+     control. It displays current backend/source, OpenAI-compatible preflight
+     status, missing key/model details, and buttons for Check, Arm runtime,
+     Apply OpenAI, Smoke worker, and Back to Codex. The card uses the existing
+     phone-control/runtime gate rather than a separate permission path.
+   - Verification:
+     `npx tsc --noEmit` passed in the mobile project. `npm run smoke:mobile`
+     passed after restarting Expo with `--offline` because Expo dependency
+     validation attempted an external fetch. The smoke now asserts the worker
+     transport card and key buttons.
+   - Governance lesson:
+     worker backend switching is now visible where the operator actually
+     controls the system. The mobile page should show readiness and missing
+     configuration before asking the operator to arm and mutate runtime state.
