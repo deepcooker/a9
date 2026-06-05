@@ -26,6 +26,8 @@ These files define the current mainline:
 - `AGENTS.md`: top-level agent rules, phase model, hard constraints.
 - `docs/context-governance.md`: this context routing table.
 - `docs/current-mainline.md`: current execution priority and freeze points.
+- `docs/mobile-control-source.md`: canonical mobile/control workspace path and
+  Git governance for the running Expo mobile control plane.
 - `docs/project.md`: current A9 product layers, architecture, progress, next work.
 - `docs/architecture/a9-runtime-monitor-foundation.md`: current P0 foundation
   architecture for runtime, monitor, and communication.
@@ -52,15 +54,16 @@ If these files conflict, resolve in this order:
 2. `AGENTS.md`
 3. `docs/context-governance.md`
 4. `docs/current-mainline.md`
-5. `docs/architecture/a9-runtime-monitor-foundation.md`
-6. `docs/decisions/ADR-0002-runtime-monitor-priority.md`
-7. `docs/decisions/ADR-0003-communication-foundation.md`
-8. `docs/requirements-review-closure.md`
-9. `docs/session-causal-memory.md`
-10. `docs/external-gpt/2026-06-04/intake.md`
-11. `docs/a9-ultimate-architecture-aggregation.md`
-12. `docs/project.md`
-13. `原始想法需求.md`
+5. `docs/mobile-control-source.md` for mobile workspace routing only
+6. `docs/architecture/a9-runtime-monitor-foundation.md`
+7. `docs/decisions/ADR-0002-runtime-monitor-priority.md`
+8. `docs/decisions/ADR-0003-communication-foundation.md`
+9. `docs/requirements-review-closure.md`
+10. `docs/session-causal-memory.md`
+11. `docs/external-gpt/2026-06-04/intake.md`
+12. `docs/a9-ultimate-architecture-aggregation.md`
+13. `docs/project.md`
+14. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.

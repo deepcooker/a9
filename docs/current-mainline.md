@@ -80,6 +80,11 @@ task contract explicitly changes this.
 Mobile remains important as a future control plane, but current work should
 improve the underlying control/session/run/communication foundations first.
 
+The active mobile/control workspace is `/mnt/d/root/a9_mobile_agent_lab`, not
+`/mnt/d/root/a9_mobile`. It is now an independent Git repository. Mobile work
+is allowed only when it exposes already-defined runtime/monitor/communication
+state or bounded control actions; it must not become a broad UI redesign.
+
 ## Next Decision Packet Should Answer
 
 1. What exactly must `24h worker + monitor` guarantee before we trust it with
@@ -94,4 +99,3 @@ improve the underlying control/session/run/communication foundations first.
    communication stability?
 6. What is the first small `execution_next` that can run under monitor without
    changing pages or starting NZX code?
-
