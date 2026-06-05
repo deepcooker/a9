@@ -2747,3 +2747,35 @@ Next monitoring target:
      this moves a class of worker quality problems from late rollback evidence
      into early, explicit envelope failure. It does not solve direct editing by
      itself, but it gives the monitor and repair lane a cleaner reason.
+
+120. Tracked-file patch discipline e2e passed after an ignored-file false start.
+   - Trigger:
+     after tightening envelope validation, the next validation needed a real
+     worker run proving that Codex can output object-shaped
+     `output.search_replace_blocks` and let A9 deterministic apply perform the
+     write.
+   - False start:
+     `worker-patch-discipline-e2e-20260605` targeted
+     `.a9/smoke/worker-patch-discipline.txt`. The worker produced a valid
+     object-shaped `search_replace_blocks`, but `.a9/` is gitignored and not
+     present in the worker worktree, so deterministic apply failed with
+     `SearchReplacePathError`. The first enqueue command also accidentally let
+     the shell expand the declared check before queueing, producing
+     `test "alpha" = beta`.
+   - Corrected run:
+     added tracked fixture `tests/fixtures/worker_patch_discipline.txt`, then
+     ran `worker-patch-discipline-tracked-e2e-20260605`. The worker returned a
+     strict JSON envelope with `search_replace_blocks` as object items,
+     deterministic apply changed the fixture from `alpha` to `beta`, the
+     declared check `test "$(cat tests/fixtures/worker_patch_discipline.txt)" =
+     beta` passed, and git governance integrated the worker commit into main.
+   - Evidence:
+     run `worker-patch-discipline-tracked-e2e-20260605-20260605T115711Z-a1`
+     passed. `patch_apply.status=pass`,
+     `patch_source=worker_envelope.output.search_replace_blocks`,
+     `applied_count=1`, and touched file
+     `tests/fixtures/worker_patch_discipline.txt`.
+   - Governance lesson:
+     real e2e tasks must target tracked files visible in worker worktrees, not
+     runtime ignored paths. Shell quoting of declared checks is also part of
+     task quality; commands with `$()` must be single-quoted at enqueue time.
