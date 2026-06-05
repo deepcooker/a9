@@ -6801,6 +6801,53 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
         raise ValueError("backend must be one of: codex_exec, custom_command")
     if backend == "custom_command" and not custom_command_template.strip():
         raise ValueError("custom_command_template is required for custom_command backend")
+    probe: dict[str, Any] = {}
+    if bool(payload.get("require_probe_pass")):
+        if preset_name != "openai_compatible":
+            raise ValueError("require_probe_pass is only supported for preset=openai_compatible")
+        config = openai_compatible_worker_config(payload)
+        if config.get("missing"):
+            return {
+                "status": "not_configured",
+                "kind": "worker_transport_policy_update",
+                "schema": "a9.worker_transport_policy_update.v1",
+                "command": command,
+                "gate": gate,
+                "before": before,
+                "preset": preset_name,
+                "config": config,
+                "reason": "missing required OpenAI-compatible worker configuration",
+                "audit_async": False,
+            }
+        probe = run_openai_compatible_worker_probe(config)
+        if probe.get("status") != "pass":
+            event = {
+                "at": utc_now(),
+                "kind": "worker_transport_policy_audit",
+                "schema": "a9.worker_transport_policy_update.v1",
+                "command": command,
+                "status": "probe_failed",
+                "reason": "required OpenAI-compatible worker probe failed; policy unchanged",
+                "gate_allowed": True,
+                "gate_reason": gate.get("reason"),
+                "before": before,
+                "preset": preset_name,
+                "probe": probe,
+                "actor": str(payload.get("actor") or "mobile-operator"),
+            }
+            enqueue_monitor_intervention_audit(event, root=root)
+            return {
+                "status": "probe_failed",
+                "kind": "worker_transport_policy_update",
+                "schema": "a9.worker_transport_policy_update.v1",
+                "command": command,
+                "gate": gate,
+                "before": before,
+                "preset": preset_name,
+                "probe": probe,
+                "reason": "required OpenAI-compatible worker probe failed; policy unchanged",
+                "audit_async": True,
+            }
 
     after = mod.write_worker_transport_policy(
         backend=backend,
@@ -6822,6 +6869,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
         "after": after,
         "resolved": resolved,
         "preset": preset_name,
+        "probe": probe,
         "actor": str(payload.get("actor") or "mobile-operator"),
     }
     enqueue_monitor_intervention_audit(event, root=root)
@@ -6835,6 +6883,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
         "after": after,
         "resolved": resolved,
         "preset": preset_name,
+        "probe": probe,
         "policy_path": str(mod.WORKER_TRANSPORT_POLICY_PATH),
         "audit_async": True,
     }

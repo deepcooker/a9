@@ -3158,3 +3158,24 @@ Next monitoring target:
      backend, but A9 needs a direct model-gateway path that can be probed,
      explained, and switched from phone/control without relying on Codex model
      refresh.
+
+136. Worker backend switching should be gated by probe evidence when requested.
+   - Trigger:
+     after adding an executable OpenAI-compatible worker probe, policy updates
+     could still switch to the preset without proving that the backend actually
+     returns a strict A9 worker envelope.
+   - Change:
+     `POST /api/worker/transport-policy` now supports
+     `require_probe_pass=true` for `preset=openai_compatible`. When set, the
+     control API runs the live worker probe before writing
+     `.a9/runtime/worker_transport_policy.json`. If configuration is missing or
+     the probe fails, the existing worker policy remains unchanged and the
+     response/audit carries the probe evidence.
+   - Verification:
+     regression coverage confirms that a failed probe leaves the policy at
+     `codex_exec`, while a passing probe switches to the OpenAI-compatible
+     `custom_command` preset and records the probe in the policy audit.
+   - Governance lesson:
+     backend failover must not be optimistic. A9 can switch away from Codex CLI,
+     but only after the alternative backend proves it can obey the strict worker
+     envelope contract.

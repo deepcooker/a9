@@ -3124,6 +3124,77 @@ Do risky work.
         self.assertEqual(applied["after"]["backend"], "custom_command")
         self.assertIn("/root/a9/scripts/a9_openai_compatible_worker.py", applied["after"]["custom_command_template"])
 
+    def test_update_worker_transport_policy_requires_probe_pass_before_openai_switch(self):
+        mod = load_control_api()
+        sup = mod.supervisor()
+        original_supervisor = mod.supervisor
+        original_audit = mod.enqueue_monitor_intervention_audit
+        old_policy_path = sup.WORKER_TRANSPORT_POLICY_PATH
+        old_key = os.environ.get("A9_LLM_WORKER_API_KEY")
+        old_model = os.environ.get("A9_LLM_WORKER_MODEL")
+        audit_events = []
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "root"
+                root.mkdir()
+                sup.WORKER_TRANSPORT_POLICY_PATH = Path(tmp) / "worker_transport_policy.json"
+                mod.supervisor = lambda: sup
+                mod.enqueue_monitor_intervention_audit = lambda event, *, root: audit_events.append(event)
+                os.environ["A9_LLM_WORKER_API_KEY"] = "test-key"
+                os.environ["A9_LLM_WORKER_MODEL"] = "test-model"
+                mod.phone_control_arm(
+                    {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                with mock.patch.object(
+                    mod,
+                    "run_openai_compatible_worker_probe",
+                    return_value={"status": "fail", "return_code": 70},
+                ):
+                    failed = mod.update_worker_transport_policy(
+                        {
+                            "preset": "openai_compatible",
+                            "require_probe_pass": True,
+                            "reason": "switch only after live probe",
+                            "operator_scopes": ["operator.admin"],
+                        },
+                        root=root,
+                    )
+                unchanged = sup.worker_transport_policy_state()
+                with mock.patch.object(
+                    mod,
+                    "run_openai_compatible_worker_probe",
+                    return_value={"status": "pass", "return_code": 0},
+                ):
+                    applied = mod.update_worker_transport_policy(
+                        {
+                            "preset": "openai_compatible",
+                            "require_probe_pass": True,
+                            "reason": "switch after live probe",
+                            "operator_scopes": ["operator.admin"],
+                        },
+                        root=root,
+                    )
+        finally:
+            sup.WORKER_TRANSPORT_POLICY_PATH = old_policy_path
+            mod.supervisor = original_supervisor
+            mod.enqueue_monitor_intervention_audit = original_audit
+            if old_key is None:
+                os.environ.pop("A9_LLM_WORKER_API_KEY", None)
+            else:
+                os.environ["A9_LLM_WORKER_API_KEY"] = old_key
+            if old_model is None:
+                os.environ.pop("A9_LLM_WORKER_MODEL", None)
+            else:
+                os.environ["A9_LLM_WORKER_MODEL"] = old_model
+
+        self.assertEqual(failed["status"], "probe_failed")
+        self.assertEqual(unchanged["backend"], "codex_exec")
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(applied["probe"]["status"], "pass")
+        self.assertEqual(applied["after"]["backend"], "custom_command")
+        self.assertEqual([event["status"] for event in audit_events], ["probe_failed", "applied"])
+
     def test_update_worker_transport_policy_codex_preset_clears_custom_template(self):
         mod = load_control_api()
         sup = mod.supervisor()
