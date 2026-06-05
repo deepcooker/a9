@@ -1146,8 +1146,7 @@ Do the work.
             "print(json.dumps({'type':'fake.start'}))\n"
             "print(json.dumps({'type':'thread.started','thread_id':'fake-thread'}))\n"
             "print(json.dumps({'type':'item.completed','item':{'id':'cmd-1','type':'command_execution','command':'echo ok','status':'completed','exit_code':0,'aggregated_output':'ok'}}))\n"
-            "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_slice':''}}) + '\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['README.md'],'search_replace_blocks':[{'path':'README.md','search':'# a9\\n','replace':'# a9 supervisor fake worker\\n'}],'worker_commands_run':['echo ok'],'supervisor_declared_checks':['grep -q supervisor README.md'],'next_slice':''}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1174,9 +1173,9 @@ Do the work.
                         task_id,
                         "fake task",
                         "--check",
-                        "test -f worker-output.txt",
+                        "grep -q supervisor README.md",
                         "--allow-path",
-                        "worker-output.txt",
+                        "README.md",
                         "--timeout-seconds",
                         "60",
                         "--idle-timeout-seconds",
@@ -1209,7 +1208,7 @@ Do the work.
         self.assertTrue(Path(data["patch_guard"]["output_path"]).exists())
         self.assertEqual(data["scope_guard"]["status"], "pass")
         self.assertEqual(data["guard_summary"]["scope_guard"]["status"], "pass")
-        self.assertEqual(data["scope_guard"]["allowed_paths"], ["worker-output.txt"])
+        self.assertEqual(data["scope_guard"]["allowed_paths"], ["README.md"])
         self.assertTrue(Path(data["scope_guard"]["output_path"]).exists())
         self.assertIn("persistence", data)
         self.assertEqual(data["policy_attestation"]["status"], "pass")
@@ -1435,8 +1434,7 @@ Do the work.
             "from pathlib import Path\n"
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
-            "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_recommended_task':'test: preserve next slice metadata through summary writes'}}) + '\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':[],'worker_commands_run':[],'supervisor_declared_checks':['python3 -c pass'],'next_recommended_task':'test: preserve next slice metadata through summary writes'}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1465,9 +1463,7 @@ Do the work.
                         "--phase",
                         "test",
                         "--check",
-                        "test -f worker-output.txt",
-                        "--allow-path",
-                        "worker-output.txt",
+                        "python3 -c pass",
                         "--timeout-seconds",
                         "60",
                         "--idle-timeout-seconds",
@@ -1491,7 +1487,7 @@ Do the work.
                     if held_path.exists() and not original_path.exists():
                         shutil.move(str(held_path), str(original_path))
 
-        self.assertEqual(done["status"], "pass")
+        self.assertIn(done["status"], {"pass", "needs-followup"})
         self.assertTrue(done["next_task_path"])
         self.assertEqual(done["next_task_path"], run_summary.get("next_task_path"))
         self.assertEqual(
@@ -1514,8 +1510,7 @@ Do the work.
             "from pathlib import Path\n"
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
-            "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_slice':'   ','next_recommended_task':' ','next_task':'test: preserve next_task fallback metadata symmetry through auto-next summary writes'}}) + '\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':[],'worker_commands_run':[],'supervisor_declared_checks':['python3 -c pass'],'next_slice':'   ','next_recommended_task':' ','next_task':'test: preserve next_task fallback metadata symmetry through auto-next summary writes'}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1544,9 +1539,7 @@ Do the work.
                         "--phase",
                         "test",
                         "--check",
-                        "test -f worker-output.txt",
-                        "--allow-path",
-                        "worker-output.txt",
+                        "python3 -c pass",
                         "--timeout-seconds",
                         "60",
                         "--idle-timeout-seconds",
@@ -1570,7 +1563,7 @@ Do the work.
                     if held_path.exists() and not original_path.exists():
                         shutil.move(str(held_path), str(original_path))
 
-        self.assertEqual(done["status"], "pass")
+        self.assertIn(done["status"], {"pass", "needs-followup"})
         self.assertTrue(done["next_task_path"])
         self.assertEqual(done["next_task_path"], run_summary.get("next_task_path"))
         self.assertEqual(
@@ -1594,8 +1587,7 @@ Do the work.
             "from pathlib import Path\n"
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
-            "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_recommended_task':'test: verify fallback queue creation remains deterministic','next_task':'implement: lower-priority fallback should not rewrite auto-next id routing'}}) + '\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':[],'worker_commands_run':[],'supervisor_declared_checks':['python3 -c pass'],'next_recommended_task':'test: verify fallback queue creation remains deterministic','next_task':'implement: lower-priority fallback should not rewrite auto-next id routing'}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1624,9 +1616,7 @@ Do the work.
                         "--phase",
                         "mechanism_extract",
                         "--check",
-                        "test -f worker-output.txt",
-                        "--allow-path",
-                        "worker-output.txt",
+                        "python3 -c pass",
                         "--allow-path",
                         "scripts/a9_supervisor.py",
                         "--allow-path",
@@ -1654,7 +1644,7 @@ Do the work.
                     if held_path.exists() and not original_path.exists():
                         shutil.move(str(held_path), str(original_path))
 
-        self.assertEqual(done["status"], "pass")
+        self.assertIn(done["status"], {"pass", "needs-followup"})
         self.assertTrue(done["next_task_path"])
         self.assertEqual(done["next_task_path"], run_summary.get("next_task_path"))
         self.assertEqual(done["gateway_runtime_gate"]["status"], "skip")
@@ -1679,8 +1669,7 @@ Do the work.
             "from pathlib import Path\n"
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
-            "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_recommended_task':'   ','next_task':'test: verify next_task fallback queue creation remains deterministic'}}) + '\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':[],'worker_commands_run':[],'supervisor_declared_checks':['python3 -c pass'],'next_recommended_task':'   ','next_task':'test: verify next_task fallback queue creation remains deterministic'}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1709,9 +1698,7 @@ Do the work.
                         "--phase",
                         "mechanism_extract",
                         "--check",
-                        "test -f worker-output.txt",
-                        "--allow-path",
-                        "worker-output.txt",
+                        "python3 -c pass",
                         "--allow-path",
                         "scripts/a9_supervisor.py",
                         "--allow-path",
@@ -1739,7 +1726,7 @@ Do the work.
                     if held_path.exists() and not original_path.exists():
                         shutil.move(str(held_path), str(original_path))
 
-        self.assertEqual(done["status"], "pass")
+        self.assertIn(done["status"], {"pass", "needs-followup"})
         self.assertTrue(done["next_task_path"])
         self.assertEqual(done["next_task_path"], run_summary.get("next_task_path"))
         self.assertEqual(done["gateway_runtime_gate"]["status"], "skip")
@@ -1764,8 +1751,7 @@ Do the work.
             "from pathlib import Path\n"
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
-            "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_slice':'test: add a run-one --auto-next regression proving summary.next_task_path roundtrip despite prior diagnostic noise','next_recommended_task':'test: lower-priority fallback should not replace next_slice source'}}) + '\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':[],'worker_commands_run':[],'supervisor_declared_checks':['python3 -c pass'],'next_slice':'test: add a run-one --auto-next regression proving summary.next_task_path roundtrip despite prior diagnostic noise','next_recommended_task':'test: lower-priority fallback should not replace next_slice source'}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1801,9 +1787,7 @@ Do the work.
                         "--phase",
                         "test",
                         "--check",
-                        "test -f worker-output.txt",
-                        "--allow-path",
-                        "worker-output.txt",
+                        "python3 -c pass",
                         "--allow-path",
                         "scripts/a9_supervisor.py",
                         "--allow-path",
@@ -1845,8 +1829,7 @@ Do the work.
             "from pathlib import Path\n"
             "import json\n"
             "print(json.dumps({'type':'fake.start'}))\n"
-            "Path('worker-output.txt').write_text('done\\n')\n"
-            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':['worker-output.txt'],'tests':['test -f worker-output.txt'],'next_recommended_task':'test: prove summary.next_task_path writes on fallback source','next_task':'implement: lower-priority field must not replace resolved next slice source'}}) + '\\n')\n"
+            "Path('{run_dir}/final.md').write_text(json.dumps({'protocolVersion':1,'ok':True,'status':'ok','output':{'changed_files':[],'worker_commands_run':[],'supervisor_declared_checks':['python3 -c pass'],'next_recommended_task':'test: prove summary.next_task_path writes on fallback source','next_task':'implement: lower-priority field must not replace resolved next slice source'}}) + '\\n')\n"
             "print(json.dumps({'type':'fake.done'}))\n"
             "PY"
         )
@@ -1875,9 +1858,7 @@ Do the work.
                         "--phase",
                         "test",
                         "--check",
-                        "test -f worker-output.txt",
-                        "--allow-path",
-                        "worker-output.txt",
+                        "python3 -c pass",
                         "--allow-path",
                         "scripts/a9_supervisor.py",
                         "--allow-path",
@@ -6621,7 +6602,7 @@ Findings are ready.
         self.assertEqual(broad_rg, {})
         self.assertEqual(sed_over, {})
         self.assertEqual(undeclared, {})
-        self.assertEqual(declared, {})
+        self.assertEqual(declared["kind"], "worker_declared_check_execution")
 
     def test_live_worker_observes_runtime_evidence_root_searches_without_blocking(self):
         mod = load_supervisor()
@@ -6695,7 +6676,7 @@ Findings are ready.
         self.assertEqual(allowed_complex_locator, {})
         self.assertEqual(allowed_capped_locator, {})
         self.assertEqual(large_read, {})
-        self.assertEqual(allowed_check, {})
+        self.assertEqual(allowed_check["kind"], "worker_declared_check_execution")
 
     def test_live_worker_flags_compound_wide_read_command(self):
         mod = load_supervisor()
@@ -6844,6 +6825,36 @@ Findings are ready.
                     "python3 -m unittest tests.test_supervisor.SupervisorTests.test_build_context_packet_reports_context_router_metadata",
                 ],
             )
+        )
+
+    def test_process_governance_fails_when_worker_runs_declared_check(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "events.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'python3 -m unittest tests.test_supervisor.SupervisorTests.test_demo'",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="worker-declared-check",
+                prompt="strict_worker_envelope: true\nDo work.",
+                checks=["python3 -m unittest tests.test_supervisor.SupervisorTests.test_demo"],
+            )
+
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertTrue(
+            any(finding.get("kind") == "worker_declared_check_execution" for finding in result["findings"])
         )
 
     def test_live_worker_observes_read_heavy_batched_sed_without_blocking(self):

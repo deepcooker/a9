@@ -3005,3 +3005,28 @@ Next monitoring target:
      checks after worker patch generation, or the transport must have a proven
      no-refresh/no-plugin/no-model-list path. Until then, 24h automation is
      usable for bounded tasks but not stable enough for unattended long runs.
+
+130. Declared checks moved out of worker execution and into supervisor authority.
+   - Trigger:
+     the worker kept spending model-session time on `python3 -m unittest
+     tests.test_supervisor` after patch planning. Even when JSONL streaming was
+     fixed, this tied long deterministic checks to Codex model/session
+     reliability and made retries expensive.
+   - Change:
+     live worker command governance now stops worker attempts that execute a
+     declared check, with `kind=worker_declared_check_execution`. Process
+     governance also records this as an error if it appears in replayed event
+     summaries. The prompt text now says declared checks are run by the outer
+     supervisor after final output.
+   - Test updates:
+     fake worker fixtures now model the intended architecture: workers emit
+     SEARCH/REPLACE or no-change envelopes, and supervisor-side checks verify
+     the result. The end-to-end fake worker test applies a README
+     SEARCH/REPLACE block instead of writing files directly.
+   - Verification:
+     `python3 -m unittest tests.test_supervisor` passed with 363 tests, followed
+     by `git diff --check`.
+   - Governance lesson:
+     worker self-report is evidence only. A9's deterministic apply, guards,
+     declared checks, and git governance are the authority. This reduces token
+     burn and decouples quality checks from model transport instability.

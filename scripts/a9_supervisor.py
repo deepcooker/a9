@@ -2588,6 +2588,12 @@ def command_directly_writes_workspace(command: str) -> bool:
 
 def live_worker_command_violation(task: Task, command: str, *, rationale: str = "") -> dict[str, Any]:
     normalized = normalize_shell_command(command)
+    if command_looks_like_test(normalized) and task.checks and command_matches_declared_check(normalized, task.checks):
+        return {
+            "kind": "worker_declared_check_execution",
+            "reason": "declared checks are executed by the outer A9 supervisor after worker final output",
+            "command": normalized,
+        }
     allowed_read_findings = allowed_read_path_findings(task, normalized)
     if allowed_read_findings:
         finding = allowed_read_findings[0]
@@ -4655,6 +4661,16 @@ def classify_process_governance(
                     "level": "warn",
                     "kind": "undeclared_check",
                     "message": "worker ran test/check command outside declared checks",
+                    "command": command,
+                    "declared_checks": task.checks,
+                }
+            )
+        if command_looks_like_test(command) and task.checks and command_matches_declared_check(command, task.checks):
+            findings.append(
+                {
+                    "level": "error",
+                    "kind": "worker_declared_check_execution",
+                    "message": "worker ran a declared check inside the model session; outer supervisor checks are authoritative",
                     "command": command,
                     "declared_checks": task.checks,
                 }
@@ -8944,7 +8960,7 @@ def next_task_prompt(task: Task, summary: dict[str, Any], phase: str) -> str:
             check_scope_notice = f"""
 Test command sync:
 - next_slice suggested executable test command: `{test_slice_command}`
-- command is declared in task checks and may be executed.
+- command is declared in task checks; do not execute it in the worker. The outer supervisor runs it after final output.
 """
         else:
             check_scope_notice = f"""
