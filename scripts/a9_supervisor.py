@@ -762,6 +762,116 @@ def update_worker_transport_health_from_summary(summary: dict[str, Any]) -> dict
     return previous
 
 
+def update_worker_transport_health_from_probe(probe: dict[str, Any]) -> dict[str, Any]:
+    previous = worker_transport_health_state()
+    if probe.get("status") == "ok":
+        payload = {
+            **previous,
+            "schema": "a9.worker_transport_health.v1",
+            "status": "ok",
+            "consecutive_failures": 0,
+            "cooldown_until": "",
+            "last_probe": probe,
+            "updated_at": utc_now(),
+        }
+        write_json(WORKER_TRANSPORT_HEALTH_PATH, payload)
+        return payload
+    now = datetime.now(timezone.utc)
+    cooldown_until = now + timedelta(seconds=worker_transport_cooldown_seconds())
+    payload = {
+        "schema": "a9.worker_transport_health.v1",
+        "status": "cooldown",
+        "failure_count": int(previous.get("failure_count") or 0) + 1,
+        "consecutive_failures": int(previous.get("consecutive_failures") or 0) + 1,
+        "last_failure_at": now.isoformat(),
+        "cooldown_until": cooldown_until.isoformat(),
+        "last_failure": {
+            "task_id": "worker_transport_probe",
+            "run_dir": probe.get("probe_dir", ""),
+            "status": "retryable-worker-transport",
+            "reason": probe.get("reason", ""),
+            "backend": probe.get("backend", ""),
+        },
+        "last_probe": probe,
+        "updated_at": now.isoformat(),
+    }
+    write_json(WORKER_TRANSPORT_HEALTH_PATH, payload)
+    return payload
+
+
+def worker_transport_probe(timeout_seconds: int = 45, *, ignore_user_config: bool = False) -> dict[str, Any]:
+    ensure_dirs()
+    transport = resolved_worker_transport()
+    backend = str(transport.get("backend") or "")
+    probe_dir = WORKER_TMP_DIR / f"transport-probe-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    probe_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = probe_dir / "stdout.jsonl"
+    stderr_path = probe_dir / "stderr.log"
+    final_path = probe_dir / "final.md"
+    if backend != "codex_exec":
+        probe = {
+            "status": "skipped",
+            "backend": backend,
+            "reason": "live probe currently supports codex_exec only",
+            "probe_dir": str(probe_dir),
+            "checked_at": utc_now(),
+        }
+        update_worker_transport_health_from_probe(probe)
+        return probe
+    model, model_source = resolved_worker_model(None)
+    cmd = [
+        "env",
+        f"CODEX_HOME={WORKER_CODEX_HOME}",
+        f"HOME={WORKER_CODEX_HOME}",
+        f"TMPDIR={WORKER_TMP_DIR}",
+        "codex",
+        "exec",
+        "--json",
+        "--ephemeral",
+        "--model",
+        model,
+        "-C",
+        str(ROOT),
+    ]
+    if ignore_user_config:
+        cmd.append("--ignore-user-config")
+    cmd.extend(["--output-last-message", str(final_path), "Return exactly: probe-ok"])
+    started = time.monotonic()
+    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
+        proc = subprocess.run(
+            ["timeout", f"{max(1, int(timeout_seconds))}s", *cmd],
+            cwd=ROOT,
+            text=True,
+            stdout=stdout,
+            stderr=stderr,
+            check=False,
+        )
+    elapsed = round(time.monotonic() - started, 3)
+    stdout_text = stdout_path.read_text(encoding="utf-8", errors="backslashreplace")
+    stderr_text = stderr_path.read_text(encoding="utf-8", errors="backslashreplace")
+    final_text = final_path.read_text(encoding="utf-8", errors="backslashreplace").strip() if final_path.exists() else ""
+    exhausted = worker_transport_exhausted_text_reason(stdout_text + "\n" + stderr_text)
+    ok = proc.returncode == 0 and final_text == "probe-ok" and not exhausted
+    reason = "probe_ok" if ok else exhausted or f"probe_failed_return_code:{proc.returncode}"
+    probe = {
+        "status": "ok" if ok else "failed",
+        "backend": backend,
+        "model": model,
+        "model_source": model_source,
+        "ignore_user_config": ignore_user_config,
+        "return_code": proc.returncode,
+        "elapsed_seconds": elapsed,
+        "reason": reason,
+        "probe_dir": str(probe_dir),
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "final_path": str(final_path),
+        "checked_at": utc_now(),
+    }
+    update_worker_transport_health_from_probe(probe)
+    return probe
+
+
 def runtime_control_paused() -> bool:
     state = runtime_control_state()
     return bool(state.get("paused"))
@@ -2187,30 +2297,31 @@ def worker_disabled_features_for_model(model: str) -> list[str]:
     return []
 
 
-def resolved_worker_model(task: Task) -> tuple[str, str]:
+def resolved_worker_model(task: Task | None) -> tuple[str, str]:
     policy = worker_model_policy_state()
+    phase = task.phase if task else "implement"
     global_model = os.getenv("A9_SUPERVISOR_MODEL", "").strip()
     if global_model:
         return global_model, "A9_SUPERVISOR_MODEL"
     policy_global_model = str(policy.get("global_model") or "").strip()
     if policy_global_model:
         return policy_global_model, "worker_model_policy.global_model"
-    phase_model_env = f"A9_SUPERVISOR_PHASE_MODEL_{task.phase.upper()}"
+    phase_model_env = f"A9_SUPERVISOR_PHASE_MODEL_{phase.upper()}"
     phase_model = os.getenv(phase_model_env, "").strip()
     if phase_model:
         return phase_model, phase_model_env
     policy_phase_models = policy.get("phase_models", {}) if isinstance(policy.get("phase_models"), dict) else {}
-    policy_phase_model = str(policy_phase_models.get(task.phase) or "").strip()
+    policy_phase_model = str(policy_phase_models.get(phase) or "").strip()
     if policy_phase_model:
-        return policy_phase_model, f"worker_model_policy.phase_models.{task.phase}"
-    if task.phase in {"repair", "test"}:
+        return policy_phase_model, f"worker_model_policy.phase_models.{phase}"
+    if phase in {"repair", "test"}:
         critical_model = os.getenv("A9_SUPERVISOR_CRITICAL_MODEL", DEFAULT_CRITICAL_WORKER_MODEL).strip()
         if critical_model:
             return critical_model, "A9_SUPERVISOR_CRITICAL_MODEL"
         policy_critical_model = str(policy.get("critical_model") or "").strip()
         if policy_critical_model:
             return policy_critical_model, "worker_model_policy.critical_model"
-    if task.phase == "reference_scan":
+    if phase == "reference_scan":
         reference_model = os.getenv("A9_SUPERVISOR_REFERENCE_MODEL", DEFAULT_REFERENCE_SCAN_WORKER_MODEL).strip()
         if reference_model:
             return reference_model, "A9_SUPERVISOR_REFERENCE_MODEL"
@@ -11566,6 +11677,15 @@ def init() -> int:
     return 0
 
 
+def transport_probe(args: argparse.Namespace) -> int:
+    probe = worker_transport_probe(
+        timeout_seconds=args.timeout_seconds,
+        ignore_user_config=args.ignore_user_config,
+    )
+    print(json.dumps(probe, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if probe.get("status") in {"ok", "skipped"} else 1
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="A9 supervisor")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -11573,6 +11693,9 @@ def main(argv: list[str]) -> int:
     run_one_parser = sub.add_parser("run-one")
     run_one_parser.add_argument("--auto-next", action="store_true")
     sub.add_parser("status")
+    probe_parser = sub.add_parser("transport-probe")
+    probe_parser.add_argument("--timeout-seconds", type=int, default=45)
+    probe_parser.add_argument("--ignore-user-config", action="store_true")
 
     loop_parser = sub.add_parser("run-loop")
     loop_parser.add_argument("--sleep-seconds", type=float, default=5.0)
@@ -11677,6 +11800,8 @@ def main(argv: list[str]) -> int:
         return run_loop(args)
     if args.command == "status":
         return status()
+    if args.command == "transport-probe":
+        return transport_probe(args)
     if args.command == "enqueue":
         return enqueue(args)
     if args.command == "plan-create":

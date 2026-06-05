@@ -2892,3 +2892,23 @@ Next monitoring target:
      circuit breaker after an observed infrastructure failure, matching the
      observation-first rule while protecting 24h automation from repeated
      startup failures.
+
+126. Worker transport probe can clear cooldown after live recovery.
+   - Trigger:
+     after cooldown support landed, `codex_exec` recovered on a direct live
+     probe: both the normal command and an `--ignore-user-config` variant
+     returned `probe-ok`.
+   - Change:
+     added `python3 scripts/a9_supervisor.py transport-probe`, which runs a
+     tiny `codex exec --json --ephemeral` probe using the supervisor worker
+     Codex home. Successful probes write `worker_transport_health.status=ok`,
+     reset consecutive failures, and clear `cooldown_until`. Failed probes write
+     the same cooldown health record used by worker failures.
+   - Verification:
+     targeted probe/health tests passed, the live probe returned `probe-ok` in
+     7.614 seconds, and full `tests.test_supervisor` passed. Current status
+     shows `worker_transport_health: ok`.
+   - Governance lesson:
+     transport recovery should be an explicit observable action. A9 can now
+     prove the worker backend is healthy before reopening the queue, instead of
+     editing runtime health state by hand.

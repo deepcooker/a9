@@ -2825,6 +2825,40 @@ Do the work.
         assert gate is not None
         self.assertEqual(gate["reason"], "worker_transport_cooldown")
 
+    def test_worker_transport_probe_success_clears_cooldown(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = mod.WORKER_TRANSPORT_HEALTH_PATH
+            mod.WORKER_TRANSPORT_HEALTH_PATH = Path(tmp) / "worker_transport_health.json"
+            try:
+                future = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                mod.write_json(
+                    mod.WORKER_TRANSPORT_HEALTH_PATH,
+                    {
+                        "schema": "a9.worker_transport_health.v1",
+                        "status": "cooldown",
+                        "failure_count": 2,
+                        "consecutive_failures": 2,
+                        "cooldown_until": future,
+                    },
+                )
+                health = mod.update_worker_transport_health_from_probe(
+                    {
+                        "status": "ok",
+                        "backend": "codex_exec",
+                        "reason": "probe_ok",
+                        "probe_dir": "/tmp/probe",
+                    }
+                )
+                gate = mod.worker_transport_cooldown_gate()
+            finally:
+                mod.WORKER_TRANSPORT_HEALTH_PATH = old_path
+
+        self.assertEqual(health["status"], "ok")
+        self.assertEqual(health["consecutive_failures"], 0)
+        self.assertEqual(health["cooldown_until"], "")
+        self.assertIsNone(gate)
+
     def test_run_loop_observes_transport_cooldown_without_claiming_task(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
