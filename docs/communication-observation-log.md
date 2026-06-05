@@ -2398,3 +2398,28 @@ Next monitoring target:
      the backup path should use the same A9 strict envelope as Codex/custom
      workers. Model providers are replaceable; the durable interface is prompt
      in, envelope out, deterministic apply/check/governance after that.
+
+107. Worker transport presets make the LLM backup selectable from the control plane.
+   - Trigger:
+     `a9_openai_compatible_worker.py` was usable from shell, but phone/mobile
+     control should not have to hand-compose fragile shell templates. The
+     operator needs discoverable presets and a guarded apply path.
+   - Change:
+     `GET /api/worker/transport-presets` now exposes `codex_exec`,
+     `local_envelope_smoke`, and `openai_compatible`. The OpenAI-compatible
+     preset uses an absolute script path and keeps `{prompt_file}`,
+     `{final_path}`, `{task_id}`, and `{phase}` for supervisor expansion.
+     `POST /api/worker/transport-policy` now accepts
+     `preset=openai_compatible` and writes the generated custom command through
+     the existing runtime arm/audit gate.
+   - Verification:
+     targeted control-api tests cover preset discovery, preset application, GET
+     route handling, and controller discovery. A live GET returned all three
+     presets; a live unarmed `preset=openai_compatible` update returned
+     `phone_control_disarmed`; `/api/monitor/control` still showed
+     `transport=codex_exec`, queue `0`, running `0`.
+   - Governance lesson:
+     the mobile control plane should select named, reviewed transport presets
+     rather than accepting ad hoc shell strings as the normal operator path.
+     Raw custom templates remain available for engineering, but product control
+     should prefer presets.

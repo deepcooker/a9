@@ -2965,6 +2965,19 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(payload["resolved"]["backend"], "custom_command")
         self.assertEqual(payload["resolved"]["source"], "worker_transport_policy.backend")
 
+    def test_worker_transport_presets_include_openai_compatible_template(self):
+        mod = load_control_api()
+        payload = mod.worker_transport_presets()
+        presets = {item["name"]: item for item in payload["presets"]}
+
+        self.assertEqual(payload["schema"], "a9.worker_transport_presets.v1")
+        self.assertEqual(presets["codex_exec"]["backend"], "codex_exec")
+        self.assertEqual(presets["openai_compatible"]["backend"], "custom_command")
+        self.assertIn("/root/a9/scripts/a9_openai_compatible_worker.py", presets["openai_compatible"]["custom_command_template"])
+        self.assertIn("{prompt_file}", presets["openai_compatible"]["custom_command_template"])
+        self.assertIn("{final_path}", presets["openai_compatible"]["custom_command_template"])
+        self.assertIn("A9_LLM_WORKER_MODEL", presets["openai_compatible"]["requires"])
+
     def test_update_worker_transport_policy_requires_runtime_arm(self):
         mod = load_control_api()
         sup = mod.supervisor()
@@ -3029,6 +3042,41 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(applied["resolved"]["backend"], "custom_command")
         self.assertEqual([event[0]["status"] for event in audit_events], ["blocked", "applied"])
 
+    def test_update_worker_transport_policy_can_apply_openai_preset(self):
+        mod = load_control_api()
+        sup = mod.supervisor()
+        original_supervisor = mod.supervisor
+        original_audit = mod.enqueue_monitor_intervention_audit
+        old_policy_path = sup.WORKER_TRANSPORT_POLICY_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "root"
+                root.mkdir()
+                sup.WORKER_TRANSPORT_POLICY_PATH = Path(tmp) / "worker_transport_policy.json"
+                mod.supervisor = lambda: sup
+                mod.enqueue_monitor_intervention_audit = lambda event, *, root: None
+                mod.phone_control_arm(
+                    {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                applied = mod.update_worker_transport_policy(
+                    {
+                        "preset": "openai_compatible",
+                        "reason": "switch to openai compatible worker preset",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+        finally:
+            sup.WORKER_TRANSPORT_POLICY_PATH = old_policy_path
+            mod.supervisor = original_supervisor
+            mod.enqueue_monitor_intervention_audit = original_audit
+
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(applied["preset"], "openai_compatible")
+        self.assertEqual(applied["after"]["backend"], "custom_command")
+        self.assertIn("/root/a9/scripts/a9_openai_compatible_worker.py", applied["after"]["custom_command_template"])
+
     def test_api_worker_transport_policy_post_route_calls_handler(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None, "request": None}
@@ -3057,6 +3105,31 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "worker_transport_policy_update")
         self.assertEqual(captured["request"]["backend"], "codex_exec")
+
+    def test_api_worker_transport_presets_endpoint_returns_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+        original_presets = mod.worker_transport_presets
+
+        class DummyWorkerTransportPresetsGetHandler:
+            path = "/api/worker/transport-presets"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for worker transport presets")
+
+        try:
+            mod.worker_transport_presets = lambda: {"status": "ok", "kind": "worker_transport_presets"}
+            mod.ControlHandler.do_GET(DummyWorkerTransportPresetsGetHandler())
+        finally:
+            mod.worker_transport_presets = original_presets
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "worker_transport_presets")
 
     def test_api_monitor_control_endpoint_returns_payload(self):
         mod = load_control_api()
@@ -9437,6 +9510,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["monitor_intervention_audit"], "/api/monitor/interventions/audit")
         self.assertEqual(discovery["endpoints"]["monitor_intervention_events"], "/api/monitor/interventions/events")
         self.assertEqual(discovery["endpoints"]["monitor_intervention_examples"], "/api/monitor/intervention/examples")
+        self.assertEqual(discovery["endpoints"]["worker_transport_presets"], "/api/worker/transport-presets")
+        self.assertEqual(discovery["endpoints"]["worker_transport_policy_update"], "/api/worker/transport-policy")
         self.assertEqual(
             discovery["endpoints"]["communication_data_contract_report"], "/api/communication/data-contract-report"
         )
@@ -9472,6 +9547,8 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(discovery["runtime"]["monitor_status_contract"])
         self.assertTrue(discovery["runtime"]["monitor_intervention_contract"])
         self.assertTrue(discovery["runtime"]["monitor_intervention_examples"])
+        self.assertTrue(discovery["runtime"]["worker_transport_presets"])
+        self.assertTrue(discovery["runtime"]["worker_transport_policy_update"])
         self.assertEqual(discovery["runtime"]["monitor_intervention_redis_stream"], "a9:monitor:interventions")
         self.assertEqual(discovery["events"]["max_limit"], 1000)
         self.assertIn("Last-Event-ID", discovery["events"]["sse_cursor_hint"])

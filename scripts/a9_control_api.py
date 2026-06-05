@@ -3070,6 +3070,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_intervention_audit": "/api/monitor/interventions/audit",
             "monitor_intervention_events": "/api/monitor/interventions/events",
             "monitor_intervention_examples": "/api/monitor/intervention/examples",
+            "worker_transport_presets": "/api/worker/transport-presets",
             "worker_transport_policy_update": "/api/worker/transport-policy",
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
@@ -3116,6 +3117,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_intervention_examples": True,
             "monitor_intervention_redis_stream": MONITOR_INTERVENTIONS_STREAM_KEY,
             "worker_transport_policy_update": True,
+            "worker_transport_presets": True,
             "worker_claim_ready": False,
         },
         "events": {
@@ -6645,6 +6647,56 @@ def worker_transport_policy(root: Path = ROOT) -> dict[str, Any]:
         }
 
 
+def worker_transport_presets(root: Path = ROOT) -> dict[str, Any]:
+    del root
+    openai_worker = ROOT / "scripts" / "a9_openai_compatible_worker.py"
+    local_worker = ROOT / "scripts" / "a9_local_envelope_worker.py"
+    return {
+        "status": "ok",
+        "kind": "worker_transport_presets",
+        "schema": "a9.worker_transport_presets.v1",
+        "presets": [
+            {
+                "name": "codex_exec",
+                "backend": "codex_exec",
+                "description": "Default Codex exec worker transport.",
+                "requires": [],
+                "custom_command_template": "",
+            },
+            {
+                "name": "local_envelope_smoke",
+                "backend": "custom_command",
+                "description": "Deterministic no-edit strict-envelope smoke worker.",
+                "requires": [],
+                "custom_command_template": (
+                    f"python3 {local_worker} --prompt-file {{prompt_file}} --final-path {{final_path}} "
+                    "--task-id {task_id} --phase {phase}"
+                ),
+            },
+            {
+                "name": "openai_compatible",
+                "backend": "custom_command",
+                "description": "OpenAI-compatible LLM worker for OpenAI, vLLM, SGLang, NIM, or A9 model gateway.",
+                "requires": ["A9_LLM_WORKER_API_KEY or OPENAI_API_KEY", "A9_LLM_WORKER_MODEL"],
+                "custom_command_template": (
+                    f"python3 {openai_worker} --prompt-file {{prompt_file}} --final-path {{final_path}} "
+                    "--task-id {task_id} --phase {phase}"
+                ),
+            },
+        ],
+    }
+
+
+def worker_transport_preset_by_name(name: str) -> dict[str, Any] | None:
+    normalized = str(name or "").strip()
+    if not normalized:
+        return None
+    for preset in worker_transport_presets().get("presets", []):
+        if str(preset.get("name") or "") == normalized:
+            return preset
+    return None
+
+
 def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     command = "worker.transport.update"
@@ -6675,11 +6727,15 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
             "audit_async": True,
         }
 
-    backend = str(payload.get("backend") or before.get("backend") or "").strip()
+    preset_name = str(payload.get("preset") or "").strip()
+    preset = worker_transport_preset_by_name(preset_name) if preset_name else None
+    if preset_name and not preset:
+        raise ValueError("unknown worker transport preset: " + preset_name)
+    backend = str(payload.get("backend") or (preset or {}).get("backend") or before.get("backend") or "").strip()
     custom_command_template = str(
         payload.get("custom_command_template")
         if payload.get("custom_command_template") is not None
-        else before.get("custom_command_template") or ""
+        else (preset or {}).get("custom_command_template") or before.get("custom_command_template") or ""
     )
     reason = str(payload.get("reason") or "").strip()
     if not reason:
@@ -6708,6 +6764,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
         "before": before,
         "after": after,
         "resolved": resolved,
+        "preset": preset_name,
         "actor": str(payload.get("actor") or "mobile-operator"),
     }
     enqueue_monitor_intervention_audit(event, root=root)
@@ -6720,6 +6777,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
         "before": before,
         "after": after,
         "resolved": resolved,
+        "preset": preset_name,
         "policy_path": str(mod.WORKER_TRANSPORT_POLICY_PATH),
         "audit_async": True,
     }
@@ -7439,6 +7497,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, monitor_status())
             elif parsed.path == "/api/monitor/intervention/examples":
                 self.write_json(200, monitor_intervention_examples())
+            elif parsed.path == "/api/worker/transport-presets":
+                self.write_json(200, worker_transport_presets())
             elif parsed.path == "/api/monitor/interventions/events":
                 last_id = _resolve_event_last_id(query.get("last_id", [None])[0], self.headers.get("Last-Event-ID"))
                 try:
