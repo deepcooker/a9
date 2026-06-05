@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
+SUPERVISOR_TEST_RUNNER_PATH = ROOT / "scripts" / "a9_run_supervisor_tests.py"
 MONITOR_BLOCKED_REGRESSION_TARGET = (
     "tests.test_supervisor.SupervisorTests."
     "test_test_slice_monitor_blocked_and_fallback_routing_regression"
@@ -37,7 +38,42 @@ def load_supervisor():
     return module
 
 
+def load_supervisor_test_runner():
+    spec = importlib.util.spec_from_file_location("a9_run_supervisor_tests", SUPERVISOR_TEST_RUNNER_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class SupervisorTests(unittest.TestCase):
+    def test_supervisor_test_runner_stops_and_restarts_daemon_session(self):
+        runner = load_supervisor_test_runner()
+        calls = []
+
+        def fake_run(cmd, cwd=None, check=False, stdout=None, stderr=None):
+            calls.append(cmd)
+            if cmd[:3] == ["tmux", "has-session", "-t"]:
+                # First check: daemon exists. Second check before restart:
+                # session has exited after C-c and should be restarted.
+                return subprocess.CompletedProcess(cmd, 0 if len(calls) == 1 else 1)
+            return subprocess.CompletedProcess(cmd, 0)
+
+        with mock.patch.object(runner.subprocess, "run", side_effect=fake_run):
+            code = runner.run_guarded(
+                ["python3", "-c", "pass"],
+                session="a9-test-loop",
+                restart_command="restart-loop",
+            )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0], ["tmux", "has-session", "-t", "a9-test-loop"])
+        self.assertEqual(calls[1], ["tmux", "send-keys", "-t", "a9-test-loop", "C-c"])
+        self.assertEqual(calls[2], ["python3", "-c", "pass"])
+        self.assertEqual(calls[3], ["tmux", "has-session", "-t", "a9-test-loop"])
+        self.assertEqual(calls[4], ["tmux", "new-session", "-d", "-s", "a9-test-loop", "restart-loop"])
+
     def test_probe_action_to_followup_maps_continue_repair_retry(self):
         mod = load_supervisor()
         cont = mod.probe_action_to_followup("continue", "heartbeat_fresh")

@@ -3104,3 +3104,31 @@ Next monitoring target:
      fallback workers are not a replacement for a real coding model, but they
      are valuable for keeping apply, envelope, guard, declared-check, and status
      governance observable while the Codex transport backend is unhealthy.
+
+134. Monitor intervention after 24h worker transport failure should finish the slice.
+   - Trigger:
+     the queued task `supervisor-test-daemon-pause-runner-20260605` was claimed
+     by the live `a9-supervisor-loop`, but the Codex custom-command backend
+     failed before model output with
+     `failed to refresh available models: timeout waiting for child process to exit`.
+   - Finding:
+     the worker produced one event, consumed no model tokens, and made no file
+     changes. This was not a task-quality failure; it was the same Codex CLI
+     transport path failing before useful work.
+   - Change:
+     the monitor intervened and implemented `scripts/a9_run_supervisor_tests.py`.
+     The first attempt reused runtime control pause, but that was wrong because
+     supervisor tests call `run-one` and are also blocked by the pause gate. The
+     runner now stops the live `a9-supervisor-loop` tmux session, runs the
+     target command, and restarts that daemon session in `finally` if it existed
+     before the test.
+   - Verification:
+     a focused regression checks daemon stop/restart behavior. The declared
+     checks for this slice are `python3 -m unittest tests.test_supervisor` and
+     `python3 scripts/a9_run_supervisor_tests.py --help`; the final runner
+     execution passed the full supervisor suite with 364 tests.
+   - Governance lesson:
+     24h automation must keep trying real worker paths, but monitor authority is
+     required when infrastructure fails before the model can reason. The right
+     response is not to keep retrying a dead transport; finish the bounded slice,
+     record evidence, and make the failure visible for backend routing work.
