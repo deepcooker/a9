@@ -3453,3 +3453,25 @@ Next monitoring target:
      correct move. The 24h worker should execute bounded reviewed work, but the
      monitor should still intervene when cost, authority, or quality evidence
      says direct repair is safer.
+
+148. Selftest runs no longer pollute active plan memory.
+   - Trigger:
+     repeated full `tests.test_supervisor` runs wrote `selftest-*` run ids and
+     evidence refs into the active plan. `plan-status` then reported the latest
+     run as a selftest instead of the real Spark mechanism extraction, which
+     distorted monitor handoff and recovery restatement.
+   - Change:
+     `update_active_plan_from_run` now skips plan-memory writes for `selftest-*`
+     task/run ids. `plan-status` and active-plan prompt recovery now select the
+     latest non-selftest run/evidence ref when historical selftest refs already
+     exist.
+   - Verification:
+     focused tests cover selftest update skipping and latest-run/evidence
+     selection that ignores historical selftest refs. A real `plan-status` check
+     now reports
+     `idle-backlog-exec-002-mechanism_extract-a9-plan-lane-runtime-20260605T175803Z-a1`
+     as latest instead of the last selftest.
+   - Governance lesson:
+     test evidence can live in `.a9/runs`, but it must not become product
+     continuation memory. Durable plan memory should represent real project
+     progress, not regression-suite byproducts.

@@ -3471,6 +3471,63 @@ Do the work.
         self.assertIn("not_doing_now: ", text)
         self.assertIn("why_next_action", text)
 
+    def test_plan_status_latest_refs_skip_selftest_runs(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_runs = mod.RUNS_DIR
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.RUNS_DIR = tmp_path / "runs"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-status-non-selftest",
+                    goal_id="goal-status-non-selftest",
+                    contract={"problem": "Need non-selftest latest status."},
+                )
+                plan_dir = mod.write_plan_files(plan)
+                real_run_dir = mod.RUNS_DIR / "real-run-1"
+                selftest_run_dir = mod.RUNS_DIR / "selftest-auto-next-summary"
+                real_run_dir.mkdir(parents=True)
+                selftest_run_dir.mkdir(parents=True)
+                (real_run_dir / "summary.json").write_text(
+                    json.dumps({"phase": "implement", "status": "needs-followup"}),
+                    encoding="utf-8",
+                )
+                (selftest_run_dir / "summary.json").write_text(
+                    json.dumps({"phase": "test", "status": "pass"}),
+                    encoding="utf-8",
+                )
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                stored["run_ids"] = ["real-run-1", "selftest-auto-next-summary"]
+                stored["evidence_refs"] = [
+                    str(real_run_dir / "summary.json"),
+                    str(selftest_run_dir / "summary.json"),
+                    str(selftest_run_dir / "context.md"),
+                ]
+                (plan_dir / "plan.json").write_text(json.dumps(stored), encoding="utf-8")
+
+                args = type("Args", (), {"plan_id": "plan-status-non-selftest"})()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_status(args)
+                text = buffer.getvalue()
+                snapshot = mod.plan_latest_run_snapshot(stored)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(code, 0)
+        self.assertIn("run_ids_count: 2", text)
+        self.assertIn("latest_run_id: real-run-1", text)
+        self.assertIn(f"latest_evidence_ref: {real_run_dir / 'summary.json'}", text)
+        self.assertNotIn("latest_run_id: selftest-auto-next-summary", text)
+        self.assertEqual(snapshot["summary_path"], str(real_run_dir / "summary.json"))
+        self.assertEqual(snapshot["phase"], "implement")
+
     def test_plan_status_prints_must_should_could_contract_excerpt(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4179,6 +4236,44 @@ Findings are ready.
         self.assertIn("run=run-1", progress)
         self.assertIn("status=pass", progress)
         self.assertIn("commit=abcdef123456", progress)
+
+    def test_update_active_plan_from_run_skips_selftest_memory(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-skip-selftest",
+                    goal_id="goal-skip-selftest",
+                    contract={"problem": "Selftests should not become plan memory."},
+                )
+                plan_dir = mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "selftest-auto-next-summary-20260605T000000Z-a1"
+                run_dir.mkdir(parents=True)
+                summary = {"status": "pass", "phase": "test", "run_dir": str(run_dir)}
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="selftest-auto-next-summary",
+                    prompt="demo",
+                    phase="test",
+                )
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                progress = (plan_dir / "progress.md").read_text(encoding="utf-8")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "skipped")
+        self.assertEqual(result["reason"], "selftest_run_not_plan_memory")
+        self.assertEqual(stored["run_ids"], [])
+        self.assertEqual(stored["evidence_refs"], [])
+        self.assertNotIn("selftest-auto-next-summary", progress)
 
     def test_update_active_plan_from_run_routes_contract_update_to_change_request(self):
         mod = load_supervisor()

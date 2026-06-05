@@ -8096,18 +8096,42 @@ def tail_change_request_line(path: Path, *, max_chars: int = 260) -> str:
     return tail_recovery_line(path, max_chars=max_chars)
 
 
+def is_selftest_run_id(value: Any) -> bool:
+    return Path(str(value or "").strip()).name.startswith("selftest-")
+
+
+def latest_plan_run_id(plan: dict[str, Any]) -> str:
+    run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
+    for value in reversed(run_ids):
+        text = str(value or "").strip()
+        if text and not is_selftest_run_id(text):
+            return text
+    return ""
+
+
+def latest_plan_evidence_ref(plan: dict[str, Any]) -> str:
+    evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
+    for value in reversed(evidence_refs):
+        text = str(value or "").strip()
+        if text and not any(part.startswith("selftest-") for part in Path(text).parts):
+            return text
+    return ""
+
+
 def plan_latest_run_snapshot(plan: dict[str, Any]) -> dict[str, str]:
     evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
     summary_path = ""
     for value in reversed(evidence_refs):
         text = str(value or "").strip()
+        if any(part.startswith("selftest-") for part in Path(text).parts):
+            continue
         if text.endswith("/summary.json"):
             summary_path = text
             break
     if not summary_path:
-        run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
-        if run_ids:
-            candidate = RUNS_DIR / str(run_ids[-1]) / "summary.json"
+        run_id = latest_plan_run_id(plan)
+        if run_id:
+            candidate = RUNS_DIR / run_id / "summary.json"
             if candidate.exists():
                 summary_path = str(candidate)
     if not summary_path:
@@ -8237,6 +8261,9 @@ def extract_contract_change_requests_from_summary(summary: dict[str, Any]) -> li
 
 
 def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    run_id = Path(str(summary.get("run_dir") or run_dir)).name
+    if str(task.task_id or "").startswith("selftest-") or is_selftest_run_id(run_id):
+        return {"status": "skipped", "reason": "selftest_run_not_plan_memory", "run_id": run_id}
     plan = active_plan()
     if not plan:
         recovered = parse_active_plan_from_prompt(task.prompt)
@@ -8247,7 +8274,6 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
     plan_id = str(plan.get("plan_id") or "")
     if not plan_id:
         return {"status": "skipped", "reason": "active_plan_missing_plan_id"}
-    run_id = Path(str(summary.get("run_dir") or run_dir)).name
     run_ids = plan.setdefault("run_ids", [])
     if isinstance(run_ids, list) and run_id not in run_ids:
         run_ids.append(run_id)
@@ -11038,11 +11064,13 @@ def plan_status(args: argparse.Namespace) -> int:
     run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
     evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
     print(f"run_ids_count: {len(run_ids)}")
-    if run_ids:
-        print(f"latest_run_id: {bounded_inline(str(run_ids[-1]), 260)}")
+    latest_run_id = latest_plan_run_id(plan)
+    if latest_run_id:
+        print(f"latest_run_id: {bounded_inline(latest_run_id, 260)}")
     print(f"evidence_refs_count: {len(evidence_refs)}")
-    if evidence_refs:
-        print(f"latest_evidence_ref: {bounded_inline(str(evidence_refs[-1]), 260)}")
+    latest_evidence = latest_plan_evidence_ref(plan)
+    if latest_evidence:
+        print(f"latest_evidence_ref: {bounded_inline(latest_evidence, 260)}")
     plan_dir = plan_path(str(plan.get("plan_id", "")))
     print(f"plan_dir: {plan_dir}")
     print(f"problem: {bounded_inline(contract.get('problem', ''), 260)}")
