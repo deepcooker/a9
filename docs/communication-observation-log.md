@@ -2374,3 +2374,27 @@ Next monitoring target:
      contracts. They must account for cwd, path visibility, final output path,
      and declared checks. The next backend can be LLM-capable, but it should
      keep the same strict envelope boundary.
+
+106. OpenAI-compatible custom worker exists as the first LLM-capable backup backend.
+   - Trigger:
+     the local envelope worker proved A9 can bypass Codex exec, but it was
+     deterministic and not capable of doing agent work. The next useful backup
+     must speak a standard model-serving protocol so it can point at OpenAI,
+     vLLM, SGLang, NIM, or an internal model gateway.
+   - Change:
+     added `scripts/a9_openai_compatible_worker.py`. It reads the supervisor
+     bounded prompt, extracts declared checks, calls an OpenAI-compatible
+     `/chat/completions` endpoint with a strict-envelope system instruction,
+     validates that the model response contains an A9 worker envelope, and
+     writes that envelope to `final.md`. It uses only the Python standard
+     library. Required configuration is `A9_LLM_WORKER_API_KEY` or
+     `OPENAI_API_KEY`, plus `A9_LLM_WORKER_MODEL` or `--model`; base URL can be
+     changed with `A9_LLM_WORKER_BASE_URL` or `--base-url`.
+   - Verification:
+     `python3 -m unittest tests.test_openai_compatible_worker` passed. A CLI
+     missing-key smoke returned code `70` and still wrote a strict error
+     envelope, so configuration failures are visible to supervisor artifacts.
+   - Governance lesson:
+     the backup path should use the same A9 strict envelope as Codex/custom
+     workers. Model providers are replaceable; the durable interface is prompt
+     in, envelope out, deterministic apply/check/governance after that.
