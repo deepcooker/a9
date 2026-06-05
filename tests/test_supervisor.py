@@ -3501,6 +3501,96 @@ Do the work.
         self.assertIn("tests/test_supervisor.py", parsed.allowed_paths)
         self.assertFalse(parsed.auto_next_allowed)
 
+    def test_plan_backlog_add_persists_item_and_next_marks_queued(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-structured-backlog",
+                    goal_id="goal-structured-backlog",
+                    contract={
+                        "problem": "Need durable execution backlog.",
+                        "why_now": "Workers need decided slices after debate.",
+                        "must": "Persist backlog items before execution.",
+                        "system_requirement": "plan-backlog-add stores ready execution slices.",
+                        "data_shape": "execution_backlog.items with status and queued task refs.",
+                        "normal_flow": "add backlog -> generate queue -> mark queued.",
+                        "exception_flow": "wrong slice -> change_request.",
+                        "acceptance": "plan JSON records ready and queued states.",
+                        "out_of_scope": "no direct implementation during backlog add.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "planning-with-files task packet and Codex plan recovery.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                add_args = type(
+                    "Args",
+                    (),
+                    {
+                        "plan_id": "plan-structured-backlog",
+                        "title": "Persist structured backlog",
+                        "phase": "implement",
+                        "prompt": "Implement structured backlog persistence and queue handoff.",
+                        "task_id": "",
+                        "allowed_path": ["scripts/a9_supervisor.py"],
+                        "check": ["python3 -m unittest tests.test_supervisor"],
+                    },
+                )()
+                add_buffer = io.StringIO()
+                with redirect_stdout(add_buffer):
+                    add_code = mod.plan_backlog_add(add_args)
+                stored_after_add = mod.load_plan("plan-structured-backlog")
+                next_args = type(
+                    "Args",
+                    (),
+                    {
+                        "plan_id": "plan-structured-backlog",
+                        "count": 1,
+                        "prefix": "structured",
+                        "timeout_seconds": 120,
+                        "idle_timeout_seconds": 30,
+                        "no_auto_next": True,
+                    },
+                )()
+                next_buffer = io.StringIO()
+                with redirect_stdout(next_buffer):
+                    next_code = mod.plan_backlog_next(next_args)
+                stored_after_next = mod.load_plan("plan-structured-backlog")
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+                first = queued[0].read_text(encoding="utf-8")
+                second_buffer = io.StringIO()
+                with redirect_stdout(second_buffer):
+                    second_code = mod.plan_backlog_next(next_args)
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+
+        self.assertEqual(add_code, 0)
+        self.assertEqual(next_code, 0)
+        self.assertEqual(second_code, 1)
+        self.assertIn("execution_backlog_added: backlog-001-Persist-structured-backlog", add_buffer.getvalue())
+        item_after_add = stored_after_add["execution_backlog"]["items"][0]
+        self.assertEqual(item_after_add["status"], "ready")
+        self.assertEqual(item_after_add["allowed_paths"], ["scripts/a9_supervisor.py"])
+        item_after_next = stored_after_next["execution_backlog"]["items"][0]
+        self.assertEqual(item_after_next["status"], "queued")
+        self.assertTrue(item_after_next["queued_task_id"].startswith("structured-exec-001-implement-"))
+        self.assertIn("structured-exec-001-implement-", stored_after_next["execution_backlog"]["generated_task_ids"][0])
+        self.assertIn("execution_backlog_id: backlog-001-Persist-structured-backlog", first)
+        self.assertIn("Implement structured backlog persistence and queue handoff.", first)
+        self.assertIn("No execution backlog generated.", second_buffer.getvalue())
+
     def test_update_active_plan_from_run_records_refs_and_progress(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

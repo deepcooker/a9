@@ -7329,6 +7329,14 @@ def default_requirements_debate_state() -> dict[str, Any]:
     }
 
 
+def default_execution_backlog_state() -> dict[str, Any]:
+    return {
+        "schema": "a9.execution_backlog.v1",
+        "items": [],
+        "generated_task_ids": [],
+    }
+
+
 def requirements_debate_progress(plan: dict[str, Any]) -> dict[str, Any]:
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     stages: list[dict[str, Any]] = []
@@ -7502,6 +7510,21 @@ def write_plan_markdown(plan: dict[str, Any]) -> str:
             + (f" missing={', '.join(str(item) for item in missing)}" if missing else "")
         )
     lines.append("")
+    backlog = execution_backlog_state(plan)
+    backlog_items = [item for item in backlog.get("items", []) if isinstance(item, dict)]
+    lines.extend(["## Execution Backlog", ""])
+    lines.append(f"- items: {len(backlog_items)}")
+    generated = backlog.get("generated_task_ids", [])
+    lines.append(
+        f"- generated_task_ids: {', '.join(str(item) for item in generated) if isinstance(generated, list) else ''}"
+    )
+    lines.append("")
+    for index, item in enumerate(backlog_items, start=1):
+        lines.append(
+            f"- {index}. {item.get('id', '')}: {item.get('status', '')} "
+            f"phase={item.get('phase', '')} title={item.get('title', '')}"
+        )
+    lines.append("")
     lines.extend(
         [
             "## Authority",
@@ -7538,6 +7561,7 @@ def create_plan_payload(
         "status": "active",
         "contract": contract,
         "requirements_debate": default_requirements_debate_state(),
+        "execution_backlog": default_execution_backlog_state(),
         "created_at": now,
         "updated_at": now,
     }
@@ -10572,11 +10596,98 @@ def extract_allowed_paths_from_execution_text(text: str) -> list[str]:
     return paths
 
 
+def execution_backlog_state(plan: dict[str, Any]) -> dict[str, Any]:
+    backlog = plan.get("execution_backlog")
+    if not isinstance(backlog, dict):
+        backlog = default_execution_backlog_state()
+        plan["execution_backlog"] = backlog
+    if not isinstance(backlog.get("items"), list):
+        backlog["items"] = []
+    if not isinstance(backlog.get("generated_task_ids"), list):
+        backlog["generated_task_ids"] = []
+    if not backlog.get("schema"):
+        backlog["schema"] = "a9.execution_backlog.v1"
+    return backlog
+
+
+def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: dict[str, Any]) -> dict[str, Any]:
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    phase = str(raw.get("phase") or "implement").strip() or "implement"
+    backlog_id = str(raw.get("id") or raw.get("backlog_id") or raw.get("task_id") or "").strip()
+    if not backlog_id:
+        title_for_id = str(raw.get("title") or raw.get("objective") or phase or "execution")
+        backlog_id = f"backlog-{index:03d}-{slugify(title_for_id)[:40]}"
+    task_id = str(raw.get("task_id") or "").strip()
+    if not task_id:
+        task_id = f"exec-{index:03d}-{phase}-{compact_task_ref(backlog_id, limit=40)}"
+    allowed_paths: list[str] = []
+    if isinstance(raw.get("allowed_paths"), list):
+        allowed_paths = [str(path).strip() for path in raw["allowed_paths"] if str(path).strip()]
+    if not allowed_paths:
+        allowed_paths = extract_allowed_paths_from_execution_text(str(raw.get("allowed_execution") or ""))
+    if not allowed_paths:
+        allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
+    checks = [str(check).strip() for check in raw.get("checks", []) if str(check).strip()] if isinstance(raw.get("checks"), list) else []
+    title = str(raw.get("title") or raw.get("objective") or phase).strip()
+    objective = str(raw.get("objective") or raw.get("prompt") or title).strip()
+    prompt_body = str(raw.get("prompt") or objective).strip()
+    prompt = "\n".join(
+        [
+            "decision_status: decided",
+            "route: execution_next",
+            f"plan_id: {plan.get('plan_id', '')}",
+            f"goal_id: {plan.get('goal_id', '')}",
+            f"problem: {contract.get('problem', '')}",
+            f"system_requirement: {contract.get('system_requirement', '')}",
+            f"data_contract: {contract.get('data_shape', '')}",
+            f"state_flow: {contract.get('normal_flow', '')}",
+            f"exception_flow: {contract.get('exception_flow', '')}",
+            f"acceptance: {contract.get('acceptance', '')}",
+            f"out_of_scope: {contract.get('out_of_scope', '')}",
+            f"allowed_execution: {contract.get('allowed_execution', '')}",
+            f"change_record: {contract.get('change_record', '') or 'Generated from requirements debate ready_for_execution_backlog.'}",
+            "role_signoff: requirements debate pipeline reached ready_for_execution_backlog.",
+            f"execution_backlog_id: {backlog_id}",
+            f"execution_backlog_index: {index}",
+            f"execution_backlog_phase: {phase}",
+            f"execution_backlog_title: {title}",
+            "",
+            "Execution slice:",
+            prompt_body,
+            "",
+            "Rules:",
+            "- Execute only this bounded slice.",
+            "- Use reference-first copying where the slice requires it.",
+            "- Do not change product scope, data contract, state flow, acceptance, or out_of_scope.",
+            "- If the contract is wrong, append a plan change_request instead of silently changing it.",
+        ]
+    )
+    return {
+        "backlog_id": backlog_id,
+        "task_id": task_id,
+        "phase": phase,
+        "prompt": prompt,
+        "allowed_paths": allowed_paths,
+        "checks": checks,
+        "source": "plan.execution_backlog.items",
+        "status": str(raw.get("status") or "ready").strip() or "ready",
+    }
+
+
 def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> list[dict[str, Any]]:
     debate = requirements_debate_progress(plan)
     if debate.get("status") != "ready_for_execution_backlog":
         return []
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    backlog = execution_backlog_state(plan)
+    raw_items = [item for item in backlog.get("items", []) if isinstance(item, dict)]
+    ready_items = [
+        normalize_execution_backlog_item(item, index=index, plan=plan)
+        for index, item in enumerate(raw_items, start=1)
+        if str(item.get("status") or "ready").strip() in ("", "ready", "pending")
+    ]
+    if raw_items:
+        return ready_items[:count] if count > 0 else ready_items
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
     selected_phases = list(EXECUTION_BACKLOG_PHASES)
     if count > 0:
@@ -10626,6 +10737,98 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
     return items
 
 
+def mark_execution_backlog_items_queued(plan: dict[str, Any], queued_items: list[dict[str, Any]], created_paths: list[Path]) -> None:
+    if not queued_items:
+        return
+    backlog = execution_backlog_state(plan)
+    raw_items = [item for item in backlog.get("items", []) if isinstance(item, dict)]
+    by_backlog_id = {str(item.get("backlog_id") or ""): (item, path) for item, path in zip(queued_items, created_paths)}
+    now = utc_now()
+    for index, raw in enumerate(raw_items, start=1):
+        normalized = normalize_execution_backlog_item(raw, index=index, plan=plan)
+        queued = by_backlog_id.get(str(normalized.get("backlog_id") or ""))
+        if not queued:
+            continue
+        item, path = queued
+        raw["status"] = "queued"
+        raw["queued_task_id"] = str(item.get("task_id") or "")
+        raw["queued_task_path"] = str(path)
+        raw["queued_at"] = now
+    generated = backlog.get("generated_task_ids")
+    if not isinstance(generated, list):
+        generated = []
+        backlog["generated_task_ids"] = generated
+    for item in queued_items:
+        task_id = str(item.get("task_id") or "")
+        if task_id and task_id not in generated:
+            generated.append(task_id)
+    debate_state = plan.get("requirements_debate")
+    if isinstance(debate_state, dict):
+        debate_state["generated_execution_next_count"] = len(generated)
+
+
+def append_execution_backlog_item(
+    *,
+    plan_id: str,
+    title: str,
+    phase: str,
+    prompt: str,
+    allowed_paths: list[str],
+    checks: list[str],
+    task_id: str = "",
+) -> dict[str, Any]:
+    plan = load_plan(plan_id)
+    if not plan:
+        return {"status": "missing_plan", "path": ""}
+    backlog = execution_backlog_state(plan)
+    items = backlog.get("items")
+    if not isinstance(items, list):
+        items = []
+        backlog["items"] = items
+    item_index = len([item for item in items if isinstance(item, dict)]) + 1
+    item = {
+        "id": f"backlog-{item_index:03d}-{slugify(title or phase or 'execution')[:40]}",
+        "title": title.strip(),
+        "phase": phase.strip() or "implement",
+        "prompt": prompt.strip(),
+        "allowed_paths": [path.strip() for path in allowed_paths if path.strip()],
+        "checks": [check.strip() for check in checks if check.strip()],
+        "status": "ready",
+        "created_at": utc_now(),
+    }
+    if task_id.strip():
+        item["task_id"] = task_id.strip()
+    items.append(item)
+    plan_dir = write_plan_files(plan)
+    append_plan_progress(plan_dir, f"execution_backlog_add: {item['id']} phase={item['phase']} title={item['title']}")
+    return {"status": "appended", "path": str(plan_dir / "plan.json"), "item": item}
+
+
+def plan_backlog_add(args: argparse.Namespace) -> int:
+    ensure_dirs()
+    plan_id = str(args.plan_id or "").strip() or active_plan_id()
+    if not plan_id:
+        print("No active plan.")
+        return 1
+    result = append_execution_backlog_item(
+        plan_id=plan_id,
+        title=str(args.title or "").strip(),
+        phase=str(args.phase or "implement").strip(),
+        prompt=str(args.prompt or "").strip(),
+        allowed_paths=[str(path) for path in args.allowed_path],
+        checks=[str(check) for check in args.check],
+        task_id=str(args.task_id or "").strip(),
+    )
+    if result["status"] != "appended":
+        print(f"Plan not found: {plan_id}")
+        return 1
+    item = result.get("item", {}) if isinstance(result.get("item"), dict) else {}
+    print(result["path"])
+    print(f"execution_backlog_added: {item.get('id', '')}")
+    print(f"execution_backlog_status: {item.get('status', '')}")
+    return 0
+
+
 def plan_backlog_next(args: argparse.Namespace) -> int:
     ensure_dirs()
     plan_id = str(args.plan_id or "").strip() or active_plan_id()
@@ -10647,6 +10850,7 @@ def plan_backlog_next(args: argparse.Namespace) -> int:
         print("No execution backlog generated.")
         return 1
     created: list[Path] = []
+    queued_items: list[dict[str, Any]] = []
     for item in items:
         task_id = str(item["task_id"])
         if args.prefix:
@@ -10662,8 +10866,14 @@ def plan_backlog_next(args: argparse.Namespace) -> int:
             allowed_paths=[str(path) for path in item.get("allowed_paths", [])],
             auto_next=not args.no_auto_next,
         )
+        queued_item = dict(item)
+        queued_item["task_id"] = task_id
+        queued_items.append(queued_item)
         created.append(path)
         print(path)
+    if any(str(item.get("source") or "") == "plan.execution_backlog.items" for item in queued_items):
+        mark_execution_backlog_items_queued(plan, queued_items, created)
+        write_plan_files(plan)
     print(f"requirements_debate_status: {debate.get('status', '')}")
     print(f"execution_backlog_created: {len(created)}")
     print(f"task_auto_next: {str(not args.no_auto_next).lower()}")
@@ -10904,6 +11114,15 @@ def main(argv: list[str]) -> int:
     plan_debate_parser.add_argument("--timeout-seconds", type=int, default=3600)
     plan_debate_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
 
+    plan_backlog_add_parser = sub.add_parser("plan-backlog-add")
+    plan_backlog_add_parser.add_argument("--plan-id", default="")
+    plan_backlog_add_parser.add_argument("--title", required=True)
+    plan_backlog_add_parser.add_argument("--phase", default="implement")
+    plan_backlog_add_parser.add_argument("--prompt", required=True)
+    plan_backlog_add_parser.add_argument("--task-id", default="")
+    plan_backlog_add_parser.add_argument("--allowed-path", action="append", default=[])
+    plan_backlog_add_parser.add_argument("--check", action="append", default=[])
+
     plan_backlog_parser = sub.add_parser("plan-backlog-next")
     plan_backlog_parser.add_argument("--plan-id", default="")
     plan_backlog_parser.add_argument("--count", type=int, default=0)
@@ -10951,6 +11170,8 @@ def main(argv: list[str]) -> int:
         return plan_status(args)
     if args.command == "plan-debate-next":
         return plan_debate_next(args)
+    if args.command == "plan-backlog-add":
+        return plan_backlog_add(args)
     if args.command == "plan-backlog-next":
         return plan_backlog_next(args)
     if args.command == "plan-change-request":

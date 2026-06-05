@@ -2586,3 +2586,29 @@ Next monitoring target:
      execution. It is intentionally deterministic and small; future work should
      let debate outputs append richer candidate backlog slices before generating
      large task batches.
+
+114. Structured execution backlog can now persist in the plan before queueing.
+   - Trigger:
+     the default five-phase backlog was only a fallback. The real 24h workflow
+     needs requirements debate to decide concrete execution slices first, persist
+     them, and let the supervisor enqueue only those decided slices.
+   - Change:
+     added `execution_backlog.items` to plan payloads plus
+     `python3 scripts/a9_supervisor.py plan-backlog-add`. `plan-backlog-next`
+     now prefers structured plan backlog items, wraps each slice with the
+     decided plan contract, enqueues it as `route: execution_next`, then writes
+     `status=queued`, `queued_task_id`, `queued_task_path`, and
+     `generated_task_ids` back to the plan. If structured backlog exists but no
+     item is ready, the supervisor stops instead of falling back to generic
+     phases.
+   - Verification:
+     targeted tests covered backlog add, queue generation, status writeback, and
+     repeat-run no-op behavior. Full `python3 -m unittest tests.test_supervisor`
+     passed with 339 tests. A live smoke added one structured backlog item to
+     the active plan, generated one `live-structured-smoke-*` task, verified the
+     path, then removed the smoke task and plan residue.
+   - Governance lesson:
+     this fixes a real drift risk discovered by testing: after all structured
+     items were queued, the older fallback would have generated generic work.
+     For the mainline, decided backlog must override defaults; fallback is only
+     for plans that have not yet adopted structured execution backlog.
