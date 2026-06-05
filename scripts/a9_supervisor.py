@@ -8542,6 +8542,33 @@ Budget:
 """
 
 
+def schedule_idle_plan_continuation() -> Path | None:
+    if not idle_goal_continuation_enabled():
+        return None
+    if next_task() is not None:
+        return None
+    if auto_loop_guard_blocks_next():
+        return None
+    plan_id = active_plan_id()
+    if not plan_id:
+        return None
+    plan = load_plan(plan_id)
+    if not plan:
+        return None
+    items = plan_execution_backlog_items(plan, count=1)
+    if not items:
+        return None
+    created = enqueue_execution_backlog_items(
+        plan,
+        items,
+        prefix="idle-backlog",
+        timeout_seconds=3600,
+        idle_timeout_seconds=300,
+        auto_next=True,
+    )
+    return created[0] if created else None
+
+
 def schedule_idle_goal_continuation() -> Path | None:
     if not idle_goal_continuation_enabled():
         return None
@@ -10841,12 +10868,17 @@ def run_loop(args: argparse.Namespace) -> int:
         task = next_task()
         if not task:
             if args.auto_next:
-                next_goal_task = schedule_idle_goal_continuation()
-                if next_goal_task:
-                    write_daemon_heartbeat("goal-continuation", detail=str(next_goal_task))
+                next_plan_task = schedule_idle_plan_continuation()
+                if next_plan_task:
+                    write_daemon_heartbeat("plan-continuation", detail=str(next_plan_task))
                     task = next_task()
                 else:
-                    task = None
+                    next_goal_task = schedule_idle_goal_continuation()
+                    if next_goal_task:
+                        write_daemon_heartbeat("goal-continuation", detail=str(next_goal_task))
+                        task = next_task()
+                    else:
+                        task = None
         if not task:
             write_daemon_heartbeat("idle", detail="no queued tasks")
             print("No queued tasks.")
@@ -11211,28 +11243,41 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
     }
 
 
+def execution_backlog_task_was_generated(task_id: str, generated_task_ids: set[str]) -> bool:
+    normalized = str(task_id or "").strip()
+    if not normalized:
+        return False
+    return any(generated == normalized or generated.endswith(f"-{normalized}") for generated in generated_task_ids)
+
+
 def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> list[dict[str, Any]]:
     debate = requirements_debate_progress(plan)
     if debate.get("status") != "ready_for_execution_backlog":
         return []
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     backlog = execution_backlog_state(plan)
+    generated_task_ids = {str(item) for item in backlog.get("generated_task_ids", []) if str(item).strip()}
     raw_items = [item for item in backlog.get("items", []) if isinstance(item, dict)]
     ready_items = [
         normalize_execution_backlog_item(item, index=index, plan=plan)
         for index, item in enumerate(raw_items, start=1)
         if str(item.get("status") or "ready").strip() in ("", "ready", "pending")
     ]
-    if raw_items:
+    if ready_items:
         return ready_items[:count] if count > 0 else ready_items
+    if raw_items:
+        terminal_statuses = {"done", "complete", "completed", "closed", "cancelled", "skipped"}
+        raw_statuses = {str(item.get("status") or "").strip().lower() for item in raw_items}
+        if any(status not in terminal_statuses for status in raw_statuses):
+            return []
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
     selected_phases = list(EXECUTION_BACKLOG_PHASES)
-    if count > 0:
-        selected_phases = selected_phases[:count]
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
     items: list[dict[str, Any]] = []
     for index, (phase, purpose) in enumerate(selected_phases, start=1):
         task_id = f"exec-{index:03d}-{phase}-{plan_ref}"
+        if execution_backlog_task_was_generated(task_id, generated_task_ids):
+            continue
         prompt = "\n".join(
             [
                 "decision_status: decided",
@@ -11269,8 +11314,11 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
                 "prompt": prompt,
                 "allowed_paths": allowed_paths,
                 "checks": [],
+                "source": "plan.execution_backlog.items",
             }
         )
+        if count > 0 and len(items) >= count:
+            break
     return items
 
 

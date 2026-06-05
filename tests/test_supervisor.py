@@ -452,6 +452,7 @@ Do the work.
             envelope["envelope"]["output"]["supervisor_declared_checks"],
             ["python3 -c 'print(\"ok\")'"],
         )
+        self.assertIn("operator_handoff:", envelope["envelope"]["output"]["next_slice"])
         self.assertEqual(envelope["envelope"]["output"]["files_validated"], [])
         self.assertIn("prompt.md", envelope["envelope"]["output"]["repo_metadata_evidence"][0])
         self.assertFalse(
@@ -3713,6 +3714,43 @@ Do the work.
 
         self.assertEqual(items, [])
 
+    def test_plan_execution_backlog_items_fall_back_after_completed_custom_backlog(self):
+        mod = load_supervisor()
+        plan = mod.create_plan_payload(
+            plan_id="plan-completed-custom-backlog",
+            goal_id="goal-completed-custom-backlog",
+            contract={
+                "problem": "Need continuation after one custom backlog item is done.",
+                "why_now": "The runtime queue is empty.",
+                "must": "Generate remaining execution phases.",
+                "system_requirement": "plan backlog fallback remains deterministic.",
+                "data_shape": "plan.execution_backlog generated_task_ids.",
+                "normal_flow": "done custom item -> default phase continuation.",
+                "exception_flow": "generated task id already present -> skip duplicate.",
+                "acceptance": "next task is reference_scan and generated ids suppress repeats.",
+                "out_of_scope": "no vague chat continuation.",
+                "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                "reference_entry": "Codex goal continuation and planning-with-files.",
+            },
+        )
+        backlog = mod.execution_backlog_state(plan)
+        backlog["items"].append(
+            {
+                "id": "backlog-001-custom",
+                "title": "Completed custom slice",
+                "phase": "implement",
+                "prompt": "Already implemented.",
+                "status": "done",
+            }
+        )
+        backlog["generated_task_ids"].append("exec-001-reference_scan-plan-completed-custom-backlog")
+
+        items = mod.plan_execution_backlog_items(plan, count=2)
+
+        self.assertEqual([item["phase"] for item in items], ["mechanism_extract", "implement"])
+        self.assertEqual(items[0]["task_id"], "exec-002-mechanism_extract-plan-completed-custom-backlog")
+        self.assertEqual(items[0]["source"], "plan.execution_backlog.items")
+
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4599,6 +4637,71 @@ Findings are ready.
         self.assertIn("Start with reference_scan discipline", text)
         self.assertIn("python3 -m py_compile scripts/a9_supervisor.py", text)
         self.assertEqual(parsed.phase, "reference_scan")
+
+    def test_idle_plan_continuation_schedules_active_plan_backlog_before_goal(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                goal = mod.create_goal_payload("goal-plan-first", "Fallback goal should not win", 1000)
+                mod.write_goal(goal)
+                plan = mod.create_plan_payload(
+                    plan_id="plan-idle-continuation",
+                    goal_id="goal-plan-first",
+                    contract={
+                        "problem": "Need plan-owned continuation when the queue is empty.",
+                        "why_now": "The runtime must not rely on chat memory.",
+                        "must": "Queue a decided execution slice from the active plan.",
+                        "system_requirement": "idle plan continuation schedules backlog first.",
+                        "data_shape": "active plan plus execution_backlog generated task ids.",
+                        "normal_flow": "idle loop -> active plan -> execution backlog task.",
+                        "exception_flow": "no plan backlog -> goal continuation fallback.",
+                        "acceptance": "queued task contains route execution_next.",
+                        "out_of_scope": "no product scope mutation.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "Codex goal continuation adapted to A9 active plan.",
+                    },
+                )
+                mod.write_plan_files(plan)
+
+                next_path = mod.schedule_idle_plan_continuation()
+                self.assertIsNotNone(next_path)
+                assert next_path is not None
+                text = next_path.read_text(encoding="utf-8")
+                parsed = mod.parse_task(next_path)
+                stored = mod.load_plan("plan-idle-continuation")
+                following_items = mod.plan_execution_backlog_items(stored, count=1)
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertIn('phase: "reference_scan"', text)
+        self.assertIn("decision_status: decided", text)
+        self.assertIn("route: execution_next", text)
+        self.assertIn("plan_id: plan-idle-continuation", text)
+        self.assertNotIn("Fallback goal should not win", text)
+        self.assertEqual(parsed.phase, "reference_scan")
+        self.assertTrue(stored["execution_backlog"]["generated_task_ids"])
+        self.assertEqual(following_items[0]["phase"], "mechanism_extract")
 
     def test_idle_goal_continuation_budget_limits_instead_of_scheduling(self):
         mod = load_supervisor()

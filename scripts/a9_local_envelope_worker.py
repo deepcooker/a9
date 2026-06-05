@@ -61,7 +61,7 @@ def build_envelope(args: argparse.Namespace, prompt: str) -> dict[str, Any]:
             "repo_metadata_evidence": [str(args.prompt_file)],
             "next_slice": compact_text(
                 args.next_slice
-                or "Replace this deterministic local worker with a real LLM-capable custom_command backend.",
+                or "operator_handoff: local envelope smoke completed; use a real LLM-capable backend for the next task.",
                 700,
             ),
         },

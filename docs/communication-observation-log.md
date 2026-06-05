@@ -3334,3 +3334,37 @@ Next monitoring target:
      backend experiments should be reachable through the same guarded operation
      from phone, API, and shell. Operators should not need raw POST commands for
      common smoke and repair loops.
+
+144. Idle continuation now prefers active-plan execution backlog before goals.
+   - Trigger:
+     the runtime reported `waiting_for_review_closure` even though the active
+     plan had a decided requirements contract. The immediate queue was empty
+     because the only structured backlog item was already done, and the
+     scheduler did not fall back to ungenerated default execution phases.
+   - Change:
+     `run-loop --auto-next` now asks `schedule_idle_plan_continuation` before
+     falling back to goal continuation. `plan_execution_backlog_items` can
+     generate ungenerated default execution phases after completed custom
+     backlog items, but it does not bypass queued/running backlog items.
+     Generated task ids are persisted to prevent repeat scheduling.
+   - Verification:
+     focused tests cover completed-custom-backlog fallback, active-plan idle
+     scheduling before goal fallback, and existing queued-backlog non-repeat.
+     Full `tests.test_supervisor` passed with 366 tests. A live no-model smoke
+     scheduled
+     `.a9/tasks/queue/idle-backlog-exec-001-reference_scan-a9-plan-lane-runtime.md`
+     from the active plan and ran it through
+     `runtime-run-one-with-transport --preset local_envelope_smoke`, producing
+     run evidence under
+     `.a9/runs/idle-backlog-exec-001-reference_scan-a9-plan-lane-runtime-20260605T174608Z-a1`
+     with zero actual model tokens and exact worker-policy rollback.
+   - Follow-up:
+     the deterministic local envelope worker initially emitted a generic
+     next-slice, causing a smoke-only auto follow-up queue. That residue was
+     removed, and the local worker now defaults to `operator_handoff:` so
+     transport smokes prove the pipe without pretending to supply real product
+     direction.
+   - Governance lesson:
+     24h continuation should come from durable plan/backlog state first, goal
+     state second, and never from chat memory. Smoke workers must not create
+     production-looking next tasks unless explicitly configured to do so.
