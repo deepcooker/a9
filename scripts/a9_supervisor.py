@@ -403,6 +403,7 @@ class Task:
     max_attempts: int = 2
     checks: list[str] = field(default_factory=list)
     allowed_paths: list[str] = field(default_factory=list)
+    auto_next_allowed: bool = True
 
 
 def effective_worker_idle_timeout_seconds(task: Task) -> int:
@@ -441,12 +442,17 @@ def parse_task(path: Path) -> Task:
                     meta[key] = json.loads(value)
                 elif value.isdigit():
                     meta[key] = int(value)
+                elif value.lower() in {"true", "false"}:
+                    meta[key] = value.lower() == "true"
                 else:
                     meta[key] = value.strip('"')
 
     task_id = slugify(str(meta.get("id") or path.stem))
     checks = [str(item) for item in meta.get("checks", [])]
     allowed_paths = [str(item) for item in meta.get("allowed_paths", [])]
+    auto_next_allowed = bool(meta.get("auto_next", True))
+    if bool(meta.get("no_auto_next", False)):
+        auto_next_allowed = False
     return Task(
         path=path,
         task_id=task_id,
@@ -457,6 +463,7 @@ def parse_task(path: Path) -> Task:
         max_attempts=int(meta.get("max_attempts", 2)),
         checks=checks,
         allowed_paths=allowed_paths,
+        auto_next_allowed=auto_next_allowed,
     )
 
 
@@ -8690,6 +8697,7 @@ def enqueue_task_file(
     idle_timeout_seconds: int = 300,
     max_attempts: int = 2,
     allowed_paths: list[str] | None = None,
+    auto_next: bool = True,
 ) -> Path:
     ensure_dirs()
     clean_id = compact_task_ref(task_id, limit=120)
@@ -8711,6 +8719,7 @@ def enqueue_task_file(
         f"timeout_seconds: {timeout_seconds}",
         f"idle_timeout_seconds: {idle_timeout_seconds}",
         f"max_attempts: {max_attempts}",
+        f"auto_next: {str(bool(auto_next)).lower()}",
         "checks:",
         checks_text,
         "allowed_paths:",
@@ -8976,6 +8985,14 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
     if flow_transition_blocks_next(summary):
         return None
     if auto_loop_guard_blocks_next(summary):
+        return None
+    if not task.auto_next_allowed:
+        summary["auto_next_block"] = {
+            "reason": "task_auto_next_disabled",
+            "status": summary.get("status", ""),
+            "task_id": task.task_id,
+            "task_path": str(task.path),
+        }
         return None
     fallback = maybe_apply_worker_model_fallback(task, summary)
     summary["worker_model_fallback"] = fallback
@@ -10220,6 +10237,7 @@ def enqueue(args: argparse.Namespace) -> int:
         idle_timeout_seconds=args.idle_timeout_seconds,
         max_attempts=args.max_attempts,
         allowed_paths=args.allow_path,
+        auto_next=not args.no_auto_next,
     )
     print(path)
     return 0
@@ -10529,6 +10547,7 @@ def main(argv: list[str]) -> int:
     enqueue_parser.add_argument("--timeout-seconds", type=int, default=3600)
     enqueue_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
     enqueue_parser.add_argument("--max-attempts", type=int, default=2)
+    enqueue_parser.add_argument("--no-auto-next", action="store_true")
 
     plan_create_parser = sub.add_parser("plan-create")
     plan_create_parser.add_argument("--plan-id", default="")

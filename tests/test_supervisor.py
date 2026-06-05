@@ -65,6 +65,7 @@ phase: "compare"
 timeout_seconds: 12
 idle_timeout_seconds: 3
 max_attempts: 4
+auto_next: false
 checks:
   - "python --version"
 allowed_paths:
@@ -83,7 +84,38 @@ Do the work.
         self.assertEqual(task.max_attempts, 4)
         self.assertEqual(task.checks, ["python --version"])
         self.assertEqual(task.allowed_paths, ["scripts/", "tests/*.py"])
+        self.assertFalse(task.auto_next_allowed)
         self.assertEqual(task.prompt, "Do the work.")
+
+    def test_schedule_next_task_respects_task_auto_next_disabled(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("bounded-smoke.md"),
+            task_id="bounded-smoke",
+            prompt="Run one bounded smoke task.",
+            phase="test",
+            checks=["python3 -c 'print(1)'"],
+            auto_next_allowed=False,
+        )
+        summary = {
+            "status": "pass",
+            "worker_envelope": {
+                "envelope": {
+                    "output": {
+                        "next_slice": "test: this would normally schedule a follow-up",
+                    }
+                }
+            },
+            "worker_output": {
+                "next_slice": "test: this would normally schedule a follow-up",
+            },
+        }
+
+        next_task = mod.schedule_next_task(task, summary)
+
+        self.assertIsNone(next_task)
+        self.assertEqual(summary["auto_next_block"]["reason"], "task_auto_next_disabled")
+        self.assertEqual(summary["auto_next_block"]["task_id"], "bounded-smoke")
 
     def test_claim_next_task_moves_queue_file_to_running_atomically(self):
         mod = load_supervisor()

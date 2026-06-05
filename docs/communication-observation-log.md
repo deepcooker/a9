@@ -2505,3 +2505,30 @@ Next monitoring target:
      24-hour mode is not just "keep running". It needs bounded task expansion,
      visible transport readiness, and fast side-path persistence so observation
      does not become the bottleneck.
+
+111. Auto-next now has a task-level stop boundary for bounded smokes and operator slices.
+   - Trigger:
+     the controlled loop smoke proved that `run-loop --auto-next` can continue
+     automatically, but it also showed that smoke tasks can still expand into a
+     follow-up `auto-reference_scan` when the worker emits a valid next slice.
+   - Change:
+     task frontmatter now supports `auto_next: false` and the enqueue CLI
+     supports `--no-auto-next`. `parse_task` carries this into
+     `Task.auto_next_allowed`, and `schedule_next_task` records
+     `auto_next_block.reason=task_auto_next_disabled` instead of enqueuing a
+     follow-up. Normal tasks keep `auto_next: true` by default, so active goals
+     and phase-prefixed continuation still work.
+   - Verification:
+     targeted supervisor tests passed for frontmatter parsing, task-level
+     auto-next blocking, and existing positive auto-next behavior. Full
+     `python3 -m unittest tests.test_supervisor` passed with 334 tests after
+     stopping the live supervisor loop during the suite.
+   - Runtime observation:
+     the first full test run failed because the live `a9-supervisor-loop`
+     consumed a temporary `selftest` auto-next queue file before the test could
+     read it. The queue/running selftest artifacts were cleaned, and the suite
+     passed after isolating tests from the daemon.
+   - Governance lesson:
+     long-running A9 services and repository tests share the same runtime
+     queue. Production loop validation is good, but full test suites need daemon
+     isolation or a dedicated test queue namespace.
