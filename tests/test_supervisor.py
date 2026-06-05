@@ -8195,6 +8195,26 @@ Findings are ready.
         self.assertIn("missing_fields: none", packet["prompt"])
         self.assertIn("required_fields: bounded_task_metadata", packet["prompt"])
 
+    def test_build_context_packet_routes_bounded_test_metadata_to_execution_next(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="bounded-test-metadata-decision",
+            prompt="Add a deterministic regression for auto-next fallback queue creation.",
+            phase="test",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            checks=["python3 -m unittest tests.test_supervisor"],
+        )
+
+        packet = mod.build_context_packet(task)
+
+        self.assertIn("Task Decision Packet", packet["prompt"])
+        self.assertIn("route: execution_next", packet["prompt"])
+        self.assertIn("decision_status: decided", packet["prompt"])
+        self.assertIn("decided: true", packet["prompt"])
+        self.assertIn("missing_fields: none", packet["prompt"])
+        self.assertIn("required_fields: bounded_task_metadata", packet["prompt"])
+
     def test_build_context_packet_injects_evidence_and_edit_contract_for_worker(self):
         mod = load_supervisor()
         task = mod.Task(

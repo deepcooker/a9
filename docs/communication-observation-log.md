@@ -2949,3 +2949,27 @@ Next monitoring target:
      supervisor loop. Patch apply, scope guard, and the three document checks
      passed. The mobile workspace was updated by cherry-pick to commit
      `97e02cf7e7fbc1ff048ecdf1d2370a038b1f855c`.
+
+128. Monitor intervention: bounded test tasks must not be trapped in debate.
+   - Trigger:
+     a real 24h task,
+     `auto-next-fallback-queue-verification-20260605`, was intentionally
+     bounded with `allowed_paths` and declared checks. The worker correctly
+     inspected the existing auto-next/gateway-hint tests, but the injected task
+     decision packet still said `route=debate_next` because the metadata fast
+     path only covered `implement` tasks. The worker therefore returned
+     `change_request_required` and did not run the declared checks.
+   - Change:
+     bounded metadata routing now treats `implement`, `test`, and `repair`
+     phases the same when the task has both `allowed_paths` and checks:
+     `route=execution_next`, `decision_status=decided`, and
+     `required_fields=bounded_task_metadata`.
+   - Verification:
+     added `test_build_context_packet_routes_bounded_test_metadata_to_execution_next`.
+     Full `python3 -m unittest tests.test_supervisor` passed with 362 tests,
+     followed by `git diff --check`.
+   - Governance lesson:
+     requirements debate belongs before task execution. Once the monitor has
+     issued a bounded executable task with explicit files and checks, the
+     runtime should execute and observe. Otherwise formal decision gates become
+     a throughput bug and push the 24h machine back into analysis-only mode.

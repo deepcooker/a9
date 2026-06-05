@@ -7396,7 +7396,7 @@ def decision_required_fields_for_task(task: Task, fields: dict[str, str] | None 
 def task_decision_packet(task: Task) -> dict[str, Any]:
     fields = parse_leading_key_value_prompt(task.prompt)
     decision_status = str(fields.get("decision_status", "")).strip().lower()
-    if not decision_status and task.phase == "implement" and task.allowed_paths and task.checks:
+    if not decision_status and task.phase in {"implement", "test", "repair"} and task.allowed_paths and task.checks:
         return {
             "route": "execution_next",
             "recommendation": "execute_bounded_task_metadata",
