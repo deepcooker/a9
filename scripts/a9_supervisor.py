@@ -694,7 +694,11 @@ def worker_transport_health_state() -> dict[str, Any]:
     return data
 
 
-def worker_transport_cooldown_gate(now: datetime | None = None) -> dict[str, Any] | None:
+def worker_transport_cooldown_gate(
+    now: datetime | None = None,
+    *,
+    requested_backend: str = "",
+) -> dict[str, Any] | None:
     state = worker_transport_health_state()
     cooldown_until = parse_utc_datetime(str(state.get("cooldown_until") or ""))
     if not cooldown_until:
@@ -702,12 +706,17 @@ def worker_transport_cooldown_gate(now: datetime | None = None) -> dict[str, Any
     current = now or datetime.now(timezone.utc)
     if cooldown_until <= current:
         return None
+    last_failure = state.get("last_failure", {}) if isinstance(state.get("last_failure"), dict) else {}
+    failed_backend = str(last_failure.get("backend") or "")
+    if requested_backend and failed_backend and requested_backend != failed_backend:
+        return None
     return {
         "status": "blocked",
         "reason": "worker_transport_cooldown",
         "cooldown_until": cooldown_until.isoformat(),
         "consecutive_failures": int(state.get("consecutive_failures") or 0),
-        "last_failure": state.get("last_failure", {}) if isinstance(state.get("last_failure"), dict) else {},
+        "last_failure": last_failure,
+        "requested_backend": requested_backend,
         "health_path": str(WORKER_TRANSPORT_HEALTH_PATH),
     }
 
@@ -10842,7 +10851,10 @@ def run_loop(args: argparse.Namespace) -> int:
             write_daemon_heartbeat("idle", detail="no queued tasks")
             print("No queued tasks.")
             return 0
-        transport_gate = worker_transport_cooldown_gate()
+        worker_transport = resolved_worker_transport(task)
+        transport_gate = worker_transport_cooldown_gate(
+            requested_backend=str(worker_transport.get("backend") or "")
+        )
         if transport_gate:
             detail = (
                 f"{transport_gate.get('reason')} until={transport_gate.get('cooldown_until')} "

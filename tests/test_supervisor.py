@@ -416,6 +416,15 @@ Do the work.
             envelope["envelope"]["output"]["supervisor_declared_checks"],
             ["python3 -c 'print(\"ok\")'"],
         )
+        self.assertEqual(envelope["envelope"]["output"]["files_validated"], [])
+        self.assertIn("prompt.md", envelope["envelope"]["output"]["repo_metadata_evidence"][0])
+        self.assertFalse(
+            [
+                item
+                for item in envelope.get("findings", [])
+                if item.get("kind") == "worker_files_validated_repo_metadata_drift"
+            ]
+        )
 
     def test_reference_scan_model_can_be_overridden_without_changing_default(self):
         mod = load_supervisor()
@@ -2792,6 +2801,8 @@ Do the work.
                 }
                 health = mod.update_worker_transport_health_from_summary(summary)
                 gate = mod.worker_transport_cooldown_gate()
+                same_backend_gate = mod.worker_transport_cooldown_gate(requested_backend="codex_exec")
+                fallback_gate = mod.worker_transport_cooldown_gate(requested_backend="custom_command")
             finally:
                 mod.WORKER_TRANSPORT_HEALTH_PATH = old_path
                 if old_cooldown is None:
@@ -2805,6 +2816,8 @@ Do the work.
         self.assertIsNotNone(gate)
         assert gate is not None
         self.assertEqual(gate["reason"], "worker_transport_cooldown")
+        self.assertIsNotNone(same_backend_gate)
+        self.assertIsNone(fallback_gate)
 
     def test_worker_transport_probe_success_clears_cooldown(self):
         mod = load_supervisor()

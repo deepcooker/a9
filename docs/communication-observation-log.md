@@ -3030,3 +3030,77 @@ Next monitoring target:
      worker self-report is evidence only. A9's deterministic apply, guards,
      declared checks, and git governance are the authority. This reduces token
      burn and decouples quality checks from model transport instability.
+
+131. Worker transport cooldown must be backend-scoped, not global.
+   - Trigger:
+     the real smoke task `worker-declared-check-authority-smoke-20260605`
+     reached run directory
+     `.a9/runs/worker-declared-check-authority-smoke-20260605-20260605T154314Z-a1`
+     but stopped before model output with `retryable-worker-transport`.
+     The recorded failure was
+     `worker transport exhausted: Reconnecting... 5/5 (timeout waiting for child process to exit)`.
+   - Finding:
+     the running lease was cleaned correctly and no file edits were applied,
+     but the cooldown gate was global. A Codex backend failure therefore also
+     blocked fallback backends such as `local_envelope_smoke` or
+     `openai_compatible`, even though those paths do not use the failing Codex
+     model-refresh process.
+   - Change:
+     `worker_transport_cooldown_gate` now accepts `requested_backend` and only
+     blocks when the requested backend matches the backend that failed. The
+     run loop resolves the next task's backend before checking cooldown, so a
+     monitor can switch to a custom fallback backend and continue validating
+     deterministic apply, guards, declared checks, and git governance.
+   - Verification:
+     a supervisor regression now confirms that a `codex_exec` transport failure
+     still blocks `codex_exec` during cooldown but does not block
+     `custom_command`.
+   - Governance lesson:
+     transport health is part of runtime routing, not a global stop switch.
+     Backend-scoped cooldown preserves evidence and avoids token burn while
+     keeping the 24h machine able to make progress on non-Codex fallback paths.
+
+132. Supervisor tests and the live daemon must not share active task state.
+   - Trigger:
+     the first full `python3 -m unittest tests.test_supervisor` run failed in
+     `test_run_one_auto_next_preserves_next_task_fallback_metadata_in_done_and_run_summary`
+     because the live `a9-supervisor-loop` daemon claimed a test-generated
+     `.a9/tasks/queue` task before the test process read its expected done
+     record.
+   - Finding:
+     after stopping the daemon and interrupting the stolen running lease through
+     supervisor governance, the same 363-test suite passed. The code change was
+     not the failing factor; shared runtime state and concurrent claimers were.
+   - Change:
+     no production code changed for this finding yet. The monitor cleaned two
+     generated auto-next queue leftovers after the passing suite.
+   - Verification:
+     `python3 -m unittest tests.test_supervisor` passed with 363 tests once the
+     live daemon was stopped, followed by `git diff --check`.
+   - Governance lesson:
+     runtime tests that operate on `.a9/tasks` need isolation or an automatic
+     daemon pause. Otherwise test evidence becomes nondeterministic and a live
+     24h worker can consume selftest tasks as if they were real work.
+
+133. Local fallback backend can validate runtime governance without Codex tokens.
+   - Trigger:
+     after backend-scoping transport cooldown, the monitor ran
+     `local-fallback-backend-smoke-20260605` with
+     `A9_SUPERVISOR_WORKER_CMD=python3 /root/a9/scripts/a9_local_envelope_worker.py ...`.
+   - Finding:
+     the task passed with `worker_transport_backend=custom_command`, two worker
+     events, no model tokens, and supervisor-side declared check
+     `test -f docs/communication-observation-log.md`.
+   - Change:
+     the local fallback worker no longer lists the prompt path under
+     `files_validated`; it records that runtime prompt path under
+     `repo_metadata_evidence` to avoid metadata-drift warning noise.
+   - Verification:
+     run evidence lives at
+     `.a9/runs/local-fallback-backend-smoke-20260605-20260605T155509Z-a1`.
+     The local worker envelope regression passed, and full
+     `python3 -m unittest tests.test_supervisor` passed with 363 tests.
+   - Governance lesson:
+     fallback workers are not a replacement for a real coding model, but they
+     are valuable for keeping apply, envelope, guard, declared-check, and status
+     governance observable while the Codex transport backend is unhealthy.

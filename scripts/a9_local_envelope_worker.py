@@ -57,8 +57,8 @@ def build_envelope(args: argparse.Namespace, prompt: str) -> dict[str, Any]:
             "worker_commands_run": [],
             "supervisor_declared_checks": declared_checks,
             "copied_mechanisms": [],
-            "files_validated": [str(args.prompt_file)],
-            "repo_metadata_evidence": [],
+            "files_validated": [],
+            "repo_metadata_evidence": [str(args.prompt_file)],
             "next_slice": compact_text(
                 args.next_slice
                 or "Replace this deterministic local worker with a real LLM-capable custom_command backend.",
