@@ -4168,6 +4168,63 @@ Do risky work.
         self.assertEqual(captured["payload"]["timeout_seconds"], 9)
         self.assertEqual(output["status"], "applied")
 
+    def test_runtime_run_one_with_transport_cli_arms_and_calls_handler(self):
+        mod = load_control_api()
+        captured = {}
+        original_arm = mod.phone_control_arm
+        original_handler = mod.runtime_run_one_with_transport
+        try:
+            def fake_arm(payload):
+                captured["arm"] = payload
+                return {"status": "armed"}
+
+            def fake_handler(payload):
+                captured["payload"] = payload
+                return {"status": "run-complete", "kind": "runtime_run_one_with_transport"}
+
+            mod.phone_control_arm = fake_arm
+            mod.runtime_run_one_with_transport = fake_handler
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = mod.main(
+                    [
+                        "runtime-run-one-with-transport",
+                        "--preset",
+                        "openai_compatible",
+                        "--require-probe-pass",
+                        "--model",
+                        "test-model",
+                        "--base-url",
+                        "http://127.0.0.1:8000/v1",
+                        "--api-key-env",
+                        "A9_TEST_KEY",
+                        "--timeout-seconds",
+                        "9",
+                        "--reason",
+                        "temporary gateway smoke",
+                        "--auto-next",
+                        "--arm-duration",
+                        "30s",
+                    ]
+                )
+            output = json.loads(buffer.getvalue())
+        finally:
+            mod.phone_control_arm = original_arm
+            mod.runtime_run_one_with_transport = original_handler
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["arm"]["group"], "runtime")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+        self.assertTrue(captured["payload"]["auto_next"])
+        self.assertEqual(captured["payload"]["transport"]["preset"], "openai_compatible")
+        self.assertTrue(captured["payload"]["transport"]["require_probe_pass"])
+        self.assertEqual(captured["payload"]["transport"]["model"], "test-model")
+        self.assertEqual(captured["payload"]["transport"]["base_url"], "http://127.0.0.1:8000/v1")
+        self.assertEqual(captured["payload"]["transport"]["api_key_env"], "A9_TEST_KEY")
+        self.assertEqual(captured["payload"]["transport"]["timeout_seconds"], 9)
+        self.assertEqual(captured["payload"]["transport"]["reason"], "temporary gateway smoke")
+        self.assertEqual(output["status"], "run-complete")
+
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
         mod = load_control_api()
 

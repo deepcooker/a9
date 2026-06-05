@@ -3315,3 +3315,22 @@ Next monitoring target:
      apply temporary backend, run bounded work, restore exact previous policy,
      and preserve all evidence. This is the safer path for future
      OpenAI-compatible gateway trials.
+
+143. Transactional backend run-one now has an operator CLI.
+   - Trigger:
+     after the API-level transaction existed, operators still needed to call an
+     internal function or hand-write a POST body to run a bounded backend trial.
+     That made phone control and shell control inconsistent.
+   - Change:
+     added `runtime-run-one-with-transport` to `scripts/a9_control_api.py`. The
+     command can arm the runtime group, pass a temporary worker transport preset
+     or OpenAI-compatible gateway config, run one supervisor task, and rely on
+     the existing transaction handler to restore the exact previous policy.
+   - Verification:
+     CLI help exposes preset, gateway config, probe gate, auto-next, reason, and
+     arm-duration options. Regression coverage confirms the CLI arms runtime and
+     calls `runtime_run_one_with_transport` with the expected scoped payload.
+   - Governance lesson:
+     backend experiments should be reachable through the same guarded operation
+     from phone, API, and shell. Operators should not need raw POST commands for
+     common smoke and repair loops.

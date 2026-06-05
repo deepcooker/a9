@@ -2685,6 +2685,26 @@ def worker_transport_config_cli(args: argparse.Namespace) -> int:
     return 0 if result.get("status") == "applied" else 1
 
 
+def runtime_run_one_with_transport_cli(args: argparse.Namespace) -> int:
+    if args.arm_duration:
+        phone_control_arm(
+            {
+                "group": "runtime",
+                "duration": args.arm_duration,
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "source": "runtime-run-one-with-transport-cli",
+            }
+        )
+    payload = {
+        "operator_scopes": [PHONE_ADMIN_SCOPE],
+        "auto_next": bool(args.auto_next),
+        "transport": worker_transport_cli_payload(args),
+    }
+    result = runtime_run_one_with_transport(payload)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") == "run-complete" else 1
+
+
 def communication_repair_suggestion_review(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     suggestion_id = str(payload.get("suggestion_id") or "").strip()
@@ -8356,6 +8376,16 @@ def main(argv: list[str]) -> int:
     config_parser.add_argument("--timeout-seconds", dest="timeout_seconds", type=int, default=30)
     config_parser.add_argument("--reason", required=True)
     config_parser.add_argument("--arm-duration", dest="arm_duration", default="")
+    runtime_transport_parser = sub.add_parser("runtime-run-one-with-transport")
+    runtime_transport_parser.add_argument("--preset", default="local_envelope_smoke")
+    runtime_transport_parser.add_argument("--model", default="")
+    runtime_transport_parser.add_argument("--base-url", dest="base_url", default="")
+    runtime_transport_parser.add_argument("--api-key-env", dest="api_key_env", default="")
+    runtime_transport_parser.add_argument("--timeout-seconds", dest="timeout_seconds", type=int)
+    runtime_transport_parser.add_argument("--reason", default="temporary transport runtime run-one")
+    runtime_transport_parser.add_argument("--require-probe-pass", dest="require_probe_pass", action="store_true")
+    runtime_transport_parser.add_argument("--auto-next", dest="auto_next", action="store_true")
+    runtime_transport_parser.add_argument("--arm-duration", dest="arm_duration", default="")
     serve_parser = sub.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8787)
@@ -8374,6 +8404,8 @@ def main(argv: list[str]) -> int:
         return worker_transport_policy_cli(args)
     if args.command == "worker-transport-config":
         return worker_transport_config_cli(args)
+    if args.command == "runtime-run-one-with-transport":
+        return runtime_run_one_with_transport_cli(args)
     if args.command == "serve":
         return serve(args)
     raise AssertionError(args.command)
