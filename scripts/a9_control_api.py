@@ -959,6 +959,55 @@ def latest_run_summary(root: Path = ROOT) -> dict[str, Any] | None:
     return read_json(summaries[-1])
 
 
+def queued_task_quality_summary(root: Path = ROOT, limit: int = 10) -> dict[str, Any]:
+    queue_dir = root / ".a9" / "tasks" / "queue"
+    queued = sorted(queue_dir.glob("*.md"))
+    warning_tasks: list[dict[str, Any]] = []
+    warnings_by_code: dict[str, int] = {}
+    warning_task_count = 0
+    warnings_count = 0
+    parse_errors = 0
+    for path in queued:
+        try:
+            task = supervisor().parse_task(path)
+            warnings = list(task.task_quality_warnings)
+            task_id = task.task_id
+            phase = task.phase
+        except Exception:
+            parse_errors += 1
+            warning_task_count += 1
+            warnings = ["task_parse_error"]
+            task_id = path.stem
+            phase = ""
+        if not warnings:
+            continue
+        if warnings != ["task_parse_error"]:
+            warning_task_count += 1
+        warnings_count += len(warnings)
+        for warning in warnings:
+            code = str(warning).split(":", 1)[0]
+            warnings_by_code[code] = warnings_by_code.get(code, 0) + 1
+        if len(warning_tasks) < limit:
+            warning_tasks.append(
+                {
+                    "task_id": task_id,
+                    "path": str(path),
+                    "phase": phase,
+                    "warnings": warnings,
+                }
+            )
+    return {
+        "status": "warning" if warning_task_count else "ok",
+        "queued_task_count": len(queued),
+        "warning_task_count": warning_task_count,
+        "warnings_count": warnings_count,
+        "warnings_by_code": warnings_by_code,
+        "tasks": warning_tasks,
+        "truncated": warning_task_count > len(warning_tasks),
+        "parse_errors": parse_errors,
+    }
+
+
 def compact_runtime_monitor_contract(contract: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(contract, dict):
         return {}
@@ -1103,6 +1152,7 @@ def supervisor_status(root: Path = ROOT) -> dict[str, Any]:
         "running": len(running),
         "done": len(done),
         "queue": [str(path) for path in queued[-20:]],
+        "task_quality": queued_task_quality_summary(root),
         "running_tasks": [read_json(path) for path in running[-20:]],
         "latest_run": compact_summary(latest_run_summary(root)),
         "progress": read_json(progress_path) if progress_path.exists() else {},
@@ -6896,6 +6946,7 @@ def monitor_status(root: Path = ROOT) -> dict[str, Any]:
             "done": int(status.get("done") or 0),
             "queue_tail": status.get("queue", []),
             "running_tasks": status.get("running_tasks", []),
+            "task_quality": status.get("task_quality", {}),
         },
         "latest_run": {
             "task_id": latest_run.get("task_id"),

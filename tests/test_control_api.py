@@ -242,7 +242,22 @@ class ControlApiTests(unittest.TestCase):
             (root / ".a9" / "tasks" / "running").mkdir(parents=True)
             (root / ".a9" / "tasks" / "done").mkdir(parents=True)
             (root / ".a9" / "runs" / "run-1").mkdir(parents=True)
-            (root / ".a9" / "tasks" / "queue" / "task.md").write_text("demo", encoding="utf-8")
+            (root / ".a9" / "tasks" / "queue" / "task.md").write_text(
+                """---
+id: "task"
+phase: "implement"
+checks:
+  - "test \\"alpha\\" = beta"
+allowed_paths:
+  - ".a9/smoke/file.txt"
+task_quality_warnings:
+  - "write_scope_runtime_ignored_path:.a9"
+  - "declared_check_maybe_shell_expanded:test_literal"
+---
+demo
+""",
+                encoding="utf-8",
+            )
             (root / ".a9" / "progress.json").write_text('{"progress_percent": 1}', encoding="utf-8")
             (root / ".a9" / "runs" / "run-1" / "summary.json").write_text(
                 json.dumps({"task_id": "task", "status": "pass", "run_dir": str(root / ".a9" / "runs" / "run-1")}),
@@ -264,6 +279,10 @@ class ControlApiTests(unittest.TestCase):
                 mod.subprocess.run = original_run
 
         self.assertEqual(status["queued"], 1)
+        self.assertEqual(status["task_quality"]["status"], "warning")
+        self.assertEqual(status["task_quality"]["warning_task_count"], 1)
+        self.assertEqual(status["task_quality"]["warnings_count"], 2)
+        self.assertEqual(status["task_quality"]["warnings_by_code"]["write_scope_runtime_ignored_path"], 1)
         self.assertEqual(status["latest_run"]["task_id"], "task")
         self.assertEqual(status["progress"]["progress_percent"], 1)
         self.assertEqual(status["nodes"]["count"], 0)
@@ -2691,6 +2710,19 @@ class ControlApiTests(unittest.TestCase):
             (state_dir / "tasks" / "queue").mkdir(parents=True)
             (state_dir / "tasks" / "running").mkdir(parents=True)
             (state_dir / "tasks" / "done").mkdir(parents=True)
+            (state_dir / "tasks" / "queue" / "risky-task.md").write_text(
+                """---
+id: "risky-task"
+phase: "implement"
+checks:
+allowed_paths:
+task_quality_warnings:
+  - "declared_check_maybe_shell_expanded:test_literal"
+---
+Do risky work.
+""",
+                encoding="utf-8",
+            )
             (state_dir / "nodes").mkdir(parents=True)
             (state_dir / "runtime").mkdir(parents=True)
             (state_dir / "runtime" / "control_state.json").write_text(
@@ -2796,6 +2828,8 @@ class ControlApiTests(unittest.TestCase):
 
         self.assertEqual(payload["schema"], "a9.monitor_status.v1")
         self.assertEqual(payload["latest_run"]["task_id"], "task-1")
+        self.assertEqual(payload["queue"]["task_quality"]["status"], "warning")
+        self.assertEqual(payload["queue"]["task_quality"]["warning_task_count"], 1)
         self.assertEqual(payload["latest_run"]["run_id"], "run-1")
         self.assertEqual(payload["next_action"], "repair")
         self.assertEqual(payload["failed_checks_count"], 1)

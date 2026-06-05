@@ -2799,3 +2799,21 @@ Next monitoring target:
      these are warnings, not hard gates. They surface bad task construction
      early without blocking legitimate runtime evidence tasks; the monitor can
      decide whether to stop, rewrite, or allow the task.
+
+122. Task quality warnings are visible to status and monitor control.
+   - Trigger:
+     frontmatter-only warnings were too hidden for the operator/mobile control
+     path. A risky queued task should be visible before a worker consumes it,
+     especially when the issue is task construction rather than implementation.
+   - Change:
+     added queued task quality summary fields with warning counts, warning
+     codes, and bounded task samples. Supervisor `service_progress()` and CLI
+     `status` expose the summary, and the control API projects it through
+     `/api/status` and `/api/monitor/status` under the queue payload.
+   - Verification:
+     added tests for supervisor queue warning aggregation, progress exposure,
+     `/api/status`, and `/api/monitor/status`.
+   - Governance lesson:
+     task quality remains observation-first. The monitor sees risky queue
+     construction early and can intervene asynchronously without turning these
+     observations into premature hard gates.

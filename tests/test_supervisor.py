@@ -9326,6 +9326,52 @@ role_signoff: product, business, architecture, test approved.
 
         self.assertEqual(parsed.task_quality_warnings, [])
 
+    def test_queued_task_quality_summary_exposes_warning_counts_for_monitoring(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                mod.enqueue_task_file(
+                    "quality-warning",
+                    "Do implementation work.",
+                    phase="implement",
+                    allowed_paths=[".a9/smoke/file.txt"],
+                    checks=['test "alpha" = beta'],
+                )
+                summary = mod.queued_task_quality_summary()
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertEqual(summary["status"], "warning")
+        self.assertEqual(summary["queued_task_count"], 1)
+        self.assertEqual(summary["warning_task_count"], 1)
+        self.assertEqual(summary["warnings_count"], 2)
+        self.assertEqual(summary["warnings_by_code"]["write_scope_runtime_ignored_path"], 1)
+        self.assertEqual(summary["warnings_by_code"]["declared_check_maybe_shell_expanded"], 1)
+        self.assertEqual(summary["tasks"][0]["task_id"], "quality-warning")
+
+    def test_service_progress_exposes_queued_task_quality_summary(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                mod.enqueue_task_file(
+                    "quality-warning",
+                    "Do implementation work.",
+                    phase="implement",
+                    allowed_paths=[".a9/smoke/file.txt"],
+                    checks=['test "alpha" = beta'],
+                )
+                progress = mod.service_progress({"task_id": "latest", "status": "pass", "run_dir": "/tmp/run"})
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertEqual(progress["task_quality"]["status"], "warning")
+        self.assertEqual(progress["task_quality"]["warning_task_count"], 1)
+        self.assertEqual(progress["task_quality"]["warnings_count"], 2)
+
     def test_build_context_packet_injects_default_strict_envelope_for_worker_phase(self):
         mod = load_supervisor()
         packet = mod.build_context_packet(

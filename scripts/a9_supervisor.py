@@ -475,6 +475,61 @@ def next_task() -> Task | None:
     return parse_task(tasks[0]) if tasks else None
 
 
+def queued_task_quality_summary(limit: int = 10) -> dict[str, Any]:
+    ensure_dirs()
+    queued_paths = sorted(QUEUE_DIR.glob("*.md"))
+    warning_tasks: list[dict[str, Any]] = []
+    warnings_by_code: dict[str, int] = {}
+    warning_task_count = 0
+    warnings_count = 0
+    parse_errors = 0
+    for path in queued_paths:
+        try:
+            task = parse_task(path)
+        except Exception:
+            parse_errors += 1
+            warning_task_count += 1
+            code = "task_parse_error"
+            warnings_by_code[code] = warnings_by_code.get(code, 0) + 1
+            warnings_count += 1
+            if len(warning_tasks) < limit:
+                warning_tasks.append(
+                    {
+                        "task_id": path.stem,
+                        "path": str(path),
+                        "phase": "",
+                        "warnings": [code],
+                    }
+                )
+            continue
+        if not task.task_quality_warnings:
+            continue
+        warning_task_count += 1
+        warnings_count += len(task.task_quality_warnings)
+        for warning in task.task_quality_warnings:
+            code = str(warning).split(":", 1)[0]
+            warnings_by_code[code] = warnings_by_code.get(code, 0) + 1
+        if len(warning_tasks) < limit:
+            warning_tasks.append(
+                {
+                    "task_id": task.task_id,
+                    "path": str(path),
+                    "phase": task.phase,
+                    "warnings": list(task.task_quality_warnings),
+                }
+            )
+    return {
+        "status": "warning" if warning_tasks or parse_errors else "ok",
+        "queued_task_count": len(queued_paths),
+        "warning_task_count": warning_task_count,
+        "warnings_count": warnings_count,
+        "warnings_by_code": warnings_by_code,
+        "tasks": warning_tasks,
+        "truncated": warning_task_count > len(warning_tasks),
+        "parse_errors": parse_errors,
+    }
+
+
 def runtime_control_state() -> dict[str, Any]:
     ensure_dirs()
     if not RUNTIME_CONTROL_STATE_PATH.exists():
@@ -9533,6 +9588,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
     done_tasks = len(list(DONE_DIR.glob("*.json")))
     queued_tasks = len(list(QUEUE_DIR.glob("*.md")))
     running_tasks = len(list(RUNNING_DIR.glob("*.json")))
+    task_quality = queued_task_quality_summary()
     capabilities = {
         "middleware_mysql_redis": True,
         "rust_gateway_streams": True,
@@ -9620,6 +9676,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "done_tasks": done_tasks,
         "queued_tasks": queued_tasks,
         "running_tasks": running_tasks,
+        "task_quality": task_quality,
         "latest_task_id": summary.get("task_id") if summary else None,
         "latest_status": summary.get("status") if summary else None,
         "latest_run": summary.get("run_dir") if summary else None,
@@ -11172,10 +11229,21 @@ def status() -> int:
     ensure_dirs()
     reconciled = reconcile_orphaned_running_tasks()
     control_state = runtime_control_state()
+    task_quality = queued_task_quality_summary()
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
     print(f"running: {len(list(RUNNING_DIR.glob('*.json')))}")
     print(f"done: {len(list(DONE_DIR.glob('*.json')))}")
     print(f"runtime_control: {control_state.get('status', 'running')}")
+    print(f"task_quality_warning_tasks: {task_quality.get('warning_task_count', 0)}")
+    print(f"task_quality_warnings_count: {task_quality.get('warnings_count', 0)}")
+    warning_codes = task_quality.get("warnings_by_code", {})
+    if isinstance(warning_codes, dict) and warning_codes:
+        warning_codes_text = ",".join(f"{code}={count}" for code, count in sorted(warning_codes.items()))
+        print(f"task_quality_warning_codes: {warning_codes_text}")
+    for item in task_quality.get("tasks", [])[:5]:
+        warnings = item.get("warnings", []) if isinstance(item, dict) else []
+        warning_text = ",".join(str(warning) for warning in warnings)
+        print(f"task_quality_warning_task: {item.get('task_id', '')} {warning_text}")
     if reconciled:
         print(f"interrupted_reconciled: {len(reconciled)}")
     latest_summary: dict[str, Any] | None = None
