@@ -5,6 +5,11 @@ This document defines when A9 review is actually finished.
 It is the bridge between the requirements-analysis method and the 24 hour
 execution machine. If this closure is missing, A9 must stay in `debate_next`.
 
+A9's target workflow is not "human review, then automation." The target workflow
+is automated requirements debate followed by automated execution. The human or
+main monitor steers the mainline, observes quality, and intervenes when the
+pipeline drifts.
+
 ## Core Rule
 
 Discussion is not closure.
@@ -17,6 +22,12 @@ Review is closed only when the roles have challenged the plan, the data/state
 shape is explicit, the exceptions are explicit, the acceptance evidence is
 explicit, and the monitor records a decision packet that allows a specific
 `execution_next` slice.
+
+Closure may be produced by a repeated 24 hour debate pipeline. The important
+property is not manual approval of every small item; the important property is
+that the pipeline has actually done the debate: problem framing, reference
+comparison, data/state modeling, role pressure, decision tradeoffs, out-of-scope
+cleanup, and executable next-task generation.
 
 ## Why This Exists
 
@@ -36,6 +47,10 @@ business goal
 -> execution backlog slice
 -> 24 hour worker execution
 ```
+
+In the finished A9 runtime, the first seven steps are also automated runtime
+work. Before that automation is stable, the current Codex/operator interaction
+page can temporarily drive those steps while monitoring the workers.
 
 If the order is reversed, A9 can copy mature projects quickly but still build
 the wrong thing.

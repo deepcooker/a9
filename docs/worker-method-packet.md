@@ -27,6 +27,19 @@ Review closure is defined by `docs/requirements-review-closure.md`. A review
 artifact, mechanism extract, or worker recommendation is not enough. Execution
 starts only after a closed decision packet approves one bounded slice.
 
+The 24 hour workflow has two automated stages, not one:
+
+```text
+requirements debate / review / decision
+-> execution backlog generation
+-> continuous worker execution
+```
+
+Before the debate stage is automated, the current Codex/operator interaction
+page may drive it manually as a temporary control surface. After the debate
+stage is automated and the requirement is clear, human involvement should drop
+to monitoring, drift correction, and exception handling.
+
 ## Two Kinds Of Next
 
 ### debate_next
