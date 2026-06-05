@@ -8,12 +8,14 @@ import os
 import json
 import argparse
 import contextlib
+import subprocess
 import sys
 import tempfile
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -3274,7 +3276,19 @@ Do risky work.
                 os.environ["A9_LLM_WORKER_MODEL"] = "test-model"
                 blocked = mod.worker_transport_check({"preset": "openai_compatible", "execute": True, "operator_scopes": ["operator.admin"]}, root=root)
                 mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
-                armed = mod.worker_transport_check({"preset": "openai_compatible", "execute": True, "operator_scopes": ["operator.admin"]}, root=root)
+                with mock.patch.object(
+                    mod,
+                    "run_openai_compatible_worker_probe",
+                    return_value={
+                        "status": "pass",
+                        "kind": "openai_compatible_worker_probe",
+                        "return_code": 0,
+                    },
+                ) as probe:
+                    armed = mod.worker_transport_check(
+                        {"preset": "openai_compatible", "execute": True, "operator_scopes": ["operator.admin"]},
+                        root=root,
+                    )
             finally:
                 if old_key is None:
                     os.environ.pop("A9_LLM_WORKER_API_KEY", None)
@@ -3287,8 +3301,31 @@ Do risky work.
 
         self.assertEqual(blocked["status"], "blocked")
         self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
-        self.assertEqual(armed["status"], "ready_for_probe")
+        self.assertEqual(armed["status"], "pass")
         self.assertEqual(armed["gate"]["reason"], "phone_control_armed")
+        self.assertEqual(armed["probe"]["return_code"], 0)
+        probe.assert_called_once()
+
+    def test_openai_compatible_worker_probe_timeout_returns_structured_failure(self):
+        mod = load_control_api()
+        with mock.patch.object(
+            mod.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(["worker"], timeout=1, output="started", stderr="slow"),
+        ):
+            result = mod.run_openai_compatible_worker_probe(
+                {
+                    "model": "test-model",
+                    "base_url": "http://127.0.0.1:9999/v1",
+                    "api_key_env": "A9_LLM_WORKER_API_KEY",
+                    "timeout_seconds": 1,
+                }
+            )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["return_code"], -1)
+        self.assertIn("timed out", result["error"])
+        self.assertFalse(result["final_path_present"])
 
     def test_api_worker_transport_check_post_route_calls_handler(self):
         mod = load_control_api()

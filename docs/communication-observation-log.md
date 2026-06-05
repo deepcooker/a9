@@ -3132,3 +3132,29 @@ Next monitoring target:
      required when infrastructure fails before the model can reason. The right
      response is not to keep retrying a dead transport; finish the bounded slice,
      record evidence, and make the failure visible for backend routing work.
+
+135. OpenAI-compatible backend needs an executable probe, not just config display.
+   - Trigger:
+     Codex CLI transport repeatedly failed before useful worker output, while
+     the existing `openai_compatible` preset only reported that configuration
+     was present and explicitly did not run a live model probe.
+   - Finding:
+     without an executable probe, the phone/control surface cannot distinguish
+     missing configuration, network/API failure, timeout, model response without
+     a strict envelope, and a usable backend. That makes backend switching a
+     guess instead of evidence-based routing.
+   - Change:
+     `worker_transport_check(execute=true)` now calls
+     `scripts/a9_openai_compatible_worker.py` with a minimal no-change prompt
+     when the phone control gate is armed. The probe captures return code,
+     stdout/stderr tails, final strict envelope, and timeout/OS errors as
+     structured evidence. Non-execute checks remain configuration-only.
+   - Verification:
+     focused control API tests cover configuration reporting, armed execute
+     routing, and timeout returning a structured `probe_failed` result instead
+     of an API crash. The OpenAI-compatible worker unit tests still pass.
+   - Governance lesson:
+     transport backend selection must be observable. Codex CLI can remain a
+     backend, but A9 needs a direct model-gateway path that can be probed,
+     explained, and switched from phone/control without relying on Codex model
+     refresh.

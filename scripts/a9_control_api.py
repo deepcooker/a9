@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -6867,6 +6868,76 @@ def openai_compatible_worker_config(payload: dict[str, Any] | None = None) -> di
     }
 
 
+def run_openai_compatible_worker_probe(config: dict[str, Any]) -> dict[str, Any]:
+    worker_path = ROOT / "scripts" / "a9_openai_compatible_worker.py"
+    with tempfile.TemporaryDirectory(prefix="a9-worker-probe-") as tmp:
+        tmp_path = Path(tmp)
+        prompt_path = tmp_path / "prompt.md"
+        final_path = tmp_path / "final.json"
+        prompt_path.write_text(
+            "# Task Declared Checks\n\n"
+            "- none\n\n"
+            "# Current Task\n\n"
+            "Return a strict A9 worker envelope with no file changes. "
+            "Set changed_files and search_replace_blocks to empty arrays.\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["A9_LLM_WORKER_MODEL"] = str(config.get("model") or "")
+        env["A9_LLM_WORKER_BASE_URL"] = str(config.get("base_url") or "")
+        cmd = [
+            sys.executable,
+            str(worker_path),
+            "--prompt-file",
+            str(prompt_path),
+            "--final-path",
+            str(final_path),
+            "--task-id",
+            "worker-transport-probe",
+            "--phase",
+            "record",
+            "--api-key-env",
+            str(config.get("api_key_env") or "A9_LLM_WORKER_API_KEY"),
+            "--timeout-seconds",
+            str(int(config.get("timeout_seconds") or 30)),
+        ]
+        started = utc_now()
+        try:
+            completed = subprocess.run(
+                cmd,
+                cwd=ROOT,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=max(1, int(config.get("timeout_seconds") or 30) + 5),
+            )
+            return_code = completed.returncode
+            stdout_tail = compact_text(completed.stdout or "", 1000)
+            stderr_tail = compact_text(completed.stderr or "", 1000)
+            error = ""
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            return_code = -1
+            stdout_tail = compact_text(getattr(exc, "stdout", "") or "", 1000)
+            stderr_tail = compact_text(getattr(exc, "stderr", "") or "", 1000)
+            error = compact_text(str(exc), 1000)
+        final_payload = read_json(final_path) if final_path.exists() else {}
+        ok = return_code == 0 and bool(final_payload.get("ok"))
+        return {
+            "status": "pass" if ok else "fail",
+            "kind": "openai_compatible_worker_probe",
+            "schema": "a9.openai_compatible_worker_probe.v1",
+            "started_at": started,
+            "completed_at": utc_now(),
+            "return_code": return_code,
+            "stdout_tail": stdout_tail,
+            "stderr_tail": stderr_tail,
+            "error": error,
+            "final_envelope": final_payload,
+            "final_path_present": final_path.exists(),
+        }
+
+
 def worker_transport_check(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     preset_name = str(payload.get("preset") or "openai_compatible").strip()
     preset = worker_transport_preset_by_name(preset_name)
@@ -6905,8 +6976,10 @@ def worker_transport_check(payload: dict[str, Any], *, root: Path = ROOT) -> dic
         result["reason"] = "missing required OpenAI-compatible worker configuration"
         return result
     if execute:
-        result["status"] = "ready_for_probe"
-        result["reason"] = "configuration present; live model probe is intentionally not executed by control-api"
+        probe = run_openai_compatible_worker_probe(config) if preset_name == "openai_compatible" else {}
+        result["probe"] = probe
+        result["status"] = "pass" if probe.get("status") == "pass" else "probe_failed"
+        result["reason"] = "live OpenAI-compatible worker probe executed"
     return result
 
 
