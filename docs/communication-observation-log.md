@@ -2282,11 +2282,14 @@ Next monitoring target:
      `.a9/runtime/worker_model_policy.json`; when the default worker model hits
      `retryable-worker-transport`, `schedule_next_task()` writes a phase-level
      fallback model and queues an `auto-retry-model-fallback-*` task with the
-     same scope and declared checks.
+     same scope and declared checks. Worker subprocesses now start in their own
+     process group and timeout/transport/budget stops kill the whole group, so
+     native Codex children do not remain after the wrapper process exits.
    - Verification:
      targeted supervisor tests cover summary/state/evidence creation during
      orphaned running-task reconciliation, persistent phase model policy
-     resolution, and automatic fallback retry task creation.
+     resolution, automatic fallback retry task creation, and process-group
+     startup for worker subprocesses.
    - Governance lesson:
      automatic execution is blocked less by business logic now and more by
      runtime failure observability. Every lease-ending path must leave a

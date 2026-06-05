@@ -18,6 +18,7 @@ import re
 import select
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -1919,13 +1920,18 @@ def worker_transport_exhausted_stderr_reason(path: Path, *, limit: int = 12000) 
     return worker_transport_exhausted_text_reason(text)
 
 
-def kill_process_if_still_running(proc: subprocess.Popen[str], *, grace_seconds: float = 0.05) -> None:
+def kill_process_group_if_still_running(proc: subprocess.Popen[str], *, grace_seconds: float = 0.05) -> None:
     if proc.poll() is not None:
         return
     try:
         proc.wait(timeout=grace_seconds)
     except subprocess.TimeoutExpired:
-        proc.kill()
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            proc.kill()
 
 
 def prepare_worker_codex_home() -> None:
@@ -2311,24 +2317,25 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
             stdout=subprocess.PIPE,
             stderr=stderr,
             bufsize=1,
+            start_new_session=True,
         )
         assert proc.stdout is not None
         while True:
             now = time.monotonic()
             if now - started > task.timeout_seconds:
                 timed_out = True
-                proc.kill()
+                kill_process_group_if_still_running(proc)
                 break
             if now - last_output > idle_timeout_seconds:
                 idle_timed_out = True
-                proc.kill()
+                kill_process_group_if_still_running(proc)
                 break
 
             stderr_exhausted_reason = worker_transport_exhausted_stderr_reason(stderr_path)
             if stderr_exhausted_reason:
                 transport_stopped = True
                 transport_reason = stderr_exhausted_reason
-                kill_process_if_still_running(proc)
+                kill_process_group_if_still_running(proc)
                 break
 
             ready, _, _ = select.select([proc.stdout], [], [], 1.0)
@@ -2350,7 +2357,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                     if exhausted_reason:
                         transport_stopped = True
                         transport_reason = exhausted_reason
-                        kill_process_if_still_running(proc)
+                        kill_process_group_if_still_running(proc)
                         break
                     event_summary = summarize_thread_event(payload)
                     if event_summary:
@@ -2367,7 +2374,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             budget_stopped = True
                             budget_stop_kind = "command_bounds"
                             budget_reason = f"blocked nested worker command: {blocked}"
-                            proc.kill()
+                            kill_process_group_if_still_running(proc)
                             break
                         violation = live_worker_command_violation(
                             task,
@@ -2381,7 +2388,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                                 f"blocked worker command by task bounds: {violation.get('kind')} "
                                 f"{bounded_inline(violation.get('command', ''), 240)}"
                             )
-                            proc.kill()
+                            kill_process_group_if_still_running(proc)
                             break
                     if event_count > max_events:
                         reason = f"worker event count exceeded {max_events}"
@@ -2389,7 +2396,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             budget_stopped = True
                             budget_stop_kind = "event_count"
                             budget_reason = reason
-                            kill_process_if_still_running(proc)
+                            kill_process_group_if_still_running(proc)
                             break
                         if not observed_event_count_budget:
                             observed_event_count_budget = True
@@ -2408,7 +2415,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             budget_stopped = True
                             budget_stop_kind = "event_bytes"
                             budget_reason = reason
-                            kill_process_if_still_running(proc)
+                            kill_process_group_if_still_running(proc)
                             break
                         if not observed_event_bytes_budget:
                             observed_event_bytes_budget = True

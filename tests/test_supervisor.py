@@ -2294,13 +2294,14 @@ Do the work.
             }
             with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
                 mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
-            ), mock.patch.object(mod.subprocess, "Popen", return_value=fake_proc), mock.patch.object(
+            ), mock.patch.object(mod.subprocess, "Popen", return_value=fake_proc) as popen_mock, mock.patch.object(
                 mod.select, "select", return_value=([], [], [])
             ):
                 worker = mod.run_worker(task, worktree, run_dir)
 
         self.assertEqual(worker["return_code"], 0)
         self.assertTrue(fake_proc.stdout.closed)
+        self.assertTrue(popen_mock.call_args.kwargs["start_new_session"])
 
     def test_run_worker_real_subprocess_has_no_unclosed_stdout_resource_warning(self):
         mod = load_supervisor()
