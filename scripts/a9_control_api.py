@@ -2618,6 +2618,55 @@ def monitor_intervention_cli(args: argparse.Namespace) -> int:
     return 0 if result.get("status") in {"recorded", "ok"} else 1
 
 
+def worker_transport_cli_payload(args: argparse.Namespace) -> dict[str, Any]:
+    payload = {
+        "preset": args.preset,
+        "operator_scopes": [PHONE_ADMIN_SCOPE],
+    }
+    for key in ["model", "base_url", "api_key_env", "reason"]:
+        value = getattr(args, key, "")
+        if value:
+            payload[key] = value
+    timeout_seconds = getattr(args, "timeout_seconds", None)
+    if timeout_seconds is not None:
+        payload["timeout_seconds"] = timeout_seconds
+    if getattr(args, "execute", False):
+        payload["execute"] = True
+    if getattr(args, "require_probe_pass", False):
+        payload["require_probe_pass"] = True
+    return payload
+
+
+def worker_transport_check_cli(args: argparse.Namespace) -> int:
+    if args.arm_duration:
+        phone_control_arm(
+            {
+                "group": "runtime",
+                "duration": args.arm_duration,
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "source": "worker-transport-check-cli",
+            }
+        )
+    result = worker_transport_check(worker_transport_cli_payload(args))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") in {"ready", "pass"} else 1
+
+
+def worker_transport_policy_cli(args: argparse.Namespace) -> int:
+    if args.arm_duration:
+        phone_control_arm(
+            {
+                "group": "runtime",
+                "duration": args.arm_duration,
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "source": "worker-transport-policy-cli",
+            }
+        )
+    result = update_worker_transport_policy(worker_transport_cli_payload(args))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") == "applied" else 1
+
+
 def communication_repair_suggestion_review(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     suggestion_id = str(payload.get("suggestion_id") or "").strip()
@@ -8091,6 +8140,23 @@ def main(argv: list[str]) -> int:
     monitor_parser.add_argument("--idempotency-key", dest="idempotency_key", default="")
     monitor_parser.add_argument("--arm-duration", dest="arm_duration", default="")
     monitor_parser.add_argument("--examples", action="store_true")
+    check_parser = sub.add_parser("worker-transport-check")
+    check_parser.add_argument("--preset", default="openai_compatible")
+    check_parser.add_argument("--execute", action="store_true")
+    check_parser.add_argument("--model", default="")
+    check_parser.add_argument("--base-url", dest="base_url", default="")
+    check_parser.add_argument("--api-key-env", dest="api_key_env", default="")
+    check_parser.add_argument("--timeout-seconds", dest="timeout_seconds", type=int)
+    check_parser.add_argument("--arm-duration", dest="arm_duration", default="")
+    policy_parser = sub.add_parser("worker-transport-policy")
+    policy_parser.add_argument("--preset", default="")
+    policy_parser.add_argument("--model", default="")
+    policy_parser.add_argument("--base-url", dest="base_url", default="")
+    policy_parser.add_argument("--api-key-env", dest="api_key_env", default="")
+    policy_parser.add_argument("--timeout-seconds", dest="timeout_seconds", type=int)
+    policy_parser.add_argument("--reason", required=True)
+    policy_parser.add_argument("--require-probe-pass", dest="require_probe_pass", action="store_true")
+    policy_parser.add_argument("--arm-duration", dest="arm_duration", default="")
     serve_parser = sub.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8787)
@@ -8103,6 +8169,10 @@ def main(argv: list[str]) -> int:
         return 0
     if args.command == "monitor-intervention":
         return monitor_intervention_cli(args)
+    if args.command == "worker-transport-check":
+        return worker_transport_check_cli(args)
+    if args.command == "worker-transport-policy":
+        return worker_transport_policy_cli(args)
     if args.command == "serve":
         return serve(args)
     raise AssertionError(args.command)

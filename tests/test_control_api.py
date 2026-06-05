@@ -3872,6 +3872,90 @@ Do risky work.
         self.assertEqual(output["kind"], "monitor_intervention_examples")
         self.assertEqual(output["examples"]["pause"]["action"], "pause")
 
+    def test_worker_transport_check_cli_arms_and_calls_handler(self):
+        mod = load_control_api()
+        captured = {}
+        original_arm = mod.phone_control_arm
+        original_check = mod.worker_transport_check
+        try:
+            def fake_arm(payload):
+                captured["arm"] = payload
+                return {"status": "armed"}
+
+            def fake_check(payload):
+                captured["payload"] = payload
+                return {"status": "pass", "kind": "worker_transport_check"}
+
+            mod.phone_control_arm = fake_arm
+            mod.worker_transport_check = fake_check
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = mod.main(
+                    [
+                        "worker-transport-check",
+                        "--execute",
+                        "--arm-duration",
+                        "30s",
+                        "--model",
+                        "test-model",
+                        "--base-url",
+                        "http://127.0.0.1:8000/v1",
+                    ]
+                )
+            output = json.loads(buffer.getvalue())
+        finally:
+            mod.phone_control_arm = original_arm
+            mod.worker_transport_check = original_check
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["arm"]["group"], "runtime")
+        self.assertTrue(captured["payload"]["execute"])
+        self.assertEqual(captured["payload"]["model"], "test-model")
+        self.assertEqual(captured["payload"]["base_url"], "http://127.0.0.1:8000/v1")
+        self.assertEqual(output["status"], "pass")
+
+    def test_worker_transport_policy_cli_arms_and_calls_handler(self):
+        mod = load_control_api()
+        captured = {}
+        original_arm = mod.phone_control_arm
+        original_policy = mod.update_worker_transport_policy
+        try:
+            def fake_arm(payload):
+                captured["arm"] = payload
+                return {"status": "armed"}
+
+            def fake_policy(payload):
+                captured["payload"] = payload
+                return {"status": "applied", "kind": "worker_transport_policy_update"}
+
+            mod.phone_control_arm = fake_arm
+            mod.update_worker_transport_policy = fake_policy
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = mod.main(
+                    [
+                        "worker-transport-policy",
+                        "--preset",
+                        "openai_compatible",
+                        "--require-probe-pass",
+                        "--reason",
+                        "switch after probe",
+                        "--arm-duration",
+                        "30s",
+                    ]
+                )
+            output = json.loads(buffer.getvalue())
+        finally:
+            mod.phone_control_arm = original_arm
+            mod.update_worker_transport_policy = original_policy
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["arm"]["group"], "runtime")
+        self.assertEqual(captured["payload"]["preset"], "openai_compatible")
+        self.assertTrue(captured["payload"]["require_probe_pass"])
+        self.assertEqual(captured["payload"]["reason"], "switch after probe")
+        self.assertEqual(output["status"], "applied")
+
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
         mod = load_control_api()
 

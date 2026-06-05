@@ -3179,3 +3179,23 @@ Next monitoring target:
      backend failover must not be optimistic. A9 can switch away from Codex CLI,
      but only after the alternative backend proves it can obey the strict worker
      envelope contract.
+
+137. Backend probe and switch need an SSH/CLI path as well as phone control.
+   - Trigger:
+     the phone/control API could probe and update worker transport policy, but
+     an operator connected over SSH still had to know the exact API payloads or
+     edit runtime JSON by hand.
+   - Change:
+     `scripts/a9_control_api.py` now exposes CLI subcommands:
+     `worker-transport-check` and `worker-transport-policy`. Both reuse the
+     same phone-control arm, probe, and policy update handlers as the HTTP API.
+     The policy command supports `--require-probe-pass`, so a server-side
+     operator can run the same evidence-gated OpenAI-compatible switch without
+     bypassing governance.
+   - Verification:
+     CLI regression tests cover auto-arming and handler payloads. The command
+     help for both subcommands renders successfully.
+   - Governance lesson:
+     phone UI is an operator surface, not the only authority. Critical runtime
+     actions need the same governed path from SSH/CLI so multi-machine recovery
+     does not depend on a browser being available.
