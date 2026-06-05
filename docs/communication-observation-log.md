@@ -3199,3 +3199,27 @@ Next monitoring target:
      phone UI is an operator surface, not the only authority. Critical runtime
      actions need the same governed path from SSH/CLI so multi-machine recovery
      does not depend on a browser being available.
+
+138. Model-gateway defaults should be persistent, but secrets must stay in env.
+   - Trigger:
+     OpenAI-compatible check/switch could accept `model`, `base_url`, and
+     `api_key_env` from each request, but after a service restart the operator
+     still had to remember or re-enter those non-secret defaults.
+   - Change:
+     added `.a9/runtime/llm_worker_config.json` as a governed runtime config
+     for `model`, `base_url`, `api_key_env`, and `timeout_seconds`. The actual
+     API key is not stored. Config resolution now follows
+     `payload > environment > runtime config > default`, so temporary overrides
+     still work while phone/SSH operators can persist the normal gateway target.
+     Added `GET/POST /api/worker/transport-config` and CLI
+     `worker-transport-config`, both protected by the same phone-control runtime
+     gate for writes.
+   - Verification:
+     regression coverage confirms blocked writes without arm, successful
+     non-secret persistence after arm, fallback use by
+     `openai_compatible_worker_config`, CLI config update payloads, API
+     GET/POST routes, and discovery exposure.
+   - Governance lesson:
+     stable backend operations need durable configuration, but credential
+     material must remain outside repo/runtime JSON. A9 should persist where to
+     look for the secret, not the secret itself.

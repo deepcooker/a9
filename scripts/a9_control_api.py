@@ -47,6 +47,7 @@ COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH = Path(".a9") / "services" / "com
 SERVICE_CONTROL_AUDIT_REL_PATH = Path(".a9") / "services" / "service-control-audit.jsonl"
 MONITOR_INTERVENTION_AUDIT_REL_PATH = Path(".a9") / "monitor" / "interventions.jsonl"
 RUNTIME_CONTROL_STATE_REL_PATH = Path(".a9") / "runtime" / "control_state.json"
+LLM_WORKER_CONFIG_REL_PATH = Path(".a9") / "runtime" / "llm_worker_config.json"
 MONITOR_INTERVENTION_ALLOWED_ACTIONS = {
     "approve",
     "change_request",
@@ -494,6 +495,7 @@ PHONE_CONTROL_GROUPS = {
         "services.start",
         "services.restart",
         "worker.transport.check",
+        "worker.transport.config.update",
         "worker.transport.update",
     ],
     "remote": [
@@ -2620,7 +2622,7 @@ def monitor_intervention_cli(args: argparse.Namespace) -> int:
 
 def worker_transport_cli_payload(args: argparse.Namespace) -> dict[str, Any]:
     payload = {
-        "preset": args.preset,
+        "preset": getattr(args, "preset", ""),
         "operator_scopes": [PHONE_ADMIN_SCOPE],
     }
     for key in ["model", "base_url", "api_key_env", "reason"]:
@@ -2663,6 +2665,22 @@ def worker_transport_policy_cli(args: argparse.Namespace) -> int:
             }
         )
     result = update_worker_transport_policy(worker_transport_cli_payload(args))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") == "applied" else 1
+
+
+def worker_transport_config_cli(args: argparse.Namespace) -> int:
+    if args.arm_duration:
+        phone_control_arm(
+            {
+                "group": "runtime",
+                "duration": args.arm_duration,
+                "operator_scopes": [PHONE_ADMIN_SCOPE],
+                "source": "worker-transport-config-cli",
+            }
+        )
+    payload = worker_transport_cli_payload(args)
+    result = update_llm_worker_config(payload)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("status") == "applied" else 1
 
@@ -3175,6 +3193,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_intervention_examples": "/api/monitor/intervention/examples",
             "worker_transport_presets": "/api/worker/transport-presets",
             "worker_transport_check": "/api/worker/transport-check",
+            "worker_transport_config": "/api/worker/transport-config",
             "worker_transport_policy_update": "/api/worker/transport-policy",
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
@@ -3223,6 +3242,7 @@ def controller_discovery() -> dict[str, Any]:
             "worker_transport_policy_update": True,
             "worker_transport_presets": True,
             "worker_transport_check": True,
+            "worker_transport_config": True,
             "worker_claim_ready": False,
         },
         "events": {
@@ -6854,7 +6874,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
     if bool(payload.get("require_probe_pass")):
         if preset_name != "openai_compatible":
             raise ValueError("require_probe_pass is only supported for preset=openai_compatible")
-        config = openai_compatible_worker_config(payload)
+        config = openai_compatible_worker_config(payload, root=root)
         if config.get("missing"):
             return {
                 "status": "not_configured",
@@ -6938,16 +6958,101 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
     }
 
 
-def openai_compatible_worker_config(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+def llm_worker_config_state(root: Path = ROOT) -> dict[str, Any]:
+    path = root / LLM_WORKER_CONFIG_REL_PATH
+    data = read_json(path) if path.exists() else {}
+    if not isinstance(data, dict):
+        data = {}
+    timeout_raw = data.get("timeout_seconds", data.get("timeout"))
+    if isinstance(timeout_raw, (int, float)):
+        timeout_seconds = max(0, int(timeout_raw))
+    else:
+        timeout_seconds = parse_duration_seconds(timeout_raw, default_seconds=0) if timeout_raw not in (None, "") else 0
+    return {
+        "schema": data.get("schema") or "a9.llm_worker_config.v1",
+        "model": str(data.get("model") or ""),
+        "base_url": str(data.get("base_url") or ""),
+        "api_key_env": str(data.get("api_key_env") or ""),
+        "timeout_seconds": timeout_seconds,
+        "updated_at": str(data.get("updated_at") or ""),
+        "last_update": data.get("last_update", {}) if isinstance(data.get("last_update"), dict) else {},
+        "path": str(path),
+    }
+
+
+def update_llm_worker_config(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    command = "worker.transport.config.update"
+    gate = command_gate(command, root=root)
+    before = llm_worker_config_state(root)
+    if not gate.get("allowed"):
+        return {
+            "status": "blocked",
+            "kind": "llm_worker_config_update",
+            "schema": "a9.llm_worker_config_update.v1",
+            "command": command,
+            "gate": gate,
+            "before": before,
+        }
+    model = str(payload.get("model") or before.get("model") or "").strip()
+    base_url = str(payload.get("base_url") or before.get("base_url") or "").strip()
+    api_key_env = str(payload.get("api_key_env") or before.get("api_key_env") or "A9_LLM_WORKER_API_KEY").strip()
+    timeout_raw = payload.get("timeout_seconds", payload.get("timeout", before.get("timeout_seconds") or 30))
+    timeout_seconds = max(1, int(timeout_raw)) if isinstance(timeout_raw, (int, float)) else parse_duration_seconds(timeout_raw, default_seconds=30)
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise ValueError("reason is required")
+    if not model:
+        raise ValueError("model is required")
+    if not base_url:
+        raise ValueError("base_url is required")
+    if not api_key_env:
+        raise ValueError("api_key_env is required")
+    path = root / LLM_WORKER_CONFIG_REL_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    after = {
+        "schema": "a9.llm_worker_config.v1",
+        "model": model,
+        "base_url": base_url,
+        "api_key_env": api_key_env,
+        "timeout_seconds": timeout_seconds,
+        "updated_at": utc_now(),
+        "last_update": {
+            "kind": "llm_worker_config_update",
+            "reason": reason,
+            "updated_at": utc_now(),
+        },
+    }
+    path.write_text(json.dumps(after, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {
+        "status": "applied",
+        "kind": "llm_worker_config_update",
+        "schema": "a9.llm_worker_config_update.v1",
+        "command": command,
+        "gate": gate,
+        "before": before,
+        "after": llm_worker_config_state(root),
+        "path": str(path),
+    }
+
+
+def openai_compatible_worker_config(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
     payload = payload or {}
-    api_key_env = str(payload.get("api_key_env") or "A9_LLM_WORKER_API_KEY").strip()
-    model = str(payload.get("model") or os.getenv("A9_LLM_WORKER_MODEL") or "").strip()
-    base_url = str(payload.get("base_url") or os.getenv("A9_LLM_WORKER_BASE_URL") or "https://api.openai.com/v1").strip()
+    state = llm_worker_config_state(root)
+    api_key_env = str(payload.get("api_key_env") or os.getenv("A9_LLM_WORKER_API_KEY_ENV") or state.get("api_key_env") or "A9_LLM_WORKER_API_KEY").strip()
+    model = str(payload.get("model") or os.getenv("A9_LLM_WORKER_MODEL") or state.get("model") or "").strip()
+    base_url = str(payload.get("base_url") or os.getenv("A9_LLM_WORKER_BASE_URL") or state.get("base_url") or "https://api.openai.com/v1").strip()
     timeout_raw = payload.get("timeout", payload.get("timeout_seconds"))
     if isinstance(timeout_raw, (int, float)):
         timeout_seconds = max(1, int(timeout_raw))
-    else:
+    elif timeout_raw not in (None, ""):
         timeout_seconds = parse_duration_seconds(timeout_raw, default_seconds=30)
+    elif os.getenv("A9_LLM_WORKER_TIMEOUT", "").strip():
+        timeout_seconds = parse_duration_seconds(os.getenv("A9_LLM_WORKER_TIMEOUT"), default_seconds=30)
+    elif int(state.get("timeout_seconds") or 0) > 0:
+        timeout_seconds = int(state.get("timeout_seconds") or 0)
+    else:
+        timeout_seconds = 30
     key_available = bool(os.getenv(api_key_env) or os.getenv("OPENAI_API_KEY"))
     missing = []
     if not key_available:
@@ -6962,6 +7067,7 @@ def openai_compatible_worker_config(payload: dict[str, Any] | None = None) -> di
         "model": model,
         "base_url": base_url,
         "timeout_seconds": timeout_seconds,
+        "config_state": state,
         "missing": missing,
     }
 
@@ -7042,7 +7148,7 @@ def worker_transport_check(payload: dict[str, Any], *, root: Path = ROOT) -> dic
     if not preset:
         raise ValueError("unknown worker transport preset: " + preset_name)
     execute = bool(payload.get("execute"))
-    config = openai_compatible_worker_config(payload) if preset_name == "openai_compatible" else {
+    config = openai_compatible_worker_config(payload, root=root) if preset_name == "openai_compatible" else {
         "missing": [],
         "api_key_available": True,
         "model": "",
@@ -7799,6 +7905,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, monitor_intervention_examples())
             elif parsed.path == "/api/worker/transport-presets":
                 self.write_json(200, worker_transport_presets())
+            elif parsed.path == "/api/worker/transport-config":
+                self.write_json(200, llm_worker_config_state())
             elif parsed.path == "/api/monitor/interventions/events":
                 last_id = _resolve_event_last_id(query.get("last_id", [None])[0], self.headers.get("Last-Event-ID"))
                 try:
@@ -8035,6 +8143,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, update_worker_transport_policy(payload))
             elif self.path == "/api/worker/transport-check":
                 self.write_json(200, worker_transport_check(payload))
+            elif self.path == "/api/worker/transport-config":
+                self.write_json(200, update_llm_worker_config(payload))
             elif self.path == "/api/services/restart":
                 self.write_json(200, service_restart_action(payload))
             elif self.path == "/api/services/start":
@@ -8157,6 +8267,13 @@ def main(argv: list[str]) -> int:
     policy_parser.add_argument("--reason", required=True)
     policy_parser.add_argument("--require-probe-pass", dest="require_probe_pass", action="store_true")
     policy_parser.add_argument("--arm-duration", dest="arm_duration", default="")
+    config_parser = sub.add_parser("worker-transport-config")
+    config_parser.add_argument("--model", required=True)
+    config_parser.add_argument("--base-url", dest="base_url", required=True)
+    config_parser.add_argument("--api-key-env", dest="api_key_env", default="A9_LLM_WORKER_API_KEY")
+    config_parser.add_argument("--timeout-seconds", dest="timeout_seconds", type=int, default=30)
+    config_parser.add_argument("--reason", required=True)
+    config_parser.add_argument("--arm-duration", dest="arm_duration", default="")
     serve_parser = sub.add_parser("serve")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8787)
@@ -8173,6 +8290,8 @@ def main(argv: list[str]) -> int:
         return worker_transport_check_cli(args)
     if args.command == "worker-transport-policy":
         return worker_transport_policy_cli(args)
+    if args.command == "worker-transport-config":
+        return worker_transport_config_cli(args)
     if args.command == "serve":
         return serve(args)
     raise AssertionError(args.command)

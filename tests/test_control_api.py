@@ -3336,6 +3336,45 @@ Do risky work.
         self.assertEqual(ready["config"]["base_url"], "http://127.0.0.1:8000/v1")
         self.assertEqual(ready["config"]["timeout_seconds"], 7)
 
+    def test_llm_worker_config_update_persists_non_secret_defaults(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked = mod.update_llm_worker_config(
+                {
+                    "model": "test-model",
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "api_key_env": "A9_TEST_KEY",
+                    "timeout_seconds": 9,
+                    "reason": "configure test gateway",
+                    "operator_scopes": ["operator.admin"],
+                },
+                root=root,
+            )
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            applied = mod.update_llm_worker_config(
+                {
+                    "model": "test-model",
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "api_key_env": "A9_TEST_KEY",
+                    "timeout_seconds": 9,
+                    "reason": "configure test gateway",
+                    "operator_scopes": ["operator.admin"],
+                },
+                root=root,
+            )
+            config = mod.openai_compatible_worker_config({}, root=root)
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(applied["after"]["model"], "test-model")
+        self.assertEqual(applied["after"]["api_key_env"], "A9_TEST_KEY")
+        self.assertNotIn("api_key", applied["after"])
+        self.assertEqual(config["model"], "test-model")
+        self.assertEqual(config["base_url"], "http://127.0.0.1:8000/v1")
+        self.assertEqual(config["api_key_env"], "A9_TEST_KEY")
+        self.assertEqual(config["timeout_seconds"], 9)
+
     def test_worker_transport_check_execute_requires_runtime_arm(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -3426,6 +3465,50 @@ Do risky work.
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "worker_transport_check")
         self.assertEqual(captured["request"]["preset"], "openai_compatible")
+
+    def test_api_worker_transport_config_routes_call_handlers(self):
+        mod = load_control_api()
+        get_capture = {"status": None, "payload": None}
+        post_capture = {"status": None, "payload": None, "request": None}
+        original_state = mod.llm_worker_config_state
+        original_update = mod.update_llm_worker_config
+        body = b'{"model":"test-model"}'
+
+        class DummyWorkerTransportConfigGetHandler:
+            path = "/api/worker/transport-config"
+            headers = {}
+
+            def write_json(self, status, payload):
+                get_capture["status"] = status
+                get_capture["payload"] = payload
+
+        class DummyWorkerTransportConfigPostHandler:
+            path = "/api/worker/transport-config"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                post_capture["status"] = status
+                post_capture["payload"] = payload
+
+        def fake_update(payload):
+            post_capture["request"] = payload
+            return {"status": "applied", "kind": "llm_worker_config_update"}
+
+        try:
+            mod.llm_worker_config_state = lambda: {"status": "ok", "kind": "llm_worker_config"}
+            mod.update_llm_worker_config = fake_update
+            mod.ControlHandler.do_GET(DummyWorkerTransportConfigGetHandler())
+            mod.ControlHandler.do_POST(DummyWorkerTransportConfigPostHandler())
+        finally:
+            mod.llm_worker_config_state = original_state
+            mod.update_llm_worker_config = original_update
+
+        self.assertEqual(get_capture["status"], 200)
+        self.assertEqual(get_capture["payload"]["kind"], "llm_worker_config")
+        self.assertEqual(post_capture["status"], 200)
+        self.assertEqual(post_capture["payload"]["kind"], "llm_worker_config_update")
+        self.assertEqual(post_capture["request"]["model"], "test-model")
 
     def test_api_monitor_control_endpoint_returns_payload(self):
         mod = load_control_api()
@@ -3954,6 +4037,54 @@ Do risky work.
         self.assertEqual(captured["payload"]["preset"], "openai_compatible")
         self.assertTrue(captured["payload"]["require_probe_pass"])
         self.assertEqual(captured["payload"]["reason"], "switch after probe")
+        self.assertEqual(output["status"], "applied")
+
+    def test_worker_transport_config_cli_arms_and_calls_handler(self):
+        mod = load_control_api()
+        captured = {}
+        original_arm = mod.phone_control_arm
+        original_update = mod.update_llm_worker_config
+        try:
+            def fake_arm(payload):
+                captured["arm"] = payload
+                return {"status": "armed"}
+
+            def fake_update(payload):
+                captured["payload"] = payload
+                return {"status": "applied", "kind": "llm_worker_config_update"}
+
+            mod.phone_control_arm = fake_arm
+            mod.update_llm_worker_config = fake_update
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = mod.main(
+                    [
+                        "worker-transport-config",
+                        "--model",
+                        "test-model",
+                        "--base-url",
+                        "http://127.0.0.1:8000/v1",
+                        "--api-key-env",
+                        "A9_TEST_KEY",
+                        "--timeout-seconds",
+                        "9",
+                        "--reason",
+                        "configure gateway",
+                        "--arm-duration",
+                        "30s",
+                    ]
+                )
+            output = json.loads(buffer.getvalue())
+        finally:
+            mod.phone_control_arm = original_arm
+            mod.update_llm_worker_config = original_update
+
+        self.assertEqual(code, 0)
+        self.assertEqual(captured["arm"]["group"], "runtime")
+        self.assertEqual(captured["payload"]["model"], "test-model")
+        self.assertEqual(captured["payload"]["base_url"], "http://127.0.0.1:8000/v1")
+        self.assertEqual(captured["payload"]["api_key_env"], "A9_TEST_KEY")
+        self.assertEqual(captured["payload"]["timeout_seconds"], 9)
         self.assertEqual(output["status"], "applied")
 
     def test_gateway_reconnect_decision_get_endpoint_returns_latest_event(self):
@@ -9892,6 +10023,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["monitor_intervention_examples"], "/api/monitor/intervention/examples")
         self.assertEqual(discovery["endpoints"]["worker_transport_presets"], "/api/worker/transport-presets")
         self.assertEqual(discovery["endpoints"]["worker_transport_check"], "/api/worker/transport-check")
+        self.assertEqual(discovery["endpoints"]["worker_transport_config"], "/api/worker/transport-config")
         self.assertEqual(discovery["endpoints"]["worker_transport_policy_update"], "/api/worker/transport-policy")
         self.assertEqual(
             discovery["endpoints"]["communication_data_contract_report"], "/api/communication/data-contract-report"
@@ -9930,6 +10062,7 @@ Do risky work.
         self.assertTrue(discovery["runtime"]["monitor_intervention_examples"])
         self.assertTrue(discovery["runtime"]["worker_transport_presets"])
         self.assertTrue(discovery["runtime"]["worker_transport_check"])
+        self.assertTrue(discovery["runtime"]["worker_transport_config"])
         self.assertTrue(discovery["runtime"]["worker_transport_policy_update"])
         self.assertEqual(discovery["runtime"]["monitor_intervention_redis_stream"], "a9:monitor:interventions")
         self.assertEqual(discovery["events"]["max_limit"], 1000)
