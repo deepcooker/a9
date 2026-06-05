@@ -2973,3 +2973,35 @@ Next monitoring target:
      issued a bounded executable task with explicit files and checks, the
      runtime should execute and observe. Otherwise formal decision gates become
      a throughput bug and push the 24h machine back into analysis-only mode.
+
+129. Worker transport streaming and sandbox fixes are necessary but not enough.
+   - Trigger:
+     rerunning the bounded auto-next fallback task proved that the decision
+     packet now routes to `execution_next`, but exposed two runtime transport
+     problems before a stable pass.
+   - Findings:
+     Codex worker tool commands were sandboxed read-only by default, so tests
+     could not create temp directories or `.a9` state inside the isolated
+     worker worktree. After switching the active custom transport to Codex
+     `--sandbox danger-full-access`, tests could start normally. The file-spool
+     transport then caused a false idle timeout because JSONL events were
+     redirected to disk and only printed after process exit; supervisor could
+     not observe progress during long checks.
+   - Change:
+     the active runtime transport policy now streams JSONL through `tee` while
+     preserving `codex-events.jsonl` and `codex-stderr.log`, and keeps
+     `--sandbox danger-full-access` inside the isolated A9 worktree. Outer A9
+     scope guard, deterministic apply, checks, and git governance remain the
+     actual safety boundary.
+   - Remaining failure:
+     after streaming/sandbox fixes, the same task still hit a Codex transport
+     failure: `failed to refresh available models` and
+     `Reconnecting... 5/5 (timeout waiting for child process to exit)`. This is
+     an infrastructure/backend reliability problem, not a requirements debate
+     problem. The monitor paused the loop and cleaned selftest residual running
+     tasks so the system would not burn tokens on bad followups.
+   - Governance lesson:
+     long full-suite checks should move toward deterministic supervisor-side
+     checks after worker patch generation, or the transport must have a proven
+     no-refresh/no-plugin/no-model-list path. Until then, 24h automation is
+     usable for bounded tasks but not stable enough for unattended long runs.
