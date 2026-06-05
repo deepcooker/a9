@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import gc
 import io
@@ -13,6 +14,7 @@ import tempfile
 import time
 import unittest
 import warnings
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -2791,6 +2793,85 @@ Do the work.
             self.assertEqual(worker["event_count"], 0)
             self.assertEqual(failure["status"], "retryable-worker-transport")
             self.assertEqual(failure["category"], "transport")
+
+    def test_worker_transport_health_records_cooldown_on_transport_failure(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = mod.WORKER_TRANSPORT_HEALTH_PATH
+            old_cooldown = os.environ.get("A9_WORKER_TRANSPORT_COOLDOWN_SECONDS")
+            mod.WORKER_TRANSPORT_HEALTH_PATH = Path(tmp) / "worker_transport_health.json"
+            os.environ["A9_WORKER_TRANSPORT_COOLDOWN_SECONDS"] = "60"
+            try:
+                summary = {
+                    "task_id": "transport-fail",
+                    "run_dir": "/tmp/run",
+                    "status": "retryable-worker-transport",
+                    "worker": {"worker_transport_backend": "codex_exec"},
+                    "worker_failure": {"category": "transport", "reason": "failed to refresh available models"},
+                }
+                health = mod.update_worker_transport_health_from_summary(summary)
+                gate = mod.worker_transport_cooldown_gate()
+            finally:
+                mod.WORKER_TRANSPORT_HEALTH_PATH = old_path
+                if old_cooldown is None:
+                    os.environ.pop("A9_WORKER_TRANSPORT_COOLDOWN_SECONDS", None)
+                else:
+                    os.environ["A9_WORKER_TRANSPORT_COOLDOWN_SECONDS"] = old_cooldown
+
+        self.assertEqual(health["status"], "cooldown")
+        self.assertEqual(health["consecutive_failures"], 1)
+        self.assertEqual(health["last_failure"]["backend"], "codex_exec")
+        self.assertIsNotNone(gate)
+        assert gate is not None
+        self.assertEqual(gate["reason"], "worker_transport_cooldown")
+
+    def test_run_loop_observes_transport_cooldown_without_claiming_task(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
+            old_done = mod.DONE_DIR
+            old_heartbeat = mod.DAEMON_HEARTBEAT_PATH
+            old_health = mod.WORKER_TRANSPORT_HEALTH_PATH
+            try:
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNNING_DIR = base / "running"
+                mod.DONE_DIR = base / "done"
+                mod.DAEMON_HEARTBEAT_PATH = base / "daemon_heartbeat.json"
+                mod.WORKER_TRANSPORT_HEALTH_PATH = base / "worker_transport_health.json"
+                mod.ensure_dirs()
+                (mod.QUEUE_DIR / "blocked.md").write_text("---\nid: blocked\n---\nDo work.\n", encoding="utf-8")
+                future = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
+                mod.write_json(
+                    mod.WORKER_TRANSPORT_HEALTH_PATH,
+                    {
+                        "schema": "a9.worker_transport_health.v1",
+                        "status": "cooldown",
+                        "consecutive_failures": 2,
+                        "cooldown_until": future,
+                    },
+                )
+                args = argparse.Namespace(
+                    sleep_seconds=0,
+                    max_tasks=0,
+                    keep_going_on_error=True,
+                    auto_next=False,
+                )
+                with mock.patch.object(mod, "run_one", side_effect=AssertionError("run_one should not be called")):
+                    with mock.patch.object(mod.time, "sleep", side_effect=KeyboardInterrupt):
+                        with self.assertRaises(KeyboardInterrupt):
+                            mod.run_loop(args)
+                heartbeat = mod.read_json_file(mod.DAEMON_HEARTBEAT_PATH)
+                self.assertTrue((base / "queue" / "blocked.md").exists())
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
+                mod.DONE_DIR = old_done
+                mod.DAEMON_HEARTBEAT_PATH = old_heartbeat
+                mod.WORKER_TRANSPORT_HEALTH_PATH = old_health
+
+        self.assertEqual(heartbeat["state"], "transport-cooldown")
 
     def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
         mod = load_supervisor()

@@ -2867,3 +2867,28 @@ Next monitoring target:
      an execution transport problem, not a mobile workspace or scope-guard
      problem. The next repair should focus on transport health/preflight or
      backend fallback before queueing more real worker tasks.
+
+125. Worker transport failures now create an automatic cooldown.
+   - Trigger:
+     the mobile workspace smoke and retry both failed before any model output
+     with `codex_exec` model-refresh timeout. Continuing to claim queued tasks
+     during that condition would waste worker attempts and hide the real
+     reliability issue.
+   - Change:
+     the supervisor now writes `.a9/runtime/worker_transport_health.json` after
+     `retryable-worker-transport`. The health record includes consecutive
+     failures, last failure evidence, backend, and `cooldown_until`. `run-loop`
+     observes this cooldown before claiming queued worker tasks and writes a
+     `transport-cooldown` daemon heartbeat instead of consuming the queue.
+   - Visibility:
+     CLI `status`, `service_progress`, `/api/status`, and `/api/monitor/status`
+     expose `worker_transport_health`, so the phone/control surface can explain
+     why automation is observing rather than claiming.
+   - Verification:
+     added tests for cooldown recording, run-loop non-claim behavior, and
+     control API projection. Full `tests.test_supervisor` passed.
+   - Governance lesson:
+     this is not a hard quality gate on business output. It is a transport
+     circuit breaker after an observed infrastructure failure, matching the
+     observation-first rule while protecting 24h automation from repeated
+     startup failures.

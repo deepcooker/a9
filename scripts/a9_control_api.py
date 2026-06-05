@@ -1147,6 +1147,7 @@ def supervisor_status(root: Path = ROOT) -> dict[str, Any]:
     done = sorted((state_dir / "tasks" / "done").glob("*.json"))
     progress_path = state_dir / "progress.json"
     heartbeat_path = state_dir / "daemon_heartbeat.json"
+    worker_transport_health_path = state_dir / "runtime" / "worker_transport_health.json"
     return {
         "queued": len(queued),
         "running": len(running),
@@ -1157,6 +1158,7 @@ def supervisor_status(root: Path = ROOT) -> dict[str, Any]:
         "latest_run": compact_summary(latest_run_summary(root)),
         "progress": read_json(progress_path) if progress_path.exists() else {},
         "daemon_heartbeat": read_json(heartbeat_path) if heartbeat_path.exists() else {},
+        "worker_transport_health": read_json(worker_transport_health_path) if worker_transport_health_path.exists() else {},
         "service_observation": service_observation_status(root),
         "nodes": node_status(root),
         "gateway": gateway_transport_contract(root),
@@ -6957,6 +6959,7 @@ def monitor_status(root: Path = ROOT) -> dict[str, Any]:
         },
         "next_action": next_action,
         "runtime_control": control_state,
+        "worker_transport_health": status.get("worker_transport_health", {}),
         "recent_interventions": intervention_audit,
         "monitor": monitor,
         "evidence_refs": evidence_refs,

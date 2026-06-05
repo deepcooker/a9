@@ -23,7 +23,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -52,9 +52,11 @@ AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
 RUNTIME_CONTROL_STATE_PATH = STATE_DIR / "runtime" / "control_state.json"
 WORKER_MODEL_POLICY_PATH = STATE_DIR / "runtime" / "worker_model_policy.json"
 WORKER_TRANSPORT_POLICY_PATH = STATE_DIR / "runtime" / "worker_transport_policy.json"
+WORKER_TRANSPORT_HEALTH_PATH = STATE_DIR / "runtime" / "worker_transport_health.json"
 DEFAULT_CONTEXT_TOKEN_BUDGET = 24000
 DEFAULT_WORKER_MODEL = "gpt-5.3-codex-spark"
 DEFAULT_WORKER_TRANSPORT_BACKEND = "codex_exec"
+DEFAULT_WORKER_TRANSPORT_COOLDOWN_SECONDS = 300
 DEFAULT_REFERENCE_SCAN_WORKER_MODEL = ""
 DEFAULT_CRITICAL_WORKER_MODEL = ""
 DEFAULT_MAX_WORKER_EVENTS = 80
@@ -653,6 +655,111 @@ def write_worker_transport_policy(
     }
     write_json(WORKER_TRANSPORT_POLICY_PATH, payload)
     return payload
+
+
+def parse_utc_datetime(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def worker_transport_cooldown_seconds() -> int:
+    value = os.getenv("A9_WORKER_TRANSPORT_COOLDOWN_SECONDS", str(DEFAULT_WORKER_TRANSPORT_COOLDOWN_SECONDS))
+    try:
+        return max(0, int(value))
+    except ValueError:
+        return DEFAULT_WORKER_TRANSPORT_COOLDOWN_SECONDS
+
+
+def worker_transport_health_state() -> dict[str, Any]:
+    ensure_dirs()
+    data = read_json_file(WORKER_TRANSPORT_HEALTH_PATH)
+    if not data:
+        return {
+            "schema": "a9.worker_transport_health.v1",
+            "status": "unknown",
+            "failure_count": 0,
+            "consecutive_failures": 0,
+            "last_failure_at": "",
+            "cooldown_until": "",
+            "last_failure": {},
+            "updated_at": "",
+        }
+    return data
+
+
+def worker_transport_cooldown_gate(now: datetime | None = None) -> dict[str, Any] | None:
+    state = worker_transport_health_state()
+    cooldown_until = parse_utc_datetime(str(state.get("cooldown_until") or ""))
+    if not cooldown_until:
+        return None
+    current = now or datetime.now(timezone.utc)
+    if cooldown_until <= current:
+        return None
+    return {
+        "status": "blocked",
+        "reason": "worker_transport_cooldown",
+        "cooldown_until": cooldown_until.isoformat(),
+        "consecutive_failures": int(state.get("consecutive_failures") or 0),
+        "last_failure": state.get("last_failure", {}) if isinstance(state.get("last_failure"), dict) else {},
+        "health_path": str(WORKER_TRANSPORT_HEALTH_PATH),
+    }
+
+
+def update_worker_transport_health_from_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    failure = summary.get("worker_failure", {}) if isinstance(summary.get("worker_failure"), dict) else {}
+    status = str(summary.get("status") or "")
+    previous = worker_transport_health_state()
+    previous_consecutive = int(previous.get("consecutive_failures") or 0)
+    previous_total = int(previous.get("failure_count") or 0)
+    if status == "retryable-worker-transport" or failure.get("category") == "transport":
+        now = datetime.now(timezone.utc)
+        cooldown_until = now + timedelta(seconds=worker_transport_cooldown_seconds())
+        payload = {
+            "schema": "a9.worker_transport_health.v1",
+            "status": "cooldown",
+            "failure_count": previous_total + 1,
+            "consecutive_failures": previous_consecutive + 1,
+            "last_failure_at": now.isoformat(),
+            "cooldown_until": cooldown_until.isoformat(),
+            "last_failure": {
+                "task_id": summary.get("task_id", ""),
+                "run_dir": summary.get("run_dir", ""),
+                "status": status,
+                "reason": failure.get("reason", ""),
+                "backend": summary.get("worker", {}).get("worker_transport_backend", "")
+                if isinstance(summary.get("worker"), dict)
+                else "",
+            },
+            "updated_at": now.isoformat(),
+        }
+        write_json(WORKER_TRANSPORT_HEALTH_PATH, payload)
+        summary["worker_transport_health"] = payload
+        return payload
+    if status == "pass" and previous.get("status") in {"cooldown", "degraded"}:
+        payload = {
+            **previous,
+            "status": "ok",
+            "consecutive_failures": 0,
+            "cooldown_until": "",
+            "updated_at": utc_now(),
+            "last_recovery": {
+                "task_id": summary.get("task_id", ""),
+                "run_dir": summary.get("run_dir", ""),
+                "status": status,
+            },
+        }
+        write_json(WORKER_TRANSPORT_HEALTH_PATH, payload)
+        summary["worker_transport_health"] = payload
+        return payload
+    summary["worker_transport_health"] = previous
+    return previous
 
 
 def runtime_control_paused() -> bool:
@@ -9662,6 +9769,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
     queued_tasks = len(list(QUEUE_DIR.glob("*.md")))
     running_tasks = len(list(RUNNING_DIR.glob("*.json")))
     task_quality = queued_task_quality_summary()
+    worker_transport_health = worker_transport_health_state()
     capabilities = {
         "middleware_mysql_redis": True,
         "rust_gateway_streams": True,
@@ -9750,6 +9858,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "queued_tasks": queued_tasks,
         "running_tasks": running_tasks,
         "task_quality": task_quality,
+        "worker_transport_health": worker_transport_health,
         "latest_task_id": summary.get("task_id") if summary else None,
         "latest_status": summary.get("status") if summary else None,
         "latest_run": summary.get("run_dir") if summary else None,
@@ -10469,6 +10578,7 @@ def run_one(*, auto_next: bool = False) -> int:
         write_json(run_dir / "summary.json", summary)
         summary["context_pressure"] = compact_context_pressure(summary)
         summary["worker_cost_risk"] = worker_cost_risk(summary)
+        summary["worker_transport_health"] = update_worker_transport_health_from_summary(summary)
         summary["guard_summary"] = compact_guard_summary(summary)
         context_path = write_context_summary(task, run_dir, summary)
         summary["context_path"] = str(context_path)
@@ -10563,6 +10673,18 @@ def run_loop(args: argparse.Namespace) -> int:
             write_daemon_heartbeat("idle", detail="no queued tasks")
             print("No queued tasks.")
             return 0
+        transport_gate = worker_transport_cooldown_gate()
+        if transport_gate:
+            detail = (
+                f"{transport_gate.get('reason')} until={transport_gate.get('cooldown_until')} "
+                f"consecutive_failures={transport_gate.get('consecutive_failures')}"
+            )
+            write_daemon_heartbeat("transport-cooldown", detail=detail)
+            print(f"Worker transport cooldown: {detail}")
+            if args.max_tasks and completed >= args.max_tasks:
+                return 0
+            time.sleep(args.sleep_seconds)
+            continue
         write_daemon_heartbeat("running", detail=task.task_id)
         code = run_one(auto_next=args.auto_next)
         completed += 1
@@ -11306,10 +11428,14 @@ def status() -> int:
     reconciled = reconcile_orphaned_running_tasks()
     control_state = runtime_control_state()
     task_quality = queued_task_quality_summary()
+    transport_health = worker_transport_health_state()
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
     print(f"running: {len(list(RUNNING_DIR.glob('*.json')))}")
     print(f"done: {len(list(DONE_DIR.glob('*.json')))}")
     print(f"runtime_control: {control_state.get('status', 'running')}")
+    print(f"worker_transport_health: {transport_health.get('status', 'unknown')}")
+    if transport_health.get("cooldown_until"):
+        print(f"worker_transport_cooldown_until: {transport_health.get('cooldown_until')}")
     print(f"task_quality_warning_tasks: {task_quality.get('warning_task_count', 0)}")
     print(f"task_quality_warnings_count: {task_quality.get('warnings_count', 0)}")
     warning_codes = task_quality.get("warnings_by_code", {})

@@ -242,6 +242,7 @@ class ControlApiTests(unittest.TestCase):
             (root / ".a9" / "tasks" / "running").mkdir(parents=True)
             (root / ".a9" / "tasks" / "done").mkdir(parents=True)
             (root / ".a9" / "runs" / "run-1").mkdir(parents=True)
+            (root / ".a9" / "runtime").mkdir(parents=True)
             (root / ".a9" / "tasks" / "queue" / "task.md").write_text(
                 """---
 id: "task"
@@ -259,6 +260,10 @@ demo
                 encoding="utf-8",
             )
             (root / ".a9" / "progress.json").write_text('{"progress_percent": 1}', encoding="utf-8")
+            (root / ".a9" / "runtime" / "worker_transport_health.json").write_text(
+                json.dumps({"schema": "a9.worker_transport_health.v1", "status": "cooldown"}),
+                encoding="utf-8",
+            )
             (root / ".a9" / "runs" / "run-1" / "summary.json").write_text(
                 json.dumps({"task_id": "task", "status": "pass", "run_dir": str(root / ".a9" / "runs" / "run-1")}),
                 encoding="utf-8",
@@ -285,6 +290,7 @@ demo
         self.assertEqual(status["task_quality"]["warnings_by_code"]["write_scope_runtime_ignored_path"], 1)
         self.assertEqual(status["latest_run"]["task_id"], "task")
         self.assertEqual(status["progress"]["progress_percent"], 1)
+        self.assertEqual(status["worker_transport_health"]["status"], "cooldown")
         self.assertEqual(status["nodes"]["count"], 0)
         self.assertEqual(status["gateway"]["status"], "missing")
         service_observation = status["service_observation"]
@@ -2739,6 +2745,10 @@ Do risky work.
                 + "\n",
                 encoding="utf-8",
             )
+            (state_dir / "runtime" / "worker_transport_health.json").write_text(
+                json.dumps({"schema": "a9.worker_transport_health.v1", "status": "cooldown"}),
+                encoding="utf-8",
+            )
             intervention_audit = state_dir / "monitor" / "interventions.jsonl"
             intervention_audit.parent.mkdir(parents=True)
             intervention_audit.write_text(
@@ -2838,6 +2848,7 @@ Do risky work.
         self.assertTrue(payload["guardrails"]["page_details_frozen"])
         self.assertEqual(payload["context_pressure"]["remaining_tokens"], 900)
         self.assertTrue(payload["runtime_control"]["paused"])
+        self.assertEqual(payload["worker_transport_health"]["status"], "cooldown")
         self.assertEqual(payload["runtime_control"]["status"], "paused")
         self.assertEqual(payload["runtime_control"]["last_intervention"]["intervention_id"], "monitor-pause-1")
         self.assertEqual(payload["recent_interventions"]["event_count"], 2)
