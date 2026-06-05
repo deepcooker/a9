@@ -6822,6 +6822,20 @@ def worker_transport_preset_by_name(name: str) -> dict[str, Any] | None:
     return None
 
 
+def worker_transport_rollback_payload(policy_state: dict[str, Any], *, reason: str) -> dict[str, Any]:
+    backend = str(policy_state.get("backend") or "").strip()
+    payload: dict[str, Any] = {
+        "backend": backend,
+        "reason": reason,
+        "operator_scopes": [PHONE_ADMIN_SCOPE],
+    }
+    if backend == "custom_command":
+        payload["custom_command_template"] = str(policy_state.get("custom_command_template") or "")
+    elif backend == "codex_exec":
+        payload["preset"] = "codex_exec"
+    return payload
+
+
 def openai_compatible_custom_command_template(config: dict[str, Any]) -> str:
     openai_worker = ROOT / "scripts" / "a9_openai_compatible_worker.py"
     return (
@@ -6862,6 +6876,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
             "command": command,
             "gate": gate,
             "before": before,
+            "rollback_payload": worker_transport_rollback_payload(before, reason="rollback blocked worker transport update"),
             "audit_async": True,
         }
 
@@ -6903,6 +6918,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
                 "before": before,
                 "preset": preset_name,
                 "config": config,
+                "rollback_payload": worker_transport_rollback_payload(before, reason="rollback failed worker transport update"),
                 "reason": "missing required OpenAI-compatible worker configuration",
                 "audit_async": False,
             }
@@ -6932,6 +6948,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
                 "before": before,
                 "preset": preset_name,
                 "probe": probe,
+                "rollback_payload": worker_transport_rollback_payload(before, reason="rollback failed worker transport update"),
                 "reason": "required OpenAI-compatible worker probe failed; policy unchanged",
                 "audit_async": True,
             }
@@ -6957,6 +6974,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
         "resolved": resolved,
         "preset": preset_name,
         "probe": probe,
+        "rollback_payload": worker_transport_rollback_payload(before, reason="rollback worker transport update"),
         "actor": str(payload.get("actor") or "mobile-operator"),
     }
     enqueue_monitor_intervention_audit(event, root=root)
@@ -6971,6 +6989,7 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
         "resolved": resolved,
         "preset": preset_name,
         "probe": probe,
+        "rollback_payload": worker_transport_rollback_payload(before, reason="rollback worker transport update"),
         "policy_path": str(mod.WORKER_TRANSPORT_POLICY_PATH),
         "audit_async": True,
     }

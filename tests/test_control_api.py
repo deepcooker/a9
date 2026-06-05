@@ -3089,6 +3089,46 @@ Do risky work.
         self.assertEqual(applied["resolved"]["backend"], "custom_command")
         self.assertEqual([event[0]["status"] for event in audit_events], ["blocked", "applied"])
 
+    def test_update_worker_transport_policy_returns_exact_custom_rollback_payload(self):
+        mod = load_control_api()
+        sup = mod.supervisor()
+        original_supervisor = mod.supervisor
+        original_audit = mod.enqueue_monitor_intervention_audit
+        old_policy_path = sup.WORKER_TRANSPORT_POLICY_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "root"
+                root.mkdir()
+                sup.WORKER_TRANSPORT_POLICY_PATH = Path(tmp) / "worker_transport_policy.json"
+                mod.supervisor = lambda: sup
+                mod.enqueue_monitor_intervention_audit = lambda event, *, root: None
+                sup.write_worker_transport_policy(
+                    backend="custom_command",
+                    custom_command_template="echo previous > {final_path}",
+                    reason="existing custom worker",
+                )
+                mod.phone_control_arm(
+                    {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                applied = mod.update_worker_transport_policy(
+                    {
+                        "preset": "local_envelope_smoke",
+                        "reason": "temporary local smoke",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+        finally:
+            sup.WORKER_TRANSPORT_POLICY_PATH = old_policy_path
+            mod.supervisor = original_supervisor
+            mod.enqueue_monitor_intervention_audit = original_audit
+
+        rollback = applied["rollback_payload"]
+        self.assertEqual(rollback["backend"], "custom_command")
+        self.assertEqual(rollback["custom_command_template"], "echo previous > {final_path}")
+        self.assertNotIn("preset", rollback)
+
     def test_update_worker_transport_policy_can_apply_openai_preset(self):
         mod = load_control_api()
         sup = mod.supervisor()

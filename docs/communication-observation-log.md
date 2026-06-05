@@ -3247,3 +3247,48 @@ Next monitoring target:
      execute the task. Runtime policy should capture non-secret execution
      defaults explicitly instead of assuming every daemon has the same shell
      environment as the operator.
+
+140. Persisted worker policy was proven by a no-model runtime smoke.
+   - Trigger:
+     after adding probe-gated and materialized worker policy updates, the system
+     still needed a real supervisor run proving that `run-one` uses the persisted
+     policy rather than only unit-tested control API functions.
+   - Action:
+     the monitor temporarily switched worker transport policy to
+     `local_envelope_smoke`, queued `local-policy-runtime-smoke-20260606`, and
+     ran `python3 scripts/a9_supervisor.py run-one`.
+   - Evidence:
+     the task passed at
+     `.a9/runs/local-policy-runtime-smoke-20260606-20260605T170605Z-a1`.
+     The summary recorded `worker_transport_backend=custom_command`,
+     `worker_transport_source=worker_transport_policy.backend`, two worker
+     events, zero actual model tokens, and supervisor-side check
+     `test -f scripts/a9_local_envelope_worker.py` with return code 0.
+   - Recovery:
+     the monitor initially restored `preset=codex_exec`, which was not the same
+     as the previous custom Codex tee policy. The policy was then corrected back
+     to the prior custom command using the original tee/clean-home Codex exec
+     template.
+   - Governance lesson:
+     backend smoke tests must snapshot and restore the exact previous policy,
+     not a preset that only approximates it. This should become a first-class
+     policy snapshot/rollback helper before more backend experiments run.
+
+141. Worker transport updates now return an exact rollback payload.
+   - Trigger:
+     the local policy smoke showed that restoring by preset can be wrong:
+     `codex_exec` did not restore the prior custom Codex tee command.
+   - Change:
+     `update_worker_transport_policy` now returns `rollback_payload` built from
+     the exact previous policy state. If the previous backend was
+     `custom_command`, the rollback payload includes the prior
+     `custom_command_template`; if it was `codex_exec`, it can use the preset.
+     Blocked, probe-failed, and applied responses all include this rollback
+     shape where previous policy evidence is available.
+   - Verification:
+     regression coverage confirms a temporary switch away from a custom worker
+     returns a rollback payload containing the exact previous custom command and
+     not an approximate preset.
+   - Governance lesson:
+     backend experiments are safe only when rollback is deterministic and based
+     on captured state. Presets are conveniences, not snapshots.
