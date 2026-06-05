@@ -2817,3 +2817,26 @@ Next monitoring target:
      task quality remains observation-first. The monitor sees risky queue
      construction early and can intervene asynchronously without turning these
      observations into premature hard gates.
+
+123. Supervisor tasks can target an external Git workspace.
+   - Trigger:
+     the active mobile control source was clarified as
+     `/mnt/d/root/a9_mobile_agent_lab`, an independent Git repository outside
+     the A9 runtime repo. Without explicit workspace routing, a 24h worker task
+     would still create worktrees from `/root/a9` and could not safely edit or
+     integrate mobile changes.
+   - Change:
+     task frontmatter and `enqueue` now accept `workspace_root`. The supervisor
+     builds repo maps from that workspace, creates worker worktrees from that
+     Git repository, runs declared checks there, and cherry-picks accepted
+     worker commits back to the target workspace. The default remains `/root/a9`.
+   - Verification:
+     added tests for task parsing, enqueue frontmatter, missing Git workspace
+     warnings, and a real temporary external Git repository where an accepted
+     worker commit is integrated back to the target repo. Full
+     `tests.test_supervisor` passed.
+   - Governance lesson:
+     cross-repository execution must be explicit task data, not an operator
+     memory. This keeps the 24h worker compatible with mobile, runtime, and
+     future private-network workspaces without weakening default A9 repo
+     governance.

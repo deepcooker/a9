@@ -398,6 +398,7 @@ class Task:
     task_id: str
     prompt: str
     phase: str = "implement"
+    workspace_root: str = ""
     timeout_seconds: int = 3600
     idle_timeout_seconds: int = 300
     max_attempts: int = 2
@@ -452,6 +453,7 @@ def parse_task(path: Path) -> Task:
     checks = [str(item) for item in meta.get("checks", [])]
     allowed_paths = [str(item) for item in meta.get("allowed_paths", [])]
     task_quality_warnings = [str(item) for item in meta.get("task_quality_warnings", [])]
+    workspace_root = str(meta.get("workspace_root", "")).strip()
     auto_next_allowed = bool(meta.get("auto_next", True))
     if bool(meta.get("no_auto_next", False)):
         auto_next_allowed = False
@@ -460,6 +462,7 @@ def parse_task(path: Path) -> Task:
         task_id=task_id,
         prompt=body.strip(),
         phase=str(meta.get("phase", "implement")),
+        workspace_root=workspace_root,
         timeout_seconds=int(meta.get("timeout_seconds", 3600)),
         idle_timeout_seconds=int(meta.get("idle_timeout_seconds", 300)),
         max_attempts=int(meta.get("max_attempts", 2)),
@@ -1019,8 +1022,22 @@ def reconcile_orphaned_running_tasks(*, max_age_seconds: int = 60) -> list[dict[
     return reconciled
 
 
-def git_head() -> str:
-    return run_cmd(["git", "rev-parse", "HEAD"], cwd=ROOT).stdout.strip()
+def task_workspace_root(task: Task) -> Path:
+    raw = str(task.workspace_root or "").strip()
+    if not raw:
+        return ROOT
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = ROOT / path
+    return path.resolve()
+
+
+def git_head(root: Path | None = None) -> str:
+    return run_cmd(["git", "rev-parse", "HEAD"], cwd=root or ROOT).stdout.strip()
+
+
+def git_head_for_workspace(root: Path) -> str:
+    return git_head() if root.resolve() == ROOT.resolve() else git_head(root)
 
 
 def approx_token_count(text: str) -> int:
@@ -1268,8 +1285,8 @@ def prompt_terms(text: str) -> set[str]:
     }
 
 
-def git_tracked_files() -> list[str]:
-    result = run_cmd_no_raise(["git", "ls-files"])
+def git_tracked_files(root: Path = ROOT) -> list[str]:
+    result = run_cmd_no_raise(["git", "ls-files"], cwd=root)
     if result.returncode != 0:
         return []
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
@@ -1308,8 +1325,8 @@ def repo_map_allowed_file(rel_path: str) -> bool:
     return Path(rel_path).suffix in allowed_suffixes
 
 
-def extract_repo_symbols(rel_path: str, limit: int = 8) -> list[str]:
-    path = ROOT / rel_path
+def extract_repo_symbols(rel_path: str, limit: int = 8, root: Path = ROOT) -> list[str]:
+    path = root / rel_path
     if not path.exists() or path.stat().st_size > 200_000:
         return []
     try:
@@ -1384,19 +1401,25 @@ def path_matches_allowed_paths(rel_path: str, allowed_paths: list[str]) -> bool:
     return False
 
 
-def build_repo_map(task_prompt: str, budget: int, allowed_paths: list[str] | None = None) -> tuple[str, dict[str, Any]]:
+def build_repo_map(
+    task_prompt: str,
+    budget: int,
+    allowed_paths: list[str] | None = None,
+    *,
+    root: Path = ROOT,
+) -> tuple[str, dict[str, Any]]:
     terms = prompt_terms(task_prompt)
     allowed_paths = [str(item) for item in (allowed_paths or [])]
     candidates: list[tuple[int, str, list[str]]] = []
     scanned = 0
-    for rel_path in git_tracked_files():
+    for rel_path in git_tracked_files(root):
         if not repo_map_allowed_file(rel_path):
             continue
         scanned += 1
         in_allowed_scope = path_matches_allowed_paths(rel_path, allowed_paths)
         if allowed_paths and not in_allowed_scope:
             continue
-        symbols = extract_repo_symbols(rel_path)
+        symbols = extract_repo_symbols(rel_path, root=root)
         score = score_repo_file(rel_path, symbols, terms)
         if in_allowed_scope:
             # Scope guard is the hard task boundary; keep task-local files dominant.
@@ -1426,6 +1449,7 @@ def build_repo_map(task_prompt: str, budget: int, allowed_paths: list[str] | Non
         "strategy": "aider_ranked_symbol_repo_map",
         "terms": sorted(terms)[:50],
         "allowed_paths": allowed_paths,
+        "root": str(root),
         "scanned_files": scanned,
         "candidate_files": len(candidates),
         "included_files": included,
@@ -1540,6 +1564,7 @@ def build_context_packet(task: Task) -> dict[str, Any]:
     """
     total_budget = token_budget()
     section_budgets = section_token_budgets_for_phase(task.phase, total_budget)
+    workspace_root = task_workspace_root(task)
 
     doctrine_source, doctrine = build_canonical_doctrine_section(task, section_budgets["doctrine"])
 
@@ -1563,6 +1588,7 @@ def build_context_packet(task: Task) -> dict[str, Any]:
         task.prompt,
         section_budgets["repo_map"],
         allowed_paths=task.allowed_paths,
+        root=workspace_root,
     )
 
     reference_mechanisms = truncate_to_token_budget(
@@ -1688,6 +1714,14 @@ Hard rules:
                 "body": declared_checks_body,
             },
             {
+                "name": "Workspace Root",
+                "source": str(task.path),
+                "role": "authority",
+                "budget_tokens": 128,
+                "reference_only": False,
+                "body": str(workspace_root),
+            },
+            {
                 "name": "Current Task",
                 "source": str(task.path),
                 "role": "task",
@@ -1747,26 +1781,29 @@ Hard rules:
 def create_worktree(task: Task, attempt: int) -> Path:
     task_ref = artifact_task_ref(task.task_id)
     worktree = WORKTREES_DIR / f"{task_ref}-attempt-{attempt}"
-    branch_scope = hashlib.sha256(str(WORKTREES_DIR.resolve()).encode("utf-8")).hexdigest()[:10]
+    workspace_root = task_workspace_root(task)
+    branch_scope = hashlib.sha256(f"{WORKTREES_DIR.resolve()}:{workspace_root}".encode("utf-8")).hexdigest()[:10]
     branch = f"a9-supervisor/{task_ref}-{attempt}-{branch_scope}"
     if worktree.exists():
-        return reset_existing_worktree(worktree)
+        return reset_existing_worktree(worktree, workspace_root=workspace_root)
     add_args = ["git", "worktree", "add", "-B", branch, str(worktree), "HEAD"]
-    result = run_cmd_no_raise(add_args)
+    result = run_cmd_no_raise(add_args, cwd=workspace_root)
     if result.returncode != 0:
-        run_cmd_no_raise(["git", "worktree", "prune"])
-        result = run_cmd_no_raise(add_args)
+        run_cmd_no_raise(["git", "worktree", "prune"], cwd=workspace_root)
+        result = run_cmd_no_raise(add_args, cwd=workspace_root)
     if result.returncode != 0:
         if "Read-only file system" in result.stdout or "cannot lock ref" in result.stdout:
-            worktree = create_isolated_git_copy(worktree)
-            hydrate_worker_reference_slices(worktree)
+            worktree = create_isolated_git_copy(worktree, source_root=workspace_root)
+            if workspace_root == ROOT:
+                hydrate_worker_reference_slices(worktree)
             return worktree
         raise subprocess.CalledProcessError(result.returncode, add_args, output=result.stdout)
-    hydrate_worker_reference_slices(worktree)
+    if workspace_root == ROOT:
+        hydrate_worker_reference_slices(worktree)
     return worktree
 
 
-def reset_existing_worktree(worktree: Path) -> Path:
+def reset_existing_worktree(worktree: Path, *, workspace_root: Path = ROOT) -> Path:
     """Reuse a stale worker tree only after returning it to the current base."""
     try:
         is_supervisor_worktree = worktree.resolve().is_relative_to(WORKTREES_DIR.resolve())
@@ -1777,10 +1814,11 @@ def reset_existing_worktree(worktree: Path) -> Path:
         except ValueError:
             is_supervisor_worktree = False
     if is_supervisor_worktree and (worktree / ".git").is_dir():
-        worktree = create_isolated_git_copy(worktree, replace_existing=True)
-        hydrate_worker_reference_slices(worktree)
+        worktree = create_isolated_git_copy(worktree, replace_existing=True, source_root=workspace_root)
+        if workspace_root == ROOT:
+            hydrate_worker_reference_slices(worktree)
         return worktree
-    base_head = git_head()
+    base_head = git_head_for_workspace(workspace_root)
     commands = (
         ["git", "restore", "--staged", "."],
         ["git", "reset", "--hard", base_head],
@@ -1790,23 +1828,25 @@ def reset_existing_worktree(worktree: Path) -> Path:
         result = run_cmd_no_raise(command, cwd=worktree)
         if result.returncode != 0:
             if "Read-only file system" in result.stdout or "cannot lock" in result.stdout:
-                worktree = create_isolated_git_copy(worktree, replace_existing=True)
-                hydrate_worker_reference_slices(worktree)
+                worktree = create_isolated_git_copy(worktree, replace_existing=True, source_root=workspace_root)
+                if workspace_root == ROOT:
+                    hydrate_worker_reference_slices(worktree)
                 return worktree
             raise subprocess.CalledProcessError(result.returncode, command, output=result.stdout)
-    hydrate_worker_reference_slices(worktree)
+    if workspace_root == ROOT:
+        hydrate_worker_reference_slices(worktree)
     return worktree
 
 
-def create_isolated_git_copy(worktree: Path, *, replace_existing: bool = False) -> Path:
+def create_isolated_git_copy(worktree: Path, *, replace_existing: bool = False, source_root: Path = ROOT) -> Path:
     """Fallback for sandboxes that cannot mutate the shared git metadata."""
     if worktree.exists():
         if not replace_existing:
             return worktree
         shutil.rmtree(worktree)
     worktree.mkdir(parents=True, exist_ok=True)
-    for rel in git_tracked_files():
-        src = ROOT / rel
+    for rel in git_tracked_files(source_root):
+        src = source_root / rel
         dst = worktree / rel
         if not src.is_file():
             continue
@@ -3437,7 +3477,12 @@ def apply_git_governance(worktree: Path, run_dir: Path, task: Task, status: str,
         if proc.returncode == 0:
             result["status"] = "committed"
             result["commit"] = run_cmd_no_raise(["git", "rev-parse", "HEAD"], cwd=worktree).stdout.strip()
-            result["main_integration"] = integrate_worker_commit_to_main(worktree, result["commit"], base_head)
+            result["main_integration"] = integrate_worker_commit_to_main(
+                worktree,
+                result["commit"],
+                base_head,
+                workspace_root=task_workspace_root(task),
+            )
         else:
             result["status"] = "commit-failed"
             result["findings"].append(
@@ -3480,12 +3525,19 @@ def path_is_relative_to(path: Path, parent: Path) -> bool:
         return False
 
 
-def integrate_worker_commit_to_main(worktree: Path, commit: str, base_head: str) -> dict[str, Any]:
+def integrate_worker_commit_to_main(
+    worktree: Path,
+    commit: str,
+    base_head: str,
+    *,
+    workspace_root: Path = ROOT,
+) -> dict[str, Any]:
     result: dict[str, Any] = {
         "status": "skipped",
-        "policy": "clean_root_fast_forward_cherry_pick",
+        "policy": "clean_workspace_fast_forward_cherry_pick",
         "commit": commit,
         "base_head": base_head,
+        "workspace_root": str(workspace_root),
         "root_head_before": "",
         "main_commit": "",
         "commands": [],
@@ -3497,7 +3549,7 @@ def integrate_worker_commit_to_main(worktree: Path, commit: str, base_head: str)
     if not path_is_relative_to(worktree, WORKTREES_DIR):
         result["reason"] = "non_supervisor_worktree"
         return result
-    root_head = git_head()
+    root_head = git_head_for_workspace(workspace_root)
     result["root_head_before"] = root_head
     if root_head != base_head:
         result["reason"] = "root_head_mismatch"
@@ -3510,34 +3562,34 @@ def integrate_worker_commit_to_main(worktree: Path, commit: str, base_head: str)
             }
         )
         return result
-    dirty = run_cmd_no_raise(["git", "status", "--porcelain"], cwd=ROOT).stdout.strip()
+    dirty = run_cmd_no_raise(["git", "status", "--porcelain"], cwd=workspace_root).stdout.strip()
     if dirty:
         result["reason"] = "dirty_root"
         result["findings"].append(
             {
                 "level": "warning",
-                "message": "worker commit was accepted but root worktree is dirty",
+                "message": "worker commit was accepted but target workspace is dirty",
                 "status_preview": dirty[:2000],
             }
         )
         return result
 
     command = ["git", "cherry-pick", commit]
-    proc = run_cmd_no_raise(command, cwd=ROOT)
+    proc = run_cmd_no_raise(command, cwd=workspace_root)
     result["commands"].append({"command": " ".join(command), "return_code": proc.returncode})
     if proc.returncode == 0:
         result["status"] = "integrated"
-        result["main_commit"] = git_head()
+        result["main_commit"] = git_head_for_workspace(workspace_root)
         return result
 
-    abort = run_cmd_no_raise(["git", "cherry-pick", "--abort"], cwd=ROOT)
+    abort = run_cmd_no_raise(["git", "cherry-pick", "--abort"], cwd=workspace_root)
     result["commands"].append({"command": "git cherry-pick --abort", "return_code": abort.returncode})
     result["status"] = "failed"
     result["reason"] = "cherry_pick_failed"
     result["findings"].append(
         {
             "level": "error",
-            "message": "failed to integrate accepted worker commit into root",
+                "message": "failed to integrate accepted worker commit into target workspace",
             "output_preview": (proc.stdout or "")[-2000:],
         }
     )
@@ -8924,8 +8976,21 @@ def auto_loop_guard_blocks_next(summary: dict[str, Any] | None = None) -> bool:
     return state.get("status") == "tripped"
 
 
-def task_quality_warnings_for_enqueue(*, phase: str, checks: list[str], allowed_paths: list[str]) -> list[str]:
+def task_quality_warnings_for_enqueue(
+    *,
+    phase: str,
+    checks: list[str],
+    allowed_paths: list[str],
+    workspace_root: str = "",
+) -> list[str]:
     warnings: list[str] = []
+    workspace_text = str(workspace_root or "").strip()
+    if workspace_text:
+        workspace_path = Path(workspace_text).expanduser()
+        if not workspace_path.is_absolute():
+            workspace_path = ROOT / workspace_path
+        if not (workspace_path / ".git").exists():
+            warnings.append("workspace_root_not_git_repo")
     if strict_worker_envelope_required_for_phase(phase):
         for path in allowed_paths:
             normalized = str(path).strip().replace("\\", "/")
@@ -8952,6 +9017,7 @@ def enqueue_task_file(
     max_attempts: int = 2,
     allowed_paths: list[str] | None = None,
     auto_next: bool = True,
+    workspace_root: str = "",
 ) -> Path:
     ensure_dirs()
     clean_id = compact_task_ref(task_id, limit=120)
@@ -8962,16 +9028,23 @@ def enqueue_task_file(
         path = QUEUE_DIR / f"{clean_id}-{suffix}.md"
     checks = checks or []
     allowed_paths = allowed_paths or []
+    workspace_root = str(workspace_root or "").strip()
     if strict_worker_envelope_required_for_phase(phase) and "strict_worker_envelope" not in parse_key_value_prompt(prompt):
         prompt = f"strict_worker_envelope: true\n{prompt.strip()}"
     checks_text = "\n".join(f'  - "{item}"' for item in checks)
     allowed_paths_text = "\n".join(f'  - "{item}"' for item in allowed_paths)
-    quality_warnings = task_quality_warnings_for_enqueue(phase=phase, checks=checks, allowed_paths=allowed_paths)
+    quality_warnings = task_quality_warnings_for_enqueue(
+        phase=phase,
+        checks=checks,
+        allowed_paths=allowed_paths,
+        workspace_root=workspace_root,
+    )
     quality_warnings_text = "\n".join(f'  - "{item}"' for item in quality_warnings)
     frontmatter = [
         "---",
         f'id: "{path.stem}"',
         f'phase: "{phase}"',
+        f'workspace_root: "{workspace_root}"',
         f"timeout_seconds: {timeout_seconds}",
         f"idle_timeout_seconds: {idle_timeout_seconds}",
         f"max_attempts: {max_attempts}",
@@ -10310,6 +10383,7 @@ def run_one(*, auto_next: bool = False) -> int:
         run_id = run_id_for_task(task.task_id, attempt)
         run_dir = RUNS_DIR / run_id
         run_dir.mkdir(parents=True)
+        workspace_root = task_workspace_root(task)
         worktree = create_worktree(task, attempt)
         lease = {
             "task_id": task.task_id,
@@ -10317,7 +10391,8 @@ def run_one(*, auto_next: bool = False) -> int:
             "started_at": utc_now(),
             "run_dir": str(run_dir),
             "worktree": str(worktree),
-            "repo_head": git_head(),
+            "workspace_root": str(workspace_root),
+            "repo_head": git_head_for_workspace(workspace_root),
             "parent_checkpoint_id": previous_task_checkpoint_id(task),
         }
         task_ref = artifact_task_ref(task.task_id)
@@ -10514,6 +10589,7 @@ def enqueue(args: argparse.Namespace) -> int:
         max_attempts=args.max_attempts,
         allowed_paths=args.allow_path,
         auto_next=not args.no_auto_next,
+        workspace_root=args.workspace_root,
     )
     print(path)
     return 0
@@ -11388,6 +11464,7 @@ def main(argv: list[str]) -> int:
     enqueue_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
     enqueue_parser.add_argument("--max-attempts", type=int, default=2)
     enqueue_parser.add_argument("--no-auto-next", action="store_true")
+    enqueue_parser.add_argument("--workspace-root", default="")
 
     plan_create_parser = sub.add_parser("plan-create")
     plan_create_parser.add_argument("--plan-id", default="")

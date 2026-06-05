@@ -62,6 +62,7 @@ class SupervisorTests(unittest.TestCase):
                 """---
 id: "sample"
 phase: "compare"
+workspace_root: "/tmp/a9-mobile"
 timeout_seconds: 12
 idle_timeout_seconds: 3
 max_attempts: 4
@@ -81,6 +82,7 @@ Do the work.
             task = mod.parse_task(task_path)
         self.assertEqual(task.task_id, "sample")
         self.assertEqual(task.phase, "compare")
+        self.assertEqual(task.workspace_root, "/tmp/a9-mobile")
         self.assertEqual(task.timeout_seconds, 12)
         self.assertEqual(task.idle_timeout_seconds, 3)
         self.assertEqual(task.max_attempts, 4)
@@ -9326,6 +9328,53 @@ role_signoff: product, business, architecture, test approved.
 
         self.assertEqual(parsed.task_quality_warnings, [])
 
+    def test_enqueue_task_file_records_workspace_root(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            workspace = Path(tmp) / "mobile"
+            workspace.mkdir()
+            (workspace / ".git").mkdir()
+            try:
+                mod.QUEUE_DIR = Path(tmp) / "queue"
+                mod.QUEUE_DIR.mkdir()
+                queued = mod.enqueue_task_file(
+                    "workspace-task",
+                    "Do mobile work.",
+                    phase="implement",
+                    workspace_root=str(workspace),
+                    allowed_paths=["app/(tabs)/profile.tsx"],
+                )
+                text = queued.read_text(encoding="utf-8")
+                parsed = mod.parse_task(queued)
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertIn(f'workspace_root: "{workspace}"', text)
+        self.assertEqual(parsed.workspace_root, str(workspace))
+        self.assertEqual(parsed.task_quality_warnings, [])
+
+    def test_enqueue_task_file_warns_when_workspace_root_is_not_git_repo(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            workspace = Path(tmp) / "missing-git"
+            workspace.mkdir()
+            try:
+                mod.QUEUE_DIR = Path(tmp) / "queue"
+                mod.QUEUE_DIR.mkdir()
+                queued = mod.enqueue_task_file(
+                    "workspace-warning",
+                    "Do mobile work.",
+                    phase="implement",
+                    workspace_root=str(workspace),
+                )
+                parsed = mod.parse_task(queued)
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertIn("workspace_root_not_git_repo", parsed.task_quality_warnings)
+
     def test_queued_task_quality_summary_exposes_warning_counts_for_monitoring(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -9371,6 +9420,55 @@ role_signoff: product, business, architecture, test approved.
         self.assertEqual(progress["task_quality"]["status"], "warning")
         self.assertEqual(progress["task_quality"]["warning_task_count"], 1)
         self.assertEqual(progress["task_quality"]["warnings_count"], 2)
+
+    def test_external_workspace_worktree_integrates_commit_to_target_repo(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            workspace = base / "mobile"
+            workspace.mkdir()
+            subprocess.run(["git", "init", "-b", "main"], cwd=workspace, check=True, stdout=subprocess.PIPE)
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.invalid"],
+                cwd=workspace,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Test User"],
+                cwd=workspace,
+                check=True,
+                stdout=subprocess.PIPE,
+            )
+            (workspace / "profile.txt").write_text("alpha\n", encoding="utf-8")
+            subprocess.run(["git", "add", "profile.txt"], cwd=workspace, check=True, stdout=subprocess.PIPE)
+            subprocess.run(["git", "commit", "-m", "baseline"], cwd=workspace, check=True, stdout=subprocess.PIPE)
+
+            old_worktrees = mod.WORKTREES_DIR
+            try:
+                mod.WORKTREES_DIR = base / "worktrees"
+                mod.WORKTREES_DIR.mkdir()
+                task = mod.Task(
+                    path=base / "task.md",
+                    task_id="mobile-workspace",
+                    prompt="Change alpha to beta.",
+                    phase="implement",
+                    workspace_root=str(workspace),
+                    allowed_paths=["profile.txt"],
+                )
+                worktree = mod.create_worktree(task, 1)
+                self.assertEqual((worktree / "profile.txt").read_text(encoding="utf-8"), "alpha\n")
+                (worktree / "profile.txt").write_text("beta\n", encoding="utf-8")
+                run_dir = base / "run"
+                run_dir.mkdir()
+                diff = mod.capture_diff(worktree, run_dir)
+                result = mod.apply_git_governance(worktree, run_dir, task, "pass", diff)
+                self.assertEqual(result["status"], "committed")
+                self.assertEqual(result["main_integration"]["status"], "integrated")
+                self.assertEqual(result["main_integration"]["workspace_root"], str(workspace.resolve()))
+                self.assertEqual((workspace / "profile.txt").read_text(encoding="utf-8"), "beta\n")
+            finally:
+                mod.WORKTREES_DIR = old_worktrees
 
     def test_build_context_packet_injects_default_strict_envelope_for_worker_phase(self):
         mod = load_supervisor()
