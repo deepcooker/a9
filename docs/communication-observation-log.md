@@ -3429,3 +3429,27 @@ Next monitoring target:
      contract authority should be enforced by deterministic runtime behavior,
      not only by prompt instructions. Workers may propose contract changes, but
      they do not silently mutate the decision packet.
+
+147. The first explicit implementation slice stayed monitor-owned.
+   - Trigger:
+     after the real Spark mechanism extraction, the next useful slice was small:
+     prove that worker-proposed contract updates become `change_request` records
+     instead of mutating `plan.json.contract`. Running another broad LLM worker
+     for this core authority path would repeat the high-token failure observed
+     in the mechanism extraction run.
+   - Change:
+     the monitor implemented the slice directly in
+     `update_active_plan_from_run`. Worker output keys
+     `contract_update`, `contract_updates`, `contract_change_request`, and
+     `contract_change_requests` are normalized into change request proposals.
+     Each accepted proposal is appended to `change_request.md` with the run
+     summary path as evidence.
+   - Verification:
+     the new regression test simulates a worker proposing an `acceptance`
+     replacement. The stored plan contract keeps the original acceptance, and
+     `change_request.md` records the proposal, reason, and evidence reference.
+   - Governance lesson:
+     when a slice protects runtime authority, monitor implementation can be the
+     correct move. The 24h worker should execute bounded reviewed work, but the
+     monitor should still intervene when cost, authority, or quality evidence
+     says direct repair is safer.
