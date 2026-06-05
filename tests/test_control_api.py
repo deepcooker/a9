@@ -10124,6 +10124,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["node_recovery_transcript"], "/api/nodes/recovery-transcript")
         self.assertEqual(discovery["endpoints"]["services_restart"], "/api/services/restart")
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
+        self.assertEqual(discovery["endpoints"]["runtime_run_one_with_transport"], "/api/runtime/run-one-with-transport")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
             discovery["endpoints"]["node_command_result_by_command"],
@@ -10327,6 +10328,92 @@ Do risky work.
             finally:
                 mod.ROOT = old_root
                 mod.supervisor = old_supervisor
+
+    def test_runtime_run_one_with_transport_updates_runs_and_rolls_back(self):
+        mod = load_control_api()
+        calls = {"updates": [], "run_one": []}
+        original_update = mod.update_worker_transport_policy
+        original_supervisor = mod.supervisor
+        original_latest = mod.latest_run_summary
+
+        class FakeSupervisor:
+            @staticmethod
+            def run_one(auto_next: bool = False) -> int:
+                calls["run_one"].append(auto_next)
+                return 0
+
+        def fake_update(payload, *, root=mod.ROOT):
+            calls["updates"].append(payload)
+            if len(calls["updates"]) == 1:
+                return {
+                    "status": "applied",
+                    "rollback_payload": {
+                        "backend": "custom_command",
+                        "custom_command_template": "echo previous > {final_path}",
+                        "reason": "rollback test",
+                    },
+                }
+            return {"status": "applied", "after": {"backend": payload.get("backend")}}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            try:
+                mod.update_worker_transport_policy = fake_update
+                mod.supervisor = lambda: FakeSupervisor
+                mod.latest_run_summary = lambda root=mod.ROOT: {"task_id": "latest", "status": "pass"}
+                blocked = mod.runtime_run_one_with_transport(
+                    {"operator_scopes": ["operator.admin"], "transport": {"preset": "local_envelope_smoke"}},
+                    root=root,
+                )
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_run_one_with_transport(
+                    {
+                        "operator_scopes": ["operator.admin"],
+                        "auto_next": True,
+                        "transport": {"preset": "local_envelope_smoke", "reason": "temporary smoke"},
+                    },
+                    root=root,
+                )
+            finally:
+                mod.update_worker_transport_policy = original_update
+                mod.supervisor = original_supervisor
+                mod.latest_run_summary = original_latest
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(result["status"], "run-complete")
+        self.assertEqual(calls["run_one"], [True])
+        self.assertEqual(calls["updates"][0]["preset"], "local_envelope_smoke")
+        self.assertEqual(calls["updates"][1]["custom_command_template"], "echo previous > {final_path}")
+        self.assertEqual(result["rollback"]["status"], "applied")
+
+    def test_api_runtime_run_one_with_transport_post_route_calls_handler(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None, "request": None}
+        original_handler = mod.runtime_run_one_with_transport
+        body = b'{"transport":{"preset":"local_envelope_smoke"}}'
+
+        class DummyRuntimeRunOneWithTransportPostHandler:
+            path = "/api/runtime/run-one-with-transport"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        def fake_handler(payload):
+            captured["request"] = payload
+            return {"status": "run-complete", "kind": "runtime_run_one_with_transport"}
+
+        try:
+            mod.runtime_run_one_with_transport = fake_handler
+            mod.ControlHandler.do_POST(DummyRuntimeRunOneWithTransportPostHandler())
+        finally:
+            mod.runtime_run_one_with_transport = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "runtime_run_one_with_transport")
+        self.assertEqual(captured["request"]["transport"]["preset"], "local_envelope_smoke")
 
     def test_service_start_action_requires_runtime_gate(self):
         mod = load_control_api()

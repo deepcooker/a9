@@ -3210,6 +3210,7 @@ def controller_discovery() -> dict[str, Any]:
             "phone_control_disarm": "/api/phone-control/disarm",
             "submit": "/api/submit",
             "runtime_run_one": "/api/runtime/run-one",
+            "runtime_run_one_with_transport": "/api/runtime/run-one-with-transport",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
             "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
@@ -7415,6 +7416,48 @@ def runtime_run_one(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def runtime_run_one_with_transport(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("submit.run", root=root)
+    if not gate.get("allowed"):
+        return {"status": "blocked", "kind": "runtime_run_one_with_transport", "gate": gate}
+    transport_payload = dict(payload.get("transport") or payload.get("worker_transport") or {})
+    if not transport_payload:
+        raise ValueError("transport payload is required")
+    transport_payload.setdefault("operator_scopes", [PHONE_ADMIN_SCOPE])
+    transport_payload.setdefault("reason", "temporary worker transport for runtime run-one")
+    update = update_worker_transport_policy(transport_payload, root=root)
+    if update.get("status") != "applied":
+        return {
+            "status": "transport-update-failed",
+            "kind": "runtime_run_one_with_transport",
+            "command": "submit.run",
+            "gate": gate,
+            "transport_update": update,
+        }
+    rollback_payload = dict(update.get("rollback_payload") or {})
+    rollback_result: dict[str, Any] = {}
+    code = 1
+    try:
+        mod = supervisor()
+        code = mod.run_one(auto_next=bool(payload.get("auto_next", False)))
+        status = "run-complete" if code == 0 else "run-failed"
+    finally:
+        if rollback_payload:
+            rollback_payload["operator_scopes"] = [PHONE_ADMIN_SCOPE]
+            rollback_result = update_worker_transport_policy(rollback_payload, root=root)
+    return {
+        "status": status,
+        "kind": "runtime_run_one_with_transport",
+        "command": "submit.run",
+        "run_return_code": code,
+        "gate": gate,
+        "transport_update": update,
+        "rollback": rollback_result,
+        "latest_run": compact_summary(latest_run_summary(root)),
+    }
+
+
 def runtime_session_refresh_trial(payload: dict[str, Any]) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("session.refresh.trial", root=ROOT)
@@ -8172,6 +8215,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 )
             elif self.path == "/api/runtime/run-one":
                 self.write_json(200, runtime_run_one(payload))
+            elif self.path == "/api/runtime/run-one-with-transport":
+                self.write_json(200, runtime_run_one_with_transport(payload))
             elif self.path == "/api/runtime/session-refresh-trial":
                 self.write_json(200, runtime_session_refresh_trial(payload))
             elif self.path == "/api/monitor/intervention":

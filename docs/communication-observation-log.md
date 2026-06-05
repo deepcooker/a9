@@ -3292,3 +3292,26 @@ Next monitoring target:
    - Governance lesson:
      backend experiments are safe only when rollback is deterministic and based
      on captured state. Presets are conveniences, not snapshots.
+
+142. Temporary backend run-one now restores policy automatically.
+   - Trigger:
+     backend smoke testing still required manual steps: switch policy, enqueue or
+     run a task, then restore the exact previous policy. The manual path already
+     caused one preset-vs-snapshot restoration mistake.
+   - Change:
+     added `runtime_run_one_with_transport`, exposed as
+     `POST /api/runtime/run-one-with-transport`. It applies a temporary worker
+     transport payload, runs supervisor `run_one`, and then uses the returned
+     exact `rollback_payload` in `finally` to restore prior policy.
+   - Verification:
+     unit coverage confirms temporary transport update, `run_one`, and rollback
+     ordering. A real no-model smoke queued
+     `run-one-with-transport-smoke-20260606` and executed through
+     `runtime_run_one_with_transport`; it passed at
+     `.a9/runs/run-one-with-transport-smoke-20260606-20260605T172046Z-a1` and
+     restored the custom Codex tee policy automatically.
+   - Governance lesson:
+     experimental backend trials should be one bounded transaction:
+     apply temporary backend, run bounded work, restore exact previous policy,
+     and preserve all evidence. This is the safer path for future
+     OpenAI-compatible gateway trials.
