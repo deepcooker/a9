@@ -1309,3 +1309,24 @@
 - strict envelope 必须是真正可解析 JSON，不是“看起来像 JSON”。
 - 多行说明必须拆成数组元素，或用合法转义，不能把换行塞进字符串。
 - `patch_guard=pass` 可以作为人工验收依据，但不能掩盖协议失败。
+
+## 2026-06-05：custom worker 命令在 worker worktree 下执行，相对路径会失效
+
+现象：
+
+- `local-envelope-worker-smoke-20260605` 使用
+  `python3 scripts/a9_local_envelope_worker.py ...` 作为
+  `A9_SUPERVISOR_WORKER_CMD`。
+- supervisor 按设计在 task worktree 中启动 worker，所以相对路径解析为
+  `.a9/worktrees/<task>/scripts/a9_local_envelope_worker.py`。
+- 新增脚本还没有出现在该 worktree，导致 worker `return_code=2`，
+  `final.md` 缺失，summary 为 `retryable-worker-failed`。
+- 改成绝对路径 `/root/a9/scripts/a9_local_envelope_worker.py` 后，
+  `local-envelope-worker-smoke-abs-20260605` 通过。
+
+规则：
+
+- `custom_command` 模板默认 cwd 是 worker worktree。
+- 指向 A9 控制脚本、外部 worker、远端 wrapper 时优先用绝对路径。
+- 如果必须用相对路径，必须确认该文件已经在 worker worktree 中可见。
+- transport smoke 要验证完整 `run-one`，不能只测 `run_worker` 函数。

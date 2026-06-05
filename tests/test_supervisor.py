@@ -338,6 +338,46 @@ Do the work.
         self.assertIn("record", cmd[2])
         self.assertIn(str(final_path), cmd[2])
 
+    def test_local_envelope_worker_runs_as_custom_transport(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="local-envelope-worker-test",
+                prompt="strict_worker_envelope: true\nUse local backup worker smoke.",
+                phase="record",
+                checks=["python3 -c 'print(\"ok\")'"],
+                timeout_seconds=30,
+            )
+            old_cmd = os.environ.get("A9_SUPERVISOR_WORKER_CMD")
+            os.environ["A9_SUPERVISOR_WORKER_CMD"] = (
+                f"{sys.executable} {ROOT / 'scripts' / 'a9_local_envelope_worker.py'} "
+                "--prompt-file {prompt_file} --final-path {final_path} "
+                "--task-id {task_id} --phase {phase}"
+            )
+            try:
+                worker = mod.run_worker(task, worktree, run_dir)
+                envelope = mod.validate_worker_envelope(task, worker, run_dir)
+            finally:
+                if old_cmd is None:
+                    os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+                else:
+                    os.environ["A9_SUPERVISOR_WORKER_CMD"] = old_cmd
+
+        self.assertEqual(worker["return_code"], 0)
+        self.assertEqual(worker["worker_transport_backend"], "custom_command")
+        self.assertEqual(worker["worker_transport_source"], "A9_SUPERVISOR_WORKER_CMD")
+        self.assertEqual(worker["event_counts"], {"thread.started": 1, "thread.completed": 1})
+        self.assertEqual(envelope["status"], "pass")
+        self.assertEqual(
+            envelope["envelope"]["output"]["supervisor_declared_checks"],
+            ["python3 -c 'print(\"ok\")'"],
+        )
+
     def test_reference_scan_model_can_be_overridden_without_changing_default(self):
         mod = load_supervisor()
         reference_task = mod.Task(path=Path("task.md"), task_id="reference-model", prompt="demo", phase="reference_scan")

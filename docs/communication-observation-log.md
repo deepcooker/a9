@@ -2348,3 +2348,29 @@ Next monitoring target:
      implementation detail. It should be available to the monitor/phone control
      plane, but only through the same arm/audit path as other high-impact
      runtime changes.
+
+105. Custom worker transport has a real non-Codex smoke path.
+   - Trigger:
+     policy and API controls still did not prove that A9 could finish a worker
+     run without Codex exec. The live blocker was transport startup, so the next
+     proof had to run through supervisor `run-one`, not only unit tests.
+   - Change:
+     added `scripts/a9_local_envelope_worker.py`, a deterministic local worker
+     that reads the bounded prompt, extracts the Task Declared Checks section,
+     writes a strict worker envelope to `final.md`, and emits compact JSONL
+     lifecycle events. It does not pretend to be an LLM and does not edit files;
+     its job is to prove the transport/envelope/check/summary path.
+   - Verification:
+     targeted supervisor tests cover the local worker through
+     `A9_SUPERVISOR_WORKER_CMD`. A first live smoke failed because the custom
+     command used a relative script path and worker cwd is the isolated
+     worktree. A second live smoke with absolute script path passed:
+     `local-envelope-worker-smoke-abs-20260605`, run
+     `.a9/runs/local-envelope-worker-smoke-abs-20260605-20260605T061553Z-a1`,
+     `worker_transport_backend=custom_command`, `worker_envelope=pass`, declared
+     check return code `0`.
+   - Governance lesson:
+     custom transport is real now, but command templates are execution
+     contracts. They must account for cwd, path visibility, final output path,
+     and declared checks. The next backend can be LLM-capable, but it should
+     keep the same strict envelope boundary.
