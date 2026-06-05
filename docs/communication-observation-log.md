@@ -2724,3 +2724,26 @@ Next monitoring target:
      the debate-to-backlog bridge quality is acceptable; the execution worker
      still needs stronger deterministic patch-output enforcement and declared
      check consistency before it can run unattended for long stretches.
+
+119. Worker envelope now fails check drift and changed_files without patch blocks.
+   - Trigger:
+     the first non-smoke execution worker failed because it directly edited
+     files, put patch text in the wrong shape, and self-reported declared checks
+     that did not match the task frontmatter. The existing system caught this
+     later through process governance, failing declared checks, and rollback, but
+     the envelope validator still treated check drift as advisory.
+   - Change:
+     strict worker envelopes now fail when
+     `output.supervisor_declared_checks` differs from task frontmatter checks.
+     They also fail when `output.changed_files` is non-empty but there is no
+     machine-readable patch field or object-shaped `output.search_replace_blocks`.
+     The worker prompt now states that changed files require object-shaped
+     `search_replace_blocks`, not prose patch strings.
+   - Verification:
+     added focused tests for declared-check mismatch failure,
+     changed-files-without-machine-patch failure, normalized check ordering, and
+     valid changed-files-with-search-replace pass behavior.
+   - Governance lesson:
+     this moves a class of worker quality problems from late rollback evidence
+     into early, explicit envelope failure. It does not solve direct editing by
+     itself, but it gives the monitor and repair lane a cleaner reason.

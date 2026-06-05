@@ -6833,7 +6833,7 @@ Findings are ready.
         self.assertFalse(any("worker_commands_run" in message for message in messages))
         self.assertFalse(any("supervisor_declared_checks" in message for message in messages))
 
-    def test_worker_envelope_observes_declared_check_self_report_mismatch(self):
+    def test_worker_envelope_fails_declared_check_self_report_mismatch(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -6858,11 +6858,89 @@ Findings are ready.
 
             envelope = mod.validate_worker_envelope(task, worker, run_dir)
 
-        self.assertEqual(envelope["status"], "pass")
+        self.assertEqual(envelope["status"], "fail")
         findings = envelope.get("findings", [])
         self.assertTrue(
             any(finding.get("kind") == "worker_declared_checks_self_report_mismatch" for finding in findings)
         )
+
+    def test_worker_envelope_allows_changed_files_without_machine_patch_for_later_evidence_guard(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                (
+                    'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":'
+                    '{"changed_files":["scripts/a9_supervisor.py"],'
+                    '"worker_commands_run":[],"supervisor_declared_checks":[]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-changed-files-no-machine-patch",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "pass")
+
+    def test_worker_envelope_fails_malformed_search_replace_blocks_when_changed_files_present(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                (
+                    'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":'
+                    '{"changed_files":["scripts/a9_supervisor.py"],'
+                    '"search_replace_blocks":["*** Update File: scripts/a9_supervisor.py"],'
+                    '"worker_commands_run":[],"supervisor_declared_checks":[]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-malformed-search-replace-blocks",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "fail")
+        findings = envelope.get("findings", [])
+        self.assertTrue(
+            any(finding.get("kind") == "worker_malformed_search_replace_blocks" for finding in findings)
+        )
+
+    def test_worker_envelope_allows_changed_files_with_search_replace_blocks(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                (
+                    'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":'
+                    '{"changed_files":["scripts/a9_supervisor.py"],'
+                    '"search_replace_blocks":[{"path":"scripts/a9_supervisor.py","search":"old","replace":"new"}],'
+                    '"worker_commands_run":[],"supervisor_declared_checks":[]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-changed-files-with-machine-patch",
+                prompt="strict_worker_envelope: true\nDo work.",
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "pass")
 
     def test_worker_envelope_declared_check_mismatch_ignores_order_and_edge_whitespace(self):
         mod = load_supervisor()

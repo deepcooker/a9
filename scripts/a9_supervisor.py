@@ -1563,6 +1563,8 @@ Hard rules:
   In output, separate worker_commands_run from supervisor_declared_checks; worker self-report is evidence,
   while supervisor-declared checks in the run summary are authoritative.
   Copy supervisor_declared_checks exactly from the Task Declared Checks section; use [] only when it says none.
+  If changed_files is non-empty, output.search_replace_blocks must contain machine-readable objects
+  with path/search/replace or path/block; do not put prose patch text or apply_patch text in strings.
   copied_mechanisms is only for borrowed external mechanisms/source slices; put ordinary inspected local files in files_validated.
   files_validated is for source/docs validated; put `.git` and runtime metadata evidence in repo_metadata_evidence.
 """,
@@ -3126,11 +3128,30 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
             ):
                 result["findings"].append(
                     {
-                        "level": "warn",
+                        "level": "error",
                         "kind": "worker_declared_checks_self_report_mismatch",
                         "message": "worker-reported supervisor_declared_checks differ from task checks; task checks remain authoritative",
                         "expected": normalize_declared_checks_for_worker_envelope(task.checks),
                         "actual": normalize_declared_checks_for_worker_envelope(output.get("supervisor_declared_checks")),
+                    }
+                )
+            search_replace_blocks = output.get("search_replace_blocks")
+            if (
+                strict_worker_envelope_required(task)
+                and "search_replace_blocks" in output
+                and (
+                    not isinstance(search_replace_blocks, list)
+                    or any(not isinstance(item, dict) for item in search_replace_blocks)
+                )
+            ):
+                changed_files = output.get("changed_files")
+                search_replace_blocks = output.get("search_replace_blocks")
+                result["findings"].append(
+                    {
+                        "level": "error",
+                        "kind": "worker_malformed_search_replace_blocks",
+                        "message": "strict worker envelope search_replace_blocks must be a list containing object-shaped patch blocks",
+                        "changed_files": [str(item) for item in changed_files] if isinstance(changed_files, list) else [],
                     }
                 )
             copied_mechanism_drift = local_paths_reported_as_copied_mechanisms(output.get("copied_mechanisms"))
