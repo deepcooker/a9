@@ -2965,6 +2965,99 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(payload["resolved"]["backend"], "custom_command")
         self.assertEqual(payload["resolved"]["source"], "worker_transport_policy.backend")
 
+    def test_update_worker_transport_policy_requires_runtime_arm(self):
+        mod = load_control_api()
+        sup = mod.supervisor()
+        original_supervisor = mod.supervisor
+        original_audit = mod.enqueue_monitor_intervention_audit
+        old_policy_path = sup.WORKER_TRANSPORT_POLICY_PATH
+        old_override = os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+        old_backend = os.environ.pop("A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND", None)
+        old_template = os.environ.pop("A9_SUPERVISOR_WORKER_CMD_TEMPLATE", None)
+        audit_events = []
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "root"
+                root.mkdir()
+                sup.WORKER_TRANSPORT_POLICY_PATH = Path(tmp) / "worker_transport_policy.json"
+                mod.supervisor = lambda: sup
+                mod.enqueue_monitor_intervention_audit = lambda event, *, root: audit_events.append((event, root))
+
+                blocked = mod.update_worker_transport_policy(
+                    {
+                        "backend": "custom_command",
+                        "custom_command_template": "echo ok > {final_path}",
+                        "reason": "test blocked",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+                mod.phone_control_arm(
+                    {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                applied = mod.update_worker_transport_policy(
+                    {
+                        "backend": "custom_command",
+                        "custom_command_template": "echo ok > {final_path}",
+                        "reason": "switch to test custom worker",
+                        "operator_scopes": ["operator.admin"],
+                    },
+                    root=root,
+                )
+        finally:
+            sup.WORKER_TRANSPORT_POLICY_PATH = old_policy_path
+            mod.supervisor = original_supervisor
+            mod.enqueue_monitor_intervention_audit = original_audit
+            if old_override is None:
+                os.environ.pop("A9_SUPERVISOR_WORKER_CMD", None)
+            else:
+                os.environ["A9_SUPERVISOR_WORKER_CMD"] = old_override
+            if old_backend is None:
+                os.environ.pop("A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND", None)
+            else:
+                os.environ["A9_SUPERVISOR_WORKER_TRANSPORT_BACKEND"] = old_backend
+            if old_template is None:
+                os.environ.pop("A9_SUPERVISOR_WORKER_CMD_TEMPLATE", None)
+            else:
+                os.environ["A9_SUPERVISOR_WORKER_CMD_TEMPLATE"] = old_template
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(applied["after"]["backend"], "custom_command")
+        self.assertEqual(applied["resolved"]["backend"], "custom_command")
+        self.assertEqual([event[0]["status"] for event in audit_events], ["blocked", "applied"])
+
+    def test_api_worker_transport_policy_post_route_calls_handler(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None, "request": None}
+        original_update = mod.update_worker_transport_policy
+        body = b'{"backend":"codex_exec"}'
+
+        class DummyWorkerTransportPolicyPostHandler:
+            path = "/api/worker/transport-policy"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        def fake_update(payload):
+            captured["request"] = payload
+            return {"status": "applied", "kind": "worker_transport_policy_update"}
+
+        try:
+            mod.update_worker_transport_policy = fake_update
+            mod.ControlHandler.do_POST(DummyWorkerTransportPolicyPostHandler())
+        finally:
+            mod.update_worker_transport_policy = original_update
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "worker_transport_policy_update")
+        self.assertEqual(captured["request"]["backend"], "codex_exec")
+
     def test_api_monitor_control_endpoint_returns_payload(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None}

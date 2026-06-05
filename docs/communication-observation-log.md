@@ -2323,3 +2323,28 @@ Next monitoring target:
      be trapped behind one CLI transport. OpenHands/aider/remote self-hosted
      workers can now plug in through a deterministic transport policy instead
      of requiring supervisor rewrites.
+
+104. Worker transport policy is now operator-controlled through the runtime gate.
+   - Trigger:
+     exposing `worker_transport_policy` was not enough for phone/control use.
+     If switching from Codex exec to a backup worker requires SSH edits or hand
+     editing `.a9/runtime/worker_transport_policy.json`, the mobile operator
+     still cannot recover the 24-hour loop cleanly during a transport incident.
+   - Change:
+     `POST /api/worker/transport-policy` updates the persistent worker
+     transport policy, but only after `phone-control` arms the `runtime` group.
+     The new registered command is `worker.transport.update`. The endpoint
+     records `before`, `after`, resolved policy, and an async audit event. It
+     validates backend values and requires a custom command template before
+     allowing `custom_command`.
+   - Verification:
+     `python3 -m unittest tests.test_control_api` passed with 270 tests.
+     A live blocked smoke against `http://127.0.0.1:8787/api/worker/transport-policy`
+     returned `phone_control_disarmed`, and `/api/monitor/control` still showed
+     `worker_transport_policy.resolved.backend=codex_exec`, queue `0`, running
+     `0`.
+   - Governance lesson:
+     switching worker backends is a runtime control action, not a background
+     implementation detail. It should be available to the monitor/phone control
+     plane, but only through the same arm/audit path as other high-impact
+     runtime changes.

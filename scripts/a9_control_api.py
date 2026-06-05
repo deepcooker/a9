@@ -492,6 +492,7 @@ PHONE_CONTROL_GROUPS = {
         "monitor.intervention",
         "services.start",
         "services.restart",
+        "worker.transport.update",
     ],
     "remote": [
         "nodes.bootstrap.execute",
@@ -3069,6 +3070,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_intervention_audit": "/api/monitor/interventions/audit",
             "monitor_intervention_events": "/api/monitor/interventions/events",
             "monitor_intervention_examples": "/api/monitor/intervention/examples",
+            "worker_transport_policy_update": "/api/worker/transport-policy",
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
             "communication_action_plan": "/api/communication/action-plan",
@@ -3113,6 +3115,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_intervention_contract": True,
             "monitor_intervention_examples": True,
             "monitor_intervention_redis_stream": MONITOR_INTERVENTIONS_STREAM_KEY,
+            "worker_transport_policy_update": True,
             "worker_claim_ready": False,
         },
         "events": {
@@ -6642,6 +6645,86 @@ def worker_transport_policy(root: Path = ROOT) -> dict[str, Any]:
         }
 
 
+def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    command = "worker.transport.update"
+    gate = command_gate(command, root=root)
+    mod = supervisor()
+    before = mod.worker_transport_policy_state()
+    if not gate.get("allowed"):
+        event = {
+            "at": utc_now(),
+            "kind": "worker_transport_policy_audit",
+            "schema": "a9.worker_transport_policy_update.v1",
+            "command": command,
+            "status": "blocked",
+            "reason": str(gate.get("reason") or "phone_control_disarmed"),
+            "gate_allowed": False,
+            "gate_reason": gate.get("reason"),
+            "before": before,
+            "actor": str(payload.get("actor") or "mobile-operator"),
+        }
+        enqueue_monitor_intervention_audit(event, root=root)
+        return {
+            "status": "blocked",
+            "kind": "worker_transport_policy_update",
+            "schema": "a9.worker_transport_policy_update.v1",
+            "command": command,
+            "gate": gate,
+            "before": before,
+            "audit_async": True,
+        }
+
+    backend = str(payload.get("backend") or before.get("backend") or "").strip()
+    custom_command_template = str(
+        payload.get("custom_command_template")
+        if payload.get("custom_command_template") is not None
+        else before.get("custom_command_template") or ""
+    )
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise ValueError("reason is required")
+    if backend not in {"codex_exec", "custom_command"}:
+        raise ValueError("backend must be one of: codex_exec, custom_command")
+    if backend == "custom_command" and not custom_command_template.strip():
+        raise ValueError("custom_command_template is required for custom_command backend")
+
+    after = mod.write_worker_transport_policy(
+        backend=backend,
+        custom_command_template=custom_command_template,
+        reason=reason,
+    )
+    task = mod.Task(path=Path("transport-policy.md"), task_id="transport-policy", prompt="", phase="record")
+    resolved = mod.resolved_worker_transport(task)
+    event = {
+        "at": utc_now(),
+        "kind": "worker_transport_policy_audit",
+        "schema": "a9.worker_transport_policy_update.v1",
+        "command": command,
+        "status": "applied",
+        "reason": reason,
+        "gate_allowed": True,
+        "gate_reason": gate.get("reason"),
+        "before": before,
+        "after": after,
+        "resolved": resolved,
+        "actor": str(payload.get("actor") or "mobile-operator"),
+    }
+    enqueue_monitor_intervention_audit(event, root=root)
+    return {
+        "status": "applied",
+        "kind": "worker_transport_policy_update",
+        "schema": "a9.worker_transport_policy_update.v1",
+        "command": command,
+        "gate": gate,
+        "before": before,
+        "after": after,
+        "resolved": resolved,
+        "policy_path": str(mod.WORKER_TRANSPORT_POLICY_PATH),
+        "audit_async": True,
+    }
+
+
 def monitor_status(root: Path = ROOT) -> dict[str, Any]:
     status = supervisor_status(root)
     control_state = runtime_control_state(root)
@@ -7588,6 +7671,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_session_refresh_trial(payload))
             elif self.path == "/api/monitor/intervention":
                 self.write_json(200, monitor_intervention(payload))
+            elif self.path == "/api/worker/transport-policy":
+                self.write_json(200, update_worker_transport_policy(payload))
             elif self.path == "/api/services/restart":
                 self.write_json(200, service_restart_action(payload))
             elif self.path == "/api/services/start":
