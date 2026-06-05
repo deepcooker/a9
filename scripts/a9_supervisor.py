@@ -10593,12 +10593,12 @@ def plan_debate_next(args: argparse.Namespace) -> int:
         idle_timeout_seconds=args.idle_timeout_seconds,
         max_attempts=1,
         allowed_paths=[],
-        auto_next=False,
+        auto_next=bool(args.allow_auto_next),
     )
     print(path)
     print(f"requirements_debate_status: {debate.get('status', '')}")
     print(f"requirements_debate_current_stage: {debate.get('current_stage', '')}")
-    print(f"task_auto_next: false")
+    print(f"task_auto_next: {str(bool(args.allow_auto_next)).lower()}")
     return 0
 
 
@@ -11284,6 +11284,7 @@ def main(argv: list[str]) -> int:
     plan_debate_parser.add_argument("--extra", default="")
     plan_debate_parser.add_argument("--timeout-seconds", type=int, default=3600)
     plan_debate_parser.add_argument("--idle-timeout-seconds", type=int, default=300)
+    plan_debate_parser.add_argument("--allow-auto-next", action="store_true")
 
     plan_backlog_add_parser = sub.add_parser("plan-backlog-add")
     plan_backlog_add_parser.add_argument("--plan-id", default="")

@@ -2662,3 +2662,30 @@ Next monitoring target:
      the debate route is still not allowed to drift into execution by default.
      It only crosses into execution when the plan update contains a structured
      backlog append; otherwise monitor review remains the stop point.
+
+117. Live debate-to-backlog-to-queue e2e smoke passed.
+   - Trigger:
+     after automatic scheduling was implemented, the remaining question was
+     whether a real Codex worker run could produce the required final JSON and
+     cause the supervisor to schedule an execution task without manual
+     `plan-backlog-next`.
+   - Run:
+     enqueued `e2e-debate-to-backlog-smoke-20260605` with
+     `plan-debate-next --allow-auto-next` and `allow_no_diff: true`, then ran
+     `python3 scripts/a9_supervisor.py run-one --auto-next`. The worker produced
+     a strict envelope final containing one `execution_backlog` item titled
+     `E2E backlog bridge smoke`.
+   - Result:
+     run `e2e-debate-to-backlog-smoke-20260605-20260605T112014Z-a1` passed.
+     `active_plan_update.execution_backlog_update.status=appended`, and
+     `schedule_next_task()` created
+     `.a9/tasks/queue/auto-backlog-exec-001-implement-backlog-001-E2E-backlog-bridge-smoke.md`.
+     The queued smoke task and plan backlog residue were removed afterward so
+     the background loop would not execute the artificial smoke slice.
+   - Governance lesson:
+     the 24h lane now has a real minimal closed loop:
+     `debate_next worker -> final JSON -> plan backlog -> auto-backlog queue`.
+     The worker also showed a useful quality signal: it still marked the broader
+     decision packet as not ready while emitting a safe smoke backlog item, which
+     means the bridge can move safe execution slices without pretending all
+     requirements debate is complete.

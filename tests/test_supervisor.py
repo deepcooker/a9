@@ -3395,6 +3395,7 @@ Do the work.
                         "extra": "Focus on the requirement guide method.",
                         "timeout_seconds": 120,
                         "idle_timeout_seconds": 30,
+                        "allow_auto_next": False,
                     },
                 )()
                 buffer = io.StringIO()
@@ -3419,6 +3420,58 @@ Do the work.
         self.assertIn("task_auto_next: false", text)
         self.assertFalse(parsed.auto_next_allowed)
         self.assertEqual(parsed.phase, "reference_scan")
+
+    def test_plan_debate_next_can_explicitly_allow_auto_next_for_e2e_trial(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-debate-auto-next",
+                    goal_id="goal-debate-auto-next",
+                    contract={
+                        "problem": "Need a controlled debate to backlog e2e trial.",
+                        "why_now": "The automatic bridge needs live validation.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                args = type(
+                    "Args",
+                    (),
+                    {
+                        "plan_id": "plan-debate-auto-next",
+                        "stage": "",
+                        "phase": "reference_scan",
+                        "task_id": "debate-auto-next-test",
+                        "extra": "Emit only a safe backlog JSON item.",
+                        "timeout_seconds": 120,
+                        "idle_timeout_seconds": 30,
+                        "allow_auto_next": True,
+                    },
+                )()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_debate_next(args)
+                text = buffer.getvalue()
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+                parsed = mod.parse_task(queued[0])
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+
+        self.assertEqual(code, 0)
+        self.assertIn("task_auto_next: true", text)
+        self.assertTrue(parsed.auto_next_allowed)
 
     def test_plan_execution_backlog_items_require_ready_debate(self):
         mod = load_supervisor()
