@@ -2423,3 +2423,26 @@ Next monitoring target:
      rather than accepting ad hoc shell strings as the normal operator path.
      Raw custom templates remain available for engineering, but product control
      should prefer presets.
+
+108. OpenAI-compatible worker configuration is now checkable before switching transport.
+   - Trigger:
+     adding an `openai_compatible` preset made it easy to switch the worker
+     backend, but switching before confirming key/model/base URL would just move
+     failure from Codex exec startup to model-gateway configuration.
+   - Change:
+     added `POST /api/worker/transport-check`. By default it performs a
+     non-mutating configuration check for the selected preset and reports
+     missing `A9_LLM_WORKER_API_KEY`/`OPENAI_API_KEY`, model, base URL, and
+     timeout. If `execute=true`, it is treated as a runtime action and requires
+     `phone-control` arm for `worker.transport.check`; this keeps live probes
+     behind the same operator gate as transport updates.
+   - Verification:
+     targeted control-api tests cover not-configured, ready, execute blocked,
+     execute armed, POST routing, and discovery. A live check in the current
+     environment returned `not_configured` with missing key/model. A live
+     `execute=true` request returned `phone_control_disarmed`. Queue remained
+     `0`, running `0`, transport `codex_exec`.
+   - Governance lesson:
+     configuration visibility should be cheap and safe, but active probes that
+     may call a model endpoint are runtime actions. This gives the mobile
+     operator a preflight step before switching the 24-hour worker fleet.

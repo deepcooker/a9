@@ -492,6 +492,7 @@ PHONE_CONTROL_GROUPS = {
         "monitor.intervention",
         "services.start",
         "services.restart",
+        "worker.transport.check",
         "worker.transport.update",
     ],
     "remote": [
@@ -3071,6 +3072,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_intervention_events": "/api/monitor/interventions/events",
             "monitor_intervention_examples": "/api/monitor/intervention/examples",
             "worker_transport_presets": "/api/worker/transport-presets",
+            "worker_transport_check": "/api/worker/transport-check",
             "worker_transport_policy_update": "/api/worker/transport-policy",
             "communication_status": "/api/communication/status",
             "communication_data_contract_report": "/api/communication/data-contract-report",
@@ -3118,6 +3120,7 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_intervention_redis_stream": MONITOR_INTERVENTIONS_STREAM_KEY,
             "worker_transport_policy_update": True,
             "worker_transport_presets": True,
+            "worker_transport_check": True,
             "worker_claim_ready": False,
         },
         "events": {
@@ -6783,6 +6786,77 @@ def update_worker_transport_policy(payload: dict[str, Any], *, root: Path = ROOT
     }
 
 
+def openai_compatible_worker_config(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    api_key_env = str(payload.get("api_key_env") or "A9_LLM_WORKER_API_KEY").strip()
+    model = str(payload.get("model") or os.getenv("A9_LLM_WORKER_MODEL") or "").strip()
+    base_url = str(payload.get("base_url") or os.getenv("A9_LLM_WORKER_BASE_URL") or "https://api.openai.com/v1").strip()
+    timeout_raw = payload.get("timeout", payload.get("timeout_seconds"))
+    if isinstance(timeout_raw, (int, float)):
+        timeout_seconds = max(1, int(timeout_raw))
+    else:
+        timeout_seconds = parse_duration_seconds(timeout_raw, default_seconds=30)
+    key_available = bool(os.getenv(api_key_env) or os.getenv("OPENAI_API_KEY"))
+    missing = []
+    if not key_available:
+        missing.append(f"{api_key_env} or OPENAI_API_KEY")
+    if not model:
+        missing.append("A9_LLM_WORKER_MODEL or payload.model")
+    if not base_url:
+        missing.append("A9_LLM_WORKER_BASE_URL or payload.base_url")
+    return {
+        "api_key_env": api_key_env,
+        "api_key_available": key_available,
+        "model": model,
+        "base_url": base_url,
+        "timeout_seconds": timeout_seconds,
+        "missing": missing,
+    }
+
+
+def worker_transport_check(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    preset_name = str(payload.get("preset") or "openai_compatible").strip()
+    preset = worker_transport_preset_by_name(preset_name)
+    if not preset:
+        raise ValueError("unknown worker transport preset: " + preset_name)
+    execute = bool(payload.get("execute"))
+    config = openai_compatible_worker_config(payload) if preset_name == "openai_compatible" else {
+        "missing": [],
+        "api_key_available": True,
+        "model": "",
+        "base_url": "",
+        "timeout_seconds": 0,
+    }
+    gate = {"status": "not_required", "allowed": True, "reason": "configuration_check_only"}
+    if execute:
+        require_phone_admin(payload)
+        gate = command_gate("worker.transport.check", root=root)
+    status = "ready" if not config.get("missing") else "not_configured"
+    result: dict[str, Any] = {
+        "status": status,
+        "kind": "worker_transport_check",
+        "schema": "a9.worker_transport_check.v1",
+        "preset": preset_name,
+        "execute": execute,
+        "gate": gate,
+        "config": config,
+        "preset_detail": preset,
+        "checked_at": utc_now(),
+    }
+    if execute and not gate.get("allowed"):
+        result["status"] = "blocked"
+        result["reason"] = str(gate.get("reason") or "phone_control_disarmed")
+        return result
+    if execute and config.get("missing"):
+        result["status"] = "not_configured"
+        result["reason"] = "missing required OpenAI-compatible worker configuration"
+        return result
+    if execute:
+        result["status"] = "ready_for_probe"
+        result["reason"] = "configuration present; live model probe is intentionally not executed by control-api"
+    return result
+
+
 def monitor_status(root: Path = ROOT) -> dict[str, Any]:
     status = supervisor_status(root)
     control_state = runtime_control_state(root)
@@ -7733,6 +7807,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, monitor_intervention(payload))
             elif self.path == "/api/worker/transport-policy":
                 self.write_json(200, update_worker_transport_policy(payload))
+            elif self.path == "/api/worker/transport-check":
+                self.write_json(200, worker_transport_check(payload))
             elif self.path == "/api/services/restart":
                 self.write_json(200, service_restart_action(payload))
             elif self.path == "/api/services/start":

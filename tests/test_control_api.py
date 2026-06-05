@@ -3131,6 +3131,105 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["kind"], "worker_transport_presets")
 
+    def test_worker_transport_check_reports_openai_compatible_config(self):
+        mod = load_control_api()
+        old_key = os.environ.pop("A9_LLM_WORKER_API_KEY", None)
+        old_openai_key = os.environ.pop("OPENAI_API_KEY", None)
+        old_model = os.environ.pop("A9_LLM_WORKER_MODEL", None)
+        old_base = os.environ.pop("A9_LLM_WORKER_BASE_URL", None)
+        try:
+            missing = mod.worker_transport_check({"preset": "openai_compatible"})
+            os.environ["A9_LLM_WORKER_API_KEY"] = "test-key"
+            ready = mod.worker_transport_check(
+                {
+                    "preset": "openai_compatible",
+                    "model": "test-model",
+                    "base_url": "http://127.0.0.1:8000/v1",
+                    "timeout_seconds": 7,
+                }
+            )
+        finally:
+            if old_key is not None:
+                os.environ["A9_LLM_WORKER_API_KEY"] = old_key
+            else:
+                os.environ.pop("A9_LLM_WORKER_API_KEY", None)
+            if old_openai_key is not None:
+                os.environ["OPENAI_API_KEY"] = old_openai_key
+            else:
+                os.environ.pop("OPENAI_API_KEY", None)
+            if old_model is not None:
+                os.environ["A9_LLM_WORKER_MODEL"] = old_model
+            else:
+                os.environ.pop("A9_LLM_WORKER_MODEL", None)
+            if old_base is not None:
+                os.environ["A9_LLM_WORKER_BASE_URL"] = old_base
+            else:
+                os.environ.pop("A9_LLM_WORKER_BASE_URL", None)
+
+        self.assertEqual(missing["status"], "not_configured")
+        self.assertIn("A9_LLM_WORKER_API_KEY or OPENAI_API_KEY", missing["config"]["missing"])
+        self.assertIn("A9_LLM_WORKER_MODEL or payload.model", missing["config"]["missing"])
+        self.assertEqual(ready["status"], "ready")
+        self.assertEqual(ready["config"]["model"], "test-model")
+        self.assertEqual(ready["config"]["base_url"], "http://127.0.0.1:8000/v1")
+        self.assertEqual(ready["config"]["timeout_seconds"], 7)
+
+    def test_worker_transport_check_execute_requires_runtime_arm(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_key = os.environ.get("A9_LLM_WORKER_API_KEY")
+            old_model = os.environ.get("A9_LLM_WORKER_MODEL")
+            try:
+                os.environ["A9_LLM_WORKER_API_KEY"] = "test-key"
+                os.environ["A9_LLM_WORKER_MODEL"] = "test-model"
+                blocked = mod.worker_transport_check({"preset": "openai_compatible", "execute": True, "operator_scopes": ["operator.admin"]}, root=root)
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                armed = mod.worker_transport_check({"preset": "openai_compatible", "execute": True, "operator_scopes": ["operator.admin"]}, root=root)
+            finally:
+                if old_key is None:
+                    os.environ.pop("A9_LLM_WORKER_API_KEY", None)
+                else:
+                    os.environ["A9_LLM_WORKER_API_KEY"] = old_key
+                if old_model is None:
+                    os.environ.pop("A9_LLM_WORKER_MODEL", None)
+                else:
+                    os.environ["A9_LLM_WORKER_MODEL"] = old_model
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(armed["status"], "ready_for_probe")
+        self.assertEqual(armed["gate"]["reason"], "phone_control_armed")
+
+    def test_api_worker_transport_check_post_route_calls_handler(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None, "request": None}
+        original_check = mod.worker_transport_check
+        body = b'{"preset":"openai_compatible"}'
+
+        class DummyWorkerTransportCheckPostHandler:
+            path = "/api/worker/transport-check"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        def fake_check(payload):
+            captured["request"] = payload
+            return {"status": "ready", "kind": "worker_transport_check"}
+
+        try:
+            mod.worker_transport_check = fake_check
+            mod.ControlHandler.do_POST(DummyWorkerTransportCheckPostHandler())
+        finally:
+            mod.worker_transport_check = original_check
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["kind"], "worker_transport_check")
+        self.assertEqual(captured["request"]["preset"], "openai_compatible")
+
     def test_api_monitor_control_endpoint_returns_payload(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None}
@@ -9511,6 +9610,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(discovery["endpoints"]["monitor_intervention_events"], "/api/monitor/interventions/events")
         self.assertEqual(discovery["endpoints"]["monitor_intervention_examples"], "/api/monitor/intervention/examples")
         self.assertEqual(discovery["endpoints"]["worker_transport_presets"], "/api/worker/transport-presets")
+        self.assertEqual(discovery["endpoints"]["worker_transport_check"], "/api/worker/transport-check")
         self.assertEqual(discovery["endpoints"]["worker_transport_policy_update"], "/api/worker/transport-policy")
         self.assertEqual(
             discovery["endpoints"]["communication_data_contract_report"], "/api/communication/data-contract-report"
@@ -9548,6 +9648,7 @@ class ControlApiTests(unittest.TestCase):
         self.assertTrue(discovery["runtime"]["monitor_intervention_contract"])
         self.assertTrue(discovery["runtime"]["monitor_intervention_examples"])
         self.assertTrue(discovery["runtime"]["worker_transport_presets"])
+        self.assertTrue(discovery["runtime"]["worker_transport_check"])
         self.assertTrue(discovery["runtime"]["worker_transport_policy_update"])
         self.assertEqual(discovery["runtime"]["monitor_intervention_redis_stream"], "a9:monitor:interventions")
         self.assertEqual(discovery["events"]["max_limit"], 1000)
