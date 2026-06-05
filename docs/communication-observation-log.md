@@ -2637,3 +2637,28 @@ Next monitoring target:
      may propose execution backlog, but only via a machine-readable final
      artifact and only on the debate route; execution workers cannot mutate the
      backlog by mentioning future work.
+
+116. Debate backlog append can now auto-schedule execution_next tasks.
+   - Trigger:
+     after debate finals could append `execution_backlog.items`, the remaining
+     manual step was running `plan-backlog-next`. That kept the 24h lane from
+     flowing from requirements debate into execution without operator action.
+   - Change:
+     extracted shared `enqueue_execution_backlog_items()` and added
+     `schedule_execution_backlog_from_plan()`. `schedule_next_task()` now keeps
+     the old `debate_next` block unless the current run's
+     `active_plan_update.execution_backlog_update.status` is `appended`; when it
+     is appended, the scheduler enqueues ready plan backlog items as
+     `auto-backlog-*` execution tasks and records `auto_next_backlog` in the run
+     summary.
+   - Verification:
+     targeted tests cover automatic queueing after debate backlog append and
+     continued blocking when a debate run produces no backlog JSON. Full
+     `python3 -m unittest tests.test_supervisor` passed with 343 tests. A live
+     smoke temporarily added a ready backlog item to `a9-plan-lane-runtime`,
+     verified `schedule_next_task()` created an `auto-backlog-*` task, then
+     removed the task and restored the plan.
+   - Governance lesson:
+     the debate route is still not allowed to drift into execution by default.
+     It only crosses into execution when the plan update contains a structured
+     backlog append; otherwise monitor review remains the stop point.

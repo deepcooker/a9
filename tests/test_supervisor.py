@@ -3717,6 +3717,102 @@ Findings are ready.
         self.assertEqual(result["execution_backlog_update"]["reason"], "not_debate_next")
         self.assertEqual(stored["execution_backlog"]["items"], [])
 
+    def test_schedule_next_task_auto_enqueues_debate_backlog_after_append(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-auto-debate-backlog",
+                    goal_id="goal-auto-debate-backlog",
+                    contract={
+                        "problem": "Debate backlog should auto enqueue.",
+                        "why_now": "24h flow should not require manual plan-backlog-next.",
+                        "must": "Schedule ready backlog after debate append.",
+                        "system_requirement": "schedule_next_task enqueues execution_next tasks from plan backlog.",
+                        "data_shape": "execution_backlog item status changes ready to queued.",
+                        "normal_flow": "debate pass -> plan append -> schedule backlog -> queue task.",
+                        "exception_flow": "no backlog append -> block for monitor.",
+                        "acceptance": "queue contains decided execution task.",
+                        "out_of_scope": "no generic fallback when structured backlog exists.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "Codex auto-next plus A9 plan backlog.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "backlog-001-auto-enqueue",
+                        "title": "Auto enqueue debate backlog",
+                        "phase": "implement",
+                        "prompt": "Implement automatic backlog scheduling after debate append.",
+                        "allowed_paths": ["scripts/a9_supervisor.py"],
+                        "checks": ["python3 -m py_compile scripts/a9_supervisor.py"],
+                        "status": "ready",
+                        "source": "debate_final_json",
+                    }
+                )
+                mod.write_plan_files(plan)
+                task = mod.Task(
+                    path=tmp_path / "task.md",
+                    task_id="debate-auto",
+                    phase="reference_scan",
+                    prompt="decision_status: not_decided\nroute: debate_next\nplan_id: plan-auto-debate-backlog\n",
+                )
+                summary = {
+                    "status": "pass",
+                    "active_plan_update": {
+                        "status": "updated",
+                        "plan_id": "plan-auto-debate-backlog",
+                        "execution_backlog_update": {"status": "appended", "added_count": 1},
+                    },
+                }
+                next_path = mod.schedule_next_task(task, summary)
+                stored = mod.load_plan("plan-auto-debate-backlog")
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+                queued_text = queued[0].read_text(encoding="utf-8")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+
+        self.assertIsNotNone(next_path)
+        self.assertEqual(len(queued), 1)
+        self.assertIn("decision_status: decided", queued_text)
+        self.assertIn("route: execution_next", queued_text)
+        self.assertIn("execution_backlog_id: backlog-001-auto-enqueue", queued_text)
+        self.assertEqual(stored["execution_backlog"]["items"][0]["status"], "queued")
+        self.assertEqual(summary["auto_next_backlog"]["status"], "scheduled")
+        self.assertNotIn("auto_next_block", summary)
+
+    def test_schedule_next_task_still_blocks_debate_without_backlog_append(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="debate-no-backlog",
+            phase="reference_scan",
+            prompt="decision_status: not_decided\nroute: debate_next\nplan_id: missing\n",
+        )
+        summary = {
+            "status": "pass",
+            "active_plan_update": {
+                "status": "updated",
+                "plan_id": "missing",
+                "execution_backlog_update": {"status": "skipped", "reason": "no_execution_backlog_json"},
+            },
+        }
+
+        next_path = mod.schedule_next_task(task, summary)
+
+        self.assertIsNone(next_path)
+        self.assertEqual(summary["auto_next_block"]["reason"], "debate_next_requires_monitor_decision")
+
     def test_update_active_plan_from_run_records_refs_and_progress(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

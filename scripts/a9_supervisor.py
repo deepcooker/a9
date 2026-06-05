@@ -9204,6 +9204,22 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         return None
     explicit_decision = explicit_task_decision_packet(task)
     if explicit_decision and explicit_decision.get("route") == "debate_next":
+        plan_update = summary.get("active_plan_update", {}) if isinstance(summary.get("active_plan_update"), dict) else {}
+        backlog_update = (
+            plan_update.get("execution_backlog_update", {}) if isinstance(plan_update.get("execution_backlog_update"), dict) else {}
+        )
+        plan_id = str(plan_update.get("plan_id") or parse_key_value_prompt(task.prompt).get("plan_id") or "").strip()
+        if backlog_update.get("status") == "appended" and plan_id:
+            next_path = schedule_execution_backlog_from_plan(plan_id)
+            if next_path is not None:
+                summary["auto_next_backlog"] = {
+                    "status": "scheduled",
+                    "plan_id": plan_id,
+                    "added_count": backlog_update.get("added_count", 0),
+                    "next_task_path": str(next_path),
+                }
+                summary.pop("auto_next_block", None)
+                return next_path
         summary["auto_next_block"] = {
             "reason": "debate_next_requires_monitor_decision",
             "decision_status": explicit_decision.get("decision_status", "missing"),
@@ -10780,6 +10796,53 @@ def mark_execution_backlog_items_queued(plan: dict[str, Any], queued_items: list
         debate_state["generated_execution_next_count"] = len(generated)
 
 
+def enqueue_execution_backlog_items(
+    plan: dict[str, Any],
+    items: list[dict[str, Any]],
+    *,
+    prefix: str = "",
+    timeout_seconds: int = 3600,
+    idle_timeout_seconds: int = 300,
+    auto_next: bool = True,
+) -> list[Path]:
+    created: list[Path] = []
+    queued_items: list[dict[str, Any]] = []
+    for item in items:
+        task_id = str(item["task_id"])
+        if prefix:
+            task_id = f"{prefix}-{task_id}"
+        path = enqueue_task_file(
+            task_id,
+            str(item["prompt"]),
+            phase=str(item["phase"]),
+            checks=[str(check) for check in item.get("checks", [])],
+            timeout_seconds=timeout_seconds,
+            idle_timeout_seconds=idle_timeout_seconds,
+            max_attempts=1,
+            allowed_paths=[str(path) for path in item.get("allowed_paths", [])],
+            auto_next=auto_next,
+        )
+        queued_item = dict(item)
+        queued_item["task_id"] = task_id
+        queued_items.append(queued_item)
+        created.append(path)
+    if any(str(item.get("source") or "") == "plan.execution_backlog.items" for item in queued_items):
+        mark_execution_backlog_items_queued(plan, queued_items, created)
+        write_plan_files(plan)
+    return created
+
+
+def schedule_execution_backlog_from_plan(plan_id: str, *, prefix: str = "auto-backlog") -> Path | None:
+    plan = load_plan(plan_id)
+    if not plan:
+        return None
+    items = plan_execution_backlog_items(plan)
+    if not items:
+        return None
+    created = enqueue_execution_backlog_items(plan, items, prefix=prefix, auto_next=True)
+    return created[0] if created else None
+
+
 def append_execution_backlog_item(
     *,
     plan_id: str,
@@ -10972,31 +11035,16 @@ def plan_backlog_next(args: argparse.Namespace) -> int:
     if not items:
         print("No execution backlog generated.")
         return 1
-    created: list[Path] = []
-    queued_items: list[dict[str, Any]] = []
-    for item in items:
-        task_id = str(item["task_id"])
-        if args.prefix:
-            task_id = f"{args.prefix}-{task_id}"
-        path = enqueue_task_file(
-            task_id,
-            str(item["prompt"]),
-            phase=str(item["phase"]),
-            checks=[str(check) for check in item.get("checks", [])],
-            timeout_seconds=args.timeout_seconds,
-            idle_timeout_seconds=args.idle_timeout_seconds,
-            max_attempts=1,
-            allowed_paths=[str(path) for path in item.get("allowed_paths", [])],
-            auto_next=not args.no_auto_next,
-        )
-        queued_item = dict(item)
-        queued_item["task_id"] = task_id
-        queued_items.append(queued_item)
-        created.append(path)
+    created = enqueue_execution_backlog_items(
+        plan,
+        items,
+        prefix=str(args.prefix or ""),
+        timeout_seconds=args.timeout_seconds,
+        idle_timeout_seconds=args.idle_timeout_seconds,
+        auto_next=not args.no_auto_next,
+    )
+    for path in created:
         print(path)
-    if any(str(item.get("source") or "") == "plan.execution_backlog.items" for item in queued_items):
-        mark_execution_backlog_items_queued(plan, queued_items, created)
-        write_plan_files(plan)
     print(f"requirements_debate_status: {debate.get('status', '')}")
     print(f"execution_backlog_created: {len(created)}")
     print(f"task_auto_next: {str(not args.no_auto_next).lower()}")
