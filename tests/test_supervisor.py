@@ -9654,6 +9654,79 @@ role_signoff: product, business, architecture, test approved.
             mod.RUNNING_DIR = old_running
             mod.DONE_DIR = old_done
 
+    def test_status_prints_latest_real_when_latest_any_is_selftest(self):
+        mod = load_supervisor()
+        old_runs = mod.RUNS_DIR
+        old_queue = mod.QUEUE_DIR
+        old_running = mod.RUNNING_DIR
+        old_done = mod.DONE_DIR
+        old_plans = mod.PLANS_DIR
+        old_active = mod.ACTIVE_PLAN_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                mod.RUNS_DIR = base / "runs"
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNNING_DIR = base / "running"
+                mod.DONE_DIR = base / "done"
+                mod.PLANS_DIR = base / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                mod.ensure_dirs()
+                plan = mod.create_plan_payload(
+                    plan_id="plan-status-latest-plan",
+                    goal_id="goal-status-latest-plan",
+                    contract={"problem": "Status must expose active plan latest run."},
+                )
+                plan_dir = mod.write_plan_files(plan)
+                real_run = mod.RUNS_DIR / "real-run"
+                plan_run = mod.RUNS_DIR / "plan-run"
+                selftest_run = mod.RUNS_DIR / "selftest-auto-next-summary"
+                real_run.mkdir(parents=True)
+                plan_run.mkdir(parents=True)
+                selftest_run.mkdir(parents=True)
+                mod.write_json(
+                    real_run / "summary.json",
+                    {"task_id": "real-task", "status": "needs-followup", "run_dir": str(real_run)},
+                )
+                mod.write_json(
+                    plan_run / "summary.json",
+                    {"task_id": "plan-task", "phase": "mechanism_extract", "status": "needs-followup", "run_dir": str(plan_run)},
+                )
+                mod.write_json(
+                    selftest_run / "summary.json",
+                    {"task_id": "selftest-auto-next-summary", "status": "pass", "run_dir": str(selftest_run)},
+                )
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                stored["run_ids"] = ["plan-run"]
+                stored["evidence_refs"] = [str(plan_run / "summary.json")]
+                (plan_dir / "plan.json").write_text(json.dumps(stored), encoding="utf-8")
+                now = time.time()
+                os.utime(real_run / "summary.json", (now, now))
+                os.utime(plan_run / "summary.json", (now + 1, now + 1))
+                os.utime(selftest_run / "summary.json", (now + 2, now + 2))
+
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    mod.status()
+                output = buffer.getvalue()
+                progress = mod.read_json_file(mod.PROGRESS_PATH)
+            self.assertIn("latest: selftest-auto-next-summary pass", output)
+            self.assertIn(f"latest_real: plan-task needs-followup {plan_run}", output)
+            self.assertIn(f"latest_plan: mechanism_extract needs-followup {plan_run / 'summary.json'}", output)
+            self.assertEqual(progress["latest_task_id"], "selftest-auto-next-summary")
+            self.assertEqual(progress["latest_real_task_id"], "plan-task")
+            self.assertEqual(progress["latest_real_status"], "needs-followup")
+            self.assertEqual(progress["latest_real_run"], str(plan_run))
+            self.assertEqual(progress["latest_plan_summary"], str(plan_run / "summary.json"))
+            self.assertEqual(progress["latest_plan_phase"], "mechanism_extract")
+        finally:
+            mod.RUNS_DIR = old_runs
+            mod.QUEUE_DIR = old_queue
+            mod.RUNNING_DIR = old_running
+            mod.DONE_DIR = old_done
+            mod.PLANS_DIR = old_plans
+            mod.ACTIVE_PLAN_PATH = old_active
+
     def test_status_prints_process_replay_when_current_rules_differ(self):
         mod = load_supervisor()
         mod.ensure_dirs()

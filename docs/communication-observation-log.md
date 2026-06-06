@@ -3475,3 +3475,26 @@ Next monitoring target:
      test evidence can live in `.a9/runs`, but it must not become product
      continuation memory. Durable plan memory should represent real project
      progress, not regression-suite byproducts.
+
+149. Global status now separates latest any, non-selftest, and active-plan runs.
+   - Trigger:
+     after selftest plan-memory writes were blocked, global `status` still
+     printed the newest run as `latest`, which can legitimately be a selftest.
+     Skipping only `selftest-*` exposed another ambiguity: non-selftest test
+     fixtures such as session route tests can still be newer than the real
+     active-plan run.
+   - Change:
+     `status` now keeps the existing `latest:` line for compatibility, adds
+     `latest_real:` for newest non-selftest run, and adds `latest_plan:` from
+     active-plan evidence. `service_progress` also records
+     `latest_real_*` and `latest_plan_*` fields so control surfaces can choose
+     the right lane.
+   - Verification:
+     focused tests create selftest, non-selftest, and active-plan summaries and
+     assert all three lanes are visible. A live status check now shows
+     `latest_plan` pointing to the real Spark mechanism extraction run even when
+     global latest is a selftest and latest_real is a session-route test.
+   - Governance lesson:
+     status must expose lanes, not collapse them into one "latest" concept.
+     Operators need global activity, non-selftest activity, and active-plan
+     progress as separate facts.

@@ -8790,6 +8790,40 @@ def worker_cost_risk(summary: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def is_selftest_summary(summary: dict[str, Any] | None) -> bool:
+    if not summary:
+        return False
+    return is_selftest_run_id(summary.get("task_id")) or is_selftest_run_id(summary.get("run_dir"))
+
+
+def latest_run_summaries() -> dict[str, Any]:
+    latest = sorted(RUNS_DIR.glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
+    invalid_summaries = 0
+    latest_any: dict[str, Any] = {}
+    latest_real: dict[str, Any] = {}
+    latest_selftest: dict[str, Any] = {}
+    for summary_path in reversed(latest):
+        data = read_json_file(summary_path)
+        if not data:
+            invalid_summaries += 1
+            continue
+        if not latest_any:
+            latest_any = data
+        if is_selftest_summary(data):
+            if not latest_selftest:
+                latest_selftest = data
+        elif not latest_real:
+            latest_real = data
+        if latest_any and latest_real and latest_selftest:
+            break
+    return {
+        "latest_any": latest_any,
+        "latest_real": latest_real,
+        "latest_selftest": latest_selftest,
+        "invalid_summaries": invalid_summaries,
+    }
+
+
 def latest_process_quality(summary: dict[str, Any] | None) -> dict[str, Any]:
     if not summary:
         return {}
@@ -10039,6 +10073,9 @@ def schedule_next_session_close_reading_task(task: Task, summary: dict[str, Any]
 def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path | None = None) -> dict[str, Any]:
     ensure_dirs()
     existing_next_task_path = next_task_path if next_task_path and next_task_path.exists() else None
+    latest_collection = latest_run_summaries()
+    latest_real = latest_collection.get("latest_real", {})
+    latest_plan = plan_latest_run_snapshot(active_plan()) if active_plan_id() else {}
     completed_runs = len(list(RUNS_DIR.glob("*/summary.json")))
     done_tasks = len(list(DONE_DIR.glob("*.json")))
     queued_tasks = len(list(QUEUE_DIR.glob("*.md")))
@@ -10137,6 +10174,12 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "latest_task_id": summary.get("task_id") if summary else None,
         "latest_status": summary.get("status") if summary else None,
         "latest_run": summary.get("run_dir") if summary else None,
+        "latest_real_task_id": latest_real.get("task_id") if latest_real else None,
+        "latest_real_status": latest_real.get("status") if latest_real else None,
+        "latest_real_run": latest_real.get("run_dir") if latest_real else None,
+        "latest_plan_summary": latest_plan.get("summary_path") if latest_plan else None,
+        "latest_plan_status": latest_plan.get("status") if latest_plan else None,
+        "latest_plan_phase": latest_plan.get("phase") if latest_plan else None,
         "latest_guards": summary.get("guard_summary", compact_guard_summary(summary)) if summary else {},
         "latest_context_pressure": (
             summary.get("context_pressure", compact_context_pressure(summary)) if summary else {}
@@ -11747,23 +11790,30 @@ def status() -> int:
     if reconciled:
         print(f"interrupted_reconciled: {len(reconciled)}")
     latest_summary: dict[str, Any] | None = None
-    latest = sorted(RUNS_DIR.glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
-    if latest:
-        invalid_summaries = 0
-        data: dict[str, Any] = {}
-        for summary_path in reversed(latest):
-            data = read_json_file(summary_path)
-            if data:
-                break
-            invalid_summaries += 1
-        if not data:
-            print(f"latest: unavailable invalid_summaries={invalid_summaries}")
-            data = {}
-        elif invalid_summaries:
-            print(f"latest skipped invalid summaries: {invalid_summaries}")
-    if latest and data:
+    latest_collection = latest_run_summaries()
+    data = latest_collection.get("latest_any", {})
+    latest_real = latest_collection.get("latest_real", {})
+    invalid_summaries = int(latest_collection.get("invalid_summaries", 0) or 0)
+    if invalid_summaries and not data:
+        print(f"latest: unavailable invalid_summaries={invalid_summaries}")
+    elif invalid_summaries:
+        print(f"latest skipped invalid summaries: {invalid_summaries}")
+    if data:
         latest_summary = data
         print(f"latest: {data['task_id']} {data['status']} {data['run_dir']}")
+        if latest_real and latest_real.get("run_dir") != data.get("run_dir"):
+            print(
+                f"latest_real: {latest_real['task_id']} "
+                f"{latest_real['status']} {latest_real['run_dir']}"
+            )
+        latest_plan = plan_latest_run_snapshot(active_plan()) if active_plan_id() else {}
+        if latest_plan.get("summary_path"):
+            print(
+                "latest_plan: "
+                f"{latest_plan.get('phase', '')} "
+                f"{latest_plan.get('status', '')} "
+                f"{latest_plan.get('summary_path', '')}"
+            )
         guards = data.get("guard_summary") or compact_guard_summary(data)
         if guards:
             patch_status = guards.get("patch_guard", {}).get("status", "missing")
