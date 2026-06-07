@@ -1035,6 +1035,42 @@ def latest_plan_run_summary(root: Path = ROOT) -> dict[str, Any]:
     return {}
 
 
+def tail_plan_progress_line(
+    plan: dict[str, Any],
+    *,
+    root: Path = ROOT,
+    actor: str | None = None,
+    max_chars: int = 260,
+) -> str:
+    plan_id = str(plan.get("plan_id") or "").strip() if plan else ""
+    if not plan_id:
+        return ""
+    path = root / ".a9" / "plans" / plan_id / "progress.md"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for raw in reversed(lines):
+        text = str(raw or "").strip()
+        if not text or text.startswith("#"):
+            continue
+        if actor and f"actor={actor}" not in text:
+            continue
+        return text[:max_chars]
+    return ""
+
+
+def latest_plan_progress_lane(root: Path = ROOT) -> dict[str, Any]:
+    plan = active_plan_payload(root)
+    latest_progress = tail_plan_progress_line(plan, root=root)
+    latest_monitor_progress = tail_plan_progress_line(plan, root=root, actor="monitor")
+    return {
+        "latest_progress": latest_progress,
+        "latest_monitor_progress": latest_monitor_progress,
+        "has_monitor_progress": bool(latest_monitor_progress),
+    }
+
+
 def latest_run_lanes(root: Path = ROOT) -> dict[str, Any]:
     summaries = sorted((root / ".a9" / "runs").glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
     latest_any: dict[str, Any] = {}
@@ -1060,6 +1096,7 @@ def latest_run_lanes(root: Path = ROOT) -> dict[str, Any]:
         "latest_real": compact_summary(latest_real),
         "latest_selftest": compact_summary(latest_selftest),
         "latest_plan": compact_summary(latest_plan_run_summary(root)),
+        "latest_plan_progress": latest_plan_progress_lane(root),
         "invalid_summaries": invalid_summaries,
     }
 

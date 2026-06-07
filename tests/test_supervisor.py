@@ -9700,6 +9700,12 @@ role_signoff: product, business, architecture, test approved.
                 stored["run_ids"] = ["plan-run"]
                 stored["evidence_refs"] = [str(plan_run / "summary.json")]
                 (plan_dir / "plan.json").write_text(json.dumps(stored), encoding="utf-8")
+                (plan_dir / "progress.md").write_text(
+                    "# Progress\n\n"
+                    "- 2026-06-07 actor=worker note=plan execution continuing\n"
+                    "- 2026-06-07 actor=monitor note=monitor intervention completed intervention_id=resume-001\n",
+                    encoding="utf-8",
+                )
                 now = time.time()
                 os.utime(real_run / "summary.json", (now, now))
                 os.utime(plan_run / "summary.json", (now + 1, now + 1))
@@ -9713,12 +9719,29 @@ role_signoff: product, business, architecture, test approved.
             self.assertIn("latest: selftest-auto-next-summary pass", output)
             self.assertIn(f"latest_real: plan-task needs-followup {plan_run}", output)
             self.assertIn(f"latest_plan: mechanism_extract needs-followup {plan_run / 'summary.json'}", output)
+            self.assertIn(
+                "latest_plan_progress: - 2026-06-07 actor=monitor note=monitor intervention completed intervention_id=resume-001",
+                output,
+            )
+            self.assertIn(
+                "latest_plan_progress_monitor: - 2026-06-07 actor=monitor note=monitor intervention completed intervention_id=resume-001",
+                output,
+            )
             self.assertEqual(progress["latest_task_id"], "selftest-auto-next-summary")
             self.assertEqual(progress["latest_real_task_id"], "plan-task")
             self.assertEqual(progress["latest_real_status"], "needs-followup")
             self.assertEqual(progress["latest_real_run"], str(plan_run))
             self.assertEqual(progress["latest_plan_summary"], str(plan_run / "summary.json"))
             self.assertEqual(progress["latest_plan_phase"], "mechanism_extract")
+            self.assertEqual(
+                progress["latest_plan_progress"]["latest_progress"],
+                "- 2026-06-07 actor=monitor note=monitor intervention completed intervention_id=resume-001",
+            )
+            self.assertEqual(
+                progress["latest_plan_progress"]["latest_monitor_progress"],
+                "- 2026-06-07 actor=monitor note=monitor intervention completed intervention_id=resume-001",
+            )
+            self.assertTrue(progress["latest_plan_progress"]["has_monitor_progress"])
         finally:
             mod.RUNS_DIR = old_runs
             mod.QUEUE_DIR = old_queue

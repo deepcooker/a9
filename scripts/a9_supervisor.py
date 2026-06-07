@@ -8096,6 +8096,40 @@ def tail_change_request_line(path: Path, *, max_chars: int = 260) -> str:
     return tail_recovery_line(path, max_chars=max_chars)
 
 
+def tail_progress_lane_line(
+    plan: dict[str, Any],
+    *,
+    actor: str | None = None,
+    max_chars: int = 260,
+) -> str:
+    plan_id = str(plan.get("plan_id") or "").strip() if plan else ""
+    if not plan_id:
+        return ""
+    path = plan_path(plan_id) / "progress.md"
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for raw in reversed(lines):
+        text = str(raw or "").strip()
+        if not text or text.startswith("#"):
+            continue
+        if actor and f"actor={actor}" not in text:
+            continue
+        return bounded_inline(text, max_chars)
+    return ""
+
+
+def plan_progress_snapshot(plan: dict[str, Any], *, max_chars: int = 260) -> dict[str, Any]:
+    latest_progress = tail_progress_lane_line(plan, max_chars=max_chars)
+    latest_monitor_progress = tail_progress_lane_line(plan, actor="monitor", max_chars=max_chars)
+    return {
+        "latest_progress": latest_progress,
+        "latest_monitor_progress": latest_monitor_progress,
+        "has_monitor_progress": bool(latest_monitor_progress),
+    }
+
+
 def is_selftest_run_id(value: Any) -> bool:
     return Path(str(value or "").strip()).name.startswith("selftest-")
 
@@ -10075,7 +10109,13 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
     existing_next_task_path = next_task_path if next_task_path and next_task_path.exists() else None
     latest_collection = latest_run_summaries()
     latest_real = latest_collection.get("latest_real", {})
-    latest_plan = plan_latest_run_snapshot(active_plan()) if active_plan_id() else {}
+    current_plan = active_plan() if active_plan_id() else {}
+    latest_plan = plan_latest_run_snapshot(current_plan) if current_plan else {}
+    latest_plan_progress = (
+        plan_progress_snapshot(current_plan)
+        if current_plan
+        else {"latest_progress": "", "latest_monitor_progress": "", "has_monitor_progress": False}
+    )
     completed_runs = len(list(RUNS_DIR.glob("*/summary.json")))
     done_tasks = len(list(DONE_DIR.glob("*.json")))
     queued_tasks = len(list(QUEUE_DIR.glob("*.md")))
@@ -10180,6 +10220,7 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "latest_plan_summary": latest_plan.get("summary_path") if latest_plan else None,
         "latest_plan_status": latest_plan.get("status") if latest_plan else None,
         "latest_plan_phase": latest_plan.get("phase") if latest_plan else None,
+        "latest_plan_progress": latest_plan_progress,
         "latest_guards": summary.get("guard_summary", compact_guard_summary(summary)) if summary else {},
         "latest_context_pressure": (
             summary.get("context_pressure", compact_context_pressure(summary)) if summary else {}
@@ -10234,6 +10275,12 @@ def print_service_progress(progress: dict[str, Any]) -> None:
     if groups:
         rendered = " ".join(f"{name}={item.get('percent', 0)}%" for name, item in sorted(groups.items()))
         print(f"capability groups: {rendered}")
+    latest_plan_progress = progress.get("latest_plan_progress", {})
+    if isinstance(latest_plan_progress, dict):
+        if latest_plan_progress.get("latest_progress"):
+            print(f"latest_plan_progress: {latest_plan_progress.get('latest_progress')}")
+        if latest_plan_progress.get("latest_monitor_progress"):
+            print(f"latest_plan_progress_monitor: {latest_plan_progress.get('latest_monitor_progress')}")
 
 
 def write_session_refresh_context(task: Task, run_dir: Path, summary: dict[str, Any]) -> Path:
@@ -11806,7 +11853,8 @@ def status() -> int:
                 f"latest_real: {latest_real['task_id']} "
                 f"{latest_real['status']} {latest_real['run_dir']}"
             )
-        latest_plan = plan_latest_run_snapshot(active_plan()) if active_plan_id() else {}
+        current_plan = active_plan() if active_plan_id() else {}
+        latest_plan = plan_latest_run_snapshot(current_plan) if current_plan else {}
         if latest_plan.get("summary_path"):
             print(
                 "latest_plan: "
@@ -11814,6 +11862,11 @@ def status() -> int:
                 f"{latest_plan.get('status', '')} "
                 f"{latest_plan.get('summary_path', '')}"
             )
+        latest_plan_progress = plan_progress_snapshot(current_plan) if current_plan else {}
+        if latest_plan_progress.get("latest_progress"):
+            print(f"latest_plan_progress: {latest_plan_progress.get('latest_progress')}")
+        if latest_plan_progress.get("latest_monitor_progress"):
+            print(f"latest_plan_progress_monitor: {latest_plan_progress.get('latest_monitor_progress')}")
         guards = data.get("guard_summary") or compact_guard_summary(data)
         if guards:
             patch_status = guards.get("patch_guard", {}).get("status", "missing")

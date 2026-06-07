@@ -3559,3 +3559,24 @@ Next monitoring target:
    - Governance lesson:
      tests for 24h execution must assert the runtime contract, not the
      monitor's current checkout path.
+
+153. Active-plan monitor progress is now a separate status lane.
+   - Trigger:
+     after monitor intervention completed backlog items, `latest_plan` still
+     pointed at the historical worker run summary and could show
+     `monitor-blocked` or `needs-repair`. Phone/control needed a separate lane
+     for the plan's latest progress note so operators do not confuse old run
+     status with current monitor closure.
+   - Change:
+     supervisor `service_progress` and CLI status now expose
+     `latest_plan_progress` plus `latest_plan_progress_monitor`. Control API
+     `latest_run_lanes` exposes the same compact progress lane for mobile.
+     The existing `latest_plan` run summary remains unchanged for
+     compatibility.
+   - Verification:
+     focused supervisor and control API tests build temporary active plans with
+     `actor=monitor` progress and assert both status surfaces expose the lane.
+   - Governance lesson:
+     run summaries and monitor interventions are different evidence streams.
+     The UI/control plane must show both instead of overwriting one with the
+     other.

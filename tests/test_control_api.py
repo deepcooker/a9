@@ -352,6 +352,12 @@ demo
                 ),
                 encoding="utf-8",
             )
+            (plan_dir / "progress.md").write_text(
+                "# Progress\n\n"
+                "- 2026-06-07 actor=worker note=plan execution continuing\n"
+                "- 2026-06-07 actor=monitor note=monitor intervention completed intervention_id=resume-001\n",
+                encoding="utf-8",
+            )
             os.utime(real_run / "summary.json", (1000, 1000))
             os.utime(plan_run / "summary.json", (1001, 1001))
             os.utime(selftest_run / "summary.json", (1002, 1002))
@@ -366,6 +372,15 @@ demo
         self.assertEqual(lanes["latest_plan"]["task_id"], "plan-task")
         self.assertEqual(lanes["latest_plan"]["phase"], "mechanism_extract")
         self.assertEqual(lanes["latest_plan"]["summary_path"], str(plan_run / "summary.json"))
+        self.assertEqual(
+            lanes["latest_plan_progress"]["latest_progress"],
+            "- 2026-06-07 actor=monitor note=monitor intervention completed intervention_id=resume-001",
+        )
+        self.assertEqual(
+            lanes["latest_plan_progress"]["latest_monitor_progress"],
+            "- 2026-06-07 actor=monitor note=monitor intervention completed intervention_id=resume-001",
+        )
+        self.assertTrue(lanes["latest_plan_progress"]["has_monitor_progress"])
 
     def test_gateway_transport_contract_runs_local_binary(self):
         mod = load_control_api()
