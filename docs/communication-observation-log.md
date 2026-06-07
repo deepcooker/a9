@@ -3541,3 +3541,21 @@ Next monitoring target:
    - Governance lesson:
      24h recovery should be an explicit operator-visible action with evidence,
      not an invisible retry loop.
+
+152. Control API worker transport preset tests are worktree-safe.
+   - Trigger:
+     24h worker runs inside `.a9/worktrees/<task>` and loaded
+     `a9_control_api` from that isolated root, but two worker transport tests
+     asserted the literal `/root/a9/scripts/a9_openai_compatible_worker.py`
+     path. The false failure blocked a valid runtime control slice.
+   - Change:
+     `tests/test_control_api.py` now compares `openai_compatible` command
+     templates with `mod.ROOT / "scripts" / "a9_openai_compatible_worker.py"`
+     in both preset discovery and policy preset application tests. Product
+     behavior is unchanged.
+   - Verification:
+     focused worker transport preset checks and the full control API suite
+     should pass from both the main checkout and supervisor worktrees.
+   - Governance lesson:
+     tests for 24h execution must assert the runtime contract, not the
+     monitor's current checkout path.

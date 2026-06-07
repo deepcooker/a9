@@ -3078,11 +3078,12 @@ Do risky work.
         mod = load_control_api()
         payload = mod.worker_transport_presets()
         presets = {item["name"]: item for item in payload["presets"]}
+        openai_worker_path = str(mod.ROOT / "scripts" / "a9_openai_compatible_worker.py")
 
         self.assertEqual(payload["schema"], "a9.worker_transport_presets.v1")
         self.assertEqual(presets["codex_exec"]["backend"], "codex_exec")
         self.assertEqual(presets["openai_compatible"]["backend"], "custom_command")
-        self.assertIn("/root/a9/scripts/a9_openai_compatible_worker.py", presets["openai_compatible"]["custom_command_template"])
+        self.assertIn(openai_worker_path, presets["openai_compatible"]["custom_command_template"])
         self.assertIn("{prompt_file}", presets["openai_compatible"]["custom_command_template"])
         self.assertIn("{final_path}", presets["openai_compatible"]["custom_command_template"])
         self.assertIn("A9_LLM_WORKER_MODEL", presets["openai_compatible"]["requires"])
@@ -3224,7 +3225,7 @@ Do risky work.
         self.assertEqual(applied["status"], "applied")
         self.assertEqual(applied["preset"], "openai_compatible")
         self.assertEqual(applied["after"]["backend"], "custom_command")
-        self.assertIn("/root/a9/scripts/a9_openai_compatible_worker.py", applied["after"]["custom_command_template"])
+        self.assertIn(str(mod.ROOT / "scripts" / "a9_openai_compatible_worker.py"), applied["after"]["custom_command_template"])
 
     def test_update_worker_transport_policy_materializes_openai_config_in_command(self):
         mod = load_control_api()
