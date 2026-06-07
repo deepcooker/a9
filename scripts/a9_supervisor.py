@@ -2950,6 +2950,17 @@ def normalize_worker_patch_path(raw_path: str, root: Path | None, source_root: P
     path = raw_path.strip()
     if not path:
         return ""
+    normalized_text = path.replace("\\", "/")
+    marker = "/.a9/worktrees/"
+    if marker in normalized_text:
+        after = normalized_text.split(marker, 1)[1]
+        parts = after.split("/", 1)
+        if len(parts) == 2 and parts[1]:
+            return parts[1]
+    if normalized_text.startswith(".a9/worktrees/"):
+        parts = normalized_text.split("/", 3)
+        if len(parts) == 4 and parts[3]:
+            return parts[3]
     if source_root is not None:
         candidate = Path(path)
         if candidate.is_absolute():
@@ -3938,6 +3949,42 @@ def unittest_targets(command: str) -> list[str]:
             cleaned = cleaned[:-3].replace("/", ".").replace("\\", ".")
         targets.append(cleaned)
     return targets
+
+
+def unittest_target_exists(target: str) -> bool:
+    text = str(target or "").strip()
+    if not text:
+        return True
+    if text.endswith(".py"):
+        text = text[:-3].replace("/", ".").replace("\\", ".")
+    parts = [part for part in text.split(".") if part]
+    for index in range(len(parts), 0, -1):
+        module_name = ".".join(parts[:index])
+        try:
+            spec = importlib.util.find_spec(module_name)
+        except (ImportError, AttributeError, ValueError):
+            spec = None
+        if spec is None:
+            continue
+        try:
+            module = __import__(module_name, fromlist=["*"])
+        except Exception:
+            return True
+        obj: Any = module
+        for attr in parts[index:]:
+            if not hasattr(obj, attr):
+                return False
+            obj = getattr(obj, attr)
+        return True
+    return False
+
+
+def unresolved_unittest_targets(command: str) -> list[str]:
+    unresolved: list[str] = []
+    for target in unittest_targets(command):
+        if not unittest_target_exists(target):
+            unresolved.append(target)
+    return unresolved
 
 
 def command_equivalence_variants(command: str) -> set[str]:
@@ -9453,6 +9500,10 @@ def task_quality_warnings_for_enqueue(
         if shell_test_re.search(text) and "$(" not in text and "`" not in text:
             if "declared_check_maybe_shell_expanded:test_literal" not in warnings:
                 warnings.append("declared_check_maybe_shell_expanded:test_literal")
+        for target in unresolved_unittest_targets(text):
+            warning = f"declared_check_unresolved_unittest_target:{target}"
+            if warning not in warnings:
+                warnings.append(warning)
     return warnings
 
 

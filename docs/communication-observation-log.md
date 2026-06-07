@@ -3580,3 +3580,22 @@ Next monitoring target:
      run summaries and monitor interventions are different evidence streams.
      The UI/control plane must show both instead of overwriting one with the
      other.
+
+154. Task-card quality now observes unresolved unittest targets and worktree-local patch paths.
+   - Trigger:
+     a 24h worker produced the right mechanism but failed deterministic apply
+     because SEARCH/REPLACE paths included `.a9/worktrees/<task>/...`, and the
+     task card declared a unittest target that did not exist. This wasted a
+     worker round even though the business slice was clear.
+   - Change:
+     enqueue-time task quality warnings now include
+     `declared_check_unresolved_unittest_target:<target>` for unresolved
+     `python3 -m unittest` targets. SEARCH/REPLACE path normalization strips
+     supervisor worktree prefixes back to repository-relative paths.
+   - Verification:
+     focused supervisor tests cover unresolved target warnings, valid test
+     checks staying clean, and worktree-local path normalization.
+   - Governance lesson:
+     early task-card quality should be visible and observational. It should
+     reduce bad worker inputs without becoming another hard gate before the
+     workflow is stable.

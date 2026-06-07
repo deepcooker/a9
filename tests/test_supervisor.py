@@ -9958,6 +9958,31 @@ role_signoff: product, business, architecture, test approved.
         self.assertIn("write_scope_runtime_ignored_path:.a9", parsed.task_quality_warnings)
         self.assertIn("declared_check_maybe_shell_expanded:test_literal", parsed.task_quality_warnings)
 
+    def test_enqueue_task_file_warns_for_unresolved_unittest_target(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                queued = mod.enqueue_task_file(
+                    "quality-warning-unresolved-test",
+                    "Do implementation work.",
+                    phase="implement",
+                    checks=[
+                        "python3 -m unittest "
+                        "tests.test_control_api.ControlApiTests.test_supervisor_status_exposes_latest_run_lanes"
+                    ],
+                )
+                parsed = mod.parse_task(queued)
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertIn(
+            "declared_check_unresolved_unittest_target:"
+            "tests.test_control_api.ControlApiTests.test_supervisor_status_exposes_latest_run_lanes",
+            parsed.task_quality_warnings,
+        )
+
     def test_enqueue_task_file_does_not_warn_for_tracked_path_and_quoted_shell_substitution_check(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -10023,6 +10048,27 @@ role_signoff: product, business, architecture, test approved.
                 mod.QUEUE_DIR = old_queue
 
         self.assertIn("workspace_root_not_git_repo", parsed.task_quality_warnings)
+
+    def test_normalize_worker_patch_path_strips_supervisor_worktree_prefix(self):
+        mod = load_supervisor()
+        root = Path("/root/a9/.a9/worktrees/task-attempt-1")
+
+        self.assertEqual(
+            mod.normalize_worker_patch_path(
+                "/root/a9/.a9/worktrees/task-attempt-1/scripts/a9_supervisor.py",
+                root,
+                Path("/root/a9"),
+            ),
+            "scripts/a9_supervisor.py",
+        )
+        self.assertEqual(
+            mod.normalize_worker_patch_path(
+                ".a9/worktrees/task-attempt-1/tests/test_supervisor.py",
+                root,
+                Path("/root/a9"),
+            ),
+            "tests/test_supervisor.py",
+        )
 
     def test_queued_task_quality_summary_exposes_warning_counts_for_monitoring(self):
         mod = load_supervisor()
