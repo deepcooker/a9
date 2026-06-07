@@ -3815,3 +3815,19 @@ Next monitoring target:
      until the business/data/architecture shape is settled, quality rules should
      observe and teach. Hard gates are reserved for corruption, authority
      mutation, security/license boundaries, and declared check truth.
+
+168. Auto-loop failure guard should observe by default, not stop 24h.
+   - Trigger:
+     real unattended runs produced useful `needs-repair` evidence, but the
+     consecutive failure guard could stop scheduling after two failures. That
+     turned repair evidence into daemon shutdown.
+   - Change:
+     `auto_loop_guard` now records consecutive failures in `observe` mode by
+     default. It blocks only when `A9_AUTO_LOOP_GUARD_MODE=enforce` is set
+     explicitly.
+   - Verification:
+     focused coverage proves tripped observe-mode guards do not block
+     `schedule_next_task`, while explicit enforce mode still can stop the loop.
+   - Governance lesson:
+     unattended execution needs repair pressure, not silent shutdown. Stop
+     switches must be deliberate operator policy, not the default behavior.

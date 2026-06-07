@@ -12653,13 +12653,15 @@ role_signoff: product, business, architecture, test approved.
             finally:
                 mod.QUEUE_DIR = old_queue
 
-    def test_auto_loop_guard_trips_after_consecutive_failures_and_resets_on_pass(self):
+    def test_auto_loop_guard_observes_by_default_and_resets_on_pass(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             old_path = mod.AUTO_LOOP_GUARD_PATH
             old_limit = os.environ.get("A9_AUTO_LOOP_FAILURE_LIMIT")
+            old_mode = os.environ.get("A9_AUTO_LOOP_GUARD_MODE")
             mod.AUTO_LOOP_GUARD_PATH = Path(tmp) / "auto_loop_guard.json"
             os.environ["A9_AUTO_LOOP_FAILURE_LIMIT"] = "2"
+            os.environ.pop("A9_AUTO_LOOP_GUARD_MODE", None)
             try:
                 first = mod.update_auto_loop_guard(
                     {
@@ -12670,6 +12672,7 @@ role_signoff: product, business, architecture, test approved.
                     }
                 )
                 self.assertEqual(first["status"], "watching")
+                self.assertEqual(first["mode"], "observe")
                 self.assertFalse(mod.auto_loop_guard_blocks_next({"auto_loop_guard": first}))
 
                 second = mod.update_auto_loop_guard(
@@ -12680,7 +12683,8 @@ role_signoff: product, business, architecture, test approved.
                     }
                 )
                 self.assertEqual(second["status"], "tripped")
-                self.assertTrue(mod.auto_loop_guard_blocks_next({"auto_loop_guard": second}))
+                self.assertEqual(second["mode"], "observe")
+                self.assertFalse(mod.auto_loop_guard_blocks_next({"auto_loop_guard": second}))
 
                 reset = mod.update_auto_loop_guard(
                     {
@@ -12697,29 +12701,75 @@ role_signoff: product, business, architecture, test approved.
                     os.environ.pop("A9_AUTO_LOOP_FAILURE_LIMIT", None)
                 else:
                     os.environ["A9_AUTO_LOOP_FAILURE_LIMIT"] = old_limit
+                if old_mode is None:
+                    os.environ.pop("A9_AUTO_LOOP_GUARD_MODE", None)
+                else:
+                    os.environ["A9_AUTO_LOOP_GUARD_MODE"] = old_mode
 
-    def test_schedule_next_task_blocks_when_auto_loop_guard_tripped(self):
+    def test_auto_loop_guard_can_enforce_when_explicitly_requested(self):
         mod = load_supervisor()
-        task = mod.Task(
-            path=mod.DONE_DIR / "auto-source.md",
-            task_id="auto-source",
-            prompt="copy the next mature mechanism",
-            phase="reference_scan",
-        )
-        summary = {
-            "task_id": task.task_id,
-            "status": "needs-repair",
-            "run_dir": str(mod.RUNS_DIR / "auto-source-run"),
-            "context_path": str(mod.RUNS_DIR / "auto-source-run" / "context.md"),
-            "auto_loop_guard": {
-                "status": "tripped",
-                "consecutive_failures": 2,
-                "failure_limit": 2,
-                "latest_failure": "needs-repair",
-            },
-        }
+        with tempfile.TemporaryDirectory() as tmp:
+            old_path = mod.AUTO_LOOP_GUARD_PATH
+            old_limit = os.environ.get("A9_AUTO_LOOP_FAILURE_LIMIT")
+            old_mode = os.environ.get("A9_AUTO_LOOP_GUARD_MODE")
+            mod.AUTO_LOOP_GUARD_PATH = Path(tmp) / "auto_loop_guard.json"
+            os.environ["A9_AUTO_LOOP_FAILURE_LIMIT"] = "1"
+            os.environ["A9_AUTO_LOOP_GUARD_MODE"] = "enforce"
+            try:
+                state = mod.update_auto_loop_guard(
+                    {
+                        "task_id": "task-1",
+                        "run_dir": "/tmp/run-1",
+                        "status": "needs-repair",
+                    }
+                )
+                self.assertEqual(state["status"], "tripped")
+                self.assertEqual(state["mode"], "enforce")
+                self.assertTrue(mod.auto_loop_guard_blocks_next({"auto_loop_guard": state}))
+            finally:
+                mod.AUTO_LOOP_GUARD_PATH = old_path
+                if old_limit is None:
+                    os.environ.pop("A9_AUTO_LOOP_FAILURE_LIMIT", None)
+                else:
+                    os.environ["A9_AUTO_LOOP_FAILURE_LIMIT"] = old_limit
+                if old_mode is None:
+                    os.environ.pop("A9_AUTO_LOOP_GUARD_MODE", None)
+                else:
+                    os.environ["A9_AUTO_LOOP_GUARD_MODE"] = old_mode
 
-        self.assertIsNone(mod.schedule_next_task(task, summary))
+    def test_schedule_next_task_observes_auto_loop_guard_by_default(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            mod.QUEUE_DIR = Path(tmp) / "queue"
+            mod.QUEUE_DIR.mkdir(parents=True)
+            try:
+                task = mod.Task(
+                    path=mod.DONE_DIR / "auto-source.md",
+                    task_id="auto-source",
+                    prompt="copy the next mature mechanism",
+                    phase="reference_scan",
+                )
+                summary = {
+                    "task_id": task.task_id,
+                    "status": "needs-repair",
+                    "run_dir": str(mod.RUNS_DIR / "auto-source-run"),
+                    "context_path": str(mod.RUNS_DIR / "auto-source-run" / "context.md"),
+                    "auto_loop_guard": {
+                        "status": "tripped",
+                        "mode": "observe",
+                        "consecutive_failures": 2,
+                        "failure_limit": 2,
+                        "latest_failure": "needs-repair",
+                    },
+                }
+
+                next_path = mod.schedule_next_task(task, summary)
+                self.assertIsNotNone(next_path)
+                assert next_path is not None
+                next_path.unlink(missing_ok=True)
+            finally:
+                mod.QUEUE_DIR = old_queue
 
     def test_schedule_next_task_applies_model_fallback_for_default_transport_failure(self):
         mod = load_supervisor()

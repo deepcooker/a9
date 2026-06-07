@@ -9507,6 +9507,13 @@ def auto_loop_failure_limit() -> int:
         return DEFAULT_AUTO_LOOP_FAILURE_LIMIT
 
 
+def auto_loop_guard_mode() -> str:
+    value = (os.getenv("A9_AUTO_LOOP_GUARD_MODE") or "observe").strip().lower()
+    if value in {"enforce", "hard", "stop"}:
+        return "enforce"
+    return "observe"
+
+
 def auto_loop_failure_kind(summary: dict[str, Any]) -> str:
     status = str(summary.get("status") or "")
     worker_failure = summary.get("worker_failure", {})
@@ -9575,10 +9582,12 @@ def update_auto_loop_guard(summary: dict[str, Any]) -> dict[str, Any]:
     kind = auto_loop_failure_kind(summary)
     previous = read_json_file(AUTO_LOOP_GUARD_PATH)
     limit = auto_loop_failure_limit()
+    mode = auto_loop_guard_mode()
     if kind:
         consecutive = int(previous.get("consecutive_failures") or 0) + 1
         state = {
             "status": "tripped" if consecutive >= limit else "watching",
+            "mode": mode,
             "consecutive_failures": consecutive,
             "failure_limit": limit,
             "latest_failure": kind,
@@ -9589,6 +9598,7 @@ def update_auto_loop_guard(summary: dict[str, Any]) -> dict[str, Any]:
     else:
         state = {
             "status": "ok",
+            "mode": mode,
             "consecutive_failures": 0,
             "failure_limit": limit,
             "latest_failure": "",
@@ -9603,11 +9613,15 @@ def update_auto_loop_guard(summary: dict[str, Any]) -> dict[str, Any]:
 def auto_loop_guard_blocks_next(summary: dict[str, Any] | None = None) -> bool:
     if summary is not None:
         state = summary.get("auto_loop_guard", {})
-        return isinstance(state, dict) and state.get("status") == "tripped"
+        if not isinstance(state, dict):
+            return False
+        mode = str(state.get("mode") or auto_loop_guard_mode()).strip().lower()
+        return mode == "enforce" and state.get("status") == "tripped"
     state = {}
     if not state:
         state = read_json_file(AUTO_LOOP_GUARD_PATH)
-    return state.get("status") == "tripped"
+    mode = str(state.get("mode") or auto_loop_guard_mode()).strip().lower()
+    return mode == "enforce" and state.get("status") == "tripped"
 
 
 def task_quality_warnings_for_enqueue(
