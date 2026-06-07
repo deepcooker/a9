@@ -3471,6 +3471,46 @@ Do the work.
         self.assertIn("not_doing_now: ", text)
         self.assertIn("why_next_action", text)
 
+    def test_plan_status_prints_open_change_request_lane(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-status-open-cr",
+                    goal_id="goal-status-open-cr",
+                    contract={"problem": "Show open change_request lane clearly."},
+                )
+                plan_dir = mod.write_plan_files(plan)
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n"
+                    "## cr-1\n\n"
+                    "- status: satisfied\n"
+                    "- proposal: historical satisfied request\n"
+                    "- evidence_refs: /tmp/run/summary.json\n",
+                    encoding="utf-8",
+                )
+
+                args = type("Args", (), {"plan_id": "plan-status-open-cr"})()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_status(args)
+                text = buffer.getvalue()
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(code, 0)
+        self.assertIn("open_change_request: none", text)
+        self.assertIn("last_change_request: - proposal: historical satisfied request", text)
+
     def test_plan_status_latest_refs_skip_selftest_runs(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -3651,3 +3651,21 @@ Next monitoring target:
    - Governance lesson:
      observation should catch bad prompts without freezing normal TDD flow. New
      tests can be declared before they exist when the task owns that test file.
+
+158. Worker can be directionally right and still require monitor compression.
+   - Trigger:
+     `implement-plan-status-open-change-request-lane-20260608` produced a
+     useful small patch for the open change_request status lane, but was
+     monitor-blocked for direct file changes, self-running a declared check, and
+     missing the final envelope after command-bound stop.
+   - Change:
+     monitor applied the bounded patch manually: keep historical
+     `last_change_request` output and add `open_change_request: none` when no
+     proposed request is active.
+   - Verification:
+     focused supervisor coverage asserts a satisfied historical
+     change_request no longer looks like active work.
+   - Governance lesson:
+     monitor should salvage correct worker intent when scope and patch are
+     small, while still recording the process failure for future prompt/worker
+     repair.
