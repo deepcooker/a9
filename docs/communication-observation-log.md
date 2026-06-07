@@ -3498,3 +3498,26 @@ Next monitoring target:
      status must expose lanes, not collapse them into one "latest" concept.
      Operators need global activity, non-selftest activity, and active-plan
      progress as separate facts.
+
+150. Control API now exposes the same latest-run lanes for mobile monitoring.
+   - Trigger:
+     supervisor status could distinguish global latest, non-selftest latest,
+     and active-plan latest, but `/api/status` and `/api/monitor/status` still
+     projected a single `latest_run`. Mobile control could therefore read a
+     selftest or unrelated route test as the mainline state.
+   - Change:
+     `a9_control_api` now keeps the compatibility `latest_run` field and adds
+     `latest_run_lanes` with `latest_any`, `latest_real`, `latest_selftest`,
+     and `latest_plan`. The active-plan lane is resolved from
+     `.a9/plans/.active_plan`, plan evidence refs, or plan run ids under the
+     caller's root, so multi-node control does not depend on supervisor globals.
+   - Verification:
+     regression coverage builds a temporary `.a9` state with a newer selftest
+     summary and an active-plan summary. The test proves the compatibility
+     field still reports the global latest while `latest_plan` points to the
+     active-plan mechanism extraction run. Existing monitor payload coverage
+     also verifies the lane is present for `/api/monitor/status`.
+   - Governance lesson:
+     phone and monitor surfaces should not infer intent from one timestamp.
+     They need explicit lanes so operators can separate background health
+     checks from the 24h mainline.

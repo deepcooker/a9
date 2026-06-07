@@ -306,6 +306,67 @@ demo
         self.assertEqual(control_api["observation_status"], "running")
         self.assertEqual(control_api["next_action"], "observe")
 
+    def test_supervisor_status_exposes_latest_run_lanes_for_mobile_monitor(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_dir = root / ".a9"
+            for name in ["queue", "running", "done"]:
+                (state_dir / "tasks" / name).mkdir(parents=True)
+            runs_dir = state_dir / "runs"
+            real_run = runs_dir / "real-run"
+            plan_run = runs_dir / "plan-run"
+            selftest_run = runs_dir / "selftest-status"
+            for path in [real_run, plan_run, selftest_run]:
+                path.mkdir(parents=True)
+            (real_run / "summary.json").write_text(
+                json.dumps({"task_id": "real-task", "status": "pass", "run_dir": str(real_run)}),
+                encoding="utf-8",
+            )
+            (plan_run / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "plan-task",
+                        "status": "needs-followup",
+                        "phase": "mechanism_extract",
+                        "run_dir": str(plan_run),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (selftest_run / "summary.json").write_text(
+                json.dumps({"task_id": "selftest-status", "status": "pass", "run_dir": str(selftest_run)}),
+                encoding="utf-8",
+            )
+            plan_dir = state_dir / "plans" / "active-plan"
+            plan_dir.mkdir(parents=True)
+            (state_dir / "plans" / ".active_plan").write_text("active-plan\n", encoding="utf-8")
+            (plan_dir / "plan.json").write_text(
+                json.dumps(
+                    {
+                        "schema": "a9.plan.v1",
+                        "plan_id": "active-plan",
+                        "run_ids": ["plan-run"],
+                        "evidence_refs": [str(plan_run / "summary.json")],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            os.utime(real_run / "summary.json", (1000, 1000))
+            os.utime(plan_run / "summary.json", (1001, 1001))
+            os.utime(selftest_run / "summary.json", (1002, 1002))
+
+            status = mod.supervisor_status(root)
+
+        self.assertEqual(status["latest_run"]["task_id"], "selftest-status")
+        lanes = status["latest_run_lanes"]
+        self.assertEqual(lanes["latest_any"]["task_id"], "selftest-status")
+        self.assertEqual(lanes["latest_selftest"]["task_id"], "selftest-status")
+        self.assertEqual(lanes["latest_real"]["task_id"], "plan-task")
+        self.assertEqual(lanes["latest_plan"]["task_id"], "plan-task")
+        self.assertEqual(lanes["latest_plan"]["phase"], "mechanism_extract")
+        self.assertEqual(lanes["latest_plan"]["summary_path"], str(plan_run / "summary.json"))
+
     def test_gateway_transport_contract_runs_local_binary(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2840,6 +2901,7 @@ Do risky work.
 
         self.assertEqual(payload["schema"], "a9.monitor_status.v1")
         self.assertEqual(payload["latest_run"]["task_id"], "task-1")
+        self.assertEqual(payload["latest_run_lanes"]["latest_any"]["task_id"], "task-1")
         self.assertEqual(payload["queue"]["task_quality"]["status"], "warning")
         self.assertEqual(payload["queue"]["task_quality"]["warning_task_count"], 1)
         self.assertEqual(payload["latest_run"]["run_id"], "run-1")

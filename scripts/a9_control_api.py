@@ -959,7 +959,108 @@ def latest_run_summary(root: Path = ROOT) -> dict[str, Any] | None:
     summaries = sorted((root / ".a9" / "runs").glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
     if not summaries:
         return None
-    return read_json(summaries[-1])
+    data = read_json(summaries[-1])
+    if isinstance(data, dict):
+        data.setdefault("summary_path", str(summaries[-1]))
+    return data
+
+
+def is_selftest_summary(summary: dict[str, Any] | None) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    values = [summary.get("task_id"), summary.get("run_dir"), summary.get("summary_path")]
+    for value in values:
+        path = Path(str(value or "").strip())
+        if any(part.startswith("selftest-") for part in path.parts):
+            return True
+        if path.name.startswith("selftest-"):
+            return True
+    return False
+
+
+def read_run_summary(path: Path) -> dict[str, Any]:
+    data = read_json(path)
+    if not isinstance(data, dict):
+        return {}
+    data.setdefault("summary_path", str(path))
+    return data
+
+
+def active_plan_payload(root: Path = ROOT) -> dict[str, Any]:
+    plans_dir = root / ".a9" / "plans"
+    active_path = plans_dir / ".active_plan"
+    if not active_path.exists():
+        return {}
+    try:
+        plan_id = active_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not plan_id:
+        return {}
+    plan_path = plans_dir / plan_id / "plan.json"
+    if not plan_path.exists():
+        return {}
+    data = read_json(plan_path)
+    return data if isinstance(data, dict) else {}
+
+
+def latest_plan_run_summary(root: Path = ROOT) -> dict[str, Any]:
+    plan = active_plan_payload(root)
+    if not plan:
+        return {}
+    evidence_refs = plan.get("evidence_refs", []) if isinstance(plan.get("evidence_refs"), list) else []
+    for value in reversed(evidence_refs):
+        text = str(value or "").strip()
+        if not text or any(part.startswith("selftest-") for part in Path(text).parts):
+            continue
+        if not text.endswith("/summary.json"):
+            continue
+        path = Path(text)
+        if not path.is_absolute():
+            path = root / path
+        data = read_run_summary(path)
+        if data:
+            return data
+        return {"summary_path": str(path)}
+    run_ids = plan.get("run_ids", []) if isinstance(plan.get("run_ids"), list) else []
+    for value in reversed(run_ids):
+        run_id = str(value or "").strip()
+        if not run_id or run_id.startswith("selftest-"):
+            continue
+        path = root / ".a9" / "runs" / run_id / "summary.json"
+        data = read_run_summary(path)
+        if data:
+            return data
+    return {}
+
+
+def latest_run_lanes(root: Path = ROOT) -> dict[str, Any]:
+    summaries = sorted((root / ".a9" / "runs").glob("*/summary.json"), key=lambda path: path.stat().st_mtime)
+    latest_any: dict[str, Any] = {}
+    latest_real: dict[str, Any] = {}
+    latest_selftest: dict[str, Any] = {}
+    invalid_summaries = 0
+    for summary_path in reversed(summaries):
+        data = read_run_summary(summary_path)
+        if not data:
+            invalid_summaries += 1
+            continue
+        if not latest_any:
+            latest_any = data
+        if is_selftest_summary(data):
+            if not latest_selftest:
+                latest_selftest = data
+        elif not latest_real:
+            latest_real = data
+        if latest_any and latest_real and latest_selftest:
+            break
+    return {
+        "latest_any": compact_summary(latest_any),
+        "latest_real": compact_summary(latest_real),
+        "latest_selftest": compact_summary(latest_selftest),
+        "latest_plan": compact_summary(latest_plan_run_summary(root)),
+        "invalid_summaries": invalid_summaries,
+    }
 
 
 def queued_task_quality_summary(root: Path = ROOT, limit: int = 10) -> dict[str, Any]:
@@ -1108,6 +1209,7 @@ def compact_summary(summary: dict[str, Any] | None) -> dict[str, Any] | None:
         "status": summary.get("status"),
         "phase": summary.get("phase"),
         "run_dir": summary.get("run_dir"),
+        "summary_path": summary.get("summary_path"),
         "context_path": summary.get("context_path"),
         "evidence_path": summary.get("evidence_path"),
         "state_path": summary.get("state_path"),
@@ -1159,6 +1261,7 @@ def supervisor_status(root: Path = ROOT) -> dict[str, Any]:
         "task_quality": queued_task_quality_summary(root),
         "running_tasks": [read_json(path) for path in running[-20:]],
         "latest_run": compact_summary(latest_run_summary(root)),
+        "latest_run_lanes": latest_run_lanes(root),
         "progress": read_json(progress_path) if progress_path.exists() else {},
         "daemon_heartbeat": read_json(heartbeat_path) if heartbeat_path.exists() else {},
         "worker_transport_health": read_json(worker_transport_health_path) if worker_transport_health_path.exists() else {},
@@ -7250,6 +7353,7 @@ def monitor_status(root: Path = ROOT) -> dict[str, Any]:
     control_state = runtime_control_state(root)
     intervention_audit = monitor_intervention_audit_tail(limit=5, root=root)
     latest_run = status.get("latest_run") if isinstance(status.get("latest_run"), dict) else {}
+    latest_lanes = status.get("latest_run_lanes") if isinstance(status.get("latest_run_lanes"), dict) else {}
     contract = latest_run.get("runtime_monitor_contract") if isinstance(latest_run, dict) else {}
     contract = contract if isinstance(contract, dict) else {}
     monitor = contract.get("monitor", {}) if isinstance(contract.get("monitor"), dict) else {}
@@ -7291,7 +7395,9 @@ def monitor_status(root: Path = ROOT) -> dict[str, Any]:
             "status": latest_run.get("status"),
             "phase": latest_run.get("phase"),
             "run_dir": latest_run.get("run_dir"),
+            "summary_path": latest_run.get("summary_path"),
         },
+        "latest_run_lanes": latest_lanes,
         "next_action": next_action,
         "runtime_control": control_state,
         "worker_transport_health": status.get("worker_transport_health", {}),
