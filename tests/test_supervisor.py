@@ -7152,7 +7152,7 @@ Findings are ready.
         self.assertEqual(result["findings"][0]["level"], "error")
         self.assertEqual(result["findings"][0]["kind"], "direct_file_change_event")
 
-    def test_process_governance_defaults_direct_file_change_repair_for_strict_worker(self):
+    def test_process_governance_defaults_direct_file_change_observe_for_strict_worker(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -7176,9 +7176,9 @@ Findings are ready.
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
-        self.assertEqual(result["direct_file_change_policy"], "repair")
-        self.assertEqual(result["status"], "fail")
-        self.assertEqual(result["findings"][0]["level"], "error")
+        self.assertEqual(result["direct_file_change_policy"], "observe")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"][0]["level"], "warn")
         self.assertEqual(result["findings"][0]["kind"], "direct_file_change_event")
 
     def test_process_governance_failure_blocks_status_even_when_checks_pass(self):
@@ -7212,6 +7212,25 @@ Findings are ready.
         )
 
         self.assertEqual(status, "needs-repair")
+
+    def test_skip_dirty_worktree_can_pass_when_guards_and_checks_pass(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
+        status = mod.decide_status(
+            worker,
+            {"diff_bytes": 120},
+            [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+            patch_apply={"status": "skip-dirty-worktree"},
+            patch_guard={"status": "pass"},
+            scope_guard={"status": "pass"},
+            process_governance={
+                "status": "pass",
+                "direct_file_change_policy": "observe",
+                "findings": [{"level": "warn", "kind": "direct_file_change_event"}],
+            },
+        )
+
+        self.assertEqual(status, "pass")
 
     def test_live_worker_observes_task_bound_violations_without_blocking(self):
         mod = load_supervisor()

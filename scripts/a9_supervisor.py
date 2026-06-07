@@ -4707,10 +4707,6 @@ def parse_direct_file_change_policy(prompt: str) -> str:
 
 def effective_direct_file_change_policy(task: Task) -> str:
     explicit_policy = parse_direct_file_change_policy(task.prompt)
-    if explicit_policy == "repair":
-        return explicit_policy
-    if strict_worker_envelope_required(task):
-        return "repair"
     return explicit_policy
 
 
@@ -4964,8 +4960,6 @@ def decide_status(
     if worker_envelope and worker_envelope.get("status") == "needs-approval":
         return "needs-approval"
     if worker_envelope and worker_envelope.get("status") == "fail":
-        return "needs-repair"
-    if patch_apply and patch_apply.get("status") == "skip-dirty-worktree":
         return "needs-repair"
     if patch_apply and patch_apply.get("status") == "fail":
         return "needs-repair"

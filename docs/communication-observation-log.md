@@ -3747,3 +3747,20 @@ Next monitoring target:
    - Governance lesson:
      deterministic task contracts must preserve exact commands. Otherwise
      supervisor truth becomes unstable before the worker even starts.
+
+164. Isolated worktree file changes are observed by default.
+   - Trigger:
+     the runtime smoke worker correctly changed only an allowed file inside its
+     isolated worktree, but process governance and `skip-dirty-worktree`
+     converted that recoverable path into `needs-repair`.
+   - Change:
+     direct file changes default to observation, and `skip-dirty-worktree` no
+     longer fails by itself when diff, scope, patch, and authoritative checks
+     pass. Explicit `direct_file_change_policy: repair` still hard-fails.
+   - Verification:
+     focused coverage checks strict workers default to observe, explicit repair
+     still routes to repair, and dirty-worktree apply can pass with green guards.
+   - Governance lesson:
+     isolated worktree diffs are reviewable evidence. The hard boundary is
+     workspace escape or failed guards/checks, not the mere presence of a file
+     change event.
