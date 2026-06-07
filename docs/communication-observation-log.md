@@ -3521,3 +3521,23 @@ Next monitoring target:
      phone and monitor surfaces should not infer intent from one timestamp.
      They need explicit lanes so operators can separate background health
      checks from the 24h mainline.
+
+151. Control API can request active-plan backlog enqueue as an explicit recovery action.
+   - Trigger:
+     after mobile/control learned to read `latest_plan`, the runtime still
+     returned `waiting_for_review_closure` with
+     `closed_next_execution_task_missing` when the active plan had no queued
+     execution slice. The phone/control surface could observe the problem but
+     could not request the deterministic recovery.
+   - Change:
+     `a9_control_api` now exposes `plan.backlog.next` in the runtime phone
+     control group and routes `/api/runtime/plan-backlog-next` to a bounded
+     helper that reuses supervisor active-plan backlog enqueue behavior. The
+     response includes runtime state, queued count, queued task paths, and an
+     audit marker.
+   - Verification:
+     control API tests cover discovery, blocked disarmed runtime gate, allowed
+     enqueue behavior, and POST route dispatch.
+   - Governance lesson:
+     24h recovery should be an explicit operator-visible action with evidence,
+     not an invisible retry loop.

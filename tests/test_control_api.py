@@ -10244,6 +10244,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["services_restart"], "/api/services/restart")
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertEqual(discovery["endpoints"]["runtime_run_one_with_transport"], "/api/runtime/run-one-with-transport")
+        self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_next"], "/api/runtime/plan-backlog-next")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
             discovery["endpoints"]["node_command_result_by_command"],
@@ -10916,6 +10917,127 @@ Do risky work.
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["response"]["command"], "services.restart")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
+    def test_api_runtime_plan_backlog_next_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.runtime_plan_backlog_next
+        captured = {}
+
+        def fake_runtime_plan_backlog_next(payload):
+            captured["payload"] = payload
+            return {"status": "enqueued", "command": "plan.backlog.next"}
+
+        body = json.dumps({"operator_scopes": ["operator.admin"]}).encode("utf-8")
+
+        class DummyPlanBacklogNextPostHandler:
+            path = "/api/runtime/plan-backlog-next"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.runtime_plan_backlog_next = fake_runtime_plan_backlog_next
+            mod.ControlHandler.do_POST(DummyPlanBacklogNextPostHandler())
+        finally:
+            mod.runtime_plan_backlog_next = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "plan.backlog.next")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
+    def test_runtime_plan_backlog_next_blocked_without_runtime_gate(self):
+        mod = load_control_api()
+
+        class FakeSupervisor:
+            @staticmethod
+            def runtime_state_from_summary(*args, **kwargs):
+                return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_audit = mod.enqueue_service_control_audit
+            audit_calls = []
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                result = mod.runtime_plan_backlog_next({"operator_scopes": ["operator.admin"]}, root=root)
+            finally:
+                mod.supervisor = original_supervisor
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["command"], "plan.backlog.next")
+        self.assertEqual(result["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(result["runtime_state"], "waiting_for_review_closure")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(audit_calls[0][0]["status"], "blocked")
+        self.assertEqual(audit_calls[0][1], root)
+
+    def test_runtime_plan_backlog_next_returns_enqueued_backlog_paths(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeSupervisor:
+            @staticmethod
+            def runtime_state_from_summary(*args, **kwargs):
+                return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+            @staticmethod
+            def active_plan_id():
+                return "active-plan"
+
+            @staticmethod
+            def load_plan(plan_id):
+                return {"plan_id": plan_id, "execution_backlog": {}}
+
+            @staticmethod
+            def plan_execution_backlog_items(plan, *, count=0):
+                return [{"task_id": "exec-001", "phase": "implement", "prompt": "do next"}]
+
+            @staticmethod
+            def enqueue_execution_backlog_items(plan, items, *, prefix="", timeout_seconds=3600, idle_timeout_seconds=300, auto_next=True):
+                calls.append(
+                    {
+                        "plan": plan,
+                        "items": items,
+                        "prefix": prefix,
+                        "timeout_seconds": timeout_seconds,
+                        "idle_timeout_seconds": idle_timeout_seconds,
+                        "auto_next": auto_next,
+                    }
+                )
+                return [root / ".a9" / "tasks" / "queue" / "exec-001.md"]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_audit = mod.enqueue_service_control_audit
+            audit_calls = []
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_next(
+                    {"operator_scopes": ["operator.admin"], "count": 1, "prefix": "phone", "auto_next": False},
+                    root=root,
+                )
+            finally:
+                mod.supervisor = original_supervisor
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "enqueued")
+        self.assertEqual(result["plan_id"], "active-plan")
+        self.assertEqual(result["queued_count"], 1)
+        self.assertEqual(result["queued_task_paths"], [str(root / ".a9" / "tasks" / "queue" / "exec-001.md")])
+        self.assertFalse(calls[0]["auto_next"])
+        self.assertEqual(calls[0]["prefix"], "phone")
+        self.assertEqual(result["runtime_state_reason"], "closed_next_execution_task_missing")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(audit_calls[0][0]["status"], "enqueued")
 
     def test_runtime_session_refresh_trial_uses_latest_session_without_worker(self):
         mod = load_control_api()

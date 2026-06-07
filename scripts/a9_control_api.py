@@ -488,6 +488,7 @@ PHONE_CONTROL_GROUPS = {
         "submit.run",
         "session.refresh.trial",
         "flow.resume",
+        "plan.backlog.next",
         "approval.approve",
         "approval.reject",
         "eval.override",
@@ -3335,6 +3336,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_run_one": "/api/runtime/run-one",
             "runtime_run_one_with_transport": "/api/runtime/run-one-with-transport",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
+            "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
             "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
             "gateway_transport_contract": "/api/gateway/transport-contract",
@@ -7639,6 +7641,105 @@ def runtime_session_refresh_trial(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    enqueue_service_control_audit(
+        {
+            "at": utc_now(),
+            "action": "plan_backlog_next",
+            "command": result.get("command", "plan.backlog.next"),
+            "status": result.get("status"),
+            "plan_id": result.get("plan_id"),
+            "reason": result.get("reason") or result.get("blocked_reason"),
+            "runtime_state": result.get("runtime_state"),
+            "runtime_state_reason": result.get("runtime_state_reason"),
+            "queued_count": result.get("queued_count"),
+            "queued_task_paths": result.get("queued_task_paths", []),
+        },
+        root=root,
+    )
+    result["audit_async"] = True
+    return result
+
+
+def runtime_plan_backlog_next(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    command = "plan.backlog.next"
+    mod = supervisor()
+    status = supervisor_status(root)
+    runtime_state, runtime_state_reason = mod.runtime_state_from_summary(
+        int(status.get("queued") or 0),
+        int(status.get("running") or 0),
+        latest_run_summary(root),
+    )
+    base = {
+        "command": command,
+        "runtime_state": runtime_state,
+        "runtime_state_reason": runtime_state_reason,
+    }
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        return audit_plan_backlog_next({**base, "status": "blocked", "blocked_reason": str(exc)}, root=root)
+    gate = command_gate(command, root=root)
+    if not gate.get("allowed"):
+        return audit_plan_backlog_next({**base, "status": "blocked", "gate": gate}, root=root)
+
+    plan_id = str(payload.get("plan_id") or "").strip() or str(mod.active_plan_id() or "").strip()
+    if not plan_id:
+        return audit_plan_backlog_next({**base, "status": "missing_plan", "gate": gate, "reason": "active_plan_missing"}, root=root)
+    plan = mod.load_plan(plan_id)
+    if not isinstance(plan, dict):
+        return audit_plan_backlog_next(
+            {**base, "status": "missing_plan", "plan_id": plan_id, "gate": gate, "reason": "plan_not_found"},
+            root=root,
+        )
+    try:
+        count = max(0, int(payload.get("count", 1)))
+        timeout_seconds = int(payload.get("timeout_seconds", 3600))
+        idle_timeout_seconds = int(payload.get("idle_timeout_seconds", 300))
+    except (TypeError, ValueError):
+        return audit_plan_backlog_next(
+            {**base, "status": "invalid_request", "plan_id": plan_id, "gate": gate, "reason": "numeric_fields_must_be_integer"},
+            root=root,
+        )
+    auto_next_raw = payload.get("auto_next", True)
+    auto_next = auto_next_raw if isinstance(auto_next_raw, bool) else str(auto_next_raw).lower() not in {"0", "false", "off", "no"}
+    items = mod.plan_execution_backlog_items(plan, count=count)
+    if not items:
+        return audit_plan_backlog_next(
+            {
+                **base,
+                "status": "no_items",
+                "plan_id": plan_id,
+                "gate": gate,
+                "queued_count": 0,
+                "queued_task_paths": [],
+            },
+            root=root,
+        )
+    created = mod.enqueue_execution_backlog_items(
+        plan,
+        items,
+        prefix=str(payload.get("prefix") or ""),
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        auto_next=auto_next,
+    )
+    queued_paths = [str(path) for path in created]
+    return audit_plan_backlog_next(
+        {
+            **base,
+            "status": "enqueued",
+            "plan_id": plan_id,
+            "gate": gate,
+            "requested_count": count,
+            "queued_count": len(queued_paths),
+            "queued_task_paths": queued_paths,
+            "auto_next": auto_next,
+        },
+        root=root,
+    )
+
+
 def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     try:
         require_phone_admin(payload)
@@ -8345,6 +8446,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_run_one_with_transport(payload))
             elif self.path == "/api/runtime/session-refresh-trial":
                 self.write_json(200, runtime_session_refresh_trial(payload))
+            elif self.path == "/api/runtime/plan-backlog-next":
+                self.write_json(200, runtime_plan_backlog_next(payload))
             elif self.path == "/api/monitor/intervention":
                 self.write_json(200, monitor_intervention(payload))
             elif self.path == "/api/worker/transport-policy":
