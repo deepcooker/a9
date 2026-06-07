@@ -2774,6 +2774,27 @@ Do the work.
             self.assertEqual(failure["status"], "retryable-worker-transport")
             self.assertEqual(failure["category"], "transport")
 
+    def test_transport_exhausted_ignores_command_output_fixture_text(self):
+        mod = load_supervisor()
+
+        command_payload = {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "aggregated_output": (
+                    "print(json.dumps({'type':'error','message':'Reconnecting... 5/5 "
+                    "(timeout waiting for child process to exit)'}))"
+                ),
+            },
+        }
+        error_payload = {
+            "type": "error",
+            "message": "Reconnecting... 5/5 (timeout waiting for child process to exit)",
+        }
+
+        self.assertEqual(mod.worker_transport_exhausted_reason(command_payload), "")
+        self.assertIn("worker transport exhausted", mod.worker_transport_exhausted_reason(error_payload))
+
     def test_live_worker_observes_declared_check_execution_without_stopping(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -2342,8 +2342,25 @@ def resolved_worker_model(task: Task | None) -> tuple[str, str]:
     return DEFAULT_WORKER_MODEL, "DEFAULT_WORKER_MODEL"
 
 
+def worker_transport_exhausted_payload_text(payload: dict[str, Any]) -> str:
+    event_type = str(payload.get("type") or payload.get("event") or payload.get("msg", {}).get("type") or "")
+    if event_type == "error":
+        return str(payload.get("message") or payload.get("error") or "")
+    if event_type == "turn.failed":
+        error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+        return str(error.get("message") or payload.get("message") or "")
+    msg = payload.get("msg") if isinstance(payload.get("msg"), dict) else {}
+    if str(msg.get("type") or "") in {"error", "turn.failed"}:
+        error = msg.get("error") if isinstance(msg.get("error"), dict) else {}
+        return str(error.get("message") or msg.get("message") or "")
+    return ""
+
+
 def worker_transport_exhausted_reason(payload: dict[str, Any]) -> str:
-    return worker_transport_exhausted_text_reason(json_compact(payload))
+    text = worker_transport_exhausted_payload_text(payload)
+    if not text:
+        return ""
+    return worker_transport_exhausted_text_reason(text)
 
 
 def worker_transport_exhausted_text_reason(text: str) -> str:

@@ -3701,3 +3701,18 @@ Next monitoring target:
      soft quality issues should not block the 24h flow. Hard stops are reserved
      for isolation escape, scope corruption, invalid patch/evidence, or failed
      authoritative outer checks.
+
+161. Transport exhaustion detection must not scan command output fixtures.
+   - Trigger:
+     a worker read supervisor tests containing the literal
+     `Reconnecting... 5/5 (timeout waiting for child process to exit)`, and A9
+     misclassified that command output as a real transport exhaustion.
+   - Change:
+     event-stream transport exhaustion now inspects only actual error event
+     messages, not arbitrary command output or aggregated test fixtures.
+   - Verification:
+     focused coverage keeps real error events classified as transport exhausted
+     while ignoring the same text inside command output.
+   - Governance lesson:
+     transport classification must be source-aware. Otherwise tests and docs can
+     trigger false cooldowns and stall the 24h loop.
