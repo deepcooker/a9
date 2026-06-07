@@ -10420,6 +10420,32 @@ role_signoff: product, business, architecture, test approved.
 
         self.assertEqual(parsed.task_quality_warnings, [])
 
+    def test_enqueue_task_file_roundtrips_checks_with_double_quotes(self):
+        mod = load_supervisor()
+        check = (
+            "python3 -c \"from pathlib import Path; "
+            "assert Path('docs/runtime-continuity-smoke.txt').read_text().strip() == "
+            "'runtime continuity smoke'\""
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                queued = mod.enqueue_task_file(
+                    "quoted-check-roundtrip",
+                    "Do implementation work.",
+                    phase="implement",
+                    allowed_paths=["docs/runtime-continuity-smoke.txt"],
+                    checks=[check],
+                )
+                parsed = mod.parse_task(queued)
+                text = queued.read_text(encoding="utf-8")
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertIn('\\"from pathlib import Path;', text)
+        self.assertEqual(parsed.checks, [check])
+
     def test_enqueue_task_file_records_workspace_root(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

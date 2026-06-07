@@ -431,7 +431,7 @@ def parse_task(path: Path) -> Task:
                 if not line.strip() or line.lstrip().startswith("#"):
                     continue
                 if line.startswith("  - ") and current_list_key:
-                    meta.setdefault(current_list_key, []).append(line[4:].strip().strip('"'))
+                    meta.setdefault(current_list_key, []).append(parse_frontmatter_scalar(line[4:].strip()))
                     continue
                 if ":" not in line:
                     continue
@@ -449,7 +449,7 @@ def parse_task(path: Path) -> Task:
                 elif value.lower() in {"true", "false"}:
                     meta[key] = value.lower() == "true"
                 else:
-                    meta[key] = value.strip('"')
+                    meta[key] = parse_frontmatter_scalar(value)
 
     task_id = slugify(str(meta.get("id") or path.stem))
     checks = [str(item) for item in meta.get("checks", [])]
@@ -473,6 +473,24 @@ def parse_task(path: Path) -> Task:
         auto_next_allowed=auto_next_allowed,
         task_quality_warnings=task_quality_warnings,
     )
+
+
+def parse_frontmatter_scalar(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text[0] in {"'", '"'}:
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, str):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+    return text.strip('"')
+
+
+def frontmatter_quote(value: Any) -> str:
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 def next_task() -> Task | None:
@@ -9644,20 +9662,20 @@ def enqueue_task_file(
     workspace_root = str(workspace_root or "").strip()
     if strict_worker_envelope_required_for_phase(phase) and "strict_worker_envelope" not in parse_key_value_prompt(prompt):
         prompt = f"strict_worker_envelope: true\n{prompt.strip()}"
-    checks_text = "\n".join(f'  - "{item}"' for item in checks)
-    allowed_paths_text = "\n".join(f'  - "{item}"' for item in allowed_paths)
+    checks_text = "\n".join(f"  - {frontmatter_quote(item)}" for item in checks)
+    allowed_paths_text = "\n".join(f"  - {frontmatter_quote(item)}" for item in allowed_paths)
     quality_warnings = task_quality_warnings_for_enqueue(
         phase=phase,
         checks=checks,
         allowed_paths=allowed_paths,
         workspace_root=workspace_root,
     )
-    quality_warnings_text = "\n".join(f'  - "{item}"' for item in quality_warnings)
+    quality_warnings_text = "\n".join(f"  - {frontmatter_quote(item)}" for item in quality_warnings)
     frontmatter = [
         "---",
-        f'id: "{path.stem}"',
-        f'phase: "{phase}"',
-        f'workspace_root: "{workspace_root}"',
+        f"id: {frontmatter_quote(path.stem)}",
+        f"phase: {frontmatter_quote(phase)}",
+        f"workspace_root: {frontmatter_quote(workspace_root)}",
         f"timeout_seconds: {timeout_seconds}",
         f"idle_timeout_seconds: {idle_timeout_seconds}",
         f"max_attempts: {max_attempts}",

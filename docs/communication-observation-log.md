@@ -3732,3 +3732,18 @@ Next monitoring target:
    - Governance lesson:
      self-report validation should catch wrong evidence, not formatting
      differences in equivalent unittest declarations.
+
+163. Task frontmatter must safely roundtrip quoted checks.
+   - Trigger:
+     a smoke task declared a `python3 -c "..."` check, but enqueue wrote it as
+     an unescaped double-quoted frontmatter string. Parsing then lost the final
+     quote and caused a false worker envelope mismatch.
+   - Change:
+     task frontmatter scalar/list values now use JSON string quoting, and
+     parsing restores quoted strings with `json.loads`.
+   - Verification:
+     focused coverage roundtrips a quoted `python3 -c` check through
+     `enqueue_task_file` and `parse_task`.
+   - Governance lesson:
+     deterministic task contracts must preserve exact commands. Otherwise
+     supervisor truth becomes unstable before the worker even starts.
