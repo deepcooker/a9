@@ -2625,6 +2625,7 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
     if command_looks_like_test(normalized) and task.checks and command_matches_declared_check(normalized, task.checks):
         return {
             "kind": "worker_declared_check_execution",
+            "level": "warn",
             "reason": "declared checks are executed by the outer A9 supervisor after worker final output",
             "command": normalized,
         }
@@ -2868,14 +2869,25 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             rationale=last_agent_rationale,
                         )
                         if violation:
-                            budget_stopped = True
-                            budget_stop_kind = "command_bounds"
-                            budget_reason = (
-                                f"blocked worker command by task bounds: {violation.get('kind')} "
-                                f"{bounded_inline(violation.get('command', ''), 240)}"
-                            )
-                            kill_process_group_if_still_running(proc)
-                            break
+                            if violation.get("kind") == "worker_declared_check_execution":
+                                budget_observations.append(
+                                    {
+                                        "kind": violation.get("kind", "worker_declared_check_execution"),
+                                        "level": violation.get("level") or "warn",
+                                        "reason": violation.get("reason", "declared check command observed"),
+                                        "command": violation.get("command", ""),
+                                        "action": "observe",
+                                    }
+                                )
+                            else:
+                                budget_stopped = True
+                                budget_stop_kind = "command_bounds"
+                                budget_reason = (
+                                    f"blocked worker command by task bounds: {violation.get('kind')} "
+                                    f"{bounded_inline(violation.get('command', ''), 240)}"
+                                )
+                                kill_process_group_if_still_running(proc)
+                                break
                     if event_count > max_events:
                         reason = f"worker event count exceeded {max_events}"
                         if event_budget_mode == "enforce":
@@ -4768,9 +4780,12 @@ def classify_process_governance(
         if command_looks_like_test(command) and task.checks and command_matches_declared_check(command, task.checks):
             findings.append(
                 {
-                    "level": "error",
+                    "level": "warn",
                     "kind": "worker_declared_check_execution",
-                    "message": "worker ran a declared check inside the model session; outer supervisor checks are authoritative",
+                    "message": (
+                        "worker ran a declared check inside the model session; observed as process "
+                        "governance observation while outer supervisor checks are authoritative"
+                    ),
                     "command": command,
                     "declared_checks": task.checks,
                 }

@@ -3684,3 +3684,20 @@ Next monitoring target:
    - Governance lesson:
      observation-first applies to recoverable quality issues. Workspace escape
      can corrupt facts and user files, so it remains a hard isolation boundary.
+
+160. Declared-check self-execution is now observed, not hard-stopped.
+   - Trigger:
+     workers often run the exact declared unittest while implementing a slice.
+     That wastes some runtime, but the outer supervisor still runs the
+     authoritative check and can decide pass/fail.
+   - Change:
+     live worker monitoring records exact declared-check commands in
+     `budget_observations` instead of killing the worker; process governance now
+     reports `worker_declared_check_execution` as a warning.
+   - Verification:
+     focused supervisor coverage checks both live worker observation and
+     process governance status for declared-check execution.
+   - Governance lesson:
+     soft quality issues should not block the 24h flow. Hard stops are reserved
+     for isolation escape, scope corruption, invalid patch/evidence, or failed
+     authoritative outer checks.

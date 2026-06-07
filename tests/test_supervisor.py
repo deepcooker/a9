@@ -2774,6 +2774,61 @@ Do the work.
             self.assertEqual(failure["status"], "retryable-worker-transport")
             self.assertEqual(failure["category"], "transport")
 
+    def test_live_worker_observes_declared_check_execution_without_stopping(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="declared-check-live-observation",
+                prompt="Run one bounded command.",
+                checks=[
+                    "python3 -m unittest "
+                    "tests.test_supervisor.SupervisorTests."
+                    "test_live_worker_observes_declared_check_execution_without_stopping",
+                ],
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    "print(json.dumps({'type':'item.completed','item':{'id':'cmd-1',"
+                    "'type':'command_execution','command':'python3 -m unittest "
+                    "tests.test_supervisor.SupervisorTests."
+                    "test_live_worker_observes_declared_check_execution_without_stopping',"
+                    "'status':'completed','exit_code':0,'aggregated_output':'ok'}}), flush=True); "
+                    "print(json.dumps({'type':'thread.started','thread_id':'fake-thread'}), flush=True)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                worker = mod.run_worker(task, worktree, run_dir)
+
+        observations = [
+            item for item in worker["budget_observations"] if item.get("kind") == "worker_declared_check_execution"
+        ]
+        self.assertFalse(worker["budget_stopped"])
+        self.assertEqual(worker["budget_reason"], "")
+        self.assertEqual(worker["return_code"], 0)
+        self.assertEqual(len(observations), 1)
+        self.assertEqual(observations[0]["level"], "warn")
+        self.assertEqual(observations[0]["action"], "observe")
+
     def test_run_worker_stops_on_transport_exhausted_stderr(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -7163,6 +7218,7 @@ Findings are ready.
         self.assertEqual(sed_over, {})
         self.assertEqual(undeclared, {})
         self.assertEqual(declared["kind"], "worker_declared_check_execution")
+        self.assertEqual(declared["level"], "warn")
 
     def test_live_worker_observes_runtime_evidence_root_searches_without_blocking(self):
         mod = load_supervisor()
@@ -7237,6 +7293,7 @@ Findings are ready.
         self.assertEqual(allowed_capped_locator, {})
         self.assertEqual(large_read, {})
         self.assertEqual(allowed_check["kind"], "worker_declared_check_execution")
+        self.assertEqual(allowed_check["level"], "warn")
 
     def test_live_worker_flags_compound_wide_read_command(self):
         mod = load_supervisor()
@@ -7387,7 +7444,7 @@ Findings are ready.
             )
         )
 
-    def test_process_governance_fails_when_worker_runs_declared_check(self):
+    def test_process_governance_observes_declared_check_execution_without_hard_fail(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -7412,9 +7469,12 @@ Findings are ready.
 
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
-        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["status"], "pass")
         self.assertTrue(
-            any(finding.get("kind") == "worker_declared_check_execution" for finding in result["findings"])
+            any(
+                finding.get("kind") == "worker_declared_check_execution" and finding.get("level") == "warn"
+                for finding in result["findings"]
+            )
         )
 
     def test_live_worker_observes_read_heavy_batched_sed_without_blocking(self):
