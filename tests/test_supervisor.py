@@ -2428,6 +2428,47 @@ Do the work.
         self.assertEqual(worker["event_budget"]["mode"], "observe")
         self.assertEqual(worker["budget_observations"][0]["kind"], "event_bytes")
 
+    def test_run_worker_command_bounds_default_to_observation_not_kill(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="command-bounds-observe",
+                prompt="Do bounded evidence reads.",
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            command = "/bin/bash -lc \"sed -n '1,120p' docs/a.md && sed -n '1,120p' docs/b.md\""
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    f"print(json.dumps({{'type':'item.completed','item':{{'type':'command_execution','command':{command!r},'status':'completed','exit_code':0}}}}), flush=True)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                worker = mod.run_worker(task, worktree, run_dir)
+
+        self.assertEqual(worker["return_code"], 0)
+        self.assertFalse(worker["budget_stopped"])
+        self.assertEqual(worker["budget_observations"][0]["kind"], "compound_wide_read_command")
+        self.assertEqual(worker["budget_observations"][0]["action"], "observe")
+
     def test_run_worker_closes_stdout_pipe(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

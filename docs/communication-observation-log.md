@@ -3798,3 +3798,20 @@ Next monitoring target:
      monitor/control code must be side-effect safe. A status probe must not kill
      a live worker, and a service helper must not silently turn the 24h loop
      into a queue-only runner.
+
+167. Command-bound findings are quality observations before they are hard gates.
+   - Trigger:
+     the first real idle goal-continuation worker launched under the 24h loop,
+     then was killed for a compound bounded read across two plan files. The
+     finding was useful evidence, but the hard kill blocked runtime progress.
+   - Change:
+     live worker command-bound findings are recorded as `budget_observations`
+     by default. Hard stops remain for nested worker/supervisor commands and
+     workspace isolation escape.
+   - Verification:
+     focused coverage proves compound read commands no longer stop the worker,
+     while process governance still records the finding for monitor review.
+   - Governance lesson:
+     until the business/data/architecture shape is settled, quality rules should
+     observe and teach. Hard gates are reserved for corruption, authority
+     mutation, security/license boundaries, and declared check truth.

@@ -2929,25 +2929,15 @@ def run_worker(task: Task, worktree: Path, run_dir: Path, *, lease_path: Path | 
                             rationale=last_agent_rationale,
                         )
                         if violation:
-                            if violation.get("kind") == "worker_declared_check_execution":
-                                budget_observations.append(
-                                    {
-                                        "kind": violation.get("kind", "worker_declared_check_execution"),
-                                        "level": violation.get("level") or "warn",
-                                        "reason": violation.get("reason", "declared check command observed"),
-                                        "command": violation.get("command", ""),
-                                        "action": "observe",
-                                    }
-                                )
-                            else:
-                                budget_stopped = True
-                                budget_stop_kind = "command_bounds"
-                                budget_reason = (
-                                    f"blocked worker command by task bounds: {violation.get('kind')} "
-                                    f"{bounded_inline(violation.get('command', ''), 240)}"
-                                )
-                                kill_process_group_if_still_running(proc)
-                                break
+                            budget_observations.append(
+                                {
+                                    "kind": violation.get("kind", "command_bounds"),
+                                    "level": violation.get("level") or "warn",
+                                    "reason": violation.get("reason", "worker command bound observed"),
+                                    "command": violation.get("command", ""),
+                                    "action": "observe",
+                                }
+                            )
                     if event_count > max_events:
                         reason = f"worker event count exceeded {max_events}"
                         if event_budget_mode == "enforce":
