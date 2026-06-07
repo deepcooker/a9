@@ -3716,3 +3716,19 @@ Next monitoring target:
    - Governance lesson:
      transport classification must be source-aware. Otherwise tests and docs can
      trigger false cooldowns and stall the 24h loop.
+
+162. Worker declared-check self-report accepts split unittest targets.
+   - Trigger:
+     a worker reported two `python3 -m unittest <target>` commands while the
+     task declared the same two targets in one unittest command, causing an
+     envelope mismatch even though the checks were equivalent.
+   - Change:
+     worker-envelope check normalization expands unittest target lists into
+     canonical per-target commands before comparing worker self-report to the
+     task-declared checks.
+   - Verification:
+     focused coverage accepts split unittest targets while preserving mismatch
+     checks for genuinely stale commands.
+   - Governance lesson:
+     self-report validation should catch wrong evidence, not formatting
+     differences in equivalent unittest declarations.

@@ -3629,8 +3629,17 @@ def validate_worker_envelope(task: Task, worker: dict[str, Any], run_dir: Path) 
 
 
 def normalize_declared_checks_for_worker_envelope(checks: list[str] | None) -> list[str]:
-    normalized = [str(item).strip() for item in checks or []]
-    return sorted(item for item in normalized if item)
+    normalized: list[str] = []
+    for item in checks or []:
+        text = str(item).strip()
+        if not text:
+            continue
+        targets = unittest_targets(text)
+        if targets:
+            normalized.extend(f"python3 -m unittest {target}" for target in targets)
+        else:
+            normalized.append(text)
+    return sorted(normalized)
 
 
 def local_paths_reported_as_copied_mechanisms(value: Any) -> list[str]:

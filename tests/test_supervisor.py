@@ -7847,6 +7847,42 @@ Findings are ready.
             any(finding.get("kind") == "worker_declared_checks_self_report_mismatch" for finding in findings)
         )
 
+    def test_worker_envelope_declared_check_mismatch_allows_split_unittest_targets(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            final = run_dir / "final.md"
+            final.write_text(
+                (
+                    'done\n{"protocolVersion":1,"ok":true,"status":"ok","output":'
+                    '{"changed_files":[],"worker_commands_run":[],'
+                    '"supervisor_declared_checks":['
+                    '"python3 -m unittest tests.test_supervisor.SupervisorTests.test_one",'
+                    '"python3 -m unittest tests.test_supervisor.SupervisorTests.test_two"],'
+                    '"copied_mechanisms":[]}}\n'
+                ),
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-envelope-check-self-report-split-unittest",
+                prompt="strict_worker_envelope: true\nDo work.",
+                checks=[
+                    "python3 -m unittest "
+                    "tests.test_supervisor.SupervisorTests.test_one "
+                    "tests.test_supervisor.SupervisorTests.test_two"
+                ],
+            )
+            worker = {"final_path": str(final), "timed_out": False, "idle_timed_out": False, "return_code": 0}
+
+            envelope = mod.validate_worker_envelope(task, worker, run_dir)
+
+        self.assertEqual(envelope["status"], "pass")
+        findings = envelope.get("findings", [])
+        self.assertFalse(
+            any(finding.get("kind") == "worker_declared_checks_self_report_mismatch" for finding in findings)
+        )
+
     def test_worker_envelope_observes_local_paths_in_copied_mechanisms(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
