@@ -57,7 +57,7 @@ start_api() {
 
 start_supervisor_loop() {
   stop_one supervisor-loop
-  setsid bash -lc "cd '$ROOT' && while true; do A9_IDLE_GOAL_CONTINUATION=0 python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error; sleep 15; done" \
+  setsid bash -lc "cd '$ROOT' && while true; do A9_IDLE_GOAL_CONTINUATION=1 python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error; sleep 15; done" \
     >"${LOG_DIR}/supervisor-loop.log" 2>&1 < /dev/null &
   echo $! >"$(pid_file supervisor-loop)"
 }

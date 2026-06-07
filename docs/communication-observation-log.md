@@ -3779,3 +3779,22 @@ Next monitoring target:
    - Governance lesson:
      passing `run-one` and auto-next smoke tests is not the same as a 24h
      service. The daemon must survive empty queues and wait for the next task.
+
+166. 24h supervision must not be disabled by its own control plane.
+   - Trigger:
+     after enabling idle loop residency, the daemon still did not stay useful:
+     the local service/stack startup path set `A9_IDLE_GOAL_CONTINUATION=0`,
+     and status reconciliation could misclassify a live worker lease as
+     orphaned because it guessed liveness from command-line text.
+   - Change:
+     local supervisor service startup now enables idle goal continuation, and
+     worker leases record the real `worker_pid`; orphan reconciliation checks
+     that pid before interrupting a running task.
+   - Verification:
+     focused coverage keeps live-pid leases, still interrupts stale leases, and
+     asserts the local stack starts the supervisor loop with idle continuation
+     enabled.
+   - Governance lesson:
+     monitor/control code must be side-effect safe. A status probe must not kill
+     a live worker, and a service helper must not silently turn the 24h loop
+     into a queue-only runner.

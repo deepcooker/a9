@@ -1148,6 +1148,22 @@ def running_process_contains(text: str) -> bool:
     return proc.returncode == 0 and text in proc.stdout
 
 
+def process_pid_alive(pid: Any) -> bool:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    try:
+        os.kill(value, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
 def running_lease_is_orphaned(lease: dict[str, Any], *, max_age_seconds: int = 60) -> tuple[bool, str]:
     run_dir_text = str(lease.get("run_dir") or "")
     if not run_dir_text:
@@ -1161,6 +1177,9 @@ def running_lease_is_orphaned(lease: dict[str, Any], *, max_age_seconds: int = 6
     age_seconds = (datetime.now(timezone.utc) - started_at).total_seconds()
     if age_seconds < max_age_seconds:
         return False, "lease_not_old_enough"
+    worker_pid = lease.get("worker_pid")
+    if process_pid_alive(worker_pid):
+        return False, "worker_pid_alive"
     if running_process_contains(run_dir_text):
         return False, "worker_process_alive"
     return True, "no_live_worker_process"
@@ -2719,7 +2738,7 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
     return {}
 
 
-def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
+def run_worker(task: Task, worktree: Path, run_dir: Path, *, lease_path: Path | None = None) -> dict[str, Any]:
     prompt_path = run_dir / "prompt.md"
     raw_task_path = run_dir / "raw_task.md"
     final_path = run_dir / "final.md"
@@ -2831,6 +2850,12 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
             bufsize=1,
             start_new_session=True,
         )
+        if lease_path is not None:
+            lease = read_json_file(lease_path)
+            if lease:
+                lease["worker_pid"] = proc.pid
+                lease["worker_started_at"] = utc_now()
+                write_json(lease_path, lease)
         assert proc.stdout is not None
         while True:
             now = time.monotonic()
@@ -11048,7 +11073,7 @@ def run_one(*, auto_next: bool = False) -> int:
         lease_path = RUNNING_DIR / f"{task_ref}.json"
         write_json(lease_path, lease)
 
-        worker = run_worker(task, worktree, run_dir)
+        worker = run_worker(task, worktree, run_dir, lease_path=lease_path)
         worker_envelope = validate_worker_envelope(task, worker, run_dir)
         patch_apply = apply_worker_search_replace(worker, worktree, run_dir, workspace_root)
         diff = capture_diff(worktree, run_dir)

@@ -269,6 +269,37 @@ Do the work.
                 mod.RUNNING_DIR = old_running
                 mod.INTERRUPTED_DIR = old_interrupted
 
+    def test_reconcile_orphaned_running_tasks_keeps_live_worker_pid_lease(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_running = mod.RUNNING_DIR
+            old_interrupted = mod.INTERRUPTED_DIR
+            try:
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.INTERRUPTED_DIR = Path(tmp) / "interrupted"
+                mod.RUNNING_DIR.mkdir(parents=True)
+                run_dir = Path(tmp) / "runs" / "run-live-pid"
+                run_dir.mkdir(parents=True)
+                lease_path = mod.RUNNING_DIR / "task-live-pid.json"
+                mod.write_json(
+                    lease_path,
+                    {
+                        "task_id": "task-live-pid",
+                        "started_at": "2026-06-03T00:00:00+00:00",
+                        "run_dir": str(run_dir),
+                        "worker_pid": os.getpid(),
+                    },
+                )
+                with mock.patch.object(mod, "running_process_contains", return_value=False):
+                    result = mod.reconcile_orphaned_running_tasks(max_age_seconds=0)
+
+                self.assertEqual(result, [])
+                self.assertTrue(lease_path.exists())
+                self.assertFalse(list(mod.INTERRUPTED_DIR.glob("*.json")))
+            finally:
+                mod.RUNNING_DIR = old_running
+                mod.INTERRUPTED_DIR = old_interrupted
+
     def test_effective_worker_idle_timeout_extends_supervisor_suite(self):
         mod = load_supervisor()
         task = mod.Task(

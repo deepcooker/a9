@@ -50,7 +50,7 @@ class ServiceTests(unittest.TestCase):
     def test_local_stack_runs_supervisor_loop(self):
         stack = STACK_PATH.read_text(encoding="utf-8")
         self.assertIn("start_supervisor_loop", stack)
-        self.assertIn("A9_IDLE_GOAL_CONTINUATION=0", stack)
+        self.assertIn("A9_IDLE_GOAL_CONTINUATION=1", stack)
         self.assertIn("scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error", stack)
         self.assertIn("supervisor-loop.log", stack)
         self.assertIn("status_one supervisor-loop 0", stack)

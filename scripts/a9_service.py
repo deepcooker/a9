@@ -39,7 +39,7 @@ SERVICE_COMMANDS = {
     "supervisor": [
         "bash",
         "-lc",
-        "cd /root/a9 && while true; do A9_IDLE_GOAL_CONTINUATION=0 python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error; sleep 15; done",
+        "cd /root/a9 && while true; do A9_IDLE_GOAL_CONTINUATION=1 python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10 --keep-going-on-error; sleep 15; done",
     ],
     "control-api": [
         "bash",
