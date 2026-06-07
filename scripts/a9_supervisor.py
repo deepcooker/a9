@@ -2597,6 +2597,29 @@ def command_directly_writes_workspace(command: str) -> bool:
     return False
 
 
+def worker_workspace_escape_violation(command: str, worktree: Path | str) -> dict[str, Any]:
+    normalized = normalize_shell_command(command)
+    worktree_text = str(worktree or "").rstrip("/")
+    root_text = str(ROOT).rstrip("/")
+    if not worktree_text or worktree_text == root_text:
+        return {}
+    if not worktree_text.startswith(root_text + "/.a9/worktrees/"):
+        return {}
+    root_re = re.escape(root_text)
+    worktree_re = re.escape(worktree_text)
+    cd_root = re.search(rf"\bcd\s+['\"]?{root_re}['\"]?(?:\s|&&|;|\|\||$)", normalized)
+    cd_worktree = re.search(rf"\bcd\s+['\"]?{worktree_re}['\"]?(?:\s|&&|;|\|\||$)", normalized)
+    if cd_root and not cd_worktree:
+        return {
+            "kind": "worker_workspace_escape",
+            "reason": "worker command changed directory to the main workspace instead of its isolated worktree",
+            "command": normalized,
+            "workspace_root": root_text,
+            "worktree": worktree_text,
+        }
+    return {}
+
+
 def live_worker_command_violation(task: Task, command: str, *, rationale: str = "") -> dict[str, Any]:
     normalized = normalize_shell_command(command)
     if command_looks_like_test(normalized) and task.checks and command_matches_declared_check(normalized, task.checks):
@@ -2827,6 +2850,16 @@ def run_worker(task: Task, worktree: Path, run_dir: Path) -> dict[str, Any]:
                             budget_stopped = True
                             budget_stop_kind = "command_bounds"
                             budget_reason = f"blocked nested worker command: {blocked}"
+                            kill_process_group_if_still_running(proc)
+                            break
+                        escape = worker_workspace_escape_violation(command, worktree)
+                        if escape:
+                            budget_stopped = True
+                            budget_stop_kind = "workspace_escape"
+                            budget_reason = (
+                                f"blocked worker command by workspace isolation: {escape.get('kind')} "
+                                f"{bounded_inline(escape.get('command', ''), 240)}"
+                            )
                             kill_process_group_if_still_running(proc)
                             break
                         violation = live_worker_command_violation(

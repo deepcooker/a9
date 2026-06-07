@@ -7440,6 +7440,23 @@ Findings are ready.
         self.assertEqual(allowed, {})
         self.assertEqual(oversized, {})
 
+    def test_worker_workspace_escape_blocks_cd_to_main_workspace(self):
+        mod = load_supervisor()
+        worktree = mod.ROOT / ".a9" / "worktrees" / "task-attempt-1"
+
+        blocked = mod.worker_workspace_escape_violation(
+            f"/bin/bash -lc 'cd {mod.ROOT} && python3 - <<\\'PY\\'\\nprint(1)\\nPY'",
+            worktree,
+        )
+        allowed = mod.worker_workspace_escape_violation(
+            f"/bin/bash -lc 'cd {worktree} && python3 -m py_compile scripts/a9_supervisor.py'",
+            worktree,
+        )
+
+        self.assertEqual(blocked["kind"], "worker_workspace_escape")
+        self.assertEqual(blocked["workspace_root"], str(mod.ROOT))
+        self.assertEqual(allowed, {})
+
     def test_worker_envelope_required_missing_requires_repair(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

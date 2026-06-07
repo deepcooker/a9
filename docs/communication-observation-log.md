@@ -3669,3 +3669,18 @@ Next monitoring target:
      monitor should salvage correct worker intent when scope and patch are
      small, while still recording the process failure for future prompt/worker
      repair.
+
+159. Worker workspace escape must remain a hard stop.
+   - Trigger:
+     the observation-first governance worker ran inside an isolated worktree but
+     executed commands with `cd /root/a9`, which dirtied the main workspace
+     instead of only the task worktree.
+   - Change:
+     live worker command monitoring now blocks commands that switch from an A9
+     worktree back to the main workspace.
+   - Verification:
+     focused supervisor coverage allows `cd <worktree>` but flags `cd /root/a9`
+     as `worker_workspace_escape`.
+   - Governance lesson:
+     observation-first applies to recoverable quality issues. Workspace escape
+     can corrupt facts and user files, so it remains a hard isolation boundary.
