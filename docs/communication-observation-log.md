@@ -3599,3 +3599,22 @@ Next monitoring target:
      early task-card quality should be visible and observational. It should
      reduce bad worker inputs without becoming another hard gate before the
      workflow is stable.
+
+155. Idle plan continuation can resume from active-plan change_request.
+   - Trigger:
+     after all ready/generated execution backlog items completed, runtime
+     returned `waiting_for_review_closure` even though the active plan still
+     had a proposed `change_request`. The system needed a shaping task rather
+     than another manually authored backlog item.
+   - Change:
+     when default execution phases are exhausted, `plan_execution_backlog_items`
+     can create a `mechanism_extract`/`debate_next` continuation item from the
+     latest active-plan `change_request`. Idle plan continuation queues it and
+     records the generated task id so it does not loop forever.
+   - Verification:
+     focused supervisor tests cover direct backlog generation from
+     `change_request` and idle continuation scheduling when normal backlog is
+     exhausted.
+   - Governance lesson:
+     empty queue is not always completion. If unresolved requirements evidence
+     exists, A9 should resume with requirements shaping before execution.

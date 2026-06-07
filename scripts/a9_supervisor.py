@@ -8143,6 +8143,13 @@ def tail_change_request_line(path: Path, *, max_chars: int = 260) -> str:
     return tail_recovery_line(path, max_chars=max_chars)
 
 
+def latest_plan_change_request(plan: dict[str, Any], *, max_chars: int = 500) -> str:
+    plan_id = str(plan.get("plan_id") or "").strip() if plan else ""
+    if not plan_id:
+        return ""
+    return tail_change_request_line(plan_path(plan_id) / "change_request.md", max_chars=max_chars)
+
+
 def tail_progress_lane_line(
     plan: dict[str, Any],
     *,
@@ -11460,6 +11467,66 @@ def execution_backlog_task_was_generated(task_id: str, generated_task_ids: set[s
     return any(generated == normalized or generated.endswith(f"-{normalized}") for generated in generated_task_ids)
 
 
+def plan_change_request_continuation_item(
+    plan: dict[str, Any],
+    *,
+    generated_task_ids: set[str],
+) -> dict[str, Any] | None:
+    change_request = latest_plan_change_request(plan)
+    if not change_request:
+        return None
+    plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
+    task_id = f"exec-change-request-review-{plan_ref}"
+    if execution_backlog_task_was_generated(task_id, generated_task_ids):
+        return None
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
+    prompt = "\n".join(
+        [
+            "decision_status: debate_next",
+            "route: debate_next",
+            f"plan_id: {plan.get('plan_id', '')}",
+            f"goal_id: {plan.get('goal_id', '')}",
+            f"problem: {contract.get('problem', '')}",
+            f"system_requirement: {contract.get('system_requirement', '')}",
+            f"data_contract: {contract.get('data_shape', '')}",
+            f"state_flow: {contract.get('normal_flow', '')}",
+            f"exception_flow: {contract.get('exception_flow', '')}",
+            f"acceptance: {contract.get('acceptance', '')}",
+            f"out_of_scope: {contract.get('out_of_scope', '')}",
+            f"allowed_execution: {contract.get('allowed_execution', '')}",
+            "role_signoff: active plan has no ready backlog; change_request requires shaping before execution.",
+            "execution_backlog_id: change_request_review",
+            "execution_backlog_phase: mechanism_extract",
+            "execution_backlog_title: Convert latest change_request into decided execution backlog candidates",
+            "",
+            "Latest change_request:",
+            change_request,
+            "",
+            "Execution slice:",
+            "Reference-scan existing planning/backlog/auto-next tests, then produce a bounded mechanism_extract result. "
+            "If the change_request is already satisfied, say so with evidence. If work remains, output proposed "
+            "execution_backlog items or a more specific plan change_request; do not implement production changes in this slice.",
+            "",
+            "Rules:",
+            "- Treat this as requirements/debate shaping, not direct implementation.",
+            "- Use reference-first copying where the slice requires it.",
+            "- Do not change product scope, data contract, state flow, acceptance, or out_of_scope.",
+            "- If the contract is wrong, append a plan change_request instead of silently changing it.",
+        ]
+    )
+    return {
+        "backlog_id": "change_request_review",
+        "task_id": task_id,
+        "phase": "mechanism_extract",
+        "prompt": prompt,
+        "allowed_paths": allowed_paths,
+        "checks": [],
+        "source": "plan.change_request",
+        "status": "ready",
+    }
+
+
 def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> list[dict[str, Any]]:
     debate = requirements_debate_progress(plan)
     if debate.get("status") != "ready_for_execution_backlog":
@@ -11529,6 +11596,10 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
         )
         if count > 0 and len(items) >= count:
             break
+    if not items:
+        change_request_item = plan_change_request_continuation_item(plan, generated_task_ids=generated_task_ids)
+        if change_request_item:
+            items.append(change_request_item)
     return items
 
 
@@ -11592,7 +11663,7 @@ def enqueue_execution_backlog_items(
         queued_item["task_id"] = task_id
         queued_items.append(queued_item)
         created.append(path)
-    if any(str(item.get("source") or "") == "plan.execution_backlog.items" for item in queued_items):
+    if any(str(item.get("source") or "") in {"plan.execution_backlog.items", "plan.change_request"} for item in queued_items):
         mark_execution_backlog_items_queued(plan, queued_items, created)
         write_plan_files(plan)
     return created

@@ -3811,6 +3811,58 @@ Do the work.
         backlog["generated_task_ids"].append("exec-002-mechanism_extract-plan-completed-custom-backlog")
         self.assertEqual(mod.plan_execution_backlog_items(plan, count=2), [])
 
+    def test_plan_execution_backlog_items_fall_back_to_change_request_review(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            try:
+                mod.PLANS_DIR = tmp_path / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                plan = mod.create_plan_payload(
+                    plan_id="plan-change-request-continuation",
+                    goal_id="goal-change-request-continuation",
+                    contract={
+                        "problem": "Need continuation after all execution phases are generated.",
+                        "why_now": "The active plan still has a proposed change request.",
+                        "must": "Shape change_request before more execution.",
+                        "system_requirement": "idle plan continuation can resume from change_request.",
+                        "data_shape": "plan.change_request.md plus generated task ids.",
+                        "normal_flow": "empty backlog -> latest change_request -> mechanism_extract shaping task.",
+                        "exception_flow": "no change_request -> no task.",
+                        "acceptance": "queued task is debate_next and not direct implementation.",
+                        "out_of_scope": "no production mutation.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "planning-with-files change proposals and A9 active plan tails.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-change-request-continuation",
+                        "exec-002-mechanism_extract-plan-change-request-continuation",
+                    ]
+                )
+                plan_dir = mod.write_plan_files(plan)
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n"
+                    "- proposal: Add deterministic verification after gateway hint filtering.\n",
+                    encoding="utf-8",
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["source"], "plan.change_request")
+        self.assertEqual(items[0]["phase"], "mechanism_extract")
+        self.assertIn("decision_status: debate_next", items[0]["prompt"])
+        self.assertIn("Latest change_request:", items[0]["prompt"])
+        self.assertIn("Add deterministic verification after gateway hint filtering.", items[0]["prompt"])
+
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -4854,6 +4906,72 @@ Findings are ready.
         self.assertEqual(parsed.phase, "reference_scan")
         self.assertTrue(stored["execution_backlog"]["generated_task_ids"])
         self.assertEqual(following_items[0]["phase"], "mechanism_extract")
+
+    def test_idle_plan_continuation_schedules_change_request_review_when_backlog_exhausted(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-idle-change-request",
+                    goal_id="goal-idle-change-request",
+                    contract={
+                        "problem": "Need idle continuation from change_request.",
+                        "why_now": "No ready backlog remains.",
+                        "must": "Queue debate shaping before execution.",
+                        "system_requirement": "change_request review is a first-class idle task.",
+                        "data_shape": "change_request tail and generated task ids.",
+                        "normal_flow": "idle loop -> change_request review task.",
+                        "exception_flow": "already generated -> no duplicate.",
+                        "acceptance": "queued task is mechanism_extract debate_next.",
+                        "out_of_scope": "no direct implementation.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 active plan recovery tails.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-idle-change-request",
+                        "exec-002-mechanism_extract-plan-idle-change-request",
+                    ]
+                )
+                plan_dir = mod.write_plan_files(plan)
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n- proposal: Add next backlog candidate from change_request.\n",
+                    encoding="utf-8",
+                )
+
+                next_path = mod.schedule_idle_plan_continuation()
+                assert next_path is not None
+                parsed = mod.parse_task(next_path)
+                text = next_path.read_text(encoding="utf-8")
+                stored = mod.load_plan("plan-idle-change-request")
+                generated = stored["execution_backlog"]["generated_task_ids"]
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertEqual(parsed.phase, "mechanism_extract")
+        self.assertIn("decision_status: debate_next", text)
+        self.assertIn("Add next backlog candidate from change_request.", text)
+        self.assertIn("idle-backlog-exec-change-request-review-plan-idle-change-request", generated)
 
     def test_idle_goal_continuation_budget_limits_instead_of_scheduling(self):
         mod = load_supervisor()
