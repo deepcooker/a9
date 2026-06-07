@@ -3989,6 +3989,15 @@ def unresolved_unittest_targets(command: str) -> list[str]:
     return unresolved
 
 
+def unittest_target_allowed_for_future_test(target: str, allowed_paths: list[str]) -> bool:
+    parts = [part for part in str(target or "").strip().split(".") if part]
+    for index in range(len(parts), 0, -1):
+        candidate = "/".join(parts[:index]) + ".py"
+        if candidate in allowed_paths:
+            return True
+    return False
+
+
 def command_equivalence_variants(command: str) -> set[str]:
     normalized = normalize_shell_command(command)
     variants = {normalized}
@@ -9528,6 +9537,8 @@ def task_quality_warnings_for_enqueue(
             if "declared_check_maybe_shell_expanded:test_literal" not in warnings:
                 warnings.append("declared_check_maybe_shell_expanded:test_literal")
         for target in unresolved_unittest_targets(text):
+            if unittest_target_allowed_for_future_test(target, allowed_paths):
+                continue
             warning = f"declared_check_unresolved_unittest_target:{target}"
             if warning not in warnings:
                 warnings.append(warning)

@@ -10201,6 +10201,32 @@ role_signoff: product, business, architecture, test approved.
             parsed.task_quality_warnings,
         )
 
+    def test_enqueue_task_file_allows_future_unittest_target_in_allowed_test_file(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            try:
+                mod.QUEUE_DIR = Path(tmp)
+                queued = mod.enqueue_task_file(
+                    "quality-future-test-target",
+                    "Add the focused test and implementation.",
+                    phase="implement",
+                    allowed_paths=["tests/test_supervisor.py"],
+                    checks=[
+                        "python3 -m unittest "
+                        "tests.test_supervisor.SupervisorTests.test_plan_status_prints_open_change_request_lane"
+                    ],
+                )
+                parsed = mod.parse_task(queued)
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertNotIn(
+            "declared_check_unresolved_unittest_target:"
+            "tests.test_supervisor.SupervisorTests.test_plan_status_prints_open_change_request_lane",
+            parsed.task_quality_warnings,
+        )
+
     def test_enqueue_task_file_does_not_warn_for_tracked_path_and_quoted_shell_substitution_check(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

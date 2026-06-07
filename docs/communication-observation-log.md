@@ -3636,3 +3636,18 @@ Next monitoring target:
      keep the parser strict and improve worker instructions. Accepting
      malformed evidence would corrupt facts; monitor can still use the evidence
      to close a change request with an explicit note.
+
+157. Future unittest targets are allowed when their test file is in scope.
+   - Trigger:
+     the next plan task declared a focused unittest method that it was supposed
+     to add, so the quality observer flagged a false unresolved-test warning
+     before the worker could run.
+   - Change:
+     unresolved unittest target warnings are suppressed when the corresponding
+     test module file is already inside `allowed_paths`.
+   - Verification:
+     focused supervisor tests cover both unresolved external targets and future
+     targets in an allowed test file.
+   - Governance lesson:
+     observation should catch bad prompts without freezing normal TDD flow. New
+     tests can be declared before they exist when the task owns that test file.
