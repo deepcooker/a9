@@ -3764,3 +3764,18 @@ Next monitoring target:
      isolated worktree diffs are reviewable evidence. The hard boundary is
      workspace escape or failed guards/checks, not the mere presence of a file
      change event.
+
+165. Run-loop idle exit was the real 24h blocker.
+   - Trigger:
+     status showed no queued/running tasks and no `a9_supervisor.py run-loop`
+     process, even though the control API was alive. The loop drained tasks and
+     exited on idle instead of staying resident.
+   - Change:
+     `run-loop` now writes an idle heartbeat and sleeps/continues when no task
+     is queued. One-shot behavior is explicit via `--exit-when-idle`.
+   - Verification:
+     focused supervisor coverage asserts idle run-loop remains alive unless the
+     new exit flag is used.
+   - Governance lesson:
+     passing `run-one` and auto-next smoke tests is not the same as a 24h
+     service. The daemon must survive empty queues and wait for the next task.

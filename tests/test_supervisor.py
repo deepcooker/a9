@@ -3048,6 +3048,43 @@ Do the work.
 
         self.assertEqual(heartbeat["state"], "transport-cooldown")
 
+    def test_run_loop_stays_alive_when_idle_unless_exit_when_idle(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
+            old_done = mod.DONE_DIR
+            old_heartbeat = mod.DAEMON_HEARTBEAT_PATH
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            try:
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNNING_DIR = base / "running"
+                mod.DONE_DIR = base / "done"
+                mod.DAEMON_HEARTBEAT_PATH = base / "daemon_heartbeat.json"
+                mod.AUTO_LOOP_GUARD_PATH = base / "auto_loop_guard.json"
+                mod.ensure_dirs()
+                args = argparse.Namespace(
+                    sleep_seconds=0,
+                    max_tasks=0,
+                    keep_going_on_error=True,
+                    auto_next=False,
+                    exit_when_idle=False,
+                )
+                with mock.patch.object(mod.time, "sleep", side_effect=KeyboardInterrupt):
+                    with self.assertRaises(KeyboardInterrupt):
+                        mod.run_loop(args)
+                heartbeat = mod.read_json_file(mod.DAEMON_HEARTBEAT_PATH)
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
+                mod.DONE_DIR = old_done
+                mod.DAEMON_HEARTBEAT_PATH = old_heartbeat
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+
+        self.assertEqual(heartbeat["state"], "idle")
+        self.assertEqual(heartbeat["detail"], "no queued tasks")
+
     def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

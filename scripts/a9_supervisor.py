@@ -11217,7 +11217,10 @@ def run_loop(args: argparse.Namespace) -> int:
         if not task:
             write_daemon_heartbeat("idle", detail="no queued tasks")
             print("No queued tasks.")
-            return 0
+            if getattr(args, "exit_when_idle", False) or (args.max_tasks and completed >= args.max_tasks):
+                return 0
+            time.sleep(args.sleep_seconds)
+            continue
         worker_transport = resolved_worker_transport(task)
         transport_gate = worker_transport_cooldown_gate(
             requested_backend=str(worker_transport.get("backend") or "")
@@ -12233,6 +12236,7 @@ def main(argv: list[str]) -> int:
     loop_parser.add_argument("--max-tasks", type=int, default=0)
     loop_parser.add_argument("--keep-going-on-error", action="store_true")
     loop_parser.add_argument("--auto-next", action="store_true")
+    loop_parser.add_argument("--exit-when-idle", action="store_true")
 
     enqueue_parser = sub.add_parser("enqueue")
     enqueue_parser.add_argument("task_id")
