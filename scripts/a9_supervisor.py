@@ -1869,6 +1869,8 @@ Hard rules:
 - If the task asks for `strict_worker_envelope: true`, the final answer must include a JSON object
   shaped like OpenClaw/Lobster tool envelopes, but A9 protocol is numeric:
   {"protocolVersion":1,"ok":true,"status":"ok","output":{...}}.
+  The envelope must be one complete valid JSON object. Do not emit adjacent sibling JSON objects,
+  trailing `,{"summary":...}` fragments, or analysis/summary objects outside `output`.
   The envelope must be valid JSON only; put file paths and evidence as strings, not Markdown links.
   In output, separate worker_commands_run from supervisor_declared_checks; worker self-report is evidence,
   while supervisor-declared checks in the run summary are authoritative.
@@ -8147,7 +8149,23 @@ def latest_plan_change_request(plan: dict[str, Any], *, max_chars: int = 500) ->
     plan_id = str(plan.get("plan_id") or "").strip() if plan else ""
     if not plan_id:
         return ""
-    return tail_change_request_line(plan_path(plan_id) / "change_request.md", max_chars=max_chars)
+    path = plan_path(plan_id) / "change_request.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    blocks = re.split(r"(?m)^##\s+", text)
+    for block in reversed(blocks):
+        lines = [str(line or "").strip() for line in block.splitlines()]
+        if not any(line.startswith("- proposal:") for line in lines):
+            continue
+        status_line = next((line for line in lines if line.startswith("- status:")), "")
+        status = status_line.split(":", 1)[1].strip().lower() if ":" in status_line else "proposed"
+        if status in {"satisfied", "done", "closed", "cancelled", "rejected"}:
+            continue
+        proposal = next((line for line in lines if line.startswith("- proposal:")), "")
+        return bounded_inline(proposal, max_chars)
+    return ""
 
 
 def tail_progress_lane_line(
@@ -9357,6 +9375,8 @@ Core rule:
 - Use `rg -n` first, then read small line windows only; avoid broad `sed` ranges and full-file dumps.
 - If `strict_worker_envelope: true` is present, final output must include:
   {{"protocolVersion":1,"ok":true,"status":"ok","output":{{"changed_files":[],"copied_mechanisms":[],"worker_commands_run":[],"supervisor_declared_checks":[],"next_slice":""}}}}
+  It must be one valid JSON object. Put analysis, summary, evidence, next_recommended_task,
+  and change_request proposals inside `output`; never append a second bare JSON object after `output`.
   Valid status values are only `ok`, `needs_approval`, and `cancelled`.
 
 Copy pipeline phases:

@@ -3863,6 +3863,55 @@ Do the work.
         self.assertIn("Latest change_request:", items[0]["prompt"])
         self.assertIn("Add deterministic verification after gateway hint filtering.", items[0]["prompt"])
 
+    def test_plan_execution_backlog_items_ignore_satisfied_change_request(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            try:
+                mod.PLANS_DIR = tmp_path / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                plan = mod.create_plan_payload(
+                    plan_id="plan-satisfied-change-request",
+                    goal_id="goal-satisfied-change-request",
+                    contract={
+                        "problem": "Do not revive closed change requests.",
+                        "why_now": "Satisfied requests are evidence, not new work.",
+                        "must": "Skip satisfied change_request blocks.",
+                        "system_requirement": "idle plan continuation only uses open change requests.",
+                        "data_shape": "change_request status plus proposal.",
+                        "normal_flow": "satisfied change_request -> no continuation item.",
+                        "exception_flow": "new proposed request -> continuation item.",
+                        "acceptance": "no backlog item is generated.",
+                        "out_of_scope": "no hidden re-open.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 active plan change_request tails.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-satisfied-change-request",
+                        "exec-002-mechanism_extract-plan-satisfied-change-request",
+                    ]
+                )
+                plan_dir = mod.write_plan_files(plan)
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n"
+                    "## cr-1\n\n"
+                    "- status: satisfied\n"
+                    "- proposal: Add deterministic verification after gateway hint filtering.\n",
+                    encoding="utf-8",
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(items, [])
+
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -8457,6 +8506,8 @@ Findings are ready.
         self.assertIn("Do not read `docs/session-raw-summary.md`", prompt)
         self.assertIn("raw session logs", prompt)
         self.assertIn("Use `rg -n` first", prompt)
+        self.assertIn("one valid JSON object", prompt)
+        self.assertIn("never append a second bare JSON object", prompt)
 
     def test_next_task_prompt_marks_undeclared_test_command_as_proposal_only(self):
         mod = load_supervisor()

@@ -3618,3 +3618,21 @@ Next monitoring target:
    - Governance lesson:
      empty queue is not always completion. If unresolved requirements evidence
      exists, A9 should resume with requirements shaping before execution.
+
+156. Strict worker envelope instructions now forbid adjacent JSON fragments.
+   - Trigger:
+     a `debate_next` worker correctly concluded that the latest
+     `change_request` was already satisfied, but emitted malformed JSON by
+     appending a second bare object after `output.analysis`. The supervisor
+     correctly rejected the envelope, wasting the worker round.
+   - Change:
+     worker prompt discipline now explicitly requires one complete valid JSON
+     object and tells workers to place analysis, summary, evidence,
+     `next_recommended_task`, and change requests inside `output`.
+   - Verification:
+     focused prompt-discipline coverage asserts the generated worker prompt
+     contains the single-object rule.
+   - Governance lesson:
+     keep the parser strict and improve worker instructions. Accepting
+     malformed evidence would corrupt facts; monitor can still use the evidence
+     to close a change request with an explicit note.
