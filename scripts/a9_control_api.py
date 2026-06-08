@@ -435,6 +435,7 @@ def communication_data_contract_report(
 ) -> dict[str, Any]:
     requested = (object_name or "").strip()
     if requested and requested not in COMMUNICATION_DATA_CONTRACT_OBJECTS:
+        required_fields = COMMUNICATION_DATA_CONTRACT_FIELDS.get(requested, [])
         return {
             "status": "ok",
             "kind": "communication_data_contract_report",
@@ -445,6 +446,10 @@ def communication_data_contract_report(
                     "object": requested,
                     "status": "missing",
                     "current_surface": "unsupported object name",
+                    "current_mapping": "unsupported object name",
+                    "mysql_target": None,
+                    "redis_target": None,
+                    "required_fields": required_fields,
                     "missing_fields_or_gap": [f"unsupported object {requested} not in v1 contract"],
                     "evidence": "no_report_object",
                 }
@@ -456,12 +461,17 @@ def communication_data_contract_report(
     for item in COMMUNICATION_DATA_CONTRACT_OBJECTS:
         baseline = COMMUNICATION_DATA_CONTRACT_BASELINE[item]
         model_closure = COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE.get(item)
+        current_surface = baseline.get("current_surface", "not_available")
         payload_objects.append(
             {
                 "object": item,
                 "status": baseline["status"],
-                "current_surface": baseline["current_surface"],
-                "missing_fields_or_gap": baseline["missing_fields_or_gap"],
+                "current_surface": current_surface,
+                "current_mapping": baseline.get("current_mapping", current_surface),
+                "mysql_target": baseline.get("mysql_target"),
+                "redis_target": baseline.get("redis_target"),
+                "required_fields": COMMUNICATION_DATA_CONTRACT_FIELDS.get(item, []),
+                "missing_fields_or_gap": baseline.get("missing_fields_or_gap", []),
                 "evidence": baseline["evidence"],
                 **(
                     {"model_closure": model_closure}

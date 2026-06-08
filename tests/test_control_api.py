@@ -1419,6 +1419,41 @@ demo
         self.assertEqual(item["object"], "not-an-object")
         self.assertEqual(item["status"], "missing")
 
+    def test_communication_data_contract_report_endpoint(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+
+        class DummyCommunicationDataContractHandler:
+            path = "/api/communication/data-contract-report"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        mod.ControlHandler.do_GET(DummyCommunicationDataContractHandler())
+        payload = captured["payload"] or {}
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["kind"], "communication_data_contract_report")
+        self.assertEqual(payload["contract_version"], mod.COMMUNICATION_DATA_CONTRACT_VERSION)
+        self.assertIn("objects", payload)
+        self.assertIsInstance(payload["objects"], list)
+        self.assertGreater(len(payload["objects"]), 0)
+        first = payload["objects"][0]
+        for key in (
+            "object",
+            "status",
+            "mysql_target",
+            "redis_target",
+            "required_fields",
+            "evidence",
+            "current_mapping",
+            "current_surface",
+        ):
+            self.assertIn(key, first)
+
     def test_api_communication_data_contract_report_endpoint_uses_report_payload(self):
         mod = load_control_api()
         captured = {"status": None, "payload": None}
