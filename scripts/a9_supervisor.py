@@ -12083,6 +12083,25 @@ def extract_execution_backlog_items_from_final(final_path: Path) -> list[dict[st
     return items
 
 
+def execution_backlog_final_decision(final_path: Path) -> dict[str, Any]:
+    if not final_path.exists():
+        return {"status": "missing", "reason": "final_path_missing"}
+    text = final_path.read_text(encoding="utf-8", errors="backslashreplace")
+    candidates = [item for item in find_json_objects(text) if is_worker_envelope_candidate(item)]
+    if not candidates:
+        return {"status": "legacy", "reason": "worker_envelope_missing"}
+    envelope = candidates[-1]
+    output = envelope.get("output") if isinstance(envelope.get("output"), dict) else {}
+    decision_status = str(output.get("decision_status") or "").strip().lower() if isinstance(output, dict) else ""
+    change_request = output.get("change_request") if isinstance(output, dict) else {}
+    change_status = str(change_request.get("status") or "").strip().lower() if isinstance(change_request, dict) else ""
+    if decision_status != "decided":
+        return {"status": "blocked", "reason": "decision_not_decided", "decision_status": decision_status or "missing"}
+    if change_status in {"required", "open", "pending"}:
+        return {"status": "blocked", "reason": "change_request_required", "decision_status": decision_status, "change_request_status": change_status}
+    return {"status": "allowed", "reason": "decision_decided", "decision_status": decision_status, "change_request_status": change_status or "none"}
+
+
 def append_execution_backlog_items_from_debate_run(
     plan: dict[str, Any],
     task: Task,
@@ -12098,6 +12117,9 @@ def append_execution_backlog_items_from_debate_run(
     final_path_text = str(worker.get("final_path") or "").strip()
     if not final_path_text:
         return {"status": "skipped", "reason": "final_path_missing"}
+    decision = execution_backlog_final_decision(Path(final_path_text))
+    if decision.get("status") == "blocked":
+        return {"status": "skipped", "reason": decision.get("reason", "decision_not_decided"), "decision": decision}
     extracted = extract_execution_backlog_items_from_final(Path(final_path_text))
     if not extracted:
         return {"status": "skipped", "reason": "no_execution_backlog_json"}

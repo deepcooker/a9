@@ -4335,6 +4335,12 @@ Do the work.
                     """
 Findings are ready.
 {
+  "protocolVersion": 1,
+  "ok": true,
+  "status": "ok",
+  "output": {
+  "decision_status": "decided",
+  "change_request": {"status": "none"},
   "execution_backlog": {
     "items": [
       {
@@ -4345,6 +4351,7 @@ Findings are ready.
         "checks": ["python3 -m unittest tests.test_supervisor"]
       }
     ]
+  }
   }
 }
 """,
@@ -4377,6 +4384,81 @@ Findings are ready.
         self.assertEqual(item["source"], "debate_final_json")
         self.assertEqual(item["title"], "Wire debate backlog extraction")
         self.assertIn("scripts/a9_supervisor.py", item["allowed_paths"])
+
+    def test_update_active_plan_skips_not_decided_debate_backlog(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-not-decided-backlog",
+                    goal_id="goal-not-decided-backlog",
+                    contract={
+                        "problem": "Draft backlog must not execute before decision.",
+                        "why_now": "Debate output can include candidate backlog while still not_decided.",
+                        "must": "Skip backlog append when final envelope decision_status is not_decided.",
+                        "system_requirement": "Only decided debate final JSON appends execution_backlog.items.",
+                        "data_shape": "worker envelope output decision_status and change_request.",
+                        "normal_flow": "not_decided debate -> change_request -> no backlog append.",
+                        "exception_flow": "candidate items remain analysis only.",
+                        "acceptance": "plan execution_backlog stays empty.",
+                        "out_of_scope": "no automatic execution.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "requirements review closure.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "debate-run"
+                run_dir.mkdir(parents=True)
+                final_path = run_dir / "final.md"
+                final_path.write_text(
+                    json.dumps(
+                        {
+                            "protocolVersion": 1,
+                            "ok": True,
+                            "status": "ok",
+                            "output": {
+                                "decision_status": "not_decided",
+                                "change_request": {"status": "required"},
+                                "execution_backlog": {
+                                    "items": [
+                                        {
+                                            "title": "Should not append",
+                                            "phase": "implement",
+                                            "prompt": "Do not execute before closure.",
+                                            "allowed_paths": ["scripts/a9_supervisor.py"],
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                task = mod.Task(
+                    path=tmp_path / "task.md",
+                    task_id="debate-task",
+                    phase="reference_scan",
+                    prompt="decision_status: not_decided\nroute: debate_next\nplan_id: plan-not-decided-backlog\n",
+                )
+                summary = {"run_dir": str(run_dir), "status": "needs-followup", "worker": {"final_path": str(final_path)}, "git_governance": {}}
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = mod.load_plan("plan-not-decided-backlog")
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(result["execution_backlog_update"]["status"], "skipped")
+        self.assertEqual(result["execution_backlog_update"]["reason"], "decision_not_decided")
+        self.assertEqual(stored["execution_backlog"]["items"], [])
 
     def test_update_active_plan_ignores_execution_backlog_json_outside_debate_route(self):
         mod = load_supervisor()
