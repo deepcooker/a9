@@ -487,6 +487,7 @@ PHONE_CONTROL_GROUPS = {
     "runtime": [
         "submit.run",
         "session.refresh.trial",
+        "session.lane.latest",
         "flow.resume",
         "plan.backlog.next",
         "approval.approve",
@@ -3373,6 +3374,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_run_one": "/api/runtime/run-one",
             "runtime_run_one_with_transport": "/api/runtime/run-one-with-transport",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
+            "runtime_session_lane_latest": "/api/runtime/session-lane-latest",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
             "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
@@ -7678,6 +7680,110 @@ def runtime_session_refresh_trial(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def audit_session_lane_latest(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    enqueue_service_control_audit(
+        {
+            "at": utc_now(),
+            "action": "session_lane_latest",
+            "command": result.get("command", "session.lane.latest"),
+            "status": result.get("status"),
+            "source_session_path": result.get("source_session_path", ""),
+            "from_turn": result.get("from_turn"),
+            "to_turn": result.get("to_turn"),
+            "queued_task_path": result.get("queued_task_path", ""),
+            "reason": result.get("reason") or result.get("blocked_reason"),
+        },
+        root=root,
+    )
+    result["audit_async"] = True
+    return result
+
+
+def runtime_session_lane_latest(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    command = "session.lane.latest"
+    base = {"command": command, "called_model": False, "called_worker": False}
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        return audit_session_lane_latest({**base, "status": "blocked", "blocked_reason": str(exc)}, root=root)
+    gate = command_gate(command, root=root)
+    if not gate.get("allowed"):
+        return audit_session_lane_latest({**base, "status": "blocked", "gate": gate}, root=root)
+    mod = supervisor()
+    try:
+        tail_turns = max(1, int(payload.get("tail_turns", 1)))
+        batch_size = max(1, int(payload.get("batch_size", 1)))
+        timeout_seconds = int(payload.get("timeout_seconds", 120))
+        idle_timeout_seconds = int(payload.get("idle_timeout_seconds", 120))
+    except (TypeError, ValueError):
+        return audit_session_lane_latest(
+            {**base, "status": "invalid_request", "gate": gate, "reason": "numeric_fields_must_be_integer"},
+            root=root,
+        )
+    session_path_text = str(payload.get("session_path") or "").strip()
+    try:
+        session_path = Path(session_path_text) if session_path_text else mod.latest_codex_session_path()
+        if not session_path.is_absolute():
+            session_path = root / session_path
+        tail = mod.latest_session_tail_range(session_path, tail_turns=tail_turns, batch_size=batch_size)
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        return audit_session_lane_latest(
+            {**base, "status": "missing-session", "gate": gate, "reason": str(exc), "source_session_path": session_path_text},
+            root=root,
+        )
+    task_id = str(payload.get("task_id") or "").strip() or (
+        f"mobile-session-lane-latest-{tail.get('session_id') or mod.compact_task_ref(session_path.stem)}-"
+        f"{tail['from_turn']}-{tail['to_turn']}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+    )
+    auto_continue = bool(payload.get("auto_continue", False))
+    auto_close_reading = not bool(payload.get("no_auto_close_reading", False))
+    close_doc = str(payload.get("close_reading_doc") or "docs/session-raw-close-reading.md")
+    summary_doc = str(payload.get("summary_doc") or "docs/session-raw-summary.md")
+    prompt = "\n".join(
+        [
+            f"source_session_path: {tail['source_session_path']}",
+            f"from_turn: {tail['from_turn']}",
+            f"to_turn: {tail['to_turn']}",
+            f"batch_size: {tail['batch_size']}",
+            f"auto_continue: {str(auto_continue).lower()}",
+            f"auto_close_reading: {str(auto_close_reading).lower()}",
+            f"close_reading_doc: {close_doc}",
+            f"summary_doc: {summary_doc}",
+            "",
+            "Mobile runtime action: enqueue the deterministic latest external operator session lane. "
+            "Do not call a model, do not run a worker, and do not enter the copy-project pipeline.",
+        ]
+    )
+    queue_path = mod.enqueue_task_file(
+        task_id,
+        prompt,
+        phase=mod.SESSION_REFRESH_PHASE,
+        checks=[],
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        max_attempts=1,
+        allowed_paths=[],
+        auto_next=True,
+    )
+    return audit_session_lane_latest(
+        {
+            **base,
+            "status": "enqueued",
+            "gate": gate,
+            "task_id": Path(queue_path).stem,
+            "queued_task_path": str(queue_path),
+            "source_session_path": str(tail["source_session_path"]),
+            "session_id": tail.get("session_id", ""),
+            "from_turn": tail["from_turn"],
+            "to_turn": tail["to_turn"],
+            "user_turn_count": tail["user_turn_count"],
+            "auto_continue": auto_continue,
+            "auto_close_reading": auto_close_reading,
+        },
+        root=root,
+    )
+
+
 def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     enqueue_service_control_audit(
         {
@@ -8483,6 +8589,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_run_one_with_transport(payload))
             elif self.path == "/api/runtime/session-refresh-trial":
                 self.write_json(200, runtime_session_refresh_trial(payload))
+            elif self.path == "/api/runtime/session-lane-latest":
+                self.write_json(200, runtime_session_lane_latest(payload))
             elif self.path == "/api/runtime/plan-backlog-next":
                 self.write_json(200, runtime_plan_backlog_next(payload))
             elif self.path == "/api/monitor/intervention":

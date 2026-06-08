@@ -8975,3 +8975,35 @@ Execution evidence:
 Assistant preview:
 
 - 队列空，runtime running。现在用新命令真实入队最新尾部 1 turn，观察它是否自动完成 refresh + close_reading。
+
+## Auto Close Reading: Turn 695-695
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-695-695.json`
+- approx JSONL lines: `91798-91798`
+- generated_at: `2026-06-08T10:41:19+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 695
+
+Original user intent:
+
+- line `91798`: 继续下一步
+
+Execution evidence:
+
+- assistant_messages: `15`
+- tool_calls: `18` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `18`
+
+Assistant preview:
+
+- API 单测通过。现在做一次本地真实 API 函数 smoke：先 arm runtime gate，再调用 handler enqueue tail 1，不直接跑 worker。因为后台 run-loop 是 running，入队后会自动执行。

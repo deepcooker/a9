@@ -10964,6 +10964,37 @@ Do risky work.
         self.assertEqual(captured["response"]["command"], "plan.backlog.next")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
 
+    def test_api_runtime_session_lane_latest_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.runtime_session_lane_latest
+        captured = {}
+
+        def fake_runtime_session_lane_latest(payload):
+            captured["payload"] = payload
+            return {"status": "enqueued", "command": "session.lane.latest"}
+
+        body = json.dumps({"operator_scopes": ["operator.admin"], "tail_turns": 1}).encode("utf-8")
+
+        class DummySessionLaneLatestPostHandler:
+            path = "/api/runtime/session-lane-latest"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.runtime_session_lane_latest = fake_runtime_session_lane_latest
+            mod.ControlHandler.do_POST(DummySessionLaneLatestPostHandler())
+        finally:
+            mod.runtime_session_lane_latest = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "session.lane.latest")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+        self.assertEqual(captured["payload"]["tail_turns"], 1)
+
     def test_runtime_plan_backlog_next_blocked_without_runtime_gate(self):
         mod = load_control_api()
 
@@ -11128,6 +11159,82 @@ Do risky work.
                 mod.ROOT = old_root
                 mod.CODEX_SESSIONS_DIR = old_base
                 mod.supervisor = old_supervisor
+
+    def test_runtime_session_lane_latest_enqueues_without_worker(self):
+        mod = load_control_api()
+        calls = {}
+
+        class FakeSupervisor:
+            SESSION_REFRESH_PHASE = "session_refresh"
+
+            @staticmethod
+            def latest_codex_session_path():
+                return root / "codex-sessions" / "latest.jsonl"
+
+            @staticmethod
+            def latest_session_tail_range(session_path, *, tail_turns, batch_size):
+                calls["session_path"] = str(session_path)
+                calls["tail_turns"] = tail_turns
+                calls["batch_size"] = batch_size
+                return {
+                    "session_id": "latest-session",
+                    "source_session_path": str(session_path),
+                    "user_turn_count": 7,
+                    "from_turn": 6,
+                    "to_turn": 7,
+                    "batch_size": batch_size,
+                }
+
+            @staticmethod
+            def compact_task_ref(value):
+                return str(value)
+
+            @staticmethod
+            def enqueue_task_file(task_id, prompt, **kwargs):
+                calls["task_id"] = task_id
+                calls["prompt"] = prompt
+                calls["kwargs"] = kwargs
+                path = root / ".a9" / "tasks" / "queue" / f"{task_id}.md"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(prompt, encoding="utf-8")
+                return path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_root = mod.ROOT
+            old_supervisor = mod.supervisor
+            audit_calls = []
+            original_audit = mod.enqueue_service_control_audit
+            mod.ROOT = root
+            mod.supervisor = lambda: FakeSupervisor
+            mod.enqueue_service_control_audit = lambda event, *, root=mod.ROOT: audit_calls.append((event, root))
+            try:
+                blocked = mod.runtime_session_lane_latest({"operator_scopes": ["operator.admin"]}, root=root)
+                self.assertEqual(blocked["status"], "blocked")
+
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_session_lane_latest(
+                    {"operator_scopes": ["operator.admin"], "tail_turns": 2, "batch_size": 1, "task_id": "api-session-lane"},
+                    root=root,
+                )
+            finally:
+                mod.ROOT = old_root
+                mod.supervisor = old_supervisor
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "enqueued")
+        self.assertEqual(result["command"], "session.lane.latest")
+        self.assertEqual(result["from_turn"], 6)
+        self.assertEqual(result["to_turn"], 7)
+        self.assertFalse(result["called_model"])
+        self.assertFalse(result["called_worker"])
+        self.assertTrue(result["auto_close_reading"])
+        self.assertEqual(calls["kwargs"]["phase"], "session_refresh")
+        self.assertTrue(calls["kwargs"]["auto_next"])
+        self.assertIn("auto_continue: false", calls["prompt"])
+        self.assertIn("auto_close_reading: true", calls["prompt"])
+        self.assertEqual(audit_calls[-1][0]["status"], "enqueued")
+        self.assertEqual(audit_calls[-1][0]["command"], "session.lane.latest")
 
 
 if __name__ == "__main__":
