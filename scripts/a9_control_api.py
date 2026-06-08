@@ -6423,6 +6423,326 @@ def bootstrap_takeover_admission(payload: dict[str, Any] | None = None, *, root:
     return result
 
 
+def bootstrap_takeover_resume(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
+    raw = payload or {}
+    require_phone_admin(raw)
+
+    raw_node_id = str(raw.get('node_id') or raw.get('target') or raw.get('ssh_target') or '').strip()
+    node_id = safe_node_id(raw_node_id)
+    if not node_id:
+        return {
+            'status': 'invalid_request',
+            'kind': 'bootstrap_takeover_resume',
+            'schema': 'a9.bootstrap_takeover_resume.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'reason': 'node_id_required',
+        }
+
+    record_path = node_path(node_id, root)
+    if not record_path.exists():
+        return {
+            'status': 'missing',
+            'kind': 'bootstrap_takeover_resume',
+            'schema': 'a9.bootstrap_takeover_resume.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'record_missing',
+        }
+
+    try:
+        record = read_json(record_path)
+    except (OSError, json.JSONDecodeError):
+        return {
+            'status': 'invalid_state',
+            'kind': 'bootstrap_takeover_resume',
+            'schema': 'a9.bootstrap_takeover_resume.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'record_read_failed',
+        }
+
+    bootstrap_state = record.get('bootstrap_takeover')
+    if not isinstance(bootstrap_state, dict):
+        return {
+            'status': 'invalid_state',
+            'kind': 'bootstrap_takeover_resume',
+            'schema': 'a9.bootstrap_takeover_resume.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'missing_bootstrap_takeover_state',
+        }
+
+    if 'expected_revision' not in raw:
+        return {
+            'status': 'invalid_request',
+            'kind': 'bootstrap_takeover_resume',
+            'schema': 'a9.bootstrap_takeover_resume.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'expected_revision_required',
+        }
+
+    try:
+        expected_revision = int(raw.get('expected_revision'))
+    except (TypeError, ValueError):
+        return {
+            'status': 'invalid_request',
+            'kind': 'bootstrap_takeover_resume',
+            'schema': 'a9.bootstrap_takeover_resume.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'expected_revision_must_be_integer',
+        }
+
+    current_revision = parse_int(record.get('revision'), default=-1)
+    if expected_revision != current_revision:
+        result = {
+            'status': 'conflict',
+            'kind': 'bootstrap_takeover_resume',
+            'schema': 'a9.bootstrap_takeover_resume.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'expected_revision': expected_revision,
+            'actual_revision': current_revision,
+            'reason': 'expected_revision_mismatch',
+            'record': {'node_id': node_id, 'revision': current_revision},
+        }
+        append_jsonl(root / BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH, {**result, 'record': record})
+        return result
+
+    if str(bootstrap_state.get('state') or '') != 'waiting':
+        return {
+            'status': 'invalid_state',
+            'kind': 'bootstrap_takeover_resume',
+            'schema': 'a9.bootstrap_takeover_resume.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'expected_revision': expected_revision,
+            'reason': 'not_in_wait_state',
+        }
+
+    now = utc_now()
+    next_revision = current_revision + 1
+    approval_id = str(
+        raw.get('approval_id')
+        or bootstrap_state.get('approval_id')
+        or f'bootstrap-takeover:{node_id}:{next_revision}'
+    )
+    resume_token = str(
+        raw.get('resume_token')
+        or bootstrap_state.get('resume_token')
+        or f'{approval_id}:resume'
+    )
+    actor = str(raw.get('actor') or raw.get('operator') or 'mobile-operator').strip() or 'mobile-operator'
+
+    updated = {
+        **record,
+        'node_id': node_id,
+        'status': 'await_bootstrap_takeover',
+        'status_reason': 'bootstrap_takeover_approved',
+        'revision': next_revision,
+        'updated_at': now,
+        'bootstrap_takeover': {
+            **bootstrap_state,
+            'state': 'approved',
+            'decision': 'resume_approved',
+            'approval_id': approval_id,
+            'resume_token': resume_token,
+            'approved_by': actor,
+            'approved_at': now,
+            'decision_reason': str(raw.get('reason') or 'approved'),
+        },
+    }
+    record_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+    result = {
+        'status': 'approved',
+        'kind': 'bootstrap_takeover_resume',
+        'schema': 'a9.bootstrap_takeover_resume.v1',
+        'execution_enabled': False,
+        'no_actuation': True,
+        'node_id': node_id,
+        'expected_revision': expected_revision,
+        'previous_revision': current_revision,
+        'next_revision': next_revision,
+        'reason': 'bootstrap_takeover_approved',
+        'record': updated,
+    }
+    evidence_path = write_node_evidence('bootstrap-takeover-resume', node_id, result, root=root)
+    result['evidence_path'] = str(evidence_path)
+    append_jsonl(root / BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH, {
+        **result,
+        'record': {
+            'node_id': node_id,
+            'revision': next_revision,
+        },
+    })
+    return result
+
+
+def bootstrap_takeover_reject(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
+    raw = payload or {}
+    require_phone_admin(raw)
+
+    raw_node_id = str(raw.get('node_id') or raw.get('target') or raw.get('ssh_target') or '').strip()
+    node_id = safe_node_id(raw_node_id)
+    if not node_id:
+        return {
+            'status': 'invalid_request',
+            'kind': 'bootstrap_takeover_reject',
+            'schema': 'a9.bootstrap_takeover_reject.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'reason': 'node_id_required',
+        }
+
+    record_path = node_path(node_id, root)
+    if not record_path.exists():
+        return {
+            'status': 'missing',
+            'kind': 'bootstrap_takeover_reject',
+            'schema': 'a9.bootstrap_takeover_reject.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'record_missing',
+        }
+
+    try:
+        record = read_json(record_path)
+    except (OSError, json.JSONDecodeError):
+        return {
+            'status': 'invalid_state',
+            'kind': 'bootstrap_takeover_reject',
+            'schema': 'a9.bootstrap_takeover_reject.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'record_read_failed',
+        }
+
+    bootstrap_state = record.get('bootstrap_takeover')
+    if not isinstance(bootstrap_state, dict):
+        return {
+            'status': 'invalid_state',
+            'kind': 'bootstrap_takeover_reject',
+            'schema': 'a9.bootstrap_takeover_reject.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'missing_bootstrap_takeover_state',
+        }
+
+    if 'expected_revision' not in raw:
+        return {
+            'status': 'invalid_request',
+            'kind': 'bootstrap_takeover_reject',
+            'schema': 'a9.bootstrap_takeover_reject.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'expected_revision_required',
+        }
+
+    try:
+        expected_revision = int(raw.get('expected_revision'))
+    except (TypeError, ValueError):
+        return {
+            'status': 'invalid_request',
+            'kind': 'bootstrap_takeover_reject',
+            'schema': 'a9.bootstrap_takeover_reject.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'reason': 'expected_revision_must_be_integer',
+        }
+
+    current_revision = parse_int(record.get('revision'), default=-1)
+    if expected_revision != current_revision:
+        result = {
+            'status': 'conflict',
+            'kind': 'bootstrap_takeover_reject',
+            'schema': 'a9.bootstrap_takeover_reject.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'expected_revision': expected_revision,
+            'actual_revision': current_revision,
+            'reason': 'expected_revision_mismatch',
+            'record': {'node_id': node_id, 'revision': current_revision},
+        }
+        append_jsonl(root / BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH, {**result, 'record': record})
+        return result
+
+    if str(bootstrap_state.get('state') or '') != 'waiting':
+        return {
+            'status': 'invalid_state',
+            'kind': 'bootstrap_takeover_reject',
+            'schema': 'a9.bootstrap_takeover_reject.v1',
+            'execution_enabled': False,
+            'no_actuation': True,
+            'node_id': node_id,
+            'expected_revision': expected_revision,
+            'reason': 'not_in_wait_state',
+        }
+
+    now = utc_now()
+    next_revision = current_revision + 1
+    actor = str(raw.get('actor') or raw.get('operator') or 'mobile-operator').strip() or 'mobile-operator'
+    current_status = str(record.get('status') or 'registered')
+    next_status = 'registered' if current_status == 'await_bootstrap_takeover' else current_status
+
+    updated = {
+        **record,
+        'node_id': node_id,
+        'status': next_status,
+        'status_reason': 'bootstrap_takeover_rejected',
+        'revision': next_revision,
+        'updated_at': now,
+        'bootstrap_takeover': {
+            **bootstrap_state,
+            'state': 'rejected',
+            'decision': 'reject',
+            'rejected_by': actor,
+            'rejected_at': now,
+            'rejection_reason': str(raw.get('reason') or 'rejected'),
+        },
+    }
+    record_path.write_text(json.dumps(updated, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+
+    result = {
+        'status': 'rejected',
+        'kind': 'bootstrap_takeover_reject',
+        'schema': 'a9.bootstrap_takeover_reject.v1',
+        'execution_enabled': False,
+        'no_actuation': True,
+        'node_id': node_id,
+        'expected_revision': expected_revision,
+        'previous_revision': current_revision,
+        'next_revision': next_revision,
+        'reason': 'bootstrap_takeover_rejected',
+        'record': updated,
+    }
+    evidence_path = write_node_evidence('bootstrap-takeover-reject', node_id, result, root=root)
+    result['evidence_path'] = str(evidence_path)
+    append_jsonl(root / BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH, {
+        **result,
+        'record': {
+            'node_id': node_id,
+            'revision': next_revision,
+        },
+    })
+    return result
+
+
 def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("nodes.bootstrap.execute", root=root)
@@ -6436,7 +6756,28 @@ def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dic
             "gate": gate,
         }
     plan = bootstrap_plan_node(payload)
-    target = str(plan.get("target") or "")
+    target = str(plan.get('target') or '')
+    node_id = safe_node_id(str(payload.get('node_id') or payload.get('ssh_target') or target).strip())
+    if node_id:
+        takeover_path = node_path(node_id, root)
+        if takeover_path.exists():
+            try:
+                takeover_record = read_json(takeover_path)
+            except (OSError, json.JSONDecodeError):
+                takeover_record = {}
+            takeover = takeover_record.get('bootstrap_takeover')
+            if (
+                str(takeover_record.get('status') or '') == 'await_bootstrap_takeover'
+                and (not isinstance(takeover, dict) or str(takeover.get('state') or '') != 'approved')
+            ):
+                return {
+                    'status': 'blocked',
+                    'execution_enabled': False,
+                    'bootstrap_action': 'wait_for_approval',
+                    'bootstrap_action_reason': 'bootstrap_takeover_not_approved',
+                    'reason': 'bootstrap_takeover_not_approved',
+                    'gate': gate,
+                }
     if not target:
         raise ValueError("bootstrap plan is missing target")
     connect_timeout = int(payload.get("connect_timeout") or 5)
@@ -8950,6 +9291,10 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, bootstrap_dry_run_node(payload))
             elif self.path == "/api/nodes/bootstrap-takeover-admission":
                 self.write_json(200, bootstrap_takeover_admission(payload))
+            elif self.path == "/api/nodes/bootstrap-takeover-resume":
+                self.write_json(200, bootstrap_takeover_resume(payload))
+            elif self.path == "/api/nodes/bootstrap-takeover-reject":
+                self.write_json(200, bootstrap_takeover_reject(payload))
             elif self.path == "/api/nodes/bootstrap-execute":
                 status, body = guarded_remote_post(
                     "nodes.bootstrap.execute",

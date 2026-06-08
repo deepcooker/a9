@@ -8100,6 +8100,211 @@ Do risky work.
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(json.dumps({'node_id': 'node-a', 'revision': 9}) + '\n', encoding='utf-8')
+
+            result = mod.bootstrap_takeover_admission(
+                {
+                    'expected_revision': 8,
+                    'reconnect_event': {
+                        'status': 'ok',
+                        'kind': 'gateway_reconnect_decision',
+                        'action': 'terminate',
+                        'node_id': 'node-a',
+                    },
+                },
+                root=root,
+            )
+            record = json.loads(node_path.read_text(encoding='utf-8'))
+
+        self.assertEqual(result['status'], 'conflict')
+        self.assertEqual(result['reason'], 'expected_revision_mismatch')
+        self.assertEqual(result['actual_revision'], 9)
+        self.assertEqual(record['revision'], 9)
+
+    def test_bootstrap_takeover_resume_requires_exact_expected_revision(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        'node_id': 'node-a',
+                        'revision': 4,
+                        'ssh_target': 'root@100.64.0.1',
+                        'status': 'registered',
+                    }
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+
+            mod.bootstrap_takeover_admission(
+                {
+                    'expected_revision': 4,
+                    'reconnect_event': {
+                        'status': 'ok',
+                        'kind': 'gateway_reconnect_decision',
+                        'event_id': '1779900000-0',
+                        'phase': 'connect',
+                        'action': 'terminate',
+                        'error_class': 'policy_budget_exhausted',
+                        'node_id': 'node-a',
+                        'flow_revision': 4,
+                    },
+                },
+                root=root,
+            )
+
+            stale = mod.bootstrap_takeover_resume(
+                {
+                    'node_id': 'node-a',
+                    'expected_revision': 4,
+                    'operator_scopes': ['operator.admin'],
+                },
+                root=root,
+            )
+            stale_record = json.loads(node_path.read_text(encoding='utf-8'))
+
+            resume = mod.bootstrap_takeover_resume(
+                {
+                    'node_id': 'node-a',
+                    'expected_revision': 5,
+                    'operator_scopes': ['operator.admin'],
+                    'actor': 'operator.admin',
+                },
+                root=root,
+            )
+            record = json.loads(node_path.read_text(encoding='utf-8'))
+            resume_evidence_path_exists = Path(resume['evidence_path']).exists()
+
+        self.assertEqual(stale['status'], 'conflict')
+        self.assertEqual(stale['reason'], 'expected_revision_mismatch')
+        self.assertEqual(stale_record['revision'], 5)
+        self.assertEqual(stale_record['bootstrap_takeover']['state'], 'waiting')
+        self.assertEqual(resume['status'], 'approved')
+        self.assertEqual(record['revision'], 6)
+        self.assertEqual(record['bootstrap_takeover']['state'], 'approved')
+        self.assertFalse(resume['execution_enabled'])
+        self.assertTrue(resume['no_actuation'])
+        self.assertEqual(record['bootstrap_takeover']['decision'], 'resume_approved')
+        self.assertEqual(resume['next_revision'], 6)
+        self.assertTrue(resume_evidence_path_exists)
+
+    def test_bootstrap_takeover_reject_closes_wait_state_and_records_audit(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        'node_id': 'node-a',
+                        'revision': 4,
+                        'ssh_target': 'root@100.64.0.1',
+                        'status': 'registered',
+                    }
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+
+            mod.bootstrap_takeover_admission(
+                {
+                    'expected_revision': 4,
+                    'reconnect_event': {
+                        'status': 'ok',
+                        'kind': 'gateway_reconnect_decision',
+                        'event_id': '1779900000-0',
+                        'phase': 'connect',
+                        'action': 'terminate',
+                        'node_id': 'node-a',
+                    },
+                },
+                root=root,
+            )
+
+            stale = mod.bootstrap_takeover_reject(
+                {
+                    'node_id': 'node-a',
+                    'expected_revision': 4,
+                    'operator_scopes': ['operator.admin'],
+                },
+                root=root,
+            )
+            stale_record = json.loads(node_path.read_text(encoding='utf-8'))
+            reject = mod.bootstrap_takeover_reject(
+                {
+                    'node_id': 'node-a',
+                    'expected_revision': 5,
+                    'operator_scopes': ['operator.admin'],
+                    'actor': 'operator.admin',
+                    'reason': 'false_positive',
+                },
+                root=root,
+            )
+            record = json.loads(node_path.read_text(encoding='utf-8'))
+            reject_evidence_path_exists = Path(reject['evidence_path']).exists()
+
+        self.assertEqual(stale['status'], 'conflict')
+        self.assertEqual(stale['reason'], 'expected_revision_mismatch')
+        self.assertEqual(stale_record['revision'], 5)
+        self.assertEqual(reject['status'], 'rejected')
+        self.assertEqual(record['revision'], 6)
+        self.assertEqual(record['status'], 'registered')
+        self.assertEqual(record['bootstrap_takeover']['state'], 'rejected')
+        self.assertEqual(record['bootstrap_takeover']['decision'], 'reject')
+        self.assertEqual(record['bootstrap_takeover']['rejected_by'], 'operator.admin')
+        self.assertTrue(reject_evidence_path_exists)
+
+    def test_bootstrap_execute_blocked_while_takeover_waiting_without_approval(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        'node_id': 'node-a',
+                        'revision': 5,
+                        'ssh_target': 'root@100.64.0.1',
+                        'status': 'await_bootstrap_takeover',
+                        'bootstrap_takeover': {
+                            'state': 'waiting',
+                            'approval_id': 'bootstrap-takeover:node-a:5',
+                            'resume_token': 'bootstrap-takeover:node-a:5:resume',
+                        },
+                    }
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            mod.phone_control_arm(
+                {'group': 'remote', 'duration': '30s', 'operator_scopes': ['operator.admin']},
+                root=root,
+            )
+            blocked = mod.bootstrap_execute_node(
+                {
+                    'node_id': 'node-a',
+                    'ssh_target': 'root@100.64.0.1',
+                    'operator_scopes': ['operator.admin'],
+                },
+                root=root,
+            )
+
+        self.assertEqual(blocked['status'], 'blocked')
+        self.assertEqual(blocked['bootstrap_action'], 'wait_for_approval')
+        self.assertEqual(blocked['bootstrap_action_reason'], 'bootstrap_takeover_not_approved')
+
+    def test_communication_action_plan_routes_terminal_reconnect_to_bootstrap_takeover_admission(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
             node_path = root / ".a9" / "nodes" / "node-a.json"
             node_path.parent.mkdir(parents=True)
             node_path.write_text(json.dumps({"node_id": "node-a", "revision": 9}) + "\n", encoding="utf-8")
