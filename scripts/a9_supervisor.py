@@ -5007,6 +5007,21 @@ def replay_process_governance_for_summary(summary: dict[str, Any]) -> dict[str, 
     )
 
 
+def process_governance_has_only_direct_file_change_errors(process_governance: dict[str, Any] | None) -> bool:
+    if not isinstance(process_governance, dict) or process_governance.get("status") != "fail":
+        return False
+    findings = process_governance.get("findings", [])
+    findings = findings if isinstance(findings, list) else []
+    error_findings = [
+        item
+        for item in findings
+        if isinstance(item, dict) and item.get("level") == "error"
+    ]
+    return bool(error_findings) and all(
+        item.get("kind") == "direct_file_change_event" for item in error_findings
+    )
+
+
 def decide_status(
     worker: dict[str, Any],
     diff: dict[str, Any],
@@ -5038,7 +5053,8 @@ def decide_status(
         return "needs-repair"
     if scope_guard and scope_guard.get("status") == "fail":
         return "needs-repair"
-    if process_governance and process_governance.get("status") == "fail":
+    direct_change_only_process_failure = process_governance_has_only_direct_file_change_errors(process_governance)
+    if process_governance and process_governance.get("status") == "fail" and not direct_change_only_process_failure:
         findings = process_governance.get("findings", [])
         findings = findings if isinstance(findings, list) else []
         direct_change_repair = process_governance.get("direct_file_change_policy") == "repair" and any(

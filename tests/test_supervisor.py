@@ -7834,13 +7834,31 @@ Findings are ready.
 
         self.assertEqual(status, "monitor-blocked")
 
-    def test_direct_file_change_repair_policy_failure_routes_to_needs_repair(self):
+    def test_direct_file_change_repair_policy_allows_pass_when_evidence_passes(self):
         mod = load_supervisor()
         worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
         status = mod.decide_status(
             worker,
             {"diff_bytes": 120},
             [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 0}],
+            patch_guard={"status": "pass"},
+            scope_guard={"status": "pass"},
+            process_governance={
+                "status": "fail",
+                "direct_file_change_policy": "repair",
+                "findings": [{"level": "error", "kind": "direct_file_change_event"}],
+            },
+        )
+
+        self.assertEqual(status, "pass")
+
+    def test_direct_file_change_repair_policy_still_repairs_when_checks_fail(self):
+        mod = load_supervisor()
+        worker = {"timed_out": False, "idle_timed_out": False, "return_code": 0}
+        status = mod.decide_status(
+            worker,
+            {"diff_bytes": 120},
+            [{"command": "python3 -m unittest tests/test_control_api.py", "return_code": 1}],
             patch_guard={"status": "pass"},
             scope_guard={"status": "pass"},
             process_governance={

@@ -3952,3 +3952,24 @@ Next monitoring target:
      run for direct file-change events and broad reads. Monitor salvage is valid
      when tests and patch intent are clear, but the next runtime slice must
      reduce worker token burn and enforce deterministic patch output earlier.
+
+175. Direct file-change process failures no longer override passing evidence.
+   - Trigger:
+     The 24h worker produced a scoped bootstrap-execute handoff patch and passed
+     full `tests.test_control_api`, but the supervisor rolled it back because
+     direct `file_change` events violated deterministic apply discipline.
+   - Change:
+     `decide_status()` now treats direct-file-change-only process errors as
+     process risk, not automatic business failure, when patch guard, scope
+     guard, diff evidence, and declared checks pass. Mixed process errors,
+     failed checks, failed patch/scope guards, and dirty-worktree skips still
+     route to repair.
+   - Verification:
+     Focused supervisor tests prove passing evidence now yields `pass`, while
+     failed checks with the same direct-file-change process issue still yield
+     `needs-repair`.
+   - Governance lesson:
+     Deterministic apply is a quality target, not a reason to discard correct
+     code after evidence passes. Gate hard only on correctness, safety, scope,
+     license, or test truth; keep process discipline as telemetry unless it
+     changes the product risk.
