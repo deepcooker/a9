@@ -1,5 +1,26 @@
 # A9 错题本
 
+## 2026-06-09：新增测试文件必须自动补跑模块级检查
+
+现象：
+
+- `implement-bootstrap-takeover-resume-governance-20260608` 由 24h worker 跑通，
+  supervisor 声明检查也通过，但 worker 新增了 `tests/test_control_api.py` 用例，
+  声明检查只覆盖旧的具体测试列表。
+- 监控者补跑完整 `tests.test_control_api` 后发现两个新增测试在
+  `TemporaryDirectory` 退出后检查 evidence 路径，测试本身失败。
+
+修正：
+
+- `run_checks()` 在 declared checks 后，根据 staged diff 自动追加 touched
+  `tests/test_*.py` 对应的模块级 `python3 -m unittest tests.<module>`。
+- 如果声明检查已包含整个模块，不重复跑；如果只声明了具体 test case，仍补跑整模块。
+
+产品判断：
+
+- 这不是新增死门禁，而是由真实变更文件推导出的验证证据。
+- 数据第一：changed files 是事实源；测试覆盖范围必须跟随事实源，而不是只信任务前置声明。
+
 ## 2026-05-29：worker pass 后仍必须由监控者复跑相关测试
 
 现象：

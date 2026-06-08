@@ -3892,3 +3892,23 @@ Next monitoring target:
      Reliable multi-machine control should first model the takeover state and
      evidence boundary. Real SSH/tmux execution remains a later, explicitly
      armed step.
+
+172. Touched test files now trigger supplemental module checks.
+   - Trigger:
+     `implement-bootstrap-takeover-resume-governance-20260608` passed its
+     declared checks, but the worker added new tests outside the declared
+     specific test list. A monitor rerun of full `tests.test_control_api`
+     caught two path-existence assertions that ran after `TemporaryDirectory`
+     cleanup.
+   - Change:
+     Supervisor checks now append a supplemental `python3 -m unittest
+     tests.<module>` when a cached patch touches `tests/test_*.py` and the
+     full module is not already declared. Specific test-case declarations do
+     not suppress the module check.
+   - Verification:
+     New supervisor tests cover supplemental module execution, broad-module
+     de-duplication, and specific-case-plus-module behavior.
+   - Governance lesson:
+     Declared checks remain authoritative, but the runtime may add evidence
+     checks derived from actual changed files. This is data-driven verification,
+     not a fixed numeric gate.

@@ -3980,11 +3980,48 @@ def integrate_worker_commit_to_main(
     return result
 
 
+def supplemental_test_module_for_path(path: str) -> str:
+    normalized = str(path or "").strip().replace("\\", "/")
+    if not normalized.startswith("tests/test_") or not normalized.endswith(".py"):
+        return ""
+    return normalized[:-3].replace("/", ".")
+
+
+def cached_changed_files(worktree: Path) -> list[str]:
+    proc = run_cmd(["git", "diff", "--cached", "--name-only"], cwd=worktree)
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def declared_check_covers_unittest_module(check: str, module: str) -> bool:
+    targets = unittest_targets(normalize_shell_command(check))
+    return any(target == module for target in targets)
+
+
+def supplemental_check_commands(task: Task, worktree: Path) -> list[str]:
+    modules: list[str] = []
+    for path in cached_changed_files(worktree):
+        module = supplemental_test_module_for_path(path)
+        if module and module not in modules:
+            modules.append(module)
+    commands: list[str] = []
+    for module in modules:
+        command = f"python3 -m unittest {module}"
+        if any(declared_check_covers_unittest_module(check, module) for check in task.checks):
+            continue
+        commands.append(command)
+    return commands
+
+
 def run_checks(task: Task, worktree: Path, run_dir: Path) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     checks_dir = run_dir / "checks"
     checks_dir.mkdir(exist_ok=True)
-    for index, check_cmd in enumerate(task.checks, start=1):
+    checks_to_run = [{"command": check, "source": "declared"} for check in task.checks]
+    checks_to_run.extend({"command": check, "source": "supplemental_changed_test_file"} for check in supplemental_check_commands(task, worktree))
+    for index, check_item in enumerate(checks_to_run, start=1):
+        check_cmd = check_item["command"]
         started = time.monotonic()
         proc = subprocess.run(
             ["bash", "-lc", check_cmd],
@@ -4001,6 +4038,7 @@ def run_checks(task: Task, worktree: Path, run_dir: Path) -> list[dict[str, Any]
                 "return_code": proc.returncode,
                 "duration_seconds": round(time.monotonic() - started, 3),
                 "output_path": str(output_path),
+                "source": check_item["source"],
             }
         )
     return results
@@ -4986,6 +5024,13 @@ def decide_status(
     if worker_envelope and worker_envelope.get("status") == "needs-approval":
         return "needs-approval"
     if worker_envelope and worker_envelope.get("status") == "fail":
+        return "needs-repair"
+    if (
+        patch_apply
+        and patch_apply.get("status") == "skip-dirty-worktree"
+        and process_governance
+        and process_governance.get("direct_file_change_policy") == "repair"
+    ):
         return "needs-repair"
     if patch_apply and patch_apply.get("status") == "fail":
         return "needs-repair"

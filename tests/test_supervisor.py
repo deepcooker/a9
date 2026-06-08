@@ -9042,7 +9042,7 @@ Findings are ready.
             scope_guard={"status": "pass"},
             patch_apply={"status": "skip-dirty-worktree"},
             worker_envelope={"status": "pass"},
-            process_governance={"status": "pass"},
+            process_governance={"status": "pass", "direct_file_change_policy": "repair"},
         )
 
         self.assertEqual(status, "needs-repair")
@@ -12986,6 +12986,100 @@ role_signoff: product, business, architecture, test approved.
             )
         finally:
             next_path.unlink(missing_ok=True)
+
+    def test_run_checks_adds_supplemental_module_when_test_file_changes(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_demo.py").write_text(
+                "import unittest\n\n"
+                "class DemoTests(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="supplemental-test",
+                prompt="modify test file",
+                phase="implement",
+                checks=["python3 -m py_compile tests/test_demo.py"],
+                allowed_paths=["tests/test_demo.py"],
+            )
+
+            checks = mod.run_checks(task, root, run_dir)
+
+        self.assertEqual([item["source"] for item in checks], ["declared", "supplemental_changed_test_file"])
+        self.assertEqual(checks[1]["command"], "python3 -m unittest tests.test_demo")
+        self.assertEqual(checks[1]["return_code"], 0)
+
+    def test_run_checks_does_not_duplicate_declared_module_supplemental_check(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_demo.py").write_text(
+                "import unittest\n\n"
+                "class DemoTests(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="supplemental-test-duplicate",
+                prompt="modify test file",
+                phase="implement",
+                checks=["python3 -m unittest tests.test_demo"],
+                allowed_paths=["tests/test_demo.py"],
+            )
+
+            checks = mod.run_checks(task, root, run_dir)
+
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]["source"], "declared")
+
+    def test_run_checks_keeps_supplemental_module_when_only_specific_case_declared(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            tests_dir = root / "tests"
+            tests_dir.mkdir()
+            (tests_dir / "test_demo.py").write_text(
+                "import unittest\n\n"
+                "class DemoTests(unittest.TestCase):\n"
+                "    def test_ok(self):\n"
+                "        self.assertTrue(True)\n",
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="supplemental-test-specific-case",
+                prompt="modify test file",
+                phase="implement",
+                checks=["python3 -m unittest tests.test_demo.DemoTests.test_ok"],
+                allowed_paths=["tests/test_demo.py"],
+            )
+
+            checks = mod.run_checks(task, root, run_dir)
+
+        self.assertEqual([item["source"] for item in checks], ["declared", "supplemental_changed_test_file"])
+        self.assertEqual(checks[1]["command"], "python3 -m unittest tests.test_demo")
 
     def test_schedule_next_task_does_not_duplicate_equivalent_declared_test_check(self):
         mod = load_supervisor()
