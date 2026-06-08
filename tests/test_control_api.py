@@ -10964,6 +10964,37 @@ Do risky work.
         self.assertEqual(captured["response"]["command"], "plan.backlog.next")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
 
+    def test_api_runtime_plan_debate_next_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.runtime_plan_debate_next
+        captured = {}
+
+        def fake_runtime_plan_debate_next(payload):
+            captured["payload"] = payload
+            return {"status": "enqueued", "command": "plan.debate.next"}
+
+        body = json.dumps({"operator_scopes": ["operator.admin"], "stage": "requirement_audit"}).encode("utf-8")
+
+        class DummyPlanDebateNextPostHandler:
+            path = "/api/runtime/plan-debate-next"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.runtime_plan_debate_next = fake_runtime_plan_debate_next
+            mod.ControlHandler.do_POST(DummyPlanDebateNextPostHandler())
+        finally:
+            mod.runtime_plan_debate_next = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "plan.debate.next")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+        self.assertEqual(captured["payload"]["stage"], "requirement_audit")
+
     def test_api_runtime_session_lane_latest_route_calls_handler(self):
         mod = load_control_api()
         original_handler = mod.runtime_session_lane_latest
@@ -11083,6 +11114,92 @@ Do risky work.
         self.assertFalse(calls[0]["auto_next"])
         self.assertEqual(calls[0]["prefix"], "phone")
         self.assertEqual(result["runtime_state_reason"], "closed_next_execution_task_missing")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(audit_calls[0][0]["status"], "enqueued")
+
+    def test_runtime_plan_debate_next_blocked_without_runtime_gate(self):
+        mod = load_control_api()
+
+        class FakeSupervisor:
+            @staticmethod
+            def runtime_state_from_summary(*args, **kwargs):
+                return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_audit = mod.enqueue_service_control_audit
+            audit_calls = []
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                result = mod.runtime_plan_debate_next({"operator_scopes": ["operator.admin"]}, root=root)
+            finally:
+                mod.supervisor = original_supervisor
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["command"], "plan.debate.next")
+        self.assertEqual(result["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(result["runtime_state"], "waiting_for_review_closure")
+        self.assertTrue(result["audit_async"])
+        self.assertEqual(audit_calls[0][0]["status"], "blocked")
+
+    def test_runtime_plan_debate_next_returns_enqueued_debate_path(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeSupervisor:
+            @staticmethod
+            def runtime_state_from_summary(*args, **kwargs):
+                return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+            @staticmethod
+            def active_plan_id():
+                return "active-plan"
+
+            @staticmethod
+            def load_plan(plan_id):
+                return {"plan_id": plan_id, "requirements_debate": {"status": "debating", "current_stage": "requirement_audit"}}
+
+            @staticmethod
+            def enqueue_plan_debate_task(plan, *, stage_id="", task_id="", extra="", phase="reference_scan", timeout_seconds=3600, idle_timeout_seconds=300, auto_next=False):
+                calls.append(
+                    {
+                        "plan": plan,
+                        "stage_id": stage_id,
+                        "extra": extra,
+                        "phase": phase,
+                        "timeout_seconds": timeout_seconds,
+                        "idle_timeout_seconds": idle_timeout_seconds,
+                        "auto_next": auto_next,
+                    }
+                )
+                return root / ".a9" / "tasks" / "queue" / "debate.md", {"status": "debating", "current_stage": stage_id or "requirement_audit"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_audit = mod.enqueue_service_control_audit
+            audit_calls = []
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_debate_next(
+                    {"operator_scopes": ["operator.admin"], "stage": "requirement_audit", "extra": "tighten scope", "auto_next": False},
+                    root=root,
+                )
+            finally:
+                mod.supervisor = original_supervisor
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "enqueued")
+        self.assertEqual(result["plan_id"], "active-plan")
+        self.assertEqual(result["queued_task_path"], str(root / ".a9" / "tasks" / "queue" / "debate.md"))
+        self.assertEqual(result["requirements_debate_current_stage"], "requirement_audit")
+        self.assertFalse(calls[0]["auto_next"])
+        self.assertEqual(calls[0]["extra"], "tighten scope")
         self.assertTrue(result["audit_async"])
         self.assertEqual(audit_calls[0][0]["status"], "enqueued")
 
