@@ -8943,3 +8943,35 @@ Execution evidence:
 Assistant preview:
 
 - index 显示当前外部 session 有 693 个 user turns，最新就是你刚才“继续下一步”。我会只跑 turn 693，`auto_continue:false`，但保留 `auto_close_reading:true`，让它自动接 `session_close_reading` 后停止。
+
+## Auto Close Reading: Turn 694-694
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-694-694.json`
+- approx JSONL lines: `91627-91627`
+- generated_at: `2026-06-08T10:31:51+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 694
+
+Original user intent:
+
+- line `91627`: 继续下一步
+
+Execution evidence:
+
+- assistant_messages: `14`
+- tool_calls: `18` (exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `18`
+
+Assistant preview:
+
+- 队列空，runtime running。现在用新命令真实入队最新尾部 1 turn，观察它是否自动完成 refresh + close_reading。

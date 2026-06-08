@@ -13094,6 +13094,116 @@ flow_expected_revision: None
 
         self.assertIsNone(spec["flow_expected_revision"])
 
+    def test_latest_session_tail_range_uses_bounded_tail_turns(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            session_path = Path(tmp) / "session.jsonl"
+            rows = [
+                {"type": "session_meta", "payload": {"id": "tail-session"}},
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-06-08T00:00:01Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "one"}],
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-06-08T00:00:02Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "two"}],
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-06-08T00:00:03Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "three"}],
+                    },
+                },
+            ]
+            session_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+            tail = mod.latest_session_tail_range(session_path, tail_turns=2, batch_size=1)
+
+        self.assertEqual(tail["session_id"], "tail-session")
+        self.assertEqual(tail["user_turn_count"], 3)
+        self.assertEqual(tail["from_turn"], 2)
+        self.assertEqual(tail["to_turn"], 3)
+
+    def test_session_lane_latest_enqueues_latest_tail_without_worker(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            session_path = tmp_path / "session.jsonl"
+            old_queue = mod.QUEUE_DIR
+            mod.QUEUE_DIR = tmp_path / "queue"
+            rows = [
+                {"type": "session_meta", "payload": {"id": "latest-session"}},
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-06-08T00:00:01Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "first"}],
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-06-08T00:00:02Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "second"}],
+                    },
+                },
+            ]
+            session_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+            args = type(
+                "Args",
+                (),
+                {
+                    "session_path": str(session_path),
+                    "tail_turns": 1,
+                    "batch_size": 1,
+                    "task_id": "latest-session-tail-test",
+                    "auto_continue": False,
+                    "no_auto_close_reading": False,
+                    "close_reading_doc": "docs/session-raw-close-reading.md",
+                    "summary_doc": "docs/session-raw-summary.md",
+                    "timeout_seconds": 120,
+                    "idle_timeout_seconds": 120,
+                },
+            )()
+            try:
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.session_lane_latest(args)
+                text = buffer.getvalue()
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+                task_text = queued[0].read_text(encoding="utf-8")
+                parsed = mod.parse_task(queued[0])
+            finally:
+                mod.QUEUE_DIR = old_queue
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(queued), 1)
+        self.assertIn("session_id: latest-session", text)
+        self.assertIn("from_turn: 2", text)
+        self.assertIn("to_turn: 2", text)
+        self.assertEqual(parsed.phase, mod.SESSION_REFRESH_PHASE)
+        self.assertIn("auto_continue: false", task_text)
+        self.assertIn("auto_close_reading: true", task_text)
+        self.assertIn("called_model: false", text)
+        self.assertIn("called_worker: false", text)
+
     def test_transition_managed_flow_skips_without_flow_id(self):
         mod = load_supervisor()
 

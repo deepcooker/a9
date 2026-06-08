@@ -39,6 +39,7 @@ WORKTREES_DIR = STATE_DIR / "worktrees"
 WORKER_CODEX_HOME = STATE_DIR / "codex-home"
 WORKER_TMP_DIR = STATE_DIR / "tmp"
 EXTERNAL_SESSIONS_DIR = STATE_DIR / "external_sessions"
+CODEX_SESSIONS_DIR = Path(os.environ.get("A9_CODEX_SESSIONS_DIR", str(Path.home() / ".codex" / "sessions")))
 RECORDS_DIR = STATE_DIR / "records"
 GOALS_DIR = STATE_DIR / "goals"
 PLANS_DIR = STATE_DIR / "plans"
@@ -7507,6 +7508,91 @@ def parse_bool_field(fields: dict[str, str], name: str, default: bool) -> bool:
     return str(fields[name]).strip().lower() not in {"0", "false", "no", "off"}
 
 
+def session_refresh_module() -> Any:
+    module_name = "a9_session_refresh_supervisor"
+    existing = sys.modules.get(module_name)
+    if existing is not None:
+        return existing
+    spec = importlib.util.spec_from_file_location(module_name, ROOT / "scripts" / "a9_session_refresh.py")
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load scripts/a9_session_refresh.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def latest_codex_session_path(sessions_dir: Path | None = None) -> Path:
+    root = sessions_dir or CODEX_SESSIONS_DIR
+    candidates = [path for path in root.rglob("*.jsonl") if path.is_file()] if root.exists() else []
+    if not candidates:
+        raise FileNotFoundError(f"no Codex session JSONL found under {root}")
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def latest_session_tail_range(session_path: Path, *, tail_turns: int, batch_size: int) -> dict[str, Any]:
+    module = session_refresh_module()
+    index = module.session_index(session_path, batch_size=max(1, batch_size))
+    user_turn_count = int(index.get("user_turn_count") or 0)
+    if user_turn_count < 1:
+        raise ValueError(f"session has no user turns: {session_path}")
+    bounded_tail = max(1, int(tail_turns))
+    from_turn = max(1, user_turn_count - bounded_tail + 1)
+    return {
+        "session_id": index.get("session_id", ""),
+        "source_session_path": str(session_path),
+        "user_turn_count": user_turn_count,
+        "from_turn": from_turn,
+        "to_turn": user_turn_count,
+        "batch_size": max(1, int(batch_size)),
+    }
+
+
+def session_lane_latest(args: argparse.Namespace) -> int:
+    ensure_dirs()
+    session_path_text = str(args.session_path or "").strip()
+    session_path = Path(session_path_text) if session_path_text else latest_codex_session_path()
+    if not session_path.is_absolute():
+        session_path = ROOT / session_path
+    tail = latest_session_tail_range(session_path, tail_turns=args.tail_turns, batch_size=args.batch_size)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    task_id = str(args.task_id or "").strip() or (
+        f"session-lane-latest-{tail['session_id'] or compact_task_ref(session_path.stem)}-"
+        f"{tail['from_turn']}-{tail['to_turn']}-{timestamp}"
+    )
+    prompt = f"""source_session_path: {tail['source_session_path']}
+from_turn: {tail['from_turn']}
+to_turn: {tail['to_turn']}
+batch_size: {tail['batch_size']}
+auto_continue: {str(bool(args.auto_continue)).lower()}
+auto_close_reading: {str(not args.no_auto_close_reading).lower()}
+close_reading_doc: {args.close_reading_doc}
+summary_doc: {args.summary_doc}
+
+Run the deterministic latest external operator session lane. Do not call a model,
+do not run a worker, and do not enter the copy-project pipeline.
+"""
+    path = enqueue_task_file(
+        task_id,
+        prompt,
+        phase=SESSION_REFRESH_PHASE,
+        checks=[],
+        timeout_seconds=args.timeout_seconds,
+        idle_timeout_seconds=args.idle_timeout_seconds,
+        max_attempts=1,
+        auto_next=True,
+    )
+    print(path)
+    print(f"session_id: {tail['session_id']}")
+    print(f"source_session_path: {tail['source_session_path']}")
+    print(f"from_turn: {tail['from_turn']}")
+    print(f"to_turn: {tail['to_turn']}")
+    print(f"user_turn_count: {tail['user_turn_count']}")
+    print("called_model: false")
+    print("called_worker: false")
+    return 0
+
+
 def strict_worker_envelope_required_for_phase(phase: str) -> bool:
     return phase in AI_WORKER_PHASES
 
@@ -12372,6 +12458,18 @@ def main(argv: list[str]) -> int:
     enqueue_parser.add_argument("--no-auto-next", action="store_true")
     enqueue_parser.add_argument("--workspace-root", default="")
 
+    session_latest_parser = sub.add_parser("session-lane-latest")
+    session_latest_parser.add_argument("--session-path", default="")
+    session_latest_parser.add_argument("--tail-turns", type=int, default=1)
+    session_latest_parser.add_argument("--batch-size", type=int, default=1)
+    session_latest_parser.add_argument("--task-id", default="")
+    session_latest_parser.add_argument("--auto-continue", action="store_true")
+    session_latest_parser.add_argument("--no-auto-close-reading", action="store_true")
+    session_latest_parser.add_argument("--close-reading-doc", default="docs/session-raw-close-reading.md")
+    session_latest_parser.add_argument("--summary-doc", default="docs/session-raw-summary.md")
+    session_latest_parser.add_argument("--timeout-seconds", type=int, default=120)
+    session_latest_parser.add_argument("--idle-timeout-seconds", type=int, default=120)
+
     plan_create_parser = sub.add_parser("plan-create")
     plan_create_parser.add_argument("--plan-id", default="")
     plan_create_parser.add_argument("--goal-id", default="")
@@ -12461,6 +12559,8 @@ def main(argv: list[str]) -> int:
         return transport_probe(args)
     if args.command == "enqueue":
         return enqueue(args)
+    if args.command == "session-lane-latest":
+        return session_lane_latest(args)
     if args.command == "plan-create":
         return plan_create(args)
     if args.command == "plan-status":
