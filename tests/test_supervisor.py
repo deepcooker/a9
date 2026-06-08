@@ -7758,7 +7758,7 @@ Findings are ready.
         self.assertEqual(result["findings"][0]["level"], "error")
         self.assertEqual(result["findings"][0]["kind"], "direct_file_change_event")
 
-    def test_process_governance_defaults_direct_file_change_observe_for_strict_worker(self):
+    def test_process_governance_defaults_direct_file_change_repair_for_strict_worker(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -7778,6 +7778,39 @@ Findings are ready.
                 task_id="strict-worker-direct-edit",
                 phase="implement",
                 prompt="strict_worker_envelope: true\nImplement with deterministic apply.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["direct_file_change_policy"], "repair")
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["findings"][0]["level"], "error")
+        self.assertEqual(result["findings"][0]["kind"], "direct_file_change_event")
+
+    def test_process_governance_respects_explicit_direct_file_change_observe(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "file_change",
+                        "changes": [{"path": "README.md", "kind": "update"}],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="strict-worker-direct-edit-observe",
+                phase="implement",
+                prompt=(
+                    "strict_worker_envelope: true\n"
+                    "direct_file_change_policy: observe\n"
+                    "Implement with deterministic apply."
+                ),
                 checks=[],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)

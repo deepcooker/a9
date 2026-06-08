@@ -3758,8 +3758,8 @@ Next monitoring target:
      longer fails by itself when diff, scope, patch, and authoritative checks
      pass. Explicit `direct_file_change_policy: repair` still hard-fails.
    - Verification:
-     focused coverage checks strict workers default to observe, explicit repair
-     still routes to repair, and dirty-worktree apply can pass with green guards.
+     focused coverage checked the temporary observation policy, explicit repair
+     still routed to repair, and dirty-worktree apply could pass with green guards.
    - Governance lesson:
      isolated worktree diffs are reviewable evidence. The hard boundary is
      workspace escape or failed guards/checks, not the mere presence of a file
@@ -3831,3 +3831,25 @@ Next monitoring target:
    - Governance lesson:
      unattended execution needs repair pressure, not silent shutdown. Stop
      switches must be deliberate operator policy, not the default behavior.
+
+169. Deterministic AI-worker phases now default direct file changes to repair.
+   - Trigger:
+     two real communication-runtime workers produced useful changes but emitted
+     direct `file_change` events despite strict SEARCH/REPLACE instructions.
+     The result passed, but the process signal stayed noisy and weakened the
+     deterministic apply contract.
+   - Change:
+     `effective_direct_file_change_policy()` now defaults strict AI-worker
+     phases to `repair` when no explicit policy is present. Explicit
+     `direct_file_change_policy: observe` remains available for monitor-approved
+     exceptions. Non-AI session lanes keep observation behavior.
+   - Verification:
+     focused coverage proves strict implement workers now fail process
+     governance on direct file changes, explicit observe still passes as a
+     warning, explicit repair still fails, and direct-file repair failures route
+     to `needs-repair`.
+   - Governance lesson:
+     observation-first does not mean observe forever. Once repeated evidence
+     shows a worker behavior will erode deterministic execution, the default
+     must move from telemetry to repair while preserving an explicit escape
+     hatch for unusual tasks.

@@ -4717,14 +4717,23 @@ def read_jsonl_file(path: Path) -> list[dict[str, Any]]:
 
 
 def parse_direct_file_change_policy(prompt: str) -> str:
+    explicit = explicit_direct_file_change_policy(prompt)
+    return explicit if explicit else "observe"
+
+
+def explicit_direct_file_change_policy(prompt: str) -> str:
     fields = parse_key_value_prompt(prompt)
     value = str(fields.get("direct_file_change_policy", "")).strip().lower()
-    return "repair" if value == "repair" else "observe"
+    return value if value in {"observe", "repair"} else ""
 
 
 def effective_direct_file_change_policy(task: Task) -> str:
-    explicit_policy = parse_direct_file_change_policy(task.prompt)
-    return explicit_policy
+    explicit_policy = explicit_direct_file_change_policy(task.prompt)
+    if explicit_policy:
+        return explicit_policy
+    if strict_worker_envelope_required(task) and task.phase in AI_WORKER_PHASES:
+        return "repair"
+    return "observe"
 
 
 def classify_process_governance(
