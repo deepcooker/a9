@@ -4698,6 +4698,64 @@ Findings are ready.
         self.assertEqual(item["last_summary_path"], str(run_dir / "summary.json"))
         self.assertIn("failed_at", item)
 
+    def test_update_active_plan_from_run_marks_parent_backlog_repaired(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-parent-repair",
+                    goal_id="goal-parent-repair",
+                    contract={"problem": "Repair tasks should close parent backlog items."},
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "backlog-001-parent",
+                        "title": "Parent item",
+                        "phase": "record",
+                        "status": "needs-repair",
+                        "queued_task_id": "parent-backlog-task",
+                        "last_run_id": "parent-backlog-task-old-a1",
+                        "failed_at": "2026-06-08T00:00:00+00:00",
+                    }
+                )
+                plan_dir = mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "repair-parent-backlog-task-20260608T000000Z-a1"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "pass",
+                    "phase": "repair",
+                    "run_dir": str(run_dir),
+                    "git_governance": {"main_integration": {"main_commit": "1234567890abcdef"}},
+                }
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="repair-parent-backlog-task",
+                    prompt="decision_status: decided\nroute: execution_next\nparent_task_id: parent-backlog-task\n",
+                    phase="repair",
+                )
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        item = stored["execution_backlog"]["items"][0]
+        self.assertEqual(result["execution_backlog_item_update"]["status"], "updated")
+        self.assertEqual(result["execution_backlog_item_update"]["match_kind"], "parent_task")
+        self.assertEqual(result["execution_backlog_item_update"]["item_status"], "pass")
+        self.assertEqual(item["status"], "pass")
+        self.assertEqual(item["repaired_by_task_id"], "repair-parent-backlog-task")
+        self.assertEqual(item["repair_status"], "pass")
+        self.assertEqual(item["last_commit"], "1234567890abcdef")
+        self.assertNotIn("failed_at", item)
+
     def test_update_active_plan_from_run_skips_selftest_memory(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

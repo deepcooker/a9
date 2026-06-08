@@ -8654,7 +8654,10 @@ def update_execution_backlog_item_from_run(plan: dict[str, Any], task: Task, run
     task_id = str(task.task_id or "").strip()
     if not task_id:
         return {"status": "skipped", "reason": "missing_task_id"}
+    task_fields = parse_key_value_prompt(task.prompt)
+    parent_task_id = str(task_fields.get("parent_task_id") or "").strip()
     matched: dict[str, Any] | None = None
+    match_kind = "task"
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -8664,8 +8667,20 @@ def update_execution_backlog_item_from_run(plan: dict[str, Any], task: Task, run
         }:
             matched = item
             break
+        if parent_task_id and parent_task_id in {
+            str(item.get("queued_task_id") or "").strip(),
+            str(item.get("task_id") or "").strip(),
+        }:
+            matched = item
+            match_kind = "parent_task"
+            break
     if matched is None:
-        return {"status": "skipped", "reason": "task_not_in_execution_backlog", "task_id": task_id}
+        return {
+            "status": "skipped",
+            "reason": "task_not_in_execution_backlog",
+            "task_id": task_id,
+            "parent_task_id": parent_task_id,
+        }
 
     run_status = str(summary.get("status") or "").strip()
     if run_status not in {"pass", "needs-followup", "needs-repair", "monitor-blocked", "worker-failed", "failed", "timeout"}:
@@ -8673,13 +8688,19 @@ def update_execution_backlog_item_from_run(plan: dict[str, Any], task: Task, run
     now = utc_now()
     git_governance = summary.get("git_governance") if isinstance(summary.get("git_governance"), dict) else {}
     main_integration = git_governance.get("main_integration") if isinstance(git_governance.get("main_integration"), dict) else {}
-    matched["status"] = run_status
+    item_status = run_status
+    if match_kind == "parent_task" and run_status in {"pass", "needs-followup"}:
+        item_status = "pass"
+        matched["repaired_by_task_id"] = task_id
+        matched["repair_status"] = run_status
+    matched["status"] = item_status
     matched["last_run_id"] = Path(str(summary.get("run_dir") or run_dir)).name
     matched["last_run_dir"] = str(run_dir)
     matched["last_summary_path"] = str(run_dir / "summary.json")
     matched["last_updated_at"] = now
-    if run_status in {"pass", "needs-followup"}:
+    if item_status in {"pass", "needs-followup"}:
         matched["completed_at"] = now
+        matched.pop("failed_at", None)
     else:
         matched["failed_at"] = now
     commit = str(main_integration.get("main_commit") or git_governance.get("commit") or "").strip()
@@ -8688,8 +8709,11 @@ def update_execution_backlog_item_from_run(plan: dict[str, Any], task: Task, run
     return {
         "status": "updated",
         "task_id": task_id,
+        "parent_task_id": parent_task_id,
         "item_id": str(matched.get("id") or matched.get("backlog_id") or ""),
+        "match_kind": match_kind,
         "run_status": run_status,
+        "item_status": item_status,
     }
 
 
