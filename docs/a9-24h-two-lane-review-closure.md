@@ -2,7 +2,7 @@
 
 ## Active Plan Contract (slice-aligned)
 - `plan_id`: `a9-plan-24h-two-lane-runtime`
-- `goal_id`: `goal-A9-24h-two-lane-agent-runtime-Codex-Hermes-OpenClaw-Aider-757c4e4c5d`
+- `goal_id`: `goal-A9-24h-agent-runtime-Codex-Hermes-OpenClaw-Aider-757c4e4c5d`
 - `execution_backlog_id`: `backlog-001-record-two-lane-review-closure`
 - `execution_backlog_phase`: `record`
 - `execution_backlog_title`: `Record two-lane review closure and next execution contract`
