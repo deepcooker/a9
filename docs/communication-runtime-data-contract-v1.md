@@ -4,7 +4,7 @@ Date: 2026-06-02
 
 ## Status
 
-`v1_draft`.
+`v1_accepted_for_report_slice`.
 
 Approved source:
 
@@ -262,6 +262,30 @@ This contract is accepted when:
 - test/data agrees each next feature slice names the affected object and state
   transitions;
 - runtime governance agrees remote mutation must be gated and audited.
+
+### Role acceptance
+
+- Product/mainline: accepts no runtime behavior change in this contract and that
+  SSH/tmux implementation remains blocked until this data model is accepted.
+- Architecture: accepts the object/state contracts and current-code mapping as the
+  v1 baseline for next implementation slices.
+- Test/data: accepts this contract as the conformance checklist and state
+  transition source for future feature tests.
+- Runtime governance: accepts remote mutation gating, audit, and revision controls as
+  hard prerequisites derived from this contract.
+
+### Residual risks
+
+- Report conformance may be over-confident if future slices add mandatory fields not
+  yet declared in MySQL/Redis key mapping.
+- A non-mutating report surface can still diverge from truth under stale cache if
+  reporting reads miss snapshot freshness controls.
+
+### change_record
+
+- Status changed from `v1_draft` to `v1_accepted_for_report_slice`.
+- Object model and current-code mapping are kept unchanged.
+- First implementation candidate remains non-mutating report endpoint/helper.
 
 ## First Decided Implementation Candidate
 
