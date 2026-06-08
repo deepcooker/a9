@@ -48,6 +48,7 @@ SERVICE_CONTROL_AUDIT_REL_PATH = Path(".a9") / "services" / "service-control-aud
 MONITOR_INTERVENTION_AUDIT_REL_PATH = Path(".a9") / "monitor" / "interventions.jsonl"
 RUNTIME_CONTROL_STATE_REL_PATH = Path(".a9") / "runtime" / "control_state.json"
 LLM_WORKER_CONFIG_REL_PATH = Path(".a9") / "runtime" / "llm_worker_config.json"
+BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH = Path(".a9") / "nodes" / "bootstrap-takeover-admissions.jsonl"
 MONITOR_INTERVENTION_ALLOWED_ACTIONS = {
     "approve",
     "change_request",
@@ -2094,6 +2095,12 @@ def write_node_evidence(kind: str, node_id: str, payload: dict[str, Any], *, roo
     return path
 
 
+def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
 def list_node_evidence(node_id: str | None = None, *, root: Path = ROOT, limit: int = 20) -> dict[str, Any]:
     base = root / ".a9" / "nodes" / "evidence"
     if node_id:
@@ -3861,6 +3868,7 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
         "install": 3,
         "repair": 4,
         "intervene": 4,
+        "await_bootstrap_takeover": 5,
         "quarantine": 5,
     }
     status_by_action = {
@@ -3873,6 +3881,7 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
         "install": "needs_attention",
         "repair": "needs_attention",
         "intervene": "needs_attention",
+        "await_bootstrap_takeover": "needs_attention",
         "quarantine": "needs_attention",
     }
 
@@ -3938,6 +3947,20 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
             "risk_count": recovery.get("risk_count"),
         }
     )
+    reconnect_event = latest_gateway_reconnect_decision_event()
+    reconnect_action = str(reconnect_event.get("action") or "")
+    gateway_action = "await_bootstrap_takeover" if reconnect_action in {"terminate", "quarantine"} else "continue"
+    candidates.append(
+        {
+            "source": "gateway_reconnect",
+            "action": gateway_action,
+            "reason": str(reconnect_event.get("error_class") or reconnect_event.get("reason") or reconnect_action or "unknown"),
+            "event_id": reconnect_event.get("event_id", ""),
+            "node_id": reconnect_event.get("node_id", ""),
+            "reconnect_action": reconnect_action,
+            "reconnect_event": reconnect_event,
+        }
+    )
 
     def candidate_key(item: dict[str, Any]) -> tuple[int, int]:
         action = str(item.get("action") or "watch")
@@ -3965,6 +3988,7 @@ def communication_status(root: Path = ROOT) -> dict[str, Any]:
             "nodes": nodes,
             "tasks_stream": tasks_stream,
             "recovery_loop": recovery,
+            "gateway_reconnect": reconnect_event,
         },
     }
 
@@ -4024,6 +4048,26 @@ def communication_action_plan(status: dict[str, Any] | None = None, *, root: Pat
             "payload": {"execute": True, "max_actions": 1},
             "reason": "run_node_recovery_cycle",
             "steps": ["arm_remote", "post_nodes_recovery_cycle", "refresh_communication_status"],
+            "executable": True,
+        }
+    if source == "gateway_reconnect" and action == "await_bootstrap_takeover":
+        reconnect_event = {}
+        layers = status.get("layers") if isinstance(status.get("layers"), dict) else {}
+        if isinstance(layers.get("gateway_reconnect"), dict):
+            reconnect_event = layers["gateway_reconnect"]
+        return {
+            **base,
+            "plan_status": "ready",
+            "route": {
+                "method": "POST",
+                "endpoint": "/api/nodes/bootstrap-takeover-admission",
+                "command": "nodes.bootstrap.takeover.admit",
+                "requires_arm": False,
+                "arm_group": None,
+            },
+            "payload": {"reconnect_event": reconnect_event},
+            "reason": "admit_bootstrap_takeover_wait_state",
+            "steps": ["post_bootstrap_takeover_admission", "operator_review_before_bootstrap_execute"],
             "executable": True,
         }
     if source == "tasks_stream" and action in {"watch", "intervene", "repair"}:
@@ -4135,6 +4179,9 @@ def communication_repair_one(payload: dict[str, Any] | None = None, *, root: Pat
         result = recover_stale_commands(recover_payload, root=root)
     elif endpoint == "/api/gateway/health-refresh":
         result = gateway_health_refresh(root=root)
+    elif endpoint == "/api/nodes/bootstrap-takeover-admission":
+        admission_payload = {**plan.get("payload", {}), **payload}
+        result = bootstrap_takeover_admission(admission_payload, root=root)
     else:
         return {"status": "manual_required", "kind": "communication_repair_one", "plan": plan, "reason": "unknown_route"}
     refreshed = communication_status(root)
@@ -6267,6 +6314,113 @@ def bootstrap_dry_run_node(payload: dict[str, Any]) -> dict[str, Any]:
         ],
         "execution_enabled": False,
     }
+
+
+def bootstrap_takeover_admission(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
+    payload = payload or {}
+    reconnect_event = payload.get("reconnect_event") if isinstance(payload.get("reconnect_event"), dict) else latest_gateway_reconnect_decision_event()
+    reconnect_action = str(reconnect_event.get("action") or payload.get("reconnect_action") or "").strip().lower()
+    terminal_actions = {"terminate", "quarantine"}
+    if reconnect_action not in terminal_actions:
+        return {
+            "status": "noop",
+            "kind": "bootstrap_takeover_admission",
+            "execution_enabled": False,
+            "no_actuation": True,
+            "reason": "reconnect_action_not_terminal",
+            "reconnect_event": reconnect_event,
+        }
+
+    raw_node_id = str(payload.get("node_id") or reconnect_event.get("node_id") or payload.get("ssh_target") or payload.get("target") or "gateway").strip()
+    node_id = safe_node_id(raw_node_id)
+    record_path = node_path(node_id, root)
+    existing = read_json(record_path) if record_path.exists() else {}
+    current_revision = parse_int(existing.get("revision"), default=parse_int(reconnect_event.get("flow_revision"), default=0))
+    if "expected_revision" in payload and payload.get("expected_revision") is not None:
+        expected_revision = parse_int(payload.get("expected_revision"), default=-1)
+    else:
+        expected_revision = current_revision
+    if expected_revision != current_revision:
+        result = {
+            "status": "conflict",
+            "kind": "bootstrap_takeover_admission",
+            "execution_enabled": False,
+            "no_actuation": True,
+            "node_id": node_id,
+            "expected_revision": expected_revision,
+            "actual_revision": current_revision,
+            "reason": "expected_revision_mismatch",
+            "reconnect_event": reconnect_event,
+        }
+        append_jsonl(root / BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH, {**result, "recorded_at": utc_now()})
+        return result
+
+    now = utc_now()
+    next_revision = current_revision + 1
+    approval_id = str(payload.get("approval_id") or f"bootstrap-takeover:{node_id}:{next_revision}")
+    resume_token = str(payload.get("resume_token") or f"{approval_id}:resume")
+    target = str(payload.get("ssh_target") or payload.get("target") or existing.get("ssh_target") or "").strip()
+    wait = {
+        "type": "approval_request",
+        "approvalId": approval_id,
+        "resumeToken": resume_token,
+        "prompt": "Gateway reconnect policy terminated automatic reconnect. Approve bootstrap takeover only after operator review.",
+        "items": [
+            {"type": "reconnect_event", "event_id": str(reconnect_event.get("event_id") or ""), "action": reconnect_action},
+            {"type": "node", "node_id": node_id, "expected_revision": next_revision},
+        ],
+    }
+    record = {
+        **existing,
+        "node_id": node_id,
+        "status": "await_bootstrap_takeover",
+        "status_reason": str(payload.get("reason") or reconnect_event.get("error_class") or "reconnect_terminal"),
+        "revision": next_revision,
+        "updated_at": now,
+        "last_seen_at": str(existing.get("last_seen_at") or now),
+        "ssh_target": target,
+        "bootstrap_takeover": {
+            "state": "waiting",
+            "reason": str(payload.get("reason") or "gateway_reconnect_terminal"),
+            "expected_revision": next_revision,
+            "previous_revision": current_revision,
+            "admitted_at": now,
+            "approval_id": approval_id,
+            "resume_token": resume_token,
+            "reconnect_event_id": str(reconnect_event.get("event_id") or ""),
+        },
+        "reconnect_action": reconnect_action,
+        "reconnect_reason": str(reconnect_event.get("error_class") or payload.get("reason") or "reconnect_terminal"),
+        "reconnect_lifecycle": {
+            "event": "await_bootstrap_takeover",
+            "phase": str(reconnect_event.get("phase") or ""),
+            "action": reconnect_action,
+            "at": now,
+        },
+    }
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    result = {
+        "status": "needs_approval",
+        "kind": "bootstrap_takeover_admission",
+        "schema": "a9.bootstrap_takeover_admission.v1",
+        "execution_enabled": False,
+        "no_actuation": True,
+        "node_id": node_id,
+        "target": target,
+        "previous_revision": current_revision,
+        "expected_revision": next_revision,
+        "admitted_at": now,
+        "reason": "await_bootstrap_takeover",
+        "wait": wait,
+        "reconnect_event": reconnect_event,
+        "record": record,
+    }
+    evidence_path = write_node_evidence("bootstrap-takeover-admission", node_id, result, root=root)
+    result["evidence_path"] = str(evidence_path)
+    append_jsonl(root / BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH, {**result, "record": {"node_id": node_id, "revision": next_revision}})
+    return result
 
 
 def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
@@ -8794,6 +8948,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, bootstrap_plan_node(payload))
             elif self.path == "/api/nodes/bootstrap-dry-run":
                 self.write_json(200, bootstrap_dry_run_node(payload))
+            elif self.path == "/api/nodes/bootstrap-takeover-admission":
+                self.write_json(200, bootstrap_takeover_admission(payload))
             elif self.path == "/api/nodes/bootstrap-execute":
                 status, body = guarded_remote_post(
                     "nodes.bootstrap.execute",

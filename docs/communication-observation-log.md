@@ -3871,3 +3871,24 @@ Next monitoring target:
      Worker self-report is evidence, not authority. Declared task checks remain
      the source of truth; mismatch should be repaired or manually reconciled,
      but should not erase useful bounded output.
+
+171. Gateway reconnect terminal events now route to bootstrap takeover admission before execution.
+   - Trigger:
+     The communication bootstrap reference scan concluded that SSH/Tailscale/tmux
+     must remain bootstrap/takeover paths, not the primary event bus, and that
+     terminal reconnect decisions need an OpenClaw/Lobster-style wait state
+     with `expected_revision` instead of immediate remote actuation.
+   - Change:
+     `bootstrap_takeover_admission()` records `await_bootstrap_takeover` node
+     state, increments the node revision, writes evidence, and returns a
+     `needs_approval` wait object with `approvalId` and `resumeToken`.
+     `communication_action_plan()` now routes terminal gateway reconnect
+     decisions to `/api/nodes/bootstrap-takeover-admission`.
+   - Verification:
+     Focused tests cover no-actuation admission, stale revision conflict, action
+     plan routing, and the existing armed bootstrap execute path. Wider
+     communication route tests still pass.
+   - Governance lesson:
+     Reliable multi-machine control should first model the takeover state and
+     evidence boundary. Real SSH/tmux execution remains a later, explicitly
+     armed step.

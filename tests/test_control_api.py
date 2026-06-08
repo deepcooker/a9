@@ -8048,6 +8048,106 @@ Do risky work.
         self.assertIn("<dry_run_script>", result["command_preview"])
         self.assertIn("git clone", result["dry_run_script"])
 
+    def test_bootstrap_takeover_admission_waits_without_remote_execution(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / ".a9" / "nodes" / "node-a.json"
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        "node_id": "node-a",
+                        "revision": 4,
+                        "ssh_target": "root@100.64.0.1",
+                        "status": "registered",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = mod.bootstrap_takeover_admission(
+                {
+                    "expected_revision": 4,
+                    "reconnect_event": {
+                        "status": "ok",
+                        "kind": "gateway_reconnect_decision",
+                        "event_id": "1779900000-0",
+                        "phase": "connect",
+                        "action": "terminate",
+                        "error_class": "policy_budget_exhausted",
+                        "node_id": "node-a",
+                        "flow_revision": 4,
+                    },
+                },
+                root=root,
+            )
+            record = json.loads(node_path.read_text(encoding="utf-8"))
+            evidence_path_exists = Path(result["evidence_path"]).exists()
+
+        self.assertEqual(result["status"], "needs_approval")
+        self.assertFalse(result["execution_enabled"])
+        self.assertTrue(result["no_actuation"])
+        self.assertEqual(result["expected_revision"], 5)
+        self.assertEqual(result["wait"]["approvalId"], "bootstrap-takeover:node-a:5")
+        self.assertEqual(record["status"], "await_bootstrap_takeover")
+        self.assertEqual(record["revision"], 5)
+        self.assertEqual(record["bootstrap_takeover"]["expected_revision"], 5)
+        self.assertTrue(evidence_path_exists)
+
+    def test_bootstrap_takeover_admission_blocks_stale_revision(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / ".a9" / "nodes" / "node-a.json"
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(json.dumps({"node_id": "node-a", "revision": 9}) + "\n", encoding="utf-8")
+
+            result = mod.bootstrap_takeover_admission(
+                {
+                    "expected_revision": 8,
+                    "reconnect_event": {
+                        "status": "ok",
+                        "kind": "gateway_reconnect_decision",
+                        "action": "terminate",
+                        "node_id": "node-a",
+                    },
+                },
+                root=root,
+            )
+            record = json.loads(node_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "conflict")
+        self.assertEqual(result["reason"], "expected_revision_mismatch")
+        self.assertEqual(result["actual_revision"], 9)
+        self.assertEqual(record["revision"], 9)
+
+    def test_communication_action_plan_routes_terminal_reconnect_to_bootstrap_takeover_admission(self):
+        mod = load_control_api()
+        plan = mod.communication_action_plan(
+            {
+                "status": "needs_attention",
+                "action": "await_bootstrap_takeover",
+                "reason": "gateway_reconnect:policy_budget_exhausted",
+                "priority_source": "gateway_reconnect",
+                "layers": {
+                    "gateway_reconnect": {
+                        "status": "ok",
+                        "kind": "gateway_reconnect_decision",
+                        "action": "terminate",
+                        "node_id": "node-a",
+                    }
+                },
+            }
+        )
+
+        self.assertEqual(plan["plan_status"], "ready")
+        self.assertEqual(plan["route"]["endpoint"], "/api/nodes/bootstrap-takeover-admission")
+        self.assertEqual(plan["route"]["command"], "nodes.bootstrap.takeover.admit")
+        self.assertFalse(plan["route"]["requires_arm"])
+        self.assertEqual(plan["payload"]["reconnect_event"]["node_id"], "node-a")
+
     def test_bootstrap_execute_requires_arm_and_runs_script(self):
         mod = load_control_api()
 
