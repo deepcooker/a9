@@ -3853,3 +3853,21 @@ Next monitoring target:
      shows a worker behavior will erode deterministic execution, the default
      must move from telemetry to repair while preserving an explicit escape
      hatch for unusual tasks.
+
+170. Worker self-reported checks must not override task-authoritative checks.
+   - Trigger:
+     `reference-scan-communication-bootstrap-governance-20260608` produced a
+     valid SEARCH/REPLACE document patch, patch/scope guards passed, and task
+     checks passed, but the strict envelope failed because the worker reported
+     `python3 -m py_compile scripts/a9_node.py` instead of the task-authoritative
+     `python3 -m py_compile scripts/a9_supervisor.py`.
+   - Change:
+     The monitor salvaged the deterministic document patch manually instead of
+     burning another large model run.
+   - Verification:
+     The run summary preserved the mismatch in `worker_envelope.findings`, and
+     the authoritative checks still passed before rollback.
+   - Governance lesson:
+     Worker self-report is evidence, not authority. Declared task checks remain
+     the source of truth; mismatch should be repaired or manually reconciled,
+     but should not erase useful bounded output.
