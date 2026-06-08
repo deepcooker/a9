@@ -17,6 +17,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib import error as url_error
+from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -62,6 +64,18 @@ SERVICE_RESTART_DEFAULT = ["control-api", "node-worker", "recovery-loop"]
 START_VERIFY_ATTEMPTS = 5
 START_VERIFY_SLEEP_SECONDS = 0.2
 START_VERIFY_TIMEOUT_SECONDS = START_VERIFY_ATTEMPTS * START_VERIFY_SLEEP_SECONDS
+COMMUNICATION_DATA_CONTRACT_REPORT_URL = "http://127.0.0.1:8787/api/communication/data-contract-report"
+COMMUNICATION_DATA_CONTRACT_REQUIRED_FIELDS = frozenset(
+    {
+        "object",
+        "status",
+        "mysql_target",
+        "redis_target",
+        "required_fields",
+        "evidence",
+        "current_mapping",
+    }
+)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -192,12 +206,83 @@ def git_writable() -> dict[str, Any]:
         return {"status": "fail", "writable": False, "path": str(ROOT / ".git"), "error": str(exc)}
 
 
+def communication_contract_smoke(
+    endpoint: str = COMMUNICATION_DATA_CONTRACT_REPORT_URL, timeout_seconds: float = 3.0
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "kind": "communication_data_contract_report",
+        "endpoint": endpoint,
+        "status": "ok",
+        "errors": [],
+        "http_status": None,
+        "objects": [],
+        "objects_count": None,
+    }
+
+    try:
+        with urlopen(endpoint, timeout=timeout_seconds) as response:
+            payload["http_status"] = getattr(response, "status", None)
+            body = json.load(response)
+    except (url_error.URLError, TimeoutError) as exc:
+        return {
+            **payload,
+            "status": "unreachable",
+            "errors": [f"{type(exc).__name__}: {exc}"],
+        }
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        return {
+            **payload,
+            "status": "malformed",
+            "errors": [f"{type(exc).__name__}: {exc}"],
+        }
+
+    if not isinstance(body, dict):
+        return {
+            **payload,
+            "status": "malformed",
+            "errors": ["response body is not an object"],
+        }
+
+    if body.get("status") != "ok":
+        payload["errors"].append(f"top-level status != ok: {body.get('status')!r}")
+    if body.get("kind") != "communication_data_contract_report":
+        payload["errors"].append(f"top-level kind != communication_data_contract_report: {body.get('kind')!r}")
+    objects = body.get("objects")
+    if not isinstance(objects, list):
+        payload["errors"].append("objects is not an array")
+        return {
+            **payload,
+            "status": "malformed",
+            "objects": [],
+            "objects_count": None,
+        }
+
+    payload["objects"] = objects
+    payload["objects_count"] = len(objects)
+    if len(objects) != 11:
+        payload["errors"].append(f"objects length != 11: {len(objects)}")
+
+    for index, item in enumerate(objects):
+        if not isinstance(item, dict):
+            payload["errors"].append(f"objects[{index}] is not an object")
+            continue
+        missing = COMMUNICATION_DATA_CONTRACT_REQUIRED_FIELDS - set(item)
+        if missing:
+            payload["errors"].append(f"objects[{index}] missing required fields: {sorted(missing)}")
+
+    if payload["errors"]:
+        payload["status"] = "malformed"
+
+    return payload
+
+
 def readiness(_: argparse.Namespace) -> int:
     progress = read_json(PROGRESS_PATH)
     heartbeat = read_json(HEARTBEAT_PATH)
     processes = running_processes()
     middleware = run([str(ROOT / "scripts" / "a9_middleware.py"), "status"])
     supervisor_status = run([str(ROOT / "scripts" / "a9_supervisor.py"), "status"])
+    communication_contract = communication_contract_smoke()
     git_probe = git_writable()
     groups = progress.get("capability_groups", {})
     group_percents = {name: item.get("percent", 0) for name, item in groups.items()}
@@ -219,6 +304,13 @@ def readiness(_: argparse.Namespace) -> int:
         warnings.append("git metadata is not writable; code can run but commits/pushes need a writable git environment")
     if progress.get("queued_tasks", 0) == 0:
         warnings.append("no queued tasks")
+    if communication_contract.get("status") == "unreachable":
+        warnings.append("communication_data_contract_report is not reachable; observed as warning to allow startup progress")
+    elif communication_contract.get("status") == "malformed":
+        blockers.append(
+            "communication_data_contract_report is malformed: "
+            + "; ".join(communication_contract["errors"][:2])
+        )
 
     if blockers:
         mode = "not_ready"
@@ -244,6 +336,7 @@ def readiness(_: argparse.Namespace) -> int:
         "done_tasks": progress.get("done_tasks"),
         "heartbeat_state": heartbeat.get("state", ""),
         "processes": processes,
+        "communication_contract": communication_contract,
         "git": git_probe,
         "middleware_return_code": middleware.returncode,
         "supervisor_return_code": supervisor_status.returncode,

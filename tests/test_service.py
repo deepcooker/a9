@@ -463,6 +463,117 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("recommendation", payload)
         self.assertIn("git", payload)
 
+    def test_service_readiness_includes_communication_contract_smoke(self):
+        mod = load_service()
+        objects = [
+            {
+                "object": f"object_{i}",
+                "status": "implemented",
+                "mysql_target": "mysql_target",
+                "redis_target": "redis_target",
+                "required_fields": ["id"],
+                "evidence": "generated",
+                "current_mapping": "mapped",
+            }
+            for i in range(11)
+        ]
+
+        with mock.patch.object(
+            mod, "run", side_effect=[subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0)]
+        ):
+            with mock.patch.object(
+                mod, "read_json",
+                side_effect=lambda path: {
+                    mod.PROGRESS_PATH: {
+                        "progress_percent": 100,
+                        "capability_groups": {"runtime": {"percent": 100}},
+                        "queued_tasks": 1,
+                        "running_tasks": 0,
+                        "done_tasks": 0,
+                    },
+                    mod.HEARTBEAT_PATH: {"state": "healthy"},
+                }.get(path, {}),
+            ):
+                with mock.patch.object(
+                    mod,
+                    "running_processes",
+                    return_value=[],
+                ):
+                    with mock.patch.object(
+                        mod,
+                        "communication_contract_smoke",
+                        return_value={
+                            "kind": "communication_data_contract_report",
+                            "status": "ok",
+                            "objects": objects,
+                            "objects_count": 11,
+                            "errors": [],
+                            "http_status": 200,
+                        },
+                    ):
+                        with mock.patch.object(
+                            mod,
+                            "git_writable",
+                            return_value={"writable": True, "status": "pass", "path": str(mod.ROOT / ".git")},
+                        ):
+                            with mock.patch("builtins.print") as printer:
+                                rc = mod.readiness(mock.Mock())
+                                payload = json.loads(printer.call_args.args[0])
+        self.assertEqual(rc, 0)
+        self.assertEqual(payload["mode"], "daemon_ready")
+        self.assertIn("communication_contract", payload)
+        self.assertEqual(payload["communication_contract"]["status"], "ok")
+        self.assertEqual(payload["communication_contract"]["objects_count"], 11)
+        self.assertEqual(len(payload["communication_contract"]["objects"]), 11)
+
+    def test_service_readiness_communication_contract_malformed_is_blocker(self):
+        mod = load_service()
+        with mock.patch.object(
+            mod, "run", side_effect=[subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0)]
+        ):
+            with mock.patch.object(
+                mod, "read_json",
+                side_effect=lambda path: {
+                    mod.PROGRESS_PATH: {
+                        "progress_percent": 100,
+                        "capability_groups": {"runtime": {"percent": 100}},
+                        "queued_tasks": 1,
+                        "running_tasks": 0,
+                        "done_tasks": 0,
+                    },
+                    mod.HEARTBEAT_PATH: {"state": "healthy"},
+                }.get(path, {}),
+            ):
+                with mock.patch.object(
+                    mod,
+                    "running_processes",
+                    return_value=[],
+                ):
+                    with mock.patch.object(
+                        mod,
+                        "communication_contract_smoke",
+                        return_value={
+                            "kind": "communication_data_contract_report",
+                            "status": "malformed",
+                            "objects": [],
+                            "objects_count": 0,
+                            "errors": ["objects length != 11: 0"],
+                        },
+                    ):
+                        with mock.patch.object(
+                            mod,
+                            "git_writable",
+                            return_value={"writable": True, "status": "pass", "path": str(mod.ROOT / ".git")},
+                        ):
+                            with mock.patch("builtins.print") as printer:
+                                rc = mod.readiness(mock.Mock())
+                                payload = json.loads(printer.call_args.args[0])
+        self.assertEqual(rc, 1)
+        self.assertEqual(payload["mode"], "not_ready")
+        self.assertIn("communication_contract", payload)
+        self.assertEqual(payload["communication_contract"]["status"], "malformed")
+        self.assertTrue(any("communication_data_contract_report is malformed" in item for item in payload["blockers"]))
+
     def test_daemon_heartbeat_is_json(self):
         mod = load_supervisor()
         payload = mod.write_daemon_heartbeat("test", detail="service-test")
