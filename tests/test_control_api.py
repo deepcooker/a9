@@ -8345,11 +8345,14 @@ Do risky work.
                 )
             finally:
                 mod.subprocess.run = original_run
+            record = json.loads(node_path.read_text(encoding='utf-8'))
 
         self.assertEqual(result['status'], 'conflict')
         self.assertEqual(result['bootstrap_action_reason'], 'expected_revision_required')
         self.assertEqual(result['actual_revision'], 6)
         self.assertEqual(calls, [])
+        self.assertEqual(record['revision'], 6)
+        self.assertNotIn('bootstrap_execution', record)
 
     def test_bootstrap_execute_rejects_stale_approved_takeover_revision_before_ssh(self):
         mod = load_control_api()
@@ -8396,12 +8399,15 @@ Do risky work.
                 )
             finally:
                 mod.subprocess.run = original_run
+            record = json.loads(node_path.read_text(encoding='utf-8'))
 
         self.assertEqual(result['status'], 'conflict')
         self.assertEqual(result['bootstrap_action_reason'], 'expected_revision_mismatch')
         self.assertEqual(result['expected_revision'], 5)
         self.assertEqual(result['actual_revision'], 6)
         self.assertEqual(calls, [])
+        self.assertEqual(record['revision'], 6)
+        self.assertNotIn('bootstrap_execution', record)
 
     def test_bootstrap_execute_runs_approved_takeover_with_matching_revision(self):
         mod = load_control_api()
@@ -8454,12 +8460,161 @@ Do risky work.
             finally:
                 mod.subprocess.run = original_run
             evidence_path_exists = Path(result['evidence_path']).exists()
+            record = json.loads(node_path.read_text(encoding='utf-8'))
 
         self.assertEqual(result['status'], 'ok')
         self.assertEqual(result['bootstrap_action'], 'continue')
         self.assertTrue(evidence_path_exists)
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0][0], 'ssh')
+        self.assertEqual(record['revision'], 7)
+        self.assertEqual(record['status'], 'registered')
+        self.assertEqual(record['status_reason'], 'bootstrap_ok')
+        self.assertEqual(record['bootstrap_execution']['action'], 'continue')
+        self.assertEqual(record['bootstrap_execution']['result'], 'ok')
+        self.assertEqual(record['bootstrap_execution']['return_code'], 0)
+        self.assertFalse(record['bootstrap_execution']['timed_out'])
+        self.assertEqual(record['bootstrap_execution']['previous_revision'], 6)
+        self.assertEqual(record['bootstrap_execution']['new_revision'], 7)
+        self.assertEqual(record['bootstrap_execution']['evidence_path'], result['evidence_path'])
+        self.assertEqual(record['bootstrap_takeover']['state'], 'approved')
+        self.assertEqual(record['bootstrap_takeover']['decision'], 'resume_approved')
+        self.assertIn('recovery_hint', result)
+        self.assertEqual(result['recovery_hint']['action'], 'observe')
+        self.assertEqual(result['recovery_hint']['next_endpoint'], '/api/nodes/recovery-transcript')
+        self.assertEqual(result['recovery_hint']['next_method'], 'GET')
+        self.assertFalse(result['recovery_hint']['next_requires_arm'])
+
+    def test_bootstrap_execute_records_node_state_on_failed_execution(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 2
+            stdout = 'A9 remote bootstrap failed\n'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        'node_id': 'node-a',
+                        'revision': 8,
+                        'ssh_target': 'root@100.64.0.1',
+                        'status': 'await_bootstrap_takeover',
+                        'bootstrap_takeover': {
+                            'state': 'approved',
+                            'decision': 'resume_approved',
+                        },
+                    }
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            mod.phone_control_arm(
+                {'group': 'remote', 'duration': '30s', 'operator_scopes': ['operator.admin']},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            try:
+                def fake_run(cmd, **kwargs):
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.bootstrap_execute_node(
+                    {
+                        'node_id': 'node-a',
+                        'ssh_target': 'root@100.64.0.1',
+                        'operator_scopes': ['operator.admin'],
+                        'expected_revision': 8,
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+            record = json.loads(node_path.read_text(encoding='utf-8'))
+
+        self.assertEqual(result['status'], 'failed')
+        self.assertEqual(result['bootstrap_action'], 'repair')
+        self.assertEqual(record['revision'], 9)
+        self.assertEqual(record['status'], 'await_bootstrap_takeover')
+        self.assertEqual(record['status_reason'], 'bootstrap_failed')
+        self.assertEqual(record['bootstrap_execution']['action'], 'repair')
+        self.assertEqual(record['bootstrap_execution']['result'], 'failed')
+        self.assertEqual(record['bootstrap_execution']['return_code'], 2)
+        self.assertFalse(record['bootstrap_execution']['timed_out'])
+        self.assertEqual(record['bootstrap_execution']['previous_revision'], 8)
+        self.assertEqual(record['bootstrap_execution']['new_revision'], 9)
+        self.assertEqual(record['bootstrap_execution']['evidence_path'], result['evidence_path'])
+        self.assertEqual(result['recovery_hint']['action'], 'repair')
+        self.assertEqual(result['recovery_hint']['next_endpoint'], '/api/nodes/bootstrap-execute')
+        self.assertEqual(result['recovery_hint']['next_method'], 'POST')
+        self.assertTrue(result['recovery_hint']['next_requires_arm'])
+
+    def test_bootstrap_execute_records_node_state_on_timeout_execution(self):
+        mod = load_control_api()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        'node_id': 'node-a',
+                        'revision': 9,
+                        'ssh_target': 'root@100.64.0.1',
+                        'status': 'await_bootstrap_takeover',
+                        'bootstrap_takeover': {
+                            'state': 'approved',
+                            'decision': 'resume_approved',
+                        },
+                    }
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            mod.phone_control_arm(
+                {'group': 'remote', 'duration': '30s', 'operator_scopes': ['operator.admin']},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            try:
+                def fake_run(cmd, **kwargs):
+                    raise subprocess.TimeoutExpired(cmd, timeout=0.1)
+
+                mod.subprocess.run = fake_run
+                result = mod.bootstrap_execute_node(
+                    {
+                        'node_id': 'node-a',
+                        'ssh_target': 'root@100.64.0.1',
+                        'operator_scopes': ['operator.admin'],
+                        'expected_revision': 9,
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+            record = json.loads(node_path.read_text(encoding='utf-8'))
+
+        self.assertEqual(result['status'], 'timeout')
+        self.assertEqual(result['bootstrap_action'], 'retry')
+        self.assertTrue(result['timed_out'])
+        self.assertEqual(record['revision'], 10)
+        self.assertEqual(record['status'], 'await_bootstrap_takeover')
+        self.assertEqual(record['status_reason'], 'bootstrap_timeout')
+        self.assertEqual(record['bootstrap_execution']['action'], 'retry')
+        self.assertEqual(record['bootstrap_execution']['result'], 'timeout')
+        self.assertEqual(record['bootstrap_execution']['return_code'], 124)
+        self.assertTrue(record['bootstrap_execution']['timed_out'])
+        self.assertEqual(record['bootstrap_execution']['previous_revision'], 9)
+        self.assertEqual(record['bootstrap_execution']['new_revision'], 10)
+        self.assertEqual(record['bootstrap_execution']['evidence_path'], result['evidence_path'])
+        self.assertEqual(result['recovery_hint']['action'], 'retry')
+        self.assertEqual(result['recovery_hint']['next_endpoint'], '/api/nodes/bootstrap-execute')
+        self.assertEqual(result['recovery_hint']['next_method'], 'POST')
+        self.assertTrue(result['recovery_hint']['next_requires_arm'])
 
     def test_bootstrap_takeover_admission_duplicate_conflict_keeps_revision(self):
         mod = load_control_api()

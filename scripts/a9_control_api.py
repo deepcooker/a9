@@ -6758,6 +6758,7 @@ def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dic
     plan = bootstrap_plan_node(payload)
     target = str(plan.get('target') or '')
     node_id = safe_node_id(str(payload.get('node_id') or payload.get('ssh_target') or target).strip())
+    execution_commit: dict[str, Any] | None = None
     if node_id:
         takeover_path = node_path(node_id, root)
         if takeover_path.exists():
@@ -6804,6 +6805,13 @@ def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dic
                         'actual_revision': current_revision,
                         'gate': gate,
                     }
+                execution_commit = {
+                    'node_id': node_id,
+                    'record_path': takeover_path,
+                    'previous_revision': current_revision,
+                    'current_status': str(takeover_record.get('status') or 'await_bootstrap_takeover'),
+                    'bootstrap_takeover': takeover,
+                }
     if not target:
         raise ValueError("bootstrap plan is missing target")
     connect_timeout = int(payload.get("connect_timeout") or 5)
@@ -6858,7 +6866,52 @@ def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dic
         "command_preview": [*command[:-1], "<bootstrap_script>"],
     }
     evidence_path = write_node_evidence("bootstrap", str(result.get("node_id") or target or "node"), result, root=root)
-    return {**result, "evidence_path": str(evidence_path)}
+    evidence_path_value = str(evidence_path)
+    result["evidence_path"] = evidence_path_value
+    if execution_commit is not None:
+        now = utc_now()
+        previous_revision = int(execution_commit.get("previous_revision") or 0)
+        new_revision = previous_revision + 1
+        record_path = execution_commit.get("record_path")
+        try:
+            node_record = read_json(record_path) if isinstance(record_path, Path) else {}
+        except (OSError, json.JSONDecodeError):
+            node_record = {"node_id": execution_commit.get("node_id"), "revision": previous_revision}
+        bootstrap_execution = {
+            "action": action,
+            "result": status,
+            "return_code": return_code,
+            "timed_out": timed_out,
+            "evidence_path": evidence_path_value,
+            "previous_revision": previous_revision,
+            "new_revision": new_revision,
+        }
+        takeover = dict(execution_commit.get("bootstrap_takeover") or {})
+        takeover.setdefault("executed_at", now)
+        takeover.setdefault("execution_result", status)
+        updated_node = {
+            **node_record,
+            "revision": new_revision,
+            "status": "registered" if status == "ok" else str(execution_commit.get("current_status") or "await_bootstrap_takeover"),
+            "status_reason": reason,
+            "updated_at": now,
+            "bootstrap_takeover": takeover,
+            "bootstrap_execution": bootstrap_execution,
+        }
+        if isinstance(record_path, Path):
+            record_path.write_text(json.dumps(updated_node, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        result["bootstrap_execution"] = bootstrap_execution
+    recovery_action = "observe" if status == "ok" else action
+    recovery_endpoint = "/api/nodes/recovery-transcript" if status == "ok" else "/api/nodes/bootstrap-execute"
+    result["recovery_hint"] = {
+        "action": recovery_action,
+        "reason": reason,
+        "evidence_refs": [evidence_path_value],
+        "next_endpoint": recovery_endpoint,
+        "next_method": "GET" if status == "ok" else "POST",
+        "next_requires_arm": status != "ok",
+    }
+    return result
 
 
 def heartbeat_repair_node(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:

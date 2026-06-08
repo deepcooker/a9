@@ -3930,3 +3930,25 @@ Next monitoring target:
    - Governance lesson:
      Approval is consent, not execution authority. Execution still needs an
      armed command gate plus current state revision.
+
+174. Bootstrap execute now persists deterministic node-state commit on actuation.
+   - Trigger:
+     The 24h worker correctly identified that approved+armed bootstrap execution
+     still lacked a durable handoff point after SSH actuation. Without a
+     revisioned node-state commit, mobile/operator recovery after disconnect
+     could only infer from a response or evidence file.
+   - Change:
+     `bootstrap_execute_node()` now persists node state only for the actuating
+     approved `await_bootstrap_takeover` path with matching `expected_revision`.
+     It bumps `node.revision`, updates `status`, `status_reason`, and
+     `updated_at`, preserves `bootstrap_takeover`, writes `bootstrap_execution`,
+     and returns a structured `recovery_hint`. Conflict and gate-block paths
+     remain non-mutating.
+   - Verification:
+     New tests cover success, failed, and timeout execution commits plus
+     non-mutating missing/stale revision conflicts.
+   - Governance lesson:
+     The worker's mechanism choice was good, but process governance rejected the
+     run for direct file-change events and broad reads. Monitor salvage is valid
+     when tests and patch intent are clear, but the next runtime slice must
+     reduce worker token burn and enforce deterministic patch output earlier.
