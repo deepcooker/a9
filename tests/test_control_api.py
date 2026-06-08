@@ -10623,6 +10623,83 @@ Do risky work.
         self.assertEqual(item["details"]["recovery_hint"]["next_requires_arm"], False)
         self.assertEqual(item["details"]["recovery_hint"]["evidence_refs"], [str(evidence_path)])
 
+    def test_bootstrap_execute_success_commit_visible_in_node_status_and_recovery_transcript(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = "A9 remote node prepared\n"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / ".a9" / "nodes" / "node-a.json"
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        "node_id": "node-a",
+                        "revision": 6,
+                        "ssh_target": "root@100.64.0.1",
+                        "status": "await_bootstrap_takeover",
+                        "bootstrap_takeover": {
+                            "state": "approved",
+                            "decision": "resume_approved",
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            mod.phone_control_arm(
+                {"group": "remote", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            original_gateway = mod.latest_gateway_reconnect_decision_event
+            original_latest = mod.recovery_loop_latest
+            try:
+                def fake_run(cmd, **kwargs):
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.bootstrap_execute_node(
+                    {
+                        "node_id": "node-a",
+                        "ssh_target": "root@100.64.0.1",
+                        "operator_scopes": ["operator.admin"],
+                        "expected_revision": 6,
+                    },
+                    root=root,
+                )
+                status = mod.node_status(root)
+                mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+                mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "missing"}
+                transcript = mod.recovery_transcript("node-a", root=root, limit=20)
+            finally:
+                mod.subprocess.run = original_run
+                mod.latest_gateway_reconnect_decision_event = original_gateway
+                mod.recovery_loop_latest = original_latest
+
+            self.assertEqual(result["status"], "ok")
+            self.assertTrue(Path(result["evidence_path"]).exists())
+            node = next((item for item in status["nodes"] if item.get("node_id") == "node-a"), None)
+            self.assertIsNotNone(node)
+            self.assertEqual(node["revision"], 7)
+            self.assertEqual(node["status"], "registered")
+            self.assertEqual(node["status_reason"], "bootstrap_ok")
+            self.assertEqual(node["bootstrap_execution"]["previous_revision"], 6)
+            self.assertEqual(node["bootstrap_execution"]["new_revision"], 7)
+            self.assertEqual(node["bootstrap_execution"]["evidence_path"], result["evidence_path"])
+
+            bootstrap_items = [item for item in transcript["items"] if item.get("source") == "node_bootstrap_execution"]
+            self.assertEqual(len(bootstrap_items), 1)
+            transcript_item = bootstrap_items[0]
+            self.assertEqual(transcript_item["evidence_path"], result["evidence_path"])
+            self.assertEqual(transcript_item["details"]["bootstrap_execution"]["new_revision"], node["revision"])
+            self.assertEqual(transcript_item["details"]["bootstrap_execution"]["evidence_path"], result["evidence_path"])
+            self.assertEqual(transcript_item["details"]["recovery_hint"], result["recovery_hint"])
+
     def test_recovery_transcript_without_bootstrap_execution_has_no_node_bootstrap_item(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

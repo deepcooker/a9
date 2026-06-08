@@ -3989,3 +3989,25 @@ Next monitoring target:
    - Governance lesson:
      State writes are incomplete until the operator/mobile read path can recover
      them. For 24h control, every commit needs a matching recovery surface.
+
+177. Bootstrap execution now has cross-surface regression coverage.
+   - Trigger:
+     The recovery transcript surface was added, but the stronger contract is
+     write once and recover consistently through node state plus transcript.
+   - Change:
+     Added a regression that mocks successful bootstrap SSH execution, calls
+     `bootstrap_execute_node()`, then verifies `node_status()` and
+     `recovery_transcript()` expose the same evidence path, revision bump, and
+     recovery hint.
+   - Verification:
+     `python3 -m unittest tests.test_control_api.ControlApiTests.test_bootstrap_execute_success_commit_visible_in_node_status_and_recovery_transcript tests.test_control_api.ControlApiTests.test_recovery_transcript_includes_node_bootstrap_execution`
+     passed. `python3 -m py_compile scripts/a9_control_api.py
+     tests/test_control_api.py`, `git diff --check`, and full
+     `python3 -m unittest tests.test_control_api` passed.
+   - Governance lesson:
+     The 24h worker found the right test idea, but its implement task read broad
+     slices, exceeded the event-byte observation budget, used a stale declared
+     check name, and wrote a test that checked a temporary evidence path after
+     the temporary directory was removed. Monitor salvage was still useful
+     because patch scope and intent were clear; next implement tasks need
+     smaller anchors and declared checks generated from real `rg` matches.
