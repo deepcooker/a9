@@ -8539,6 +8539,7 @@ def approve_plan_decision_backlog(
     reason: str,
     actor: str = "monitor",
     source_run: str = "",
+    item_ids: list[str] | None = None,
     evidence_refs: list[str] | None = None,
 ) -> dict[str, Any]:
     plan = load_plan(plan_id)
@@ -8548,6 +8549,7 @@ def approve_plan_decision_backlog(
     if not reason_text:
         return {"status": "invalid_request", "plan_id": plan_id, "reason": "approval_reason_required", "approved_count": 0}
     source_filter = str(source_run or "").strip()
+    id_filter = {str(item).strip() for item in (item_ids or []) if str(item).strip()}
     backlog = execution_backlog_state(plan)
     items = backlog.get("items")
     if not isinstance(items, list):
@@ -8560,6 +8562,9 @@ def approve_plan_decision_backlog(
         if not isinstance(item, dict):
             continue
         if str(item.get("status") or "") != "blocked_not_decided":
+            continue
+        item_id = str(item.get("id") or "").strip()
+        if id_filter and item_id not in id_filter:
             continue
         item_source = str(item.get("source_run") or "")
         if source_filter and source_filter not in {item_source, Path(item_source).name}:
@@ -8574,7 +8579,7 @@ def approve_plan_decision_backlog(
         item.pop("blocked_at", None)
         approved.append({"id": item.get("id"), "title": item.get("title"), "source_run": item_source})
     if not approved:
-        return {"status": "no_items", "plan_id": plan_id, "approved_count": 0, "source_run": source_filter}
+        return {"status": "no_items", "plan_id": plan_id, "approved_count": 0, "source_run": source_filter, "item_ids": sorted(id_filter)}
     plan["updated_at"] = approved_at
     plan_dir = write_plan_files(plan)
     refs = [str(item).strip() for item in (evidence_refs or []) if str(item).strip()]
@@ -8587,6 +8592,8 @@ def approve_plan_decision_backlog(
         handle.write(f"- reason: {reason_text}\n")
         if source_filter:
             handle.write(f"- source_run: {source_filter}\n")
+        if id_filter:
+            handle.write(f"- item_ids: {', '.join(sorted(id_filter))}\n")
         if refs:
             handle.write(f"- evidence_refs: {', '.join(refs)}\n")
         handle.write(f"- approved_count: {len(approved)}\n")
@@ -8602,6 +8609,7 @@ def approve_plan_decision_backlog(
         "path": str(plan_dir / "plan.json"),
         "approval_path": str(approval_path),
         "source_run": source_filter,
+        "item_ids": sorted(id_filter),
     }
 
 

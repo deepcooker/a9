@@ -5055,6 +5055,7 @@ Findings are ready.
                 result = mod.approve_plan_decision_backlog(
                     plan_id="plan-approve-backlog",
                     source_run="/tmp/run-a",
+                    item_ids=["candidate-1"],
                     reason="monitor reviewed debate evidence and accepts candidate one only",
                     actor="human-monitor",
                     evidence_refs=["/tmp/run-a/summary.json"],
@@ -5067,6 +5068,7 @@ Findings are ready.
 
         self.assertEqual(result["status"], "approved")
         self.assertEqual(result["approved_count"], 1)
+        self.assertEqual(result["item_ids"], ["candidate-1"])
         items = {item["id"]: item for item in stored["execution_backlog"]["items"]}
         self.assertEqual(items["candidate-1"]["status"], "ready")
         self.assertEqual(items["candidate-1"]["decision_status"], "decided")

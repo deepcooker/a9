@@ -8441,16 +8441,32 @@ Do risky work.
                 mod.supervisor = lambda: FakeSupervisor
                 mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
                 blocked = mod.runtime_plan_decision_approve(
-                    {"operator_scopes": ["operator.admin"], "reason": "approve after review", "source_run": "run-a"},
+                    {
+                        "operator_scopes": ["operator.admin"],
+                        "reason": "approve after review",
+                        "source_run": "run-a",
+                        "item_ids": ["candidate-1"],
+                    },
                     root=root,
                 )
                 mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                invalid = mod.runtime_plan_decision_approve(
+                    {
+                        "operator_scopes": ["operator.admin"],
+                        "reason": "approve after review",
+                        "actor": "mobile-human",
+                        "source_run": "run-a",
+                        "evidence_refs": ["/tmp/run-a/summary.json"],
+                    },
+                    root=root,
+                )
                 result = mod.runtime_plan_decision_approve(
                     {
                         "operator_scopes": ["operator.admin"],
                         "reason": "approve after review",
                         "actor": "mobile-human",
                         "source_run": "run-a",
+                        "item_ids": ["candidate-1", "candidate-2"],
                         "evidence_refs": ["/tmp/run-a/summary.json"],
                     },
                     root=root,
@@ -8461,12 +8477,15 @@ Do risky work.
 
         self.assertEqual(blocked["status"], "blocked")
         self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(invalid["status"], "invalid_request")
+        self.assertEqual(invalid["reason"], "item_ids_required")
         self.assertEqual(result["status"], "approved")
         self.assertEqual(result["command"], "plan.decision.approve")
         self.assertEqual(result["approved_count"], 2)
         self.assertEqual(calls[0]["plan_id"], "active-plan")
         self.assertEqual(calls[0]["source_run"], "run-a")
         self.assertEqual(calls[0]["actor"], "mobile-human")
+        self.assertEqual(calls[0]["item_ids"], ["candidate-1", "candidate-2"])
         self.assertEqual(calls[0]["evidence_refs"], ["/tmp/run-a/summary.json"])
         self.assertEqual(audit_calls[-1][0]["action"], "plan_decision_approve")
 

@@ -7929,10 +7929,29 @@ def runtime_plan_decision_approve(payload: dict[str, Any], *, root: Path = ROOT)
         evidence_refs = [evidence_refs]
     if not isinstance(evidence_refs, list):
         evidence_refs = []
+    item_ids = payload.get("item_ids", [])
+    if isinstance(item_ids, str):
+        item_ids = [item_ids]
+    if not isinstance(item_ids, list):
+        item_ids = []
+    item_ids = [str(item).strip() for item in item_ids if str(item).strip()]
+    allow_all = bool(payload.get("allow_all"))
+    if not item_ids and not allow_all:
+        return audit_plan_decision_approve(
+            {
+                **base,
+                "status": "invalid_request",
+                "gate": gate,
+                "reason": "item_ids_required",
+                "hint": "pass explicit item_ids or allow_all=true after review",
+            },
+            root=root,
+        )
     plan_id = str(payload.get("plan_id") or "").strip() or str(mod.active_plan_id() or "").strip()
     result = mod.approve_plan_decision_backlog(
         plan_id=plan_id,
         source_run=str(payload.get("source_run") or "").strip(),
+        item_ids=item_ids,
         reason=str(payload.get("reason") or "").strip(),
         actor=str(payload.get("actor") or "mobile-operator").strip(),
         evidence_refs=[str(item) for item in evidence_refs],
