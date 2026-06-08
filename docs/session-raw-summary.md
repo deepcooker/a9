@@ -1030,3 +1030,9 @@ trading philosophy and requirements method
 
 - turn 695-695: external session extract `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-695-695.json` lines `91798-91798`.
 - turn 695, line 91798: 继续下一步
+
+
+## Auto Session Extract Index
+
+- turn 696-696: external session extract `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-696-696.json` lines `91974-91974`.
+- turn 696, line 91974: 继续下一步

@@ -9007,3 +9007,35 @@ Execution evidence:
 Assistant preview:
 
 - API 单测通过。现在做一次本地真实 API 函数 smoke：先 arm runtime gate，再调用 handler enqueue tail 1，不直接跑 worker。因为后台 run-loop 是 running，入队后会自动执行。
+
+## Auto Close Reading: Turn 696-696
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-696-696.json`
+- approx JSONL lines: `91974-91974`
+- generated_at: `2026-06-08T11:28:41+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 696
+
+Original user intent:
+
+- line `91974`: 继续下一步
+
+Execution evidence:
+
+- assistant_messages: `16`
+- tool_calls: `39` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `38`
+
+Assistant preview:
+
+- 新进程都起来了。现在重新跑真实 API 闭环和 mobile smoke，确认最新代码被服务加载。
