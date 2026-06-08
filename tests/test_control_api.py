@@ -2700,6 +2700,7 @@ demo
         self.assertNotIn("heartbeat_start_timed_out", node)
         self.assertNotIn("heartbeat_start_executed_at", node)
         self.assertNotIn("heartbeat_start_evidence_path", node)
+        self.assertNotIn("bootstrap_execution", node)
 
     def test_gateway_transport_contract_get_endpoint_emits_event(self):
         mod = load_control_api()
@@ -10556,6 +10557,100 @@ Do risky work.
         refs = result["intervention_decision"]["evidence_refs"]
         self.assertIn("redis:ping", refs)
         self.assertIn(str(node_path), refs)
+
+    def test_recovery_transcript_includes_node_bootstrap_execution(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence_path = root / ".a9" / "nodes" / "evidence" / "node-a" / "bootstrap-execute-node-a-1.json"
+            evidence_path.parent.mkdir(parents=True, exist_ok=True)
+            evidence_path.write_text(
+                json.dumps(
+                    {
+                        "action": "continue",
+                        "result": "ok",
+                        "return_code": 0,
+                        "timed_out": False,
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (root / ".a9" / "nodes" / "node-a.json").write_text(
+                json.dumps(
+                    {
+                        "node_id": "node-a",
+                        "status": "registered",
+                        "updated_at": "2026-06-09T00:00:00+00:00",
+                        "bootstrap_execution": {
+                            "action": "continue",
+                            "result": "ok",
+                            "return_code": 0,
+                            "timed_out": False,
+                            "evidence_path": str(evidence_path),
+                            "previous_revision": 6,
+                            "new_revision": 7,
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            original_gateway = mod.latest_gateway_reconnect_decision_event
+            original_latest = mod.recovery_loop_latest
+            try:
+                mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+                mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "missing"}
+                result = mod.recovery_transcript("node-a", root=root, limit=20)
+            finally:
+                mod.latest_gateway_reconnect_decision_event = original_gateway
+                mod.recovery_loop_latest = original_latest
+
+        bootstrap_items = [item for item in result["items"] if item.get("source") == "node_bootstrap_execution"]
+        self.assertEqual(len(bootstrap_items), 1)
+        item = bootstrap_items[0]
+        self.assertEqual(item["node_id"], "node-a")
+        self.assertEqual(item["action"], "continue")
+        self.assertEqual(item["status"], "ok")
+        self.assertEqual(item["evidence_path"], str(evidence_path))
+        self.assertEqual(item["details"]["bootstrap_execution"]["previous_revision"], 6)
+        self.assertEqual(item["details"]["bootstrap_execution"]["new_revision"], 7)
+        self.assertEqual(item["details"]["status_reason"], "")
+        self.assertEqual(item["details"]["recovery_hint"]["action"], "observe")
+        self.assertEqual(item["details"]["recovery_hint"]["next_endpoint"], "/api/nodes/recovery-transcript")
+        self.assertEqual(item["details"]["recovery_hint"]["next_method"], "GET")
+        self.assertEqual(item["details"]["recovery_hint"]["next_requires_arm"], False)
+        self.assertEqual(item["details"]["recovery_hint"]["evidence_refs"], [str(evidence_path)])
+
+    def test_recovery_transcript_without_bootstrap_execution_has_no_node_bootstrap_item(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".a9" / "nodes" / "node-a.json").parent.mkdir(parents=True)
+            (root / ".a9" / "nodes" / "node-a.json").write_text(
+                json.dumps(
+                    {
+                        "node_id": "node-a",
+                        "status": "registered",
+                        "updated_at": "2026-06-09T00:00:00+00:00",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            original_gateway = mod.latest_gateway_reconnect_decision_event
+            original_latest = mod.recovery_loop_latest
+            try:
+                mod.latest_gateway_reconnect_decision_event = lambda: {"status": "missing", "kind": "gateway_reconnect_decision"}
+                mod.recovery_loop_latest = lambda root=mod.ROOT: {"status": "missing"}
+                result = mod.recovery_transcript("node-a", root=root, limit=20)
+            finally:
+                mod.latest_gateway_reconnect_decision_event = original_gateway
+                mod.recovery_loop_latest = original_latest
+
+        self.assertFalse(any(item.get("source") == "node_bootstrap_execution" for item in result["items"]))
 
     def test_recovery_transcript_intervention_decision_quarantine_on_sequence_conflict(self):
         mod = load_control_api()

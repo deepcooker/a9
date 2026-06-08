@@ -3973,3 +3973,19 @@ Next monitoring target:
      code after evidence passes. Gate hard only on correctness, safety, scope,
      license, or test truth; keep process discipline as telemetry unless it
      changes the product risk.
+
+176. Bootstrap execution commit is now visible in recovery transcript.
+   - Trigger:
+     Entry 174 made bootstrap execution durable in node state, but recovery
+     clients still needed a read-side surface after disconnect.
+   - Change:
+     `recovery_transcript()` now emits a `node_bootstrap_execution` item when a
+     node record has `bootstrap_execution.evidence_path`. The item carries the
+     execution payload, status metadata, evidence path, and a recovery hint
+     compatible with the bootstrap execute response shape.
+   - Verification:
+     Tests cover transcript inclusion for persisted bootstrap execution and
+     compatibility when the field is absent.
+   - Governance lesson:
+     State writes are incomplete until the operator/mobile read path can recover
+     them. For 24h control, every commit needs a matching recovery surface.

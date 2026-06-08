@@ -3274,6 +3274,46 @@ def recovery_transcript(
             connection_state = str(node.get("connection_state") or "")
             if connection_state not in {"stale", "degraded", "offline", "unknown"}:
                 continue
+        bootstrap_execution = node.get("bootstrap_execution")
+        if isinstance(bootstrap_execution, dict) and bootstrap_execution.get("evidence_path"):
+            bootstrap_result = str(bootstrap_execution.get("result") or "")
+            if bootstrap_result == "ok":
+                recovery_action = "observe"
+                recovery_next_endpoint = "/api/nodes/recovery-transcript"
+                recovery_next_method = "GET"
+                recovery_next_requires_arm = False
+            else:
+                recovery_action = str(bootstrap_execution.get("action") or "repair")
+                recovery_next_endpoint = "/api/nodes/bootstrap-execute"
+                recovery_next_method = "POST"
+                recovery_next_requires_arm = True
+            recovery_hint = {
+                "action": recovery_action,
+                "reason": str(node.get("status_reason") or f"bootstrap_{bootstrap_result or 'unknown'}"),
+                "evidence_refs": [str(bootstrap_execution.get("evidence_path") or "")],
+                "next_endpoint": recovery_next_endpoint,
+                "next_method": recovery_next_method,
+                "next_requires_arm": recovery_next_requires_arm,
+            }
+            items.append(
+                _transcript_item(
+                    source="node_bootstrap_execution",
+                    phase="reconnecting",
+                    action=str(bootstrap_execution.get("action") or "continue"),
+                    reason="bootstrap_execution",
+                    status=str(bootstrap_execution.get("result") or ""),
+                    node_id=current_node_id,
+                    evidence_path=str(bootstrap_execution.get("evidence_path") or ""),
+                    ts=str(node.get("updated_at") or ""),
+                    details={
+                        "bootstrap_execution": bootstrap_execution,
+                        "status_reason": str(node.get("status_reason") or ""),
+                        "updated_at": str(node.get("updated_at") or ""),
+                        "status": str(node.get("status") or ""),
+                        "recovery_hint": recovery_hint,
+                    },
+                )
+            )
         node_hint = node_command_recovery_hint(
             node_id=current_node_id,
             result_status="noop",
