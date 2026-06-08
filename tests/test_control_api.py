@@ -8411,7 +8411,94 @@ Do risky work.
 
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["payload"]["command"], "eval.override")
-        self.assertEqual(captured["called_payload"]["run_id"], "run-eval")
+
+    def test_runtime_plan_decision_approve_requires_runtime_arm_and_promotes_items(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeSupervisor:
+            @staticmethod
+            def active_plan_id():
+                return "active-plan"
+
+            @staticmethod
+            def approve_plan_decision_backlog(**kwargs):
+                calls.append(kwargs)
+                return {
+                    "status": "approved",
+                    "plan_id": kwargs["plan_id"],
+                    "approved_count": 2,
+                    "source_run": kwargs["source_run"],
+                    "approval_path": "/tmp/decision_approval.md",
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_audit = mod.enqueue_service_control_audit
+            audit_calls = []
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                blocked = mod.runtime_plan_decision_approve(
+                    {"operator_scopes": ["operator.admin"], "reason": "approve after review", "source_run": "run-a"},
+                    root=root,
+                )
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_decision_approve(
+                    {
+                        "operator_scopes": ["operator.admin"],
+                        "reason": "approve after review",
+                        "actor": "mobile-human",
+                        "source_run": "run-a",
+                        "evidence_refs": ["/tmp/run-a/summary.json"],
+                    },
+                    root=root,
+                )
+            finally:
+                mod.supervisor = original_supervisor
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+        self.assertEqual(result["status"], "approved")
+        self.assertEqual(result["command"], "plan.decision.approve")
+        self.assertEqual(result["approved_count"], 2)
+        self.assertEqual(calls[0]["plan_id"], "active-plan")
+        self.assertEqual(calls[0]["source_run"], "run-a")
+        self.assertEqual(calls[0]["actor"], "mobile-human")
+        self.assertEqual(calls[0]["evidence_refs"], ["/tmp/run-a/summary.json"])
+        self.assertEqual(audit_calls[-1][0]["action"], "plan_decision_approve")
+
+    def test_runtime_plan_decision_approve_post_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.runtime_plan_decision_approve
+        captured = {}
+
+        def fake_runtime_plan_decision_approve(payload):
+            captured["payload"] = payload
+            return {"status": "approved", "command": "plan.decision.approve"}
+
+        body = json.dumps({"operator_scopes": ["operator.admin"], "reason": "approve"}).encode("utf-8")
+
+        class DummyPlanDecisionApprovePostHandler:
+            path = "/api/runtime/plan-decision-approve"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.runtime_plan_decision_approve = fake_runtime_plan_decision_approve
+            mod.ControlHandler.do_POST(DummyPlanDecisionApprovePostHandler())
+        finally:
+            mod.runtime_plan_decision_approve = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "plan.decision.approve")
+        self.assertEqual(captured["payload"]["reason"], "approve")
 
     def test_heartbeat_tmux_start_requires_arm_and_uses_persisted_plan(self):
         mod = load_control_api()

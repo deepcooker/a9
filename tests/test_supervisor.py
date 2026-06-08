@@ -5014,6 +5014,69 @@ Findings are ready.
         self.assertIn("proposal: Add regression check for change_request append path.", change_request)
         self.assertIn("evidence_refs: /tmp/run/summary.json", change_request)
 
+    def test_approve_plan_decision_backlog_promotes_blocked_items_only(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-approve-backlog",
+                    goal_id="goal-approve-backlog",
+                    contract={"problem": "Explicit decision approval promotes blocked candidate backlog."},
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"] = [
+                    {
+                        "id": "candidate-1",
+                        "title": "Candidate one",
+                        "status": "blocked_not_decided",
+                        "source_run": "/tmp/run-a",
+                        "blocked_reason": "decision_not_decided",
+                    },
+                    {
+                        "id": "candidate-2",
+                        "title": "Candidate two",
+                        "status": "blocked_not_decided",
+                        "source_run": "/tmp/run-b",
+                    },
+                    {
+                        "id": "already-queued",
+                        "title": "Queued item",
+                        "status": "queued",
+                        "source_run": "/tmp/run-a",
+                    },
+                ]
+                plan_dir = mod.write_plan_files(plan)
+
+                result = mod.approve_plan_decision_backlog(
+                    plan_id="plan-approve-backlog",
+                    source_run="/tmp/run-a",
+                    reason="monitor reviewed debate evidence and accepts candidate one only",
+                    actor="human-monitor",
+                    evidence_refs=["/tmp/run-a/summary.json"],
+                )
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+                approval = (plan_dir / "decision_approval.md").read_text(encoding="utf-8")
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "approved")
+        self.assertEqual(result["approved_count"], 1)
+        items = {item["id"]: item for item in stored["execution_backlog"]["items"]}
+        self.assertEqual(items["candidate-1"]["status"], "ready")
+        self.assertEqual(items["candidate-1"]["decision_status"], "decided")
+        self.assertEqual(items["candidate-1"]["approved_by"], "human-monitor")
+        self.assertNotIn("blocked_reason", items["candidate-1"])
+        self.assertEqual(items["candidate-2"]["status"], "blocked_not_decided")
+        self.assertEqual(items["already-queued"]["status"], "queued")
+        self.assertIn("status: approved", approval)
+        self.assertIn("evidence_refs: /tmp/run-a/summary.json", approval)
+
     def test_plan_note_appends_to_requested_lane(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

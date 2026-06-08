@@ -8533,6 +8533,78 @@ def append_plan_change_request(
     return {"status": "appended", "plan_id": plan_id, "request_id": request_id, "path": str(path)}
 
 
+def approve_plan_decision_backlog(
+    *,
+    plan_id: str,
+    reason: str,
+    actor: str = "monitor",
+    source_run: str = "",
+    evidence_refs: list[str] | None = None,
+) -> dict[str, Any]:
+    plan = load_plan(plan_id)
+    if not plan:
+        return {"status": "missing_plan", "plan_id": plan_id, "approved_count": 0}
+    reason_text = str(reason or "").strip()
+    if not reason_text:
+        return {"status": "invalid_request", "plan_id": plan_id, "reason": "approval_reason_required", "approved_count": 0}
+    source_filter = str(source_run or "").strip()
+    backlog = execution_backlog_state(plan)
+    items = backlog.get("items")
+    if not isinstance(items, list):
+        items = []
+        backlog["items"] = items
+    approved: list[dict[str, Any]] = []
+    approved_at = utc_now()
+    actor_text = str(actor or "monitor").strip() or "monitor"
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "") != "blocked_not_decided":
+            continue
+        item_source = str(item.get("source_run") or "")
+        if source_filter and source_filter not in {item_source, Path(item_source).name}:
+            continue
+        item["status"] = "ready"
+        item["decision_status"] = "decided"
+        item["approved_at"] = approved_at
+        item["approved_by"] = actor_text
+        item["approval_reason"] = reason_text
+        item["approval_source"] = "monitor_explicit_decision"
+        item.pop("blocked_reason", None)
+        item.pop("blocked_at", None)
+        approved.append({"id": item.get("id"), "title": item.get("title"), "source_run": item_source})
+    if not approved:
+        return {"status": "no_items", "plan_id": plan_id, "approved_count": 0, "source_run": source_filter}
+    plan["updated_at"] = approved_at
+    plan_dir = write_plan_files(plan)
+    refs = [str(item).strip() for item in (evidence_refs or []) if str(item).strip()]
+    approval_path = plan_dir / "decision_approval.md"
+    if not approval_path.exists():
+        approval_path.write_text("# Decision Approval\n\n", encoding="utf-8")
+    with approval_path.open("a", encoding="utf-8") as handle:
+        handle.write(f"## approval-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{len(approved)}\n\n")
+        handle.write(f"- status: approved\n- approved_at: {approved_at}\n- actor: {actor_text}\n")
+        handle.write(f"- reason: {reason_text}\n")
+        if source_filter:
+            handle.write(f"- source_run: {source_filter}\n")
+        if refs:
+            handle.write(f"- evidence_refs: {', '.join(refs)}\n")
+        handle.write(f"- approved_count: {len(approved)}\n")
+        for item in approved:
+            handle.write(f"  - {item.get('id')}: {item.get('title')}\n")
+        handle.write("\n")
+    append_plan_progress(plan_dir, f"decision_approval: approved {len(approved)} blocked_not_decided backlog item(s) actor={actor_text} reason={reason_text}")
+    return {
+        "status": "approved",
+        "plan_id": plan_id,
+        "approved_count": len(approved),
+        "approved_items": approved,
+        "path": str(plan_dir / "plan.json"),
+        "approval_path": str(approval_path),
+        "source_run": source_filter,
+    }
+
+
 def extract_contract_change_requests_from_summary(summary: dict[str, Any]) -> list[dict[str, str]]:
     worker = worker_output_from_summary(summary)
     raw: Any = None

@@ -489,6 +489,7 @@ PHONE_CONTROL_GROUPS = {
         "session.refresh.trial",
         "session.lane.latest",
         "flow.resume",
+        "plan.decision.approve",
         "plan.debate.next",
         "plan.backlog.next",
         "approval.approve",
@@ -3376,6 +3377,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_run_one_with_transport": "/api/runtime/run-one-with-transport",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
             "runtime_session_lane_latest": "/api/runtime/session-lane-latest",
+            "runtime_plan_decision_approve": "/api/runtime/plan-decision-approve",
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
             "services_start": "/api/services/start",
@@ -7893,6 +7895,51 @@ def runtime_plan_debate_next(payload: dict[str, Any], *, root: Path = ROOT) -> d
     )
 
 
+def audit_plan_decision_approve(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    enqueue_service_control_audit(
+        {
+            "at": utc_now(),
+            "action": "plan_decision_approve",
+            "command": result.get("command", "plan.decision.approve"),
+            "status": result.get("status"),
+            "plan_id": result.get("plan_id"),
+            "reason": result.get("reason") or result.get("blocked_reason"),
+            "approved_count": result.get("approved_count"),
+            "source_run": result.get("source_run"),
+        },
+        root=root,
+    )
+    result["audit_async"] = True
+    return result
+
+
+def runtime_plan_decision_approve(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    command = "plan.decision.approve"
+    mod = supervisor()
+    base = {"command": command}
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        return audit_plan_decision_approve({**base, "status": "blocked", "blocked_reason": str(exc)}, root=root)
+    gate = command_gate(command, root=root)
+    if not gate.get("allowed"):
+        return audit_plan_decision_approve({**base, "status": "blocked", "gate": gate}, root=root)
+    evidence_refs = payload.get("evidence_refs", [])
+    if isinstance(evidence_refs, str):
+        evidence_refs = [evidence_refs]
+    if not isinstance(evidence_refs, list):
+        evidence_refs = []
+    plan_id = str(payload.get("plan_id") or "").strip() or str(mod.active_plan_id() or "").strip()
+    result = mod.approve_plan_decision_backlog(
+        plan_id=plan_id,
+        source_run=str(payload.get("source_run") or "").strip(),
+        reason=str(payload.get("reason") or "").strip(),
+        actor=str(payload.get("actor") or "mobile-operator").strip(),
+        evidence_refs=[str(item) for item in evidence_refs],
+    )
+    return audit_plan_decision_approve({**base, "gate": gate, **result}, root=root)
+
+
 def runtime_plan_backlog_next(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     command = "plan.backlog.next"
     mod = supervisor()
@@ -8680,6 +8727,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_session_refresh_trial(payload))
             elif self.path == "/api/runtime/session-lane-latest":
                 self.write_json(200, runtime_session_lane_latest(payload))
+            elif self.path == "/api/runtime/plan-decision-approve":
+                self.write_json(200, runtime_plan_decision_approve(payload))
             elif self.path == "/api/runtime/plan-debate-next":
                 self.write_json(200, runtime_plan_debate_next(payload))
             elif self.path == "/api/runtime/plan-backlog-next":
