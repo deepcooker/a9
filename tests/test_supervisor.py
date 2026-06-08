@@ -5036,6 +5036,9 @@ Findings are ready.
                         "status": "blocked_not_decided",
                         "source_run": "/tmp/run-a",
                         "blocked_reason": "decision_not_decided",
+                        "queued_task_id": "old-bad-run",
+                        "queued_task_path": "/tmp/old-bad-run.md",
+                        "queued_at": "2026-06-08T00:00:00+00:00",
                     },
                     {
                         "id": "candidate-2",
@@ -5074,6 +5077,9 @@ Findings are ready.
         self.assertEqual(items["candidate-1"]["decision_status"], "decided")
         self.assertEqual(items["candidate-1"]["approved_by"], "human-monitor")
         self.assertNotIn("blocked_reason", items["candidate-1"])
+        self.assertNotIn("queued_task_id", items["candidate-1"])
+        self.assertNotIn("queued_task_path", items["candidate-1"])
+        self.assertNotIn("queued_at", items["candidate-1"])
         self.assertEqual(items["candidate-2"]["status"], "blocked_not_decided")
         self.assertEqual(items["already-queued"]["status"], "queued")
         self.assertIn("status: approved", approval)

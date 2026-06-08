@@ -8577,6 +8577,9 @@ def approve_plan_decision_backlog(
         item["approval_source"] = "monitor_explicit_decision"
         item.pop("blocked_reason", None)
         item.pop("blocked_at", None)
+        item.pop("queued_task_id", None)
+        item.pop("queued_task_path", None)
+        item.pop("queued_at", None)
         approved.append({"id": item.get("id"), "title": item.get("title"), "source_run": item_source})
     if not approved:
         return {"status": "no_items", "plan_id": plan_id, "approved_count": 0, "source_run": source_filter, "item_ids": sorted(id_filter)}
