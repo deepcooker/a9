@@ -8911,3 +8911,35 @@ Causal reading:
   causal evolution, not from the latest feature request.
 - The latest supplement must cite the extract and update causal memory before
   finalizing the aggregation document.
+
+## Auto Close Reading: Turn 693-693
+
+Source:
+
+- session: `/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
+- session_id: `019e488c-d5f9-7501-835a-bf6e8ff6d8a2`
+- extract: `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-693-693.json`
+- approx JSONL lines: `91521-91521`
+- generated_at: `2026-06-08T10:21:14+00:00`
+
+Boundary:
+
+- deterministic extraction only; no model call
+- preserves raw wording previews and tool evidence
+- does not replace human/worker deep interpretation
+
+### Turn 693
+
+Original user intent:
+
+- line `91521`: 继续下一步
+
+Execution evidence:
+
+- assistant_messages: `5`
+- tool_calls: `12` (exec_command, exec_command, exec_command, write_stdin, exec_command, exec_command, exec_command, exec_command, exec_command, exec_command)
+- tool_outputs: `12`
+
+Assistant preview:
+
+- index 显示当前外部 session 有 693 个 user turns，最新就是你刚才“继续下一步”。我会只跑 turn 693，`auto_continue:false`，但保留 `auto_close_reading:true`，让它自动接 `session_close_reading` 后停止。

@@ -1012,3 +1012,9 @@ trading philosophy and requirements method
 -> private compute/model scheduler as new infrastructure layer
 -> NZX RWA as first heavy business line
 ```
+
+
+## Auto Session Extract Index
+
+- turn 693-693: external session extract `/root/a9/.a9/external_sessions/019e488c-d5f9-7501-835a-bf6e8ff6d8a2/turns-693-693.json` lines `91521-91521`.
+- turn 693, line 91521: 继续下一步
