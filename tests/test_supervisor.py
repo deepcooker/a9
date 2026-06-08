@@ -4648,6 +4648,56 @@ Findings are ready.
         self.assertIn("status=pass", progress)
         self.assertIn("commit=abcdef123456", progress)
 
+    def test_update_active_plan_from_run_marks_execution_backlog_terminal_status(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-backlog-terminal",
+                    goal_id="goal-backlog-terminal",
+                    contract={"problem": "Queued backlog items must reflect terminal run status."},
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "backlog-001-terminal",
+                        "title": "Terminal item",
+                        "phase": "record",
+                        "status": "queued",
+                        "queued_task_id": "queued-terminal-task",
+                        "queued_task_path": "/tmp/queued-terminal-task.md",
+                    }
+                )
+                plan_dir = mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "queued-terminal-task-20260608T000000Z-a1"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "needs-repair",
+                    "phase": "record",
+                    "run_dir": str(run_dir),
+                    "git_governance": {"status": "rolled-back"},
+                }
+                task = mod.Task(path=Path("task.md"), task_id="queued-terminal-task", prompt="demo", phase="record")
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        item = stored["execution_backlog"]["items"][0]
+        self.assertEqual(result["execution_backlog_item_update"]["status"], "updated")
+        self.assertEqual(result["execution_backlog_item_update"]["run_status"], "needs-repair")
+        self.assertEqual(item["status"], "needs-repair")
+        self.assertEqual(item["last_run_id"], "queued-terminal-task-20260608T000000Z-a1")
+        self.assertEqual(item["last_summary_path"], str(run_dir / "summary.json"))
+        self.assertIn("failed_at", item)
+
     def test_update_active_plan_from_run_skips_selftest_memory(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

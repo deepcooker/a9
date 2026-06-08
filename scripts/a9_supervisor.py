@@ -8646,6 +8646,53 @@ def extract_contract_change_requests_from_summary(summary: dict[str, Any]) -> li
     return requests
 
 
+def update_execution_backlog_item_from_run(plan: dict[str, Any], task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
+    backlog = execution_backlog_state(plan)
+    items = backlog.get("items")
+    if not isinstance(items, list):
+        return {"status": "skipped", "reason": "no_execution_backlog_items"}
+    task_id = str(task.task_id or "").strip()
+    if not task_id:
+        return {"status": "skipped", "reason": "missing_task_id"}
+    matched: dict[str, Any] | None = None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if task_id in {
+            str(item.get("queued_task_id") or "").strip(),
+            str(item.get("task_id") or "").strip(),
+        }:
+            matched = item
+            break
+    if matched is None:
+        return {"status": "skipped", "reason": "task_not_in_execution_backlog", "task_id": task_id}
+
+    run_status = str(summary.get("status") or "").strip()
+    if run_status not in {"pass", "needs-followup", "needs-repair", "monitor-blocked", "worker-failed", "failed", "timeout"}:
+        return {"status": "skipped", "reason": "non_terminal_or_unknown_status", "task_id": task_id, "run_status": run_status}
+    now = utc_now()
+    git_governance = summary.get("git_governance") if isinstance(summary.get("git_governance"), dict) else {}
+    main_integration = git_governance.get("main_integration") if isinstance(git_governance.get("main_integration"), dict) else {}
+    matched["status"] = run_status
+    matched["last_run_id"] = Path(str(summary.get("run_dir") or run_dir)).name
+    matched["last_run_dir"] = str(run_dir)
+    matched["last_summary_path"] = str(run_dir / "summary.json")
+    matched["last_updated_at"] = now
+    if run_status in {"pass", "needs-followup"}:
+        matched["completed_at"] = now
+    else:
+        matched["failed_at"] = now
+    commit = str(main_integration.get("main_commit") or git_governance.get("commit") or "").strip()
+    if commit:
+        matched["last_commit"] = commit
+    return {
+        "status": "updated",
+        "task_id": task_id,
+        "item_id": str(matched.get("id") or matched.get("backlog_id") or ""),
+        "run_status": run_status,
+    }
+
+
 def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, Any]) -> dict[str, Any]:
     run_id = Path(str(summary.get("run_dir") or run_dir)).name
     if str(task.task_id or "").startswith("selftest-") or is_selftest_run_id(run_id):
@@ -8670,6 +8717,7 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
         if isinstance(evidence_refs, list) and value and str(value) not in evidence_refs:
             evidence_refs.append(str(value))
     contract_change_requests = extract_contract_change_requests_from_summary(summary)
+    backlog_item_update = update_execution_backlog_item_from_run(plan, task, run_dir, summary)
     backlog_update = append_execution_backlog_items_from_debate_run(plan, task, run_dir, summary)
     plan_dir = write_plan_files(plan, activate=True)
     appended_change_requests: list[dict[str, str]] = []
@@ -8708,6 +8756,7 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
         "plan_dir": str(plan_dir),
         "run_id": run_id,
         "evidence_refs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
+        "execution_backlog_item_update": backlog_item_update,
         "execution_backlog_update": backlog_update,
         "contract_change_requests": appended_change_requests,
     }
