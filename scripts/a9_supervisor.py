@@ -8988,6 +8988,8 @@ def schedule_idle_lane_continuation() -> tuple[str, Path] | None:
     debate_path = schedule_idle_debate_continuation()
     if debate_path:
         return "debate-continuation", debate_path
+    if active_plan_id():
+        return None
     goal_path_result = schedule_idle_goal_continuation()
     if goal_path_result:
         return "goal-continuation", goal_path_result

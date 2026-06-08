@@ -5294,6 +5294,67 @@ Findings are ready.
         self.assertIn("route: execution_next", text)
         self.assertNotIn("route: debate_next", text)
 
+    def test_idle_lane_continuation_does_not_fallback_to_goal_when_active_plan_has_no_work(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                goal = mod.create_goal_payload("goal-no-plan-fallback", "Generic goal fallback", 1000)
+                mod.write_goal(goal)
+                plan = mod.create_plan_payload(
+                    plan_id="plan-active-but-exhausted",
+                    goal_id="goal-no-plan-fallback",
+                    contract={
+                        "problem": "Plan has no remaining work.",
+                        "why_now": "Active plan should not drift into generic goal tasks.",
+                        "must": "Stay idle until monitor seeds a decided slice or debate request.",
+                        "system_requirement": "lane router blocks goal fallback while active plan exists.",
+                        "data_shape": "active plan with exhausted generated ids.",
+                        "normal_flow": "idle -> no task.",
+                        "exception_flow": "monitor adds backlog or change_request.",
+                        "acceptance": "no queued task is created.",
+                        "out_of_scope": "generic goal continuation.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 lane router tests.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-active-but-exhausted",
+                        "exec-002-mechanism_extract-plan-active-but-exhausted",
+                    ]
+                )
+                mod.write_plan_files(plan)
+
+                lane_task = mod.schedule_idle_lane_continuation()
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertIsNone(lane_task)
+        self.assertEqual(queued, [])
+
     def test_idle_plan_continuation_schedules_change_request_review_when_backlog_exhausted(self):
         mod = load_supervisor()
         old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
