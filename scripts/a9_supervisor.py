@@ -164,6 +164,7 @@ PHASE_FOCUS = {
     "test": "Strengthen automated verification and regression coverage for the copied mechanism.",
     "repair": "Fix the previous failed checks, incomplete implementation, or missing evidence.",
     "record": "Update docs, evidence, and progress so the next worker can continue without chat context.",
+    "compare": "Verify the previous run, active-plan hydration, and declared decisions with bounded evidence before executing the next slice.",
     SESSION_REFRESH_PHASE: "Index and extract external Codex/operator sessions without calling an AI worker.",
     SESSION_CLOSE_READING_PHASE: "Append bounded external-session close-reading notes from extracted evidence.",
 }
@@ -8855,6 +8856,144 @@ def schedule_idle_plan_continuation() -> Path | None:
     return created[0] if created else None
 
 
+def build_plan_debate_task(
+    plan: dict[str, Any],
+    *,
+    stage_id: str = "",
+    task_id: str = "",
+    extra: str = "",
+) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+    debate = requirements_debate_progress(plan)
+    resolved_stage_id = str(stage_id or "").strip() or str(debate.get("current_stage") or "")
+    if not resolved_stage_id:
+        resolved_stage_id = "execution_backlog_generation"
+    stage = requirements_debate_stage_spec(resolved_stage_id)
+    plan_id = str(plan.get("plan_id") or "")
+    resolved_task_id = str(task_id or "").strip()
+    if not resolved_task_id:
+        resolved_task_id = (
+            f"debate-{resolved_stage_id}-{compact_task_ref(plan_id, limit=48)}-"
+            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+        )
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    missing = [
+        field
+        for field in stage.get("required_contract_fields", [])
+        if not str(contract.get(str(field)) or "").strip()
+    ]
+    prompt_lines = [
+        "decision_status: not_decided",
+        "route: debate_next",
+        f"plan_id: {plan_id}",
+        f"goal_id: {plan.get('goal_id', '')}",
+        f"debate_stage: {resolved_stage_id}",
+        f"debate_stage_label: {stage.get('label', '')}",
+        f"missing_contract_fields: {', '.join(str(item) for item in missing)}",
+        f"problem: {contract.get('problem', '')}",
+        f"why_now: {contract.get('why_now', '')}",
+        f"system_requirement: {contract.get('system_requirement', '')}",
+        f"data_shape: {contract.get('data_shape', '')}",
+        f"normal_flow: {contract.get('normal_flow', '')}",
+        f"exception_flow: {contract.get('exception_flow', '')}",
+        f"acceptance: {contract.get('acceptance', '')}",
+        f"out_of_scope: {contract.get('out_of_scope', '')}",
+        "",
+        "Debate task:",
+        str(stage.get("prompt", "")),
+        "",
+        "Output requirements:",
+        "- Append findings/progress/change_request to the active plan if evidence changes the contract.",
+        "- Produce a decision packet draft only when the missing fields are supported by evidence.",
+        "- Do not implement production code in this task.",
+        "- If the stage is ready, propose candidate execution_next backlog slices with allowed paths and checks.",
+        "- When proposing execution slices, include one JSON object with this shape:",
+        '  {"execution_backlog":{"items":[{"title":"...","phase":"reference_scan|mechanism_extract|implement|test|record","prompt":"...","allowed_paths":["..."],"checks":["..."]}]}}',
+    ]
+    if extra:
+        prompt_lines.extend(["", "Extra operator direction:", str(extra).strip()])
+    return resolved_task_id, "\n".join(prompt_lines), debate, stage
+
+
+def enqueue_plan_debate_task(
+    plan: dict[str, Any],
+    *,
+    stage_id: str = "",
+    task_id: str = "",
+    extra: str = "",
+    phase: str = "reference_scan",
+    timeout_seconds: int = 3600,
+    idle_timeout_seconds: int = 300,
+    auto_next: bool = False,
+) -> tuple[Path, dict[str, Any]]:
+    resolved_task_id, prompt, debate, _stage = build_plan_debate_task(
+        plan,
+        stage_id=stage_id,
+        task_id=task_id,
+        extra=extra,
+    )
+    path = enqueue_task_file(
+        resolved_task_id,
+        prompt,
+        phase=phase,
+        checks=[],
+        timeout_seconds=timeout_seconds,
+        idle_timeout_seconds=idle_timeout_seconds,
+        max_attempts=1,
+        allowed_paths=[],
+        auto_next=auto_next,
+    )
+    return path, debate
+
+
+def schedule_idle_debate_continuation() -> Path | None:
+    if not idle_goal_continuation_enabled():
+        return None
+    if next_task() is not None:
+        return None
+    if auto_loop_guard_blocks_next():
+        return None
+    plan_id = active_plan_id()
+    if not plan_id:
+        return None
+    plan = load_plan(plan_id)
+    if not plan:
+        return None
+    debate = requirements_debate_progress(plan)
+    if debate.get("status") == "ready_for_execution_backlog":
+        return None
+    stage_id = str(debate.get("current_stage") or "")
+    plan_ref = compact_task_ref(plan_id, limit=48)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    task_id = f"idle-debate-{stage_id or 'requirements'}-{plan_ref}-{timestamp}"
+    path, _ = enqueue_plan_debate_task(
+        plan,
+        stage_id=stage_id,
+        task_id=task_id,
+        extra=(
+            "Idle 24h lane router selected requirements debate before execution. "
+            "Close missing contract fields with evidence or produce a change_request; do not implement."
+        ),
+        phase="reference_scan",
+        timeout_seconds=3600,
+        idle_timeout_seconds=300,
+        auto_next=True,
+    )
+    return path
+
+
+def schedule_idle_lane_continuation() -> tuple[str, Path] | None:
+    plan_path_result = schedule_idle_plan_continuation()
+    if plan_path_result:
+        return "plan-continuation", plan_path_result
+    debate_path = schedule_idle_debate_continuation()
+    if debate_path:
+        return "debate-continuation", debate_path
+    goal_path_result = schedule_idle_goal_continuation()
+    if goal_path_result:
+        return "goal-continuation", goal_path_result
+    return None
+
+
 def schedule_idle_goal_continuation() -> Path | None:
     if not idle_goal_continuation_enabled():
         return None
@@ -11232,17 +11371,11 @@ def run_loop(args: argparse.Namespace) -> int:
         task = next_task()
         if not task:
             if args.auto_next:
-                next_plan_task = schedule_idle_plan_continuation()
-                if next_plan_task:
-                    write_daemon_heartbeat("plan-continuation", detail=str(next_plan_task))
+                next_lane_task = schedule_idle_lane_continuation()
+                if next_lane_task:
+                    lane, next_task_path = next_lane_task
+                    write_daemon_heartbeat(lane, detail=str(next_task_path))
                     task = next_task()
-                else:
-                    next_goal_task = schedule_idle_goal_continuation()
-                    if next_goal_task:
-                        write_daemon_heartbeat("goal-continuation", detail=str(next_goal_task))
-                        task = next_task()
-                    else:
-                        task = None
         if not task:
             write_daemon_heartbeat("idle", detail="no queued tasks")
             print("No queued tasks.")
@@ -11451,59 +11584,14 @@ def plan_debate_next(args: argparse.Namespace) -> int:
     if not plan:
         print(f"Plan not found: {plan_id}")
         return 1
-    debate = requirements_debate_progress(plan)
-    stage_id = str(args.stage or "").strip() or str(debate.get("current_stage") or "")
-    if not stage_id:
-        stage_id = "execution_backlog_generation"
-    stage = requirements_debate_stage_spec(stage_id)
-    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
-    task_id = str(args.task_id or "").strip()
-    if not task_id:
-        task_id = f"debate-{stage_id}-{compact_task_ref(plan_id, limit=48)}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-    missing = [
-        field
-        for field in stage.get("required_contract_fields", [])
-        if not str(contract.get(str(field)) or "").strip()
-    ]
-    prompt_lines = [
-        "decision_status: not_decided",
-        "route: debate_next",
-        f"plan_id: {plan_id}",
-        f"goal_id: {plan.get('goal_id', '')}",
-        f"debate_stage: {stage_id}",
-        f"debate_stage_label: {stage.get('label', '')}",
-        f"missing_contract_fields: {', '.join(str(item) for item in missing)}",
-        f"problem: {contract.get('problem', '')}",
-        f"why_now: {contract.get('why_now', '')}",
-        f"system_requirement: {contract.get('system_requirement', '')}",
-        f"data_shape: {contract.get('data_shape', '')}",
-        f"normal_flow: {contract.get('normal_flow', '')}",
-        f"exception_flow: {contract.get('exception_flow', '')}",
-        f"acceptance: {contract.get('acceptance', '')}",
-        f"out_of_scope: {contract.get('out_of_scope', '')}",
-        "",
-        "Debate task:",
-        str(stage.get("prompt", "")),
-        "",
-        "Output requirements:",
-        "- Append findings/progress/change_request to the active plan if evidence changes the contract.",
-        "- Produce a decision packet draft only when the missing fields are supported by evidence.",
-        "- Do not implement production code in this task.",
-        "- If the stage is ready, propose candidate execution_next backlog slices with allowed paths and checks.",
-        "- When proposing execution slices, include one JSON object with this shape:",
-        '  {"execution_backlog":{"items":[{"title":"...","phase":"reference_scan|mechanism_extract|implement|test|record","prompt":"...","allowed_paths":["..."],"checks":["..."]}]}}',
-    ]
-    if args.extra:
-        prompt_lines.extend(["", "Extra operator direction:", str(args.extra).strip()])
-    path = enqueue_task_file(
-        task_id,
-        "\n".join(prompt_lines),
+    path, debate = enqueue_plan_debate_task(
+        plan,
+        stage_id=str(args.stage or "").strip(),
+        task_id=str(args.task_id or "").strip(),
+        extra=str(args.extra or "").strip(),
         phase=str(args.phase or "reference_scan"),
-        checks=[],
         timeout_seconds=args.timeout_seconds,
         idle_timeout_seconds=args.idle_timeout_seconds,
-        max_attempts=1,
-        allowed_paths=[],
         auto_next=bool(args.allow_auto_next),
     )
     print(path)

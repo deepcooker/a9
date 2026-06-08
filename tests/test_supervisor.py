@@ -5181,6 +5181,119 @@ Findings are ready.
         self.assertTrue(stored["execution_backlog"]["generated_task_ids"])
         self.assertEqual(following_items[0]["phase"], "mechanism_extract")
 
+    def test_idle_lane_continuation_schedules_debate_before_goal_when_plan_not_ready(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                goal = mod.create_goal_payload("goal-debate-before-goal", "Generic goal fallback", 1000)
+                mod.write_goal(goal)
+                plan = mod.create_plan_payload(
+                    plan_id="plan-idle-debate-not-ready",
+                    goal_id="goal-debate-before-goal",
+                    contract={
+                        "problem": "Need requirements debate before execution.",
+                        "why_now": "Idle loop must not skip unfinished contract fields.",
+                    },
+                )
+                mod.write_plan_files(plan)
+
+                lane_task = mod.schedule_idle_lane_continuation()
+                self.assertIsNotNone(lane_task)
+                assert lane_task is not None
+                lane, next_path = lane_task
+                text = next_path.read_text(encoding="utf-8")
+                parsed = mod.parse_task(next_path)
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertEqual(lane, "debate-continuation")
+        self.assertIn("decision_status: not_decided", text)
+        self.assertIn("route: debate_next", text)
+        self.assertIn("debate_stage: requirement_audit", text)
+        self.assertIn("Idle 24h lane router selected requirements debate before execution.", text)
+        self.assertNotIn("Generic goal fallback", text)
+        self.assertTrue(parsed.auto_next_allowed)
+
+    def test_idle_lane_continuation_keeps_plan_execution_before_debate(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                goal = mod.create_goal_payload("goal-plan-before-debate", "Generic goal fallback", 1000)
+                mod.write_goal(goal)
+                plan = mod.create_plan_payload(
+                    plan_id="plan-idle-ready-for-execution",
+                    goal_id="goal-plan-before-debate",
+                    contract={
+                        "problem": "Need execution after decided debate.",
+                        "why_now": "The active plan is ready for backlog.",
+                        "must": "Queue decided execution.",
+                        "system_requirement": "lane router chooses execution_next first.",
+                        "data_shape": "ready contract fields.",
+                        "normal_flow": "idle -> execution backlog.",
+                        "exception_flow": "fallback only when no plan work exists.",
+                        "acceptance": "queued task is execution_next.",
+                        "out_of_scope": "no debate loop.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 active plan backlog tests.",
+                    },
+                )
+                mod.write_plan_files(plan)
+
+                lane_task = mod.schedule_idle_lane_continuation()
+                self.assertIsNotNone(lane_task)
+                assert lane_task is not None
+                lane, next_path = lane_task
+                text = next_path.read_text(encoding="utf-8")
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertEqual(lane, "plan-continuation")
+        self.assertIn("decision_status: decided", text)
+        self.assertIn("route: execution_next", text)
+        self.assertNotIn("route: debate_next", text)
+
     def test_idle_plan_continuation_schedules_change_request_review_when_backlog_exhausted(self):
         mod = load_supervisor()
         old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
