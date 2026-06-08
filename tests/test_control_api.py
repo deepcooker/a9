@@ -8301,7 +8301,167 @@ Do risky work.
         self.assertEqual(blocked['bootstrap_action'], 'wait_for_approval')
         self.assertEqual(blocked['bootstrap_action_reason'], 'bootstrap_takeover_not_approved')
 
-    def test_communication_action_plan_routes_terminal_reconnect_to_bootstrap_takeover_admission(self):
+    def test_bootstrap_execute_requires_expected_revision_for_approved_takeover(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        'node_id': 'node-a',
+                        'revision': 6,
+                        'ssh_target': 'root@100.64.0.1',
+                        'status': 'await_bootstrap_takeover',
+                        'bootstrap_takeover': {
+                            'state': 'approved',
+                            'decision': 'resume_approved',
+                        },
+                    }
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            mod.phone_control_arm(
+                {'group': 'remote', 'duration': '30s', 'operator_scopes': ['operator.admin']},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    raise AssertionError('bootstrap execute should not run without expected_revision')
+
+                mod.subprocess.run = fake_run
+                result = mod.bootstrap_execute_node(
+                    {
+                        'node_id': 'node-a',
+                        'ssh_target': 'root@100.64.0.1',
+                        'operator_scopes': ['operator.admin'],
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+
+        self.assertEqual(result['status'], 'conflict')
+        self.assertEqual(result['bootstrap_action_reason'], 'expected_revision_required')
+        self.assertEqual(result['actual_revision'], 6)
+        self.assertEqual(calls, [])
+
+    def test_bootstrap_execute_rejects_stale_approved_takeover_revision_before_ssh(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        'node_id': 'node-a',
+                        'revision': 6,
+                        'ssh_target': 'root@100.64.0.1',
+                        'status': 'await_bootstrap_takeover',
+                        'bootstrap_takeover': {
+                            'state': 'approved',
+                            'decision': 'resume_approved',
+                        },
+                    }
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            mod.phone_control_arm(
+                {'group': 'remote', 'duration': '30s', 'operator_scopes': ['operator.admin']},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    raise AssertionError('bootstrap execute should not run on stale expected_revision')
+
+                mod.subprocess.run = fake_run
+                result = mod.bootstrap_execute_node(
+                    {
+                        'node_id': 'node-a',
+                        'ssh_target': 'root@100.64.0.1',
+                        'operator_scopes': ['operator.admin'],
+                        'expected_revision': 5,
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+
+        self.assertEqual(result['status'], 'conflict')
+        self.assertEqual(result['bootstrap_action_reason'], 'expected_revision_mismatch')
+        self.assertEqual(result['expected_revision'], 5)
+        self.assertEqual(result['actual_revision'], 6)
+        self.assertEqual(calls, [])
+
+    def test_bootstrap_execute_runs_approved_takeover_with_matching_revision(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            returncode = 0
+            stdout = 'A9 remote node prepared\n'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            node_path = root / '.a9' / 'nodes' / 'node-a.json'
+            node_path.parent.mkdir(parents=True)
+            node_path.write_text(
+                json.dumps(
+                    {
+                        'node_id': 'node-a',
+                        'revision': 6,
+                        'ssh_target': 'root@100.64.0.1',
+                        'status': 'await_bootstrap_takeover',
+                        'bootstrap_takeover': {
+                            'state': 'approved',
+                            'decision': 'resume_approved',
+                        },
+                    }
+                )
+                + '\n',
+                encoding='utf-8',
+            )
+            mod.phone_control_arm(
+                {'group': 'remote', 'duration': '30s', 'operator_scopes': ['operator.admin']},
+                root=root,
+            )
+            original_run = mod.subprocess.run
+            calls = []
+            try:
+                def fake_run(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.run = fake_run
+                result = mod.bootstrap_execute_node(
+                    {
+                        'node_id': 'node-a',
+                        'ssh_target': 'root@100.64.0.1',
+                        'operator_scopes': ['operator.admin'],
+                        'expected_revision': 6,
+                    },
+                    root=root,
+                )
+            finally:
+                mod.subprocess.run = original_run
+            evidence_path_exists = Path(result['evidence_path']).exists()
+
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['bootstrap_action'], 'continue')
+        self.assertTrue(evidence_path_exists)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0][0], 'ssh')
+
+    def test_bootstrap_takeover_admission_duplicate_conflict_keeps_revision(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

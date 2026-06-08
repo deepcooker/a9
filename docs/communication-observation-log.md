@@ -3912,3 +3912,21 @@ Next monitoring target:
      Declared checks remain authoritative, but the runtime may add evidence
      checks derived from actual changed files. This is data-driven verification,
      not a fixed numeric gate.
+
+173. Approved bootstrap takeover now requires revision alignment before execute.
+   - Trigger:
+     The bootstrap execute boundary scan separated `approved takeover` from
+     `armed bootstrap execute` and identified drift risk between approval state
+     and actual SSH bootstrap actuation.
+   - Change:
+     `bootstrap_execute_node()` now checks `expected_revision` when a node is in
+     `await_bootstrap_takeover`. Waiting/not-approved takeover still blocks as
+     before. Approved takeover without revision, or with stale revision, returns
+     conflict before subprocess execution.
+   - Verification:
+     Focused tests cover missing revision, stale revision, approved+matching
+     revision execution, and the existing wait-state block. Full
+     `tests.test_control_api` passes.
+   - Governance lesson:
+     Approval is consent, not execution authority. Execution still needs an
+     armed command gate plus current state revision.

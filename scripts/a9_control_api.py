@@ -6778,6 +6778,32 @@ def bootstrap_execute_node(payload: dict[str, Any], *, root: Path = ROOT) -> dic
                     'reason': 'bootstrap_takeover_not_approved',
                     'gate': gate,
                 }
+            if str(takeover_record.get('status') or '') == 'await_bootstrap_takeover' and isinstance(takeover, dict):
+                current_revision = parse_int(takeover_record.get('revision'), default=-1)
+                if 'expected_revision' not in payload:
+                    return {
+                        'status': 'conflict',
+                        'execution_enabled': False,
+                        'bootstrap_action': 'wait_for_approval',
+                        'bootstrap_action_reason': 'expected_revision_required',
+                        'reason': 'expected_revision_required',
+                        'node_id': node_id,
+                        'actual_revision': current_revision,
+                        'gate': gate,
+                    }
+                expected_revision = parse_int(payload.get('expected_revision'), default=-1)
+                if expected_revision != current_revision:
+                    return {
+                        'status': 'conflict',
+                        'execution_enabled': False,
+                        'bootstrap_action': 'wait_for_approval',
+                        'bootstrap_action_reason': 'expected_revision_mismatch',
+                        'reason': 'expected_revision_mismatch',
+                        'node_id': node_id,
+                        'expected_revision': expected_revision,
+                        'actual_revision': current_revision,
+                        'gate': gate,
+                    }
     if not target:
         raise ValueError("bootstrap plan is missing target")
     connect_timeout = int(payload.get("connect_timeout") or 5)
