@@ -2,14 +2,15 @@
 
 ## decision_status
 
-partial_decision.
+decision_status: partial_decision.
+route: debate_next
 
 This packet approves only the next requirements-contract slice. It does not
 approve production feature expansion.
 
 ## problem
 
-A9 can run 24h worker tasks, but undecided analysis outputs were previously
+problem: A9 can run 24h worker tasks, but undecided analysis outputs were previously
 auto-continued into `test` or `repair` tasks. That caused broad runtime/session
 reads, stale progress display, and token-heavy loops.
 
@@ -18,7 +19,7 @@ contract closure between `debate_next` and `execution_next`.
 
 ## system_requirement
 
-A9 must make the debate-to-execution handoff explicit:
+system_requirement: A9 must make the debate-to-execution handoff explicit:
 
 - A task with explicit `decision_status` and route `debate_next` must stop after
   review/change-request evidence until monitor/product decision.
@@ -32,7 +33,7 @@ A9 must make the debate-to-execution handoff explicit:
 
 ## data_contract
 
-Minimum task packet fields:
+data_contract: Minimum task packet fields:
 
 - `decision_status`: `not_decided`, `partial_decision`, or `decided`.
 - `route`: derived from decision packet as `debate_next` or `execution_next`.
@@ -55,7 +56,7 @@ Minimum runtime evidence fields:
 
 ## state_flow
 
-Normal flow:
+state_flow: normal flow:
 
 ```text
 debate_next
@@ -82,6 +83,7 @@ human/operator decision
 
 ## exception_flow
 
+exception_flow:
 - Missing decision fields: remain `debate_next`, do not auto-next into
   `test`/`implement`/`repair`.
 - Stale next task path: clear progress `next_task_path` unless the file exists.
@@ -94,7 +96,7 @@ human/operator decision
 
 ## acceptance
 
-This decision slice is accepted when:
+acceptance: this decision slice is accepted when:
 
 - `scripts/a9_supervisor.py::schedule_next_task` blocks explicit `debate_next`
   auto-continuation.
@@ -107,6 +109,7 @@ This decision slice is accepted when:
 
 ## out_of_scope
 
+out_of_scope:
 - No mobile UI work.
 - No communication/runtime feature expansion.
 - No finance/quant strategy work.
@@ -117,22 +120,17 @@ This decision slice is accepted when:
 
 ## allowed_execution
 
-Allowed for this slice:
-
-- `scripts/a9_supervisor.py`
-- `tests/test_supervisor.py`
-- `docs/agent-runtime-observations.md`
+allowed_execution:
 - `docs/a9-current-decision-packet.md`
+- `test -s docs/a9-24h-two-lane-review-closure.md`
 
 Allowed checks:
 
-- `python3 -m py_compile scripts/a9_supervisor.py tests/test_supervisor.py`
-- focused `tests.test_supervisor.SupervisorTests` methods covering decision
-  routing and stale progress.
-- `python3 scripts/a9_supervisor.py status`
+- `test -s docs/a9-24h-two-lane-review-closure.md`
 
 ## role_signoff
 
+role_signoff:
 Product/mainline:
 - Approves stopping undecided tasks before auto-next execution.
 - Does not approve feature expansion until the next execution packet is decided.
@@ -149,6 +147,11 @@ Architecture:
 Test/acceptance:
 - Requires focused tests for decision routing and stale progress.
 - Requires CLI status evidence for actual queue/running state.
+
+## change_record
+
+change_record: monitor closure keeps this packet bounded to decision-record repair; route remains `debate_next` and no production files are to be modified until a decided execution slice is emitted.
+change_request: if any required field remains undecided or missing, continue in `debate_next` and return to this packet for closure repair before enqueuing execution.
 
 ## next_execution_candidate
 
