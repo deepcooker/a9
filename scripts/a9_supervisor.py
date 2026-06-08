@@ -8961,6 +8961,9 @@ def schedule_idle_debate_continuation() -> Path | None:
     debate = requirements_debate_progress(plan)
     if debate.get("status") == "ready_for_execution_backlog":
         return None
+    backlog = execution_backlog_state(plan)
+    if any(isinstance(item, dict) for item in backlog.get("items", [])):
+        return None
     stage_id = str(debate.get("current_stage") or "")
     plan_ref = compact_task_ref(plan_id, limit=48)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

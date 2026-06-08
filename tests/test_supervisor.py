@@ -5355,6 +5355,65 @@ Findings are ready.
         self.assertIsNone(lane_task)
         self.assertEqual(queued, [])
 
+    def test_idle_debate_continuation_waits_when_backlog_draft_exists_but_contract_not_ready(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                goal = mod.create_goal_payload("goal-backlog-draft-waits", "Generic goal fallback", 1000)
+                mod.write_goal(goal)
+                plan = mod.create_plan_payload(
+                    plan_id="plan-backlog-draft-not-ready",
+                    goal_id="goal-backlog-draft-waits",
+                    contract={
+                        "problem": "A debate worker produced a backlog draft before review closure.",
+                        "why_now": "Repeating debate burns budget instead of closing the contract.",
+                        "out_of_scope": "generic goal fallback and execution before closure.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "title": "Draft backlog from debate",
+                        "phase": "record",
+                        "prompt": "Close the contract first.",
+                        "allowed_paths": ["docs/worker-method-packet.md"],
+                        "checks": [],
+                        "status": "ready",
+                    }
+                )
+                mod.write_plan_files(plan)
+
+                debate_path = mod.schedule_idle_debate_continuation()
+                lane_task = mod.schedule_idle_lane_continuation()
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertIsNone(debate_path)
+        self.assertIsNone(lane_task)
+        self.assertEqual(queued, [])
+
     def test_idle_plan_continuation_schedules_change_request_review_when_backlog_exhausted(self):
         mod = load_supervisor()
         old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
