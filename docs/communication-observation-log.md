@@ -4049,3 +4049,22 @@ Next monitoring target:
    - Governance lesson:
      Runtime tests must not share production control-plane state. The 24h
      machine should only consume intentional tasks, never test residue.
+
+180. Live blocker validation exposed stale daemon code risk.
+   - Trigger:
+     A live negative task with an intentionally missing unittest target should
+     have been blocked before worker claim. The first probe was still consumed
+     by the 24h loop and ran a worker turn.
+   - Finding:
+     The long-running tmux loop had been started before the blocker change and
+     was still executing old Python code. After restarting the loop, the same
+     stale-check probe was recognized as a queued task-quality blocker and moved
+     to `.a9/tasks/blocked` with a `task_quality_block` audit record.
+   - Verification:
+     `validate-stale-declared-check-blocker-v2-20260609` remained out of
+     `running`, was moved from `queue` to `blocked`, and wrote
+     `validate-stale-declared-check-blocker-v2-20260609.quality-block.json`.
+   - Governance lesson:
+     Runtime code changes are incomplete until the resident 24h daemon has
+     reloaded them. The next control-plane hardening slice should make the loop
+     expose its code revision and restart requirement explicitly.

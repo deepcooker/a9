@@ -1393,3 +1393,22 @@
   QUEUE/RUNNING/DONE/RUNS/EXTERNAL_SESSIONS 等目录。
 - full `tests.test_supervisor` 后真实 `.a9/tasks/queue` 和
   `.a9/tasks/running` 保持为空。
+
+## 2026-06-09：24h daemon 不重启会继续执行旧治理逻辑
+
+现象：
+
+- `Block stale declared unittest contracts` 已经合入并通过测试。
+- 但后台 tmux 里的 `a9_supervisor.py run-loop` 是合入前启动的长期 Python
+  进程。
+- live probe `validate-stale-declared-check-blocker-20260609` 明明带有
+  `declared_check_unresolved_unittest_target`，仍被旧 loop 领取并启动 worker。
+- 重启 tmux loop 后，v2 probe 正确移动到 `.a9/tasks/blocked` 并写
+  `task_quality_block` audit。
+
+规则：
+
+- 修改 supervisor/runtime 治理代码后，必须重启常驻 24h loop。
+- runtime status 需要暴露当前运行代码 revision，否则监控者无法判断
+  daemon 是否落后于仓库 HEAD。
+- live validation 要在确认 daemon revision 后执行，否则验证的是旧代码。
