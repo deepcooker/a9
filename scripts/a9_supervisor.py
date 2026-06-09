@@ -309,7 +309,6 @@ WORKER_TRANSPORT_OBSERVATION_PATTERNS = [
 ]
 WORKER_TRANSPORT_EXHAUSTED_PATTERNS = [
     re.compile(r"\bReconnecting\.\.\.\s*5/5\b.*\btimeout waiting for child process to exit\b", re.I | re.S),
-    re.compile(r"\bfailed to refresh available models:\s*timeout waiting for child process to exit\b", re.I),
 ]
 
 

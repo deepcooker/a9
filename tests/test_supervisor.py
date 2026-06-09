@@ -3034,7 +3034,7 @@ Do the work.
         self.assertEqual(observations[0]["level"], "warn")
         self.assertEqual(observations[0]["action"], "observe")
 
-    def test_run_worker_stops_on_transport_exhausted_stderr(self):
+    def test_run_worker_does_not_stop_on_model_refresh_stderr_if_turn_succeeds(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp) / "run"
@@ -3061,11 +3061,16 @@ Do the work.
                 sys.executable,
                 "-c",
                 (
-                    "import sys, time; "
+                    "import json, sys; "
                     "print('2026-06-04T14:24:18Z ERROR codex_models_manager::manager: "
                     "failed to refresh available models: timeout waiting for child process to exit', "
                     "file=sys.stderr, flush=True); "
-                    "time.sleep(30)"
+                    "print(json.dumps({'type':'thread.started','thread_id':'fake-thread'}), flush=True); "
+                    "print(json.dumps({'type':'turn.started'}), flush=True); "
+                    "print(json.dumps({'type':'item.completed','item':{'id':'msg-1',"
+                    "'type':'agent_message','text':'OK'}}), flush=True); "
+                    "print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1,"
+                    "'cached_input_tokens':0,'output_tokens':1,'reasoning_output_tokens':0}}), flush=True)"
                 ),
             ]
             with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
@@ -3075,11 +3080,12 @@ Do the work.
 
             failure = mod.classify_worker_failure(worker)
 
-            self.assertTrue(worker["transport_stopped"])
-            self.assertIn("failed to refresh available models", worker["transport_reason"])
-            self.assertEqual(worker["event_count"], 0)
-            self.assertEqual(failure["status"], "retryable-worker-transport")
-            self.assertEqual(failure["category"], "transport")
+            self.assertFalse(worker["transport_stopped"])
+            self.assertEqual(worker["transport_reason"], "")
+            self.assertEqual(worker["return_code"], 0)
+            self.assertEqual(worker["event_counts"], {"thread.started": 1, "turn.started": 1, "item.completed": 1, "turn.completed": 1})
+            self.assertEqual(failure["status"], "")
+            self.assertEqual(failure["category"], "")
 
     def test_worker_transport_health_records_cooldown_on_transport_failure(self):
         mod = load_supervisor()

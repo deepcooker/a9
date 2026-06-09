@@ -1421,3 +1421,28 @@
   `daemon_revision: started=... current=... stale=...`。
 - 运行时治理代码合入后，必须重启 tmux 里的 24h loop，并确认
   `daemon_revision stale=false` 后再让它领取任务。
+
+## 2026-06-09：不要把 Codex 模型刷新 stderr 单独当成致命 transport
+
+现象：
+
+- 24h worker 连续失败为 `retryable-worker-transport`，实际 token usage 为 0。
+- stderr 出现 `failed to refresh available models: timeout waiting for child
+  process to exit`。
+- 手工用同一个 clean `CODEX_HOME` 跑最小 `codex exec`，stderr 仍出现同样
+  行，但最终事件流完成并输出 `OK`。
+
+规则：
+
+- `failed to refresh available models` 只能作为 transport 观察信号，不能单独
+  kill worker。
+- 只有事件流明确进入不可恢复状态，例如 `Reconnecting... 5/5 ... timeout
+  waiting for child process to exit`，才按 transport exhausted 停止。
+- transport 判定必须看最终 worker outcome、event stream、return code 和
+  token usage，不能只看 stderr 文本。
+
+修复：
+
+- 从 fatal transport exhausted pattern 中移除模型刷新 timeout。
+- 增加回归：stderr 有模型刷新 timeout，但 worker 后续成功完成事件流时，
+  supervisor 不应设置 `transport_stopped`。

@@ -4086,3 +4086,24 @@ Next monitoring target:
      A 24h runtime must expose its own control-plane revision. Restarting after
      runtime changes should be verified by status output before trusting live
      worker behavior.
+
+182. Model refresh stderr is no longer treated as fatal by itself.
+   - Trigger:
+     Three small 24h tasks failed as `retryable-worker-transport` with zero
+     token usage. A manual clean-home probe showed the same
+     `failed to refresh available models` stderr line but still completed the
+     turn and wrote `OK`.
+   - Change:
+     Removed the model-refresh timeout line from fatal transport-exhaustion
+     matching. Supervisor still stops on real event-stream exhaustion such as
+     `Reconnecting... 5/5`, but model-refresh stderr alone is treated as
+     non-fatal if the worker continues to successful events.
+   - Verification:
+     Added a regression where stderr contains the model refresh timeout and the
+     worker emits a complete successful event stream. Focused transport tests
+     passed, and full `python3 -m unittest tests.test_supervisor` passed with
+     406 tests.
+   - Governance lesson:
+     Transport governance must classify by outcome and event stream, not by a
+     scary stderr line alone. Over-aggressive failure matching can block the
+     24h machine even when Codex would have recovered.
