@@ -1351,3 +1351,36 @@
 - 指向 A9 控制脚本、外部 worker、远端 wrapper 时优先用绝对路径。
 - 如果必须用相对路径，必须确认该文件已经在 worker worktree 中可见。
 - transport smoke 要验证完整 `run-one`，不能只测 `run_worker` 函数。
+
+## 2026-06-09：声明检查名写错会浪费一整轮 24h worker
+
+现象：
+
+- `implement-bootstrap-execution-cross-surface-test-20260609` 的 declared
+  check 引用了不存在的
+  `tests.test_control_api.ControlApiTests.test_bootstrap_execute_node_continue_commits_success_state`。
+- worker 找到了正确测试思路，但外层 supervisor 最终因为 stale declared
+  check 失败并回滚，主控只能人工 salvage。
+
+规则：
+
+- declared checks 是任务合同，不是 worker 可自由修正的建议。
+- 已存在测试名必须在 enqueue/claim 前校验；校验失败时阻断任务领取。
+- 只有当目标测试文件在 `allowed_paths` 中、任务明确可以创建未来测试时，
+  unresolved unittest target 才允许作为观察项。
+
+## 2026-06-09：supervisor 全量测试会污染真实 24h runtime 队列
+
+现象：
+
+- `python3 -m unittest tests.test_supervisor` 会创建 selftest 队列和 running
+  lease 到真实 `.a9/tasks`。
+- 测试结束后仍可能留下 selftest queue/running 文件，导致真实 24h runtime
+  误判 active 或继续领取测试残留。
+
+规则：
+
+- 每次跑 supervisor 全量测试后必须检查 `.a9/tasks/queue` 和
+  `.a9/tasks/running`。
+- 测试残留要归档到 `.a9/tasks/interrupted`，不能让 24h 机器继续消费。
+- 后续应把这些测试改成隔离 STATE_DIR，避免污染真实 runtime。

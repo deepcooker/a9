@@ -4011,3 +4011,23 @@ Next monitoring target:
      the temporary directory was removed. Monitor salvage was still useful
      because patch scope and intent were clear; next implement tasks need
      smaller anchors and declared checks generated from real `rg` matches.
+
+178. Stale declared unittest targets are now task-quality blockers.
+   - Trigger:
+     Entry 177 exposed a 24h waste pattern: a task declared a focused unittest
+     target that did not exist, so the worker spent a full turn before the
+     outer supervisor failed the declared check.
+   - Change:
+     Queued task quality now classifies unresolved unittest targets as
+     blockers unless the target belongs to an allowed test file that the task
+     may create. `claim_next_task()` moves blocked task contracts to
+     `.a9/tasks/blocked` with a `task_quality_block` audit record before any
+     worker is started.
+   - Verification:
+     Focused supervisor tests cover blocker classification, future-test
+     allowance, and claim-time blocking. Full `python3 -m unittest
+     tests.test_supervisor` passed.
+   - Governance lesson:
+     Contract defects belong in the requirements/task-shaping layer, not in
+     worker execution. This is not a token-count gate; it prevents a known-bad
+     executable contract from consuming a 24h turn.

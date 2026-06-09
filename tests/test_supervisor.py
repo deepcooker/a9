@@ -11050,6 +11050,55 @@ role_signoff: product, business, architecture, test approved.
             "tests.test_control_api.ControlApiTests.test_supervisor_status_exposes_latest_run_lanes",
             parsed.task_quality_warnings,
         )
+        self.assertIn(
+            "declared_check_unresolved_unittest_target:"
+            "tests.test_control_api.ControlApiTests.test_supervisor_status_exposes_latest_run_lanes",
+            mod.task_quality_blockers(parsed.task_quality_warnings),
+        )
+
+    def test_claim_next_task_blocks_unresolved_unittest_contract_before_worker_claim(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
+            old_blocked = mod.BLOCKED_DIR
+            try:
+                mod.QUEUE_DIR = root / "queue"
+                mod.RUNNING_DIR = root / "running"
+                mod.BLOCKED_DIR = root / "blocked"
+                for directory in (mod.QUEUE_DIR, mod.RUNNING_DIR, mod.BLOCKED_DIR):
+                    directory.mkdir(parents=True)
+                mod.enqueue_task_file(
+                    "bad-declared-check",
+                    "Do implementation work.",
+                    phase="implement",
+                    checks=[
+                        "python3 -m unittest "
+                        "tests.test_control_api.ControlApiTests.test_missing_stale_declared_check_name"
+                    ],
+                )
+                claimed = mod.claim_next_task()
+                blocked_tasks = sorted(mod.BLOCKED_DIR.glob("*.md"))
+                block_records = sorted(mod.BLOCKED_DIR.glob("*.quality-block.json"))
+                record = json.loads(block_records[0].read_text(encoding="utf-8"))
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
+                mod.BLOCKED_DIR = old_blocked
+
+        self.assertIsNone(claimed)
+        self.assertEqual(len(blocked_tasks), 1)
+        self.assertEqual(len(block_records), 1)
+        self.assertEqual(record["status"], "blocked")
+        self.assertEqual(record["kind"], "task_quality_block")
+        self.assertEqual(record["task_id"], "bad-declared-check")
+        self.assertEqual(record["reason"], "task_contract_invalid_before_worker_claim")
+        self.assertIn(
+            "declared_check_unresolved_unittest_target:"
+            "tests.test_control_api.ControlApiTests.test_missing_stale_declared_check_name",
+            record["blockers"],
+        )
 
     def test_enqueue_task_file_allows_future_unittest_target_in_allowed_test_file(self):
         mod = load_supervisor()

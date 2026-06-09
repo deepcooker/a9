@@ -34,6 +34,7 @@ QUEUE_DIR = STATE_DIR / "tasks" / "queue"
 RUNNING_DIR = STATE_DIR / "tasks" / "running"
 DONE_DIR = STATE_DIR / "tasks" / "done"
 INTERRUPTED_DIR = STATE_DIR / "tasks" / "interrupted"
+BLOCKED_DIR = STATE_DIR / "tasks" / "blocked"
 RUNS_DIR = STATE_DIR / "runs"
 WORKTREES_DIR = STATE_DIR / "worktrees"
 WORKER_CODEX_HOME = STATE_DIR / "codex-home"
@@ -380,6 +381,7 @@ def ensure_dirs() -> None:
         RUNNING_DIR,
         DONE_DIR,
         INTERRUPTED_DIR,
+        BLOCKED_DIR,
         RUNS_DIR,
         WORKTREES_DIR,
         WORKER_CODEX_HOME,
@@ -500,6 +502,15 @@ def next_task() -> Task | None:
     return parse_task(tasks[0]) if tasks else None
 
 
+def task_quality_blockers(warnings: list[str]) -> list[str]:
+    blockers: list[str] = []
+    for warning in warnings:
+        text = str(warning or "")
+        if text.startswith("declared_check_unresolved_unittest_target:"):
+            blockers.append(text)
+    return blockers
+
+
 def queued_task_quality_summary(limit: int = 10) -> dict[str, Any]:
     ensure_dirs()
     queued_paths = sorted(QUEUE_DIR.glob("*.md"))
@@ -507,6 +518,9 @@ def queued_task_quality_summary(limit: int = 10) -> dict[str, Any]:
     warnings_by_code: dict[str, int] = {}
     warning_task_count = 0
     warnings_count = 0
+    blocker_task_count = 0
+    blockers_count = 0
+    blockers_by_code: dict[str, int] = {}
     parse_errors = 0
     for path in queued_paths:
         try:
@@ -529,11 +543,18 @@ def queued_task_quality_summary(limit: int = 10) -> dict[str, Any]:
             continue
         if not task.task_quality_warnings:
             continue
+        blockers = task_quality_blockers(task.task_quality_warnings)
         warning_task_count += 1
         warnings_count += len(task.task_quality_warnings)
         for warning in task.task_quality_warnings:
             code = str(warning).split(":", 1)[0]
             warnings_by_code[code] = warnings_by_code.get(code, 0) + 1
+        if blockers:
+            blocker_task_count += 1
+            blockers_count += len(blockers)
+            for blocker in blockers:
+                code = str(blocker).split(":", 1)[0]
+                blockers_by_code[code] = blockers_by_code.get(code, 0) + 1
         if len(warning_tasks) < limit:
             warning_tasks.append(
                 {
@@ -541,14 +562,18 @@ def queued_task_quality_summary(limit: int = 10) -> dict[str, Any]:
                     "path": str(path),
                     "phase": task.phase,
                     "warnings": list(task.task_quality_warnings),
+                    "blockers": blockers,
                 }
             )
     return {
-        "status": "warning" if warning_tasks or parse_errors else "ok",
+        "status": "blocked" if blocker_task_count else "warning" if warning_tasks or parse_errors else "ok",
         "queued_task_count": len(queued_paths),
         "warning_task_count": warning_task_count,
         "warnings_count": warnings_count,
         "warnings_by_code": warnings_by_code,
+        "blocker_task_count": blocker_task_count,
+        "blockers_count": blockers_count,
+        "blockers_by_code": blockers_by_code,
         "tasks": warning_tasks,
         "truncated": warning_task_count > len(warning_tasks),
         "parse_errors": parse_errors,
@@ -1117,6 +1142,38 @@ def claim_next_task() -> Task | None:
     if runtime_control_paused():
         return None
     for path in sorted(QUEUE_DIR.glob("*.md")):
+        try:
+            candidate = parse_task(path)
+        except Exception:
+            candidate = None
+        if candidate is not None:
+            blockers = task_quality_blockers(candidate.task_quality_warnings)
+            if blockers:
+                blocked_path = BLOCKED_DIR / path.name
+                suffix = 1
+                while blocked_path.exists():
+                    suffix += 1
+                    blocked_path = BLOCKED_DIR / f"{path.stem}-{suffix}{path.suffix}"
+                block_record = {
+                    "status": "blocked",
+                    "kind": "task_quality_block",
+                    "task_id": candidate.task_id,
+                    "phase": candidate.phase,
+                    "blocked_at": utc_now(),
+                    "blockers": blockers,
+                    "source_path": str(path),
+                    "blocked_path": str(blocked_path),
+                    "reason": "task_contract_invalid_before_worker_claim",
+                }
+                audit_path = BLOCKED_DIR / f"{path.stem}.quality-block.json"
+                write_json(audit_path, block_record)
+                try:
+                    os.replace(path, blocked_path)
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    continue
+                continue
         claimed = RUNNING_DIR / path.name
         try:
             os.replace(path, claimed)
@@ -12528,10 +12585,16 @@ def status() -> int:
         print(f"worker_transport_cooldown_until: {transport_health.get('cooldown_until')}")
     print(f"task_quality_warning_tasks: {task_quality.get('warning_task_count', 0)}")
     print(f"task_quality_warnings_count: {task_quality.get('warnings_count', 0)}")
+    print(f"task_quality_blocker_tasks: {task_quality.get('blocker_task_count', 0)}")
+    print(f"task_quality_blockers_count: {task_quality.get('blockers_count', 0)}")
     warning_codes = task_quality.get("warnings_by_code", {})
     if isinstance(warning_codes, dict) and warning_codes:
         warning_codes_text = ",".join(f"{code}={count}" for code, count in sorted(warning_codes.items()))
         print(f"task_quality_warning_codes: {warning_codes_text}")
+    blocker_codes = task_quality.get("blockers_by_code", {})
+    if isinstance(blocker_codes, dict) and blocker_codes:
+        blocker_codes_text = ",".join(f"{code}={count}" for code, count in sorted(blocker_codes.items()))
+        print(f"task_quality_blocker_codes: {blocker_codes_text}")
     for item in task_quality.get("tasks", [])[:5]:
         warnings = item.get("warnings", []) if isinstance(item, dict) else []
         warning_text = ",".join(str(warning) for warning in warnings)
