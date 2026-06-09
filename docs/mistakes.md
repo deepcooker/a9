@@ -1412,3 +1412,12 @@
 - runtime status 需要暴露当前运行代码 revision，否则监控者无法判断
   daemon 是否落后于仓库 HEAD。
 - live validation 要在确认 daemon revision 后执行，否则验证的是旧代码。
+
+修复：
+
+- `write_daemon_heartbeat()` 记录 daemon pid、cwd、启动时 repo HEAD、当前
+  repo HEAD 和 `repo_head_stale`。
+- `python3 scripts/a9_supervisor.py status` 输出 `daemon_heartbeat` 和
+  `daemon_revision: started=... current=... stale=...`。
+- 运行时治理代码合入后，必须重启 tmux 里的 24h loop，并确认
+  `daemon_revision stale=false` 后再让它领取任务。

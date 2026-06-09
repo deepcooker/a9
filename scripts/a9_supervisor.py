@@ -1358,6 +1358,19 @@ def git_head(root: Path | None = None) -> str:
     return run_cmd(["git", "rev-parse", "HEAD"], cwd=root or ROOT).stdout.strip()
 
 
+SUPERVISOR_PROCESS_REPO_HEAD = ""
+
+
+def supervisor_process_repo_head() -> str:
+    global SUPERVISOR_PROCESS_REPO_HEAD
+    if not SUPERVISOR_PROCESS_REPO_HEAD:
+        try:
+            SUPERVISOR_PROCESS_REPO_HEAD = git_head()
+        except RuntimeError:
+            SUPERVISOR_PROCESS_REPO_HEAD = "unknown"
+    return SUPERVISOR_PROCESS_REPO_HEAD
+
+
 def git_head_for_workspace(root: Path) -> str:
     return git_head() if root.resolve() == ROOT.resolve() else git_head(root)
 
@@ -10967,16 +10980,53 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
 
 def write_daemon_heartbeat(state: str, *, detail: str = "") -> dict[str, Any]:
     ensure_dirs()
+    started_repo_head = supervisor_process_repo_head()
+    try:
+        current_repo_head = git_head()
+    except RuntimeError:
+        current_repo_head = "unknown"
     payload = {
         "updated_at": utc_now(),
         "state": state,
         "detail": detail,
+        "pid": os.getpid(),
+        "cwd": str(Path.cwd()),
+        "started_repo_head": started_repo_head,
+        "current_repo_head": current_repo_head,
+        "repo_head_stale": bool(
+            started_repo_head
+            and current_repo_head
+            and started_repo_head != "unknown"
+            and current_repo_head != "unknown"
+            and started_repo_head != current_repo_head
+        ),
         "queued_tasks": len(list(QUEUE_DIR.glob("*.md"))),
         "running_tasks": len(list(RUNNING_DIR.glob("*.json"))),
         "done_tasks": len(list(DONE_DIR.glob("*.json"))),
     }
     write_json(DAEMON_HEARTBEAT_PATH, payload)
     return payload
+
+
+def daemon_heartbeat_status() -> dict[str, Any]:
+    heartbeat = read_json_file(DAEMON_HEARTBEAT_PATH)
+    if not heartbeat:
+        return {}
+    try:
+        current_repo_head = git_head()
+    except RuntimeError:
+        current_repo_head = "unknown"
+    started_repo_head = str(heartbeat.get("started_repo_head") or "")
+    stale = bool(
+        started_repo_head
+        and current_repo_head
+        and started_repo_head != "unknown"
+        and current_repo_head != "unknown"
+        and started_repo_head != current_repo_head
+    )
+    heartbeat["current_repo_head"] = current_repo_head
+    heartbeat["repo_head_stale"] = stale
+    return heartbeat
 
 
 def print_service_progress(progress: dict[str, Any]) -> None:
@@ -12576,11 +12626,25 @@ def status() -> int:
     control_state = runtime_control_state()
     task_quality = queued_task_quality_summary()
     transport_health = worker_transport_health_state()
+    daemon_heartbeat = daemon_heartbeat_status()
     print(f"queued: {len(list(QUEUE_DIR.glob('*.md')))}")
     print(f"running: {len(list(RUNNING_DIR.glob('*.json')))}")
     print(f"done: {len(list(DONE_DIR.glob('*.json')))}")
     print(f"runtime_control: {control_state.get('status', 'running')}")
     print(f"worker_transport_health: {transport_health.get('status', 'unknown')}")
+    if daemon_heartbeat:
+        print(
+            "daemon_heartbeat: "
+            f"{daemon_heartbeat.get('state', 'unknown')} "
+            f"pid={daemon_heartbeat.get('pid', '')} "
+            f"detail={daemon_heartbeat.get('detail', '')}"
+        )
+        print(
+            "daemon_revision: "
+            f"started={str(daemon_heartbeat.get('started_repo_head', ''))[:12]} "
+            f"current={str(daemon_heartbeat.get('current_repo_head', ''))[:12]} "
+            f"stale={str(bool(daemon_heartbeat.get('repo_head_stale', False))).lower()}"
+        )
     if transport_health.get("cooldown_until"):
         print(f"worker_transport_cooldown_until: {transport_health.get('cooldown_until')}")
     print(f"task_quality_warning_tasks: {task_quality.get('warning_task_count', 0)}")

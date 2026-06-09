@@ -4068,3 +4068,21 @@ Next monitoring target:
      Runtime code changes are incomplete until the resident 24h daemon has
      reloaded them. The next control-plane hardening slice should make the loop
      expose its code revision and restart requirement explicitly.
+
+181. Daemon revision is now visible in supervisor status.
+   - Trigger:
+     Entry 180 showed that a long-running tmux loop can keep executing old
+     supervisor code after a governance commit. The monitor needed direct
+     revision visibility instead of inferring daemon freshness from behavior.
+   - Change:
+     `write_daemon_heartbeat()` records the daemon pid, cwd, process startup
+     repo HEAD, current repo HEAD, and stale flag. `status` prints
+     `daemon_heartbeat` and `daemon_revision` so the monitor can see whether
+     the resident loop has loaded the current code.
+   - Verification:
+     Focused heartbeat/status regression tests passed. Full
+     `python3 -m unittest tests.test_supervisor` passed with 406 tests.
+   - Governance lesson:
+     A 24h runtime must expose its own control-plane revision. Restarting after
+     runtime changes should be verified by status output before trusting live
+     worker behavior.

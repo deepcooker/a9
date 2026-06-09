@@ -3269,6 +3269,78 @@ Do the work.
         self.assertEqual(heartbeat["state"], "idle")
         self.assertEqual(heartbeat["detail"], "no queued tasks")
 
+    def test_write_daemon_heartbeat_records_process_revision(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
+            old_done = mod.DONE_DIR
+            old_heartbeat = mod.DAEMON_HEARTBEAT_PATH
+            old_started_head = mod.SUPERVISOR_PROCESS_REPO_HEAD
+            try:
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNNING_DIR = base / "running"
+                mod.DONE_DIR = base / "done"
+                mod.DAEMON_HEARTBEAT_PATH = base / "daemon_heartbeat.json"
+                mod.SUPERVISOR_PROCESS_REPO_HEAD = ""
+                with mock.patch.object(mod, "git_head", return_value="abc123"):
+                    heartbeat = mod.write_daemon_heartbeat("idle", detail="selftest")
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
+                mod.DONE_DIR = old_done
+                mod.DAEMON_HEARTBEAT_PATH = old_heartbeat
+                mod.SUPERVISOR_PROCESS_REPO_HEAD = old_started_head
+
+        self.assertEqual(heartbeat["state"], "idle")
+        self.assertEqual(heartbeat["detail"], "selftest")
+        self.assertEqual(heartbeat["started_repo_head"], "abc123")
+        self.assertEqual(heartbeat["current_repo_head"], "abc123")
+        self.assertFalse(heartbeat["repo_head_stale"])
+        self.assertIsInstance(heartbeat["pid"], int)
+
+    def test_status_prints_daemon_revision_staleness(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
+            old_done = mod.DONE_DIR
+            old_runs = mod.RUNS_DIR
+            old_heartbeat = mod.DAEMON_HEARTBEAT_PATH
+            try:
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNNING_DIR = base / "running"
+                mod.DONE_DIR = base / "done"
+                mod.RUNS_DIR = base / "runs"
+                mod.DAEMON_HEARTBEAT_PATH = base / "daemon_heartbeat.json"
+                mod.ensure_dirs()
+                mod.write_json(
+                    mod.DAEMON_HEARTBEAT_PATH,
+                    {
+                        "updated_at": "2026-06-09T00:00:00+00:00",
+                        "state": "idle",
+                        "detail": "old code",
+                        "pid": 123,
+                        "started_repo_head": "oldrev",
+                    },
+                )
+                buffer = io.StringIO()
+                with mock.patch.object(mod, "git_head", return_value="newrev"):
+                    with redirect_stdout(buffer):
+                        mod.status()
+                output = buffer.getvalue()
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
+                mod.DONE_DIR = old_done
+                mod.RUNS_DIR = old_runs
+                mod.DAEMON_HEARTBEAT_PATH = old_heartbeat
+
+        self.assertIn("daemon_heartbeat: idle pid=123 detail=old code", output)
+        self.assertIn("daemon_revision: started=oldrev current=newrev stale=true", output)
+
     def test_goal_runtime_creates_updates_and_accounts_goal_state(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
