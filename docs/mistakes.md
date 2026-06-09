@@ -1384,3 +1384,12 @@
   `.a9/tasks/running`。
 - 测试残留要归档到 `.a9/tasks/interrupted`，不能让 24h 机器继续消费。
 - 后续应把这些测试改成隔离 STATE_DIR，避免污染真实 runtime。
+
+修复：
+
+- `scripts/a9_supervisor.py` 支持 `A9_STATE_DIR` 覆盖默认 `.a9`。
+- 子进程 supervisor 测试使用临时 `A9_STATE_DIR`。
+- 直接调用 session route 的测试通过 helper 临时重定向已加载模块的
+  QUEUE/RUNNING/DONE/RUNS/EXTERNAL_SESSIONS 等目录。
+- full `tests.test_supervisor` 后真实 `.a9/tasks/queue` 和
+  `.a9/tasks/running` 保持为空。

@@ -4031,3 +4031,21 @@ Next monitoring target:
      Contract defects belong in the requirements/task-shaping layer, not in
      worker execution. This is not a token-count gate; it prevents a known-bad
      executable contract from consuming a 24h turn.
+
+179. Supervisor tests now isolate runtime state from the real 24h queue.
+   - Trigger:
+     Full `tests.test_supervisor` verification created selftest queue/running
+     files and session-route done records under the real `.a9` runtime state,
+     which could mislead the 24h monitor or be consumed by the daemon.
+   - Change:
+     `scripts/a9_supervisor.py` now honors `A9_STATE_DIR`. Subprocess
+     supervisor tests pass a temporary state directory through that environment
+     variable, and direct session-route tests temporarily remap the loaded
+     supervisor module's runtime directories to a temp state root.
+   - Verification:
+     Focused pollution-source tests passed, full `python3 -m unittest
+     tests.test_supervisor` passed, and real `.a9/tasks/queue` plus
+     `.a9/tasks/running` remained empty after the run.
+   - Governance lesson:
+     Runtime tests must not share production control-plane state. The 24h
+     machine should only consume intentional tasks, never test residue.

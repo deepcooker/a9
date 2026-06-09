@@ -29,7 +29,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-STATE_DIR = ROOT / ".a9"
+STATE_DIR = Path(os.environ.get("A9_STATE_DIR", str(ROOT / ".a9"))).expanduser()
 QUEUE_DIR = STATE_DIR / "tasks" / "queue"
 RUNNING_DIR = STATE_DIR / "tasks" / "running"
 DONE_DIR = STATE_DIR / "tasks" / "done"

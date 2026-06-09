@@ -47,6 +47,55 @@ def load_supervisor_test_runner():
     return module
 
 
+def isolated_supervisor_env(base: Path, env: dict[str, str] | None = None) -> tuple[dict[str, str], Path]:
+    state_dir = base / ".a9-test-state"
+    result = (env or os.environ.copy()).copy()
+    result["A9_STATE_DIR"] = str(state_dir)
+    return result, state_dir
+
+
+def isolate_loaded_supervisor_state(mod, base: Path) -> dict[str, Path]:
+    old = {
+        "STATE_DIR": mod.STATE_DIR,
+        "QUEUE_DIR": mod.QUEUE_DIR,
+        "RUNNING_DIR": mod.RUNNING_DIR,
+        "DONE_DIR": mod.DONE_DIR,
+        "INTERRUPTED_DIR": mod.INTERRUPTED_DIR,
+        "BLOCKED_DIR": mod.BLOCKED_DIR,
+        "RUNS_DIR": mod.RUNS_DIR,
+        "WORKTREES_DIR": mod.WORKTREES_DIR,
+        "WORKER_CODEX_HOME": mod.WORKER_CODEX_HOME,
+        "WORKER_TMP_DIR": mod.WORKER_TMP_DIR,
+        "EXTERNAL_SESSIONS_DIR": mod.EXTERNAL_SESSIONS_DIR,
+        "RECORDS_DIR": mod.RECORDS_DIR,
+        "EVAL_STORE_DIR": mod.EVAL_STORE_DIR,
+        "EVAL_STORE_RUNS_DIR": mod.EVAL_STORE_RUNS_DIR,
+        "EVAL_STORE_OVERRIDES_DIR": mod.EVAL_STORE_OVERRIDES_DIR,
+    }
+    state_dir = base / ".a9-test-state"
+    mod.STATE_DIR = state_dir
+    mod.QUEUE_DIR = state_dir / "tasks" / "queue"
+    mod.RUNNING_DIR = state_dir / "tasks" / "running"
+    mod.DONE_DIR = state_dir / "tasks" / "done"
+    mod.INTERRUPTED_DIR = state_dir / "tasks" / "interrupted"
+    mod.BLOCKED_DIR = state_dir / "tasks" / "blocked"
+    mod.RUNS_DIR = state_dir / "runs"
+    mod.WORKTREES_DIR = state_dir / "worktrees"
+    mod.WORKER_CODEX_HOME = state_dir / "codex-home"
+    mod.WORKER_TMP_DIR = state_dir / "tmp"
+    mod.EXTERNAL_SESSIONS_DIR = state_dir / "external_sessions"
+    mod.RECORDS_DIR = state_dir / "records"
+    mod.EVAL_STORE_DIR = state_dir / "eval_store"
+    mod.EVAL_STORE_RUNS_DIR = mod.EVAL_STORE_DIR / "runs"
+    mod.EVAL_STORE_OVERRIDES_DIR = mod.EVAL_STORE_DIR / "overrides"
+    return old
+
+
+def restore_loaded_supervisor_state(mod, old: dict[str, Path]) -> None:
+    for name, value in old.items():
+        setattr(mod, name, value)
+
+
 class SupervisorTests(unittest.TestCase):
     def test_supervisor_test_runner_stops_and_restarts_daemon_session(self):
         runner = load_supervisor_test_runner()
@@ -1232,9 +1281,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1262,6 +1317,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one"], cwd=ROOT, check=True, env=env)
                 data = json.loads(done_path.read_text(encoding="utf-8"))
@@ -1393,9 +1449,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1423,6 +1485,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one"], cwd=ROOT, check=True, env=env)
                 data = json.loads(done_path.read_text(encoding="utf-8"))
@@ -1461,9 +1524,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1487,6 +1556,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one"], cwd=ROOT, check=True, env=env)
                 done = json.loads(done_path.read_text(encoding="utf-8"))
@@ -1520,9 +1590,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1550,6 +1626,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
                 done = json.loads(done_path.read_text(encoding="utf-8"))
@@ -1596,9 +1673,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1626,6 +1709,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
                 done = json.loads(done_path.read_text(encoding="utf-8"))
@@ -1673,9 +1757,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1707,6 +1797,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
                 done = json.loads(done_path.read_text(encoding="utf-8"))
@@ -1755,9 +1846,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1789,6 +1886,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
                 done = json.loads(done_path.read_text(encoding="utf-8"))
@@ -1837,9 +1935,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1878,6 +1982,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
                 done = json.loads(done_path.read_text(encoding="utf-8"))
@@ -1915,9 +2020,15 @@ Do the work.
         done_path = ROOT / ".a9" / "tasks" / "done" / f"{task_id}.json"
         queue_dir = ROOT / ".a9" / "tasks" / "queue"
 
-        with tempfile.TemporaryDirectory() as held_tmp:
+        held_tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, held_tmp, ignore_errors=True)
+        if True:
             held_dir = Path(held_tmp)
-            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True)
+            env, state_dir = isolated_supervisor_env(held_dir, env)
+            queue_path = state_dir / "tasks" / "queue" / f"{task_id}.md"
+            done_path = state_dir / "tasks" / "done" / f"{task_id}.json"
+            queue_dir = state_dir / "tasks" / "queue"
+            subprocess.run([str(SUPERVISOR_PATH), "init"], cwd=ROOT, check=True, env=env)
             held_paths = []
             for path in queue_dir.glob("*.md"):
                 held_path = held_dir / path.name
@@ -1949,6 +2060,7 @@ Do the work.
                     ],
                     cwd=ROOT,
                     check=True,
+                    env=env,
                 )
                 subprocess.run([str(SUPERVISOR_PATH), "run-one", "--auto-next"], cwd=ROOT, check=True, env=env)
                 done = json.loads(done_path.read_text(encoding="utf-8"))
@@ -14364,9 +14476,10 @@ flow_expected_revision: None
 
     def test_session_refresh_route_runs_without_codex_worker(self):
         mod = load_supervisor()
-        mod.ensure_dirs()
         task_id = "session-refresh-route-test"
         with tempfile.TemporaryDirectory() as tmp:
+            old_state = isolate_loaded_supervisor_state(mod, Path(tmp))
+            mod.ensure_dirs()
             session_path = Path(tmp) / "session.jsonl"
             rows = [
                 {"type": "session_meta", "payload": {"id": "session-refresh-test"}},
@@ -14440,12 +14553,14 @@ auto_close_reading: false
                 (mod.DONE_DIR / f"{task_id}.md").unlink(missing_ok=True)
                 task_path.unlink(missing_ok=True)
                 shutil.rmtree(mod.EXTERNAL_SESSIONS_DIR / "session-refresh-test", ignore_errors=True)
+                restore_loaded_supervisor_state(mod, old_state)
 
     def test_session_close_reading_route_appends_bounded_docs_without_worker(self):
         mod = load_supervisor()
-        mod.ensure_dirs()
         task_id = "session-close-reading-route-test"
         with tempfile.TemporaryDirectory() as tmp:
+            old_state = isolate_loaded_supervisor_state(mod, Path(tmp))
+            mod.ensure_dirs()
             tmp_path = Path(tmp)
             extract_path = tmp_path / "turns-1-2.json"
             close_doc = tmp_path / "close.md"
@@ -14523,6 +14638,7 @@ auto_continue: false
                 (mod.DONE_DIR / f"{task_id}.json").unlink(missing_ok=True)
                 (mod.DONE_DIR / f"{task_id}.md").unlink(missing_ok=True)
                 task_path.unlink(missing_ok=True)
+                restore_loaded_supervisor_state(mod, old_state)
 
     def test_copy_pipeline_phase_order(self):
         mod = load_supervisor()
