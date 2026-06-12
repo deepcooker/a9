@@ -1,5 +1,7 @@
 reference-projects/
 third-party-packages/
+a3b_moe_cognition/
+model-lab/
 .a9/
 .env
 target/

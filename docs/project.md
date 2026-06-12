@@ -25,6 +25,32 @@ agent 稳定后的垂直化训练和数据项目。
 当前阶段先把 agent 基建做扎实。没有稳定执行机器，后续业务模型、交易研究、
 训练数据闭环都没有可靠来源。
 
+## 与 A3B 底层认知层的边界
+
+`/root/a9/a3b_moe_cognition` 是独立的 A3B / A?B 元认知动态激活系统。它的
+权威说明是
+`/root/a9/a3b_moe_cognition/docs/A3B_Codex_FINAL_AUTHORITATIVE_SPEC.md`。
+该目录当前不属于 A9 runtime 的默认改动范围。
+
+A3B 的职责是更底层的认知和元激活：SemanticSessionFrame、真实意图拆解、
+MainlineFrame、FirstPrinciplesFrame、MethodologySelection、MetaActivationPlan、
+CandidatePath、RuntimeMode、A3BMonitor、WrongBook 和未来训练 trace。
+
+A9 的职责是稳定的执行控制面和任务环境：
+
+- CLI / control API / supervisor / 24h run-loop。
+- 通讯网关和感知器：SSH、Tailscale、tmux、Redis、worker transport、Codex CLI、
+  host/worktree/queue/run 状态。
+- 需求博弈、session 精读、backlog、execution、test、git/evidence/repair。
+- 断线、cooldown、retry、resume、heartbeat、status、audit。
+- 给 A3B 和 worker 提供结构化上下文环境：目标、边界、数据形态、状态流、
+  证据引用、参考机制、允许工具、运行日志摘要和验收标准。
+
+因此当前 A9 的工程重点不是继续在 supervisor 里发明底层认知逻辑，而是把通讯、
+状态、任务编排、证据落盘和 24 小时恢复做稳定。A3B 可以消费 A9 的 run summary、
+tool result、memory commit、wrongbook 和 trace；A9 可以消费 A3B 的意图、主线、
+方法论、路径选择和风险判断，再把它们转成 plan/backlog/worker prompt。
+
 ## 目标
 
 做出 A9 自己的 agent client + supervisor stack：

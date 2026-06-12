@@ -21,20 +21,14 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/requirements-review-closure.md`: 评审博弈什么时候算完成，以及何时允许进入 `execution_next`。
 - `docs/stage-handoff-2026-06-01.md`: 当前通讯/control 阶段收口和下一轮 session 精读任务包。
 - `docs/role-memory-governance.md`: 主控窗口和各角色如何读取/接收精读记忆。
-- `docs/role-memory-reference-scan.md`: 角色记忆/旁路治理的参考项目证据和临时决策边界。
-- `docs/requirements-plan-file-reference-scan.md`: 需求分析方法论与 plan-file agent 工作流参考扫描。
 - `docs/worker-method-packet.md`: analysis worker / execution worker 共用方法包，规定定案前博弈、定案后执行。
-- `docs/memory-graph-wiki-reference-scan.md`: GBrain/GraphRAG/Graphify/LLM-Wiki 长期记忆和图谱参考扫描。
 - `docs/reference-adoption-decision.md`: 多轮博弈后的参考机制取舍，哪些现在进、哪些暂缓。
 - `docs/collaboration.md`: 人类/监控者与 24 小时机器的协作方式。
 - `docs/communication-governance-framework.md`: 当前主线，通讯治理架构。
 - `docs/communication-runtime-decision-packet.md`: 通讯运行时当前决策包，规定先做数据/状态模型校验，再允许实现。
-- `docs/communication-runtime-role-review.md`: 通讯运行时第二轮角色评审，批准先做 data contract v1，不准直接做 SSH/tmux 功能。
 - `docs/communication-runtime-data-contract-v1.md`: 通讯运行时对象、状态、Redis/MySQL/evidence 合同，后续实现必须对齐。
-- `docs/communication-runtime-readiness-review.md`: 通讯运行时对象级就绪评审，按 data-first 维度给出下一对象实现优先级。
 - `docs/communication-runtime-model-closure.md`: 运营闭包切片（`operator_session`、`event_cursor`、`reconnect_state`）的对象字段、状态、异常门控、持久化键与执行建议。
 - `docs/runtime-auto-next-review.md`: auto-next 治理评审，规定 phase-prefixed 才能自动续跑。
-- `docs/communication-governance-worker-task.md`: 下一刀 worker 任务模板。
 
 ## Evidence
 
@@ -51,5 +45,12 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/production-daemon.md`: 服务化和运行方式。
 - `docs/patch-diff-discipline.md`: patch / SEARCH-REPLACE / guard 纪律。
 - `docs/vendor-strategy.md`: license 和 vendor 规则。
-- `docs/agent-governance-research.md`: agent 治理研究决策。
-- `docs/private-model-strategy.md`: 私有模型方向，当前不是第一执行主线。
+
+## Archive
+
+阶段性研究、旧评审、旧任务模板和非当前主线文档放在：
+
+- `docs/archive/2026-06-history/`
+
+worker 默认不得读取 archive。只有任务包明确点名某个归档文件和 bounded slice 时，
+才允许把它作为历史证据。

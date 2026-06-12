@@ -157,6 +157,44 @@ policy attestation 和 monitor review。plan 只是任务合同和 prompt hydrat
 
 不要把这三层混在一起。当前任务默认服务于第一层，除非人类/监控者明确切换。
 
+## A9 与 A3B 的职责边界
+
+`/root/a9/a3b_moe_cognition` 是独立的 A3B / A?B 元认知动态激活系统目录，
+当前只读参考，不属于 A9 worker 默认可改范围。除非人类/监控者明确授权，A9
+不得修改该目录。
+
+A3B 负责更底层的认知和元激活：
+
+- 构造 session / intent / mainline / first-principles / methodology / activation
+  plan。
+- 区分需求、方案、假设、约束、风险和成功标准。
+- 选择 runtime mode、候选路径、虚拟专家、证据和工具协作方式。
+- 记录 monitor report、wrongbook、trace 和未来训练样本。
+
+A9 当前负责稳定执行控制面：
+
+- 类 Codex CLI / client / supervisor / control API。
+- 网关感知器：SSH、Tailscale、tmux、Redis、worker transport、Codex CLI、
+  host/worktree/queue/run 状态。
+- 24 小时任务编排：需求博弈、session 精读、backlog、execution、test、
+  git/evidence/repair。
+- 通讯保障：断线、cooldown、retry、resume、heartbeat、status、audit。
+- 给底层 A3B 提供任务上下文环境，而不是替 A3B 发明认知逻辑。
+
+任务层本质上是给底层认知和执行引擎提供上下文环境：目标、边界、数据形态、
+状态流、证据、参考机制、允许工具、运行日志和验收标准。A9 worker 输出的
+raw log、run summary、tool result、check result 和 memory commit 可以作为
+A3B 的 evidence / trace / wrongbook 输入；A3B 的意图、主线、方法论、路径和风险
+判断可以反向成为 A9 的 plan/backlog/worker prompt 输入。
+
+边界规则：
+
+- A9 不硬控 A3B 的 MoE/expert/router，也不把 teacher 输出当真理。
+- A9 不把页面/TUI 当主架构；A9 的主架构是稳定通讯、状态推进和证据落盘。
+- A9 只向 A3B 传结构化上下文、摘要和 evidence 引用；原始大日志留在磁盘/Redis/MySQL。
+- A3B 返回的是认知/路径/风险建议；最终执行仍由 A9 的 queue、worktree、checks、
+  git governance 和 monitor 负责。
+
 当前产品验收标准固定为两条：
 
 1. 数据第一。数据、表结构、状态、事件必须先映射真实业务结构；页面/API 只是数据
