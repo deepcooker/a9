@@ -110,6 +110,10 @@ as a section, line range, run id, turn id, or specific finding.
 `docs/copied-mechanisms.md` are active indexes. Their full historical versions
 are archived and must not be treated as default context.
 
+Communication, requirements, reference-selection and MoE methodology docs are
+also active indexes after the 2026-06-13 cleanup. Full versions are under
+`docs/archive/2026-06-noise-reduction/`.
+
 The rule is: preserve evidence on disk, but do not hydrate it into worker
 context by default.
 

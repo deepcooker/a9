@@ -372,3 +372,38 @@ python3 scripts/a9_runtime_archive.py --apply \
 - `docs/session-raw-summary.md` 从 1038 行降为 active summary。
 - `docs/session-causal-memory.md` 从 560 行降为 active causal index。
 - `docs/project.md` 从 392 行降为 active project index。
+
+## 第九批已完成
+
+继续收敛中型当前文档。保留原路径作为 active index / active contract，全文移入
+`docs/archive/2026-06-noise-reduction/`。
+
+归档全文：
+
+- `docs/communication-governance-framework.md`
+  -> `docs/archive/2026-06-noise-reduction/communication-governance-framework-full-20260613.md`
+- `docs/requirements-guide-close-reading.md`
+  -> `docs/archive/2026-06-noise-reduction/requirements-guide-close-reading-full-20260613.md`
+- `docs/reference-selection-reassessment.md`
+  -> `docs/archive/2026-06-noise-reduction/reference-selection-reassessment-full-20260613.md`
+- `docs/moe-review-methodology.md`
+  -> `docs/archive/2026-06-noise-reduction/moe-review-methodology-full-20260613.md`
+- `docs/communication-runtime-decision-packet.md`
+  -> `docs/archive/2026-06-noise-reduction/communication-runtime-decision-packet-full-20260613.md`
+- `docs/communication-runtime-data-contract-v1.md`
+  -> `docs/archive/2026-06-noise-reduction/communication-runtime-data-contract-v1-full-20260613.md`
+- `docs/communication-runtime-model-closure.md`
+  -> `docs/archive/2026-06-noise-reduction/communication-runtime-model-closure-full-20260613.md`
+
+保留原路径短索引：
+
+- `docs/communication-governance-framework.md`
+- `docs/requirements-guide-close-reading.md`
+- `docs/reference-selection-reassessment.md`
+- `docs/moe-review-methodology.md`
+- `docs/communication-runtime-decision-packet.md`
+- `docs/communication-runtime-data-contract-v1.md`
+- `docs/communication-runtime-model-closure.md`
+
+这些路径被 AGENTS、脚本、测试、worker contract 或 evidence 字符串引用，因此保留
+active index，不改成不存在路径。

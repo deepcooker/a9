@@ -23,10 +23,10 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/worker-method-packet.md`: analysis worker / execution worker 共用方法包，规定定案前博弈、定案后执行。
 - `docs/reference-adoption-decision.md`: 多轮博弈后的参考机制取舍，哪些现在进、哪些暂缓。
 - `docs/collaboration.md`: 人类/监控者与 24 小时机器的协作方式。
-- `docs/communication-governance-framework.md`: 当前主线，通讯治理架构。
-- `docs/communication-runtime-decision-packet.md`: 通讯运行时当前决策包，规定先做数据/状态模型校验，再允许实现。
-- `docs/communication-runtime-data-contract-v1.md`: 通讯运行时对象、状态、Redis/MySQL/evidence 合同，后续实现必须对齐。
-- `docs/communication-runtime-model-closure.md`: 运营闭包切片（`operator_session`、`event_cursor`、`reconnect_state`）的对象字段、状态、异常门控、持久化键与执行建议。
+- `docs/communication-governance-framework.md`: 通讯治理 active index。
+- `docs/communication-runtime-decision-packet.md`: 通讯运行时 active decision index。
+- `docs/communication-runtime-data-contract-v1.md`: 通讯运行时 active data-contract index。
+- `docs/communication-runtime-model-closure.md`: 运营闭包 active model index。
 
 ## Evidence
 
@@ -40,7 +40,7 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/communication-observation-log.md`: archived evidence pointer.
 - `docs/copied-mechanisms.md`: 已抄机制 active 索引；全文归档在
   `docs/archive/evidence/copied-mechanisms-full-20260613.md`。
-- `docs/reference-selection-reassessment.md`: 参考项目优先级重排。
+- `docs/reference-selection-reassessment.md`: 参考项目 active index。
 - `docs/mistakes.md`: 错题本 active 索引；全文归档在
   `docs/archive/evidence/mistakes-full-20260613.md`。
 
@@ -49,6 +49,8 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/production-daemon.md`: 服务化和运行方式。
 - `docs/patch-diff-discipline.md`: patch / SEARCH-REPLACE / guard 纪律。
 - `docs/vendor-strategy.md`: license 和 vendor 规则。
+- `docs/requirements-guide-close-reading.md`: 需求方法论 active checklist。
+- `docs/moe-review-methodology.md`: MoE/requirements-review active index。
 
 ## Archive
 
