@@ -105,6 +105,11 @@ historical evidence has been moved under `docs/archive/evidence/`. Workers may
 read archived evidence only through bounded slices named by a task packet, such
 as a section, line range, run id, turn id, or specific finding.
 
+`docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`,
+`docs/session-causal-memory.md`, `docs/project.md`, `docs/mistakes.md`, and
+`docs/copied-mechanisms.md` are active indexes. Their full historical versions
+are archived and must not be treated as default context.
+
 The rule is: preserve evidence on disk, but do not hydrate it into worker
 context by default.
 

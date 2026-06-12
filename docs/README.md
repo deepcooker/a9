@@ -32,7 +32,8 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 
 证据文档不是默认 prompt。只有任务包点名路径和 slice 时才读。
 
-- `docs/session-raw-summary.md`: raw session 滚动总结。
+- `docs/session-raw-summary.md`: raw session active summary；全文归档在
+  `docs/archive/evidence/session-raw-summary-full-20260613.md`。
 - `docs/session-raw-close-reading.md`: raw session 精读 active 索引；全文归档在
   `docs/archive/evidence/session-raw-close-reading-full-20260613.md`。
 - `docs/agent-runtime-observations.md`: archived evidence pointer.

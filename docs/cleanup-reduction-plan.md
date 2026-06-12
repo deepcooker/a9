@@ -346,3 +346,29 @@ python3 scripts/a9_runtime_archive.py --apply \
 - `docs/mistakes.md` 从 1448 行降为 active pointer。
 - `docs/copied-mechanisms.md` 从 701 行降为 active pointer。
 - `docs/a9-ultimate-architecture-aggregation.md` 从 838 行降为 active index。
+
+## 第八批已完成
+
+继续收敛剩余主入口大文档，保留路径和写入兼容性，同时把全文移到 archive。
+
+归档全文：
+
+- `docs/session-raw-summary.md`
+  -> `docs/archive/evidence/session-raw-summary-full-20260613.md`
+- `docs/session-causal-memory.md`
+  -> `docs/archive/evidence/session-causal-memory-full-20260613.md`
+- `docs/project.md`
+  -> `docs/archive/2026-06-noise-reduction/project-full-20260613.md`
+
+保留原路径短索引：
+
+- `docs/session-raw-summary.md`：active rolling summary lane，允许
+  `session_close_reading` 追加小摘要；超过 active window 后再轮转。
+- `docs/session-causal-memory.md`：active causal-memory index。
+- `docs/project.md`：active project current-state index。
+
+结果：
+
+- `docs/session-raw-summary.md` 从 1038 行降为 active summary。
+- `docs/session-causal-memory.md` 从 560 行降为 active causal index。
+- `docs/project.md` 从 392 行降为 active project index。
