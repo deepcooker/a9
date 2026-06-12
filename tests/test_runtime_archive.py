@@ -3,7 +3,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 import os
+from contextlib import redirect_stderr
+from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from scripts import a9_runtime_archive as mod
@@ -41,9 +44,12 @@ class RuntimeArchiveTests(unittest.TestCase):
             for index, path in enumerate([protected, registered, plain]):
                 path.mkdir()
                 os.utime(path, (1000 + index, 1000 + index))
+            (registered / ".git").write_text("gitdir: /tmp/registered-gitdir\n", encoding="utf-8")
             (tasks / "running" / "active-task.md").write_text("active", encoding="utf-8")
             with mock.patch.object(mod, "WORKTREES_DIR", worktrees), mock.patch.object(mod, "TASKS_DIR", tasks), mock.patch.object(
                 mod, "git_worktree_paths", return_value={registered.resolve()}
+            ), mock.patch.object(
+                mod, "git_worktree_dirty_reason", return_value=""
             ):
                 candidates = mod.worktree_candidates(keep_worktrees=0)
 
@@ -51,6 +57,82 @@ class RuntimeArchiveTests(unittest.TestCase):
         self.assertNotIn("active-task-attempt-1", by_name)
         self.assertEqual(by_name["old-task-attempt-1"].action, "git_worktree_remove")
         self.assertEqual(by_name["plain-task-attempt-1"].action, "move")
+
+    def test_worktree_candidates_skip_dirty_registered_worktree(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worktrees = root / "worktrees"
+            tasks = root / "tasks"
+            worktrees.mkdir()
+            (tasks / "running").mkdir(parents=True)
+            dirty = worktrees / "dirty-task-attempt-1"
+            dirty.mkdir()
+            (dirty / ".git").write_text("gitdir: /tmp/dirty-gitdir\n", encoding="utf-8")
+            with mock.patch.object(mod, "WORKTREES_DIR", worktrees), mock.patch.object(mod, "TASKS_DIR", tasks), mock.patch.object(
+                mod, "git_worktree_paths", return_value={dirty.resolve()}
+            ), mock.patch.object(
+                mod, "git_worktree_dirty_reason", return_value="dirty_worktree"
+            ):
+                candidates = mod.worktree_candidates(keep_worktrees=0)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].action, "skip")
+        self.assertEqual(candidates[0].skip_reason, "dirty_worktree")
+        self.assertIsNone(candidates[0].archive_path)
+
+    def test_worktree_candidates_skip_invalid_registered_metadata(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worktrees = root / "worktrees"
+            tasks = root / "tasks"
+            worktrees.mkdir()
+            (tasks / "running").mkdir(parents=True)
+            invalid = worktrees / "invalid-task-attempt-1"
+            invalid.mkdir()
+            (invalid / ".git").mkdir()
+            with mock.patch.object(mod, "WORKTREES_DIR", worktrees), mock.patch.object(mod, "TASKS_DIR", tasks), mock.patch.object(
+                mod, "git_worktree_paths", return_value={invalid.resolve()}
+            ):
+                candidates = mod.worktree_candidates(keep_worktrees=0)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].action, "skip")
+        self.assertEqual(candidates[0].skip_reason, "invalid_git_metadata")
+        self.assertIsNone(candidates[0].archive_path)
+
+    def test_worktree_candidates_skip_status_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worktrees = root / "worktrees"
+            tasks = root / "tasks"
+            worktrees.mkdir()
+            (tasks / "running").mkdir(parents=True)
+            slow = worktrees / "slow-task-attempt-1"
+            slow.mkdir()
+            (slow / ".git").write_text("gitdir: /tmp/slow-gitdir\n", encoding="utf-8")
+            with mock.patch.object(mod, "WORKTREES_DIR", worktrees), mock.patch.object(mod, "TASKS_DIR", tasks), mock.patch.object(
+                mod, "git_worktree_paths", return_value={slow.resolve()}
+            ), mock.patch.object(
+                mod.subprocess, "run", side_effect=mod.subprocess.TimeoutExpired(cmd=["git"], timeout=1)
+            ):
+                candidates = mod.worktree_candidates(keep_worktrees=0)
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].action, "skip")
+        self.assertEqual(candidates[0].skip_reason, "status_timeout")
+
+    def test_apply_candidate_does_not_abort_when_git_worktree_remove_fails(self):
+        candidate = mod.ArchiveCandidate(
+            kind="worktree",
+            path=Path("/tmp/bad-worktree"),
+            archive_path=None,
+            reason="test",
+            action="git_worktree_remove",
+        )
+        result = SimpleNamespace(returncode=128, stdout="", stderr="validation failed")
+        with mock.patch.object(mod.subprocess, "run", return_value=result):
+            with redirect_stderr(StringIO()):
+                mod.apply_candidate(candidate)
 
     def test_task_candidates_never_consider_queue_or_running(self):
         with tempfile.TemporaryDirectory() as tmp:

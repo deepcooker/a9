@@ -105,6 +105,9 @@ python3 scripts/a9_runtime_archive.py --apply --limit 20
 - `queue` 和 `running` 永远不进入候选。
 - Git 注册 worktree 不用 `mv`，只输出/执行 `git worktree remove --force`。
 - plain worktree 目录才按 archive move 处理。
+- Git 注册但 `.git` 元数据缺失/损坏，或 `git status` 显示 dirty 的 worktree，
+  只记录 `skip_reason`，不移动、不强删。
+- 单个 `git worktree remove` 失败只记录 stderr 并继续批次，不能中断整个减负流程。
 - apply 前必须先 dry-run 并检查候选，尤其是 worktree。
 
 ## 第一批动作
@@ -179,3 +182,36 @@ python3 scripts/a9_runtime_archive.py --apply \
 - `.a9/tasks/queue` 和 `.a9/tasks/running` 仍为空。
 - 未触碰 `.a9/worktrees`。
 - 执行后 `python3 scripts/a9_supervisor.py status` 正常，daemon `stale=false`。
+
+## 第四批已完成
+
+开始处理 `.a9/worktrees` 前，先补强归档工具：
+
+- dirty registered worktree 跳过并记录 `skip_reason=dirty_worktree`。
+- Git 注册但 `.git` metadata 缺失/损坏的 worktree 跳过并记录
+  `missing_git_metadata` / `invalid_git_metadata`。
+- `git worktree remove --force` 单项失败不再中断整批清理。
+- Git status/remove 都有运行态清理专用短超时；超时记为 skip，不阻断控制面。
+- 单测覆盖上述场景。
+
+执行：
+
+```bash
+python3 scripts/a9_runtime_archive.py \
+  --no-include-runs --include-worktrees --no-include-tasks --limit 30
+
+python3 scripts/a9_runtime_archive.py --apply \
+  --no-include-runs --include-worktrees --no-include-tasks --limit 30
+
+python3 scripts/a9_runtime_archive.py --apply \
+  --no-include-runs --include-worktrees --no-include-tasks --limit 20
+```
+
+结果：
+
+- `.a9/worktrees` 从 689 降到 663。
+- `.a9/archive/worktrees` 新增 13 个 plain worktree 归档。
+- 12 个 dirty/invalid registered worktree 被跳过，没有强删。
+- 第二个小批次移除 8 个干净 registered worktree。
+- `.a9/tasks/queue` 和 `.a9/tasks/running` 仍为空。
+- 后台 `supervisor`、`control-api`、`node-worker`、`recovery-loop` 仍在运行。

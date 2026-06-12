@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import shutil
+import sys
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,7 @@ RUNS_DIR = STATE_DIR / "runs"
 WORKTREES_DIR = STATE_DIR / "worktrees"
 TASKS_DIR = STATE_DIR / "tasks"
 ARCHIVE_DIR = STATE_DIR / "archive"
+GIT_COMMAND_TIMEOUT_SECONDS = 3
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class ArchiveCandidate:
     archive_path: Path | None
     reason: str
     action: str
+    skip_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +38,7 @@ class ArchiveCandidate:
             "archive_path": str(self.archive_path) if self.archive_path else "",
             "reason": self.reason,
             "action": self.action,
+            "skip_reason": self.skip_reason,
         }
 
 
@@ -85,6 +89,43 @@ def git_worktree_paths() -> set[Path]:
             if raw:
                 paths.add(Path(raw).resolve())
     return paths
+
+
+def git_worktree_dirty_reason(path: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), "status", "--porcelain", "--untracked-files=all"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return "status_timeout"
+    except OSError as exc:
+        return f"status_failed:{exc}"
+    if result.returncode != 0:
+        return f"status_failed:{result.stderr.strip() or result.returncode}"
+    if result.stdout.strip():
+        return "dirty_worktree"
+    return ""
+
+
+def git_worktree_metadata_reason(path: Path) -> str:
+    dotgit = path / ".git"
+    if not dotgit.exists():
+        return "missing_git_metadata"
+    if not dotgit.is_file():
+        return "invalid_git_metadata"
+    try:
+        header = dotgit.read_text(encoding="utf-8", errors="replace")[:256]
+    except OSError as exc:
+        return f"unreadable_git_metadata:{exc}"
+    if not header.startswith("gitdir: "):
+        return "invalid_git_metadata"
+    return ""
 
 
 def protected_task_ids() -> set[str]:
@@ -157,7 +198,12 @@ def worktree_candidates(*, keep_worktrees: int) -> list[ArchiveCandidate]:
             continue
         resolved = worktree.resolve()
         action = "git_worktree_remove" if resolved in git_paths else "move"
-        archive_path = None if action == "git_worktree_remove" else archive_bucket("worktrees", worktree)
+        skip_reason = ""
+        if action == "git_worktree_remove":
+            skip_reason = git_worktree_metadata_reason(worktree) or git_worktree_dirty_reason(worktree)
+            if skip_reason:
+                action = "skip"
+        archive_path = archive_bucket("worktrees", worktree) if action == "move" else None
         candidates.append(
             ArchiveCandidate(
                 kind="worktree",
@@ -165,6 +211,7 @@ def worktree_candidates(*, keep_worktrees: int) -> list[ArchiveCandidate]:
                 archive_path=archive_path,
                 reason=f"older_than_newest_{keep_worktrees}_worktrees task_id={task_id}",
                 action=action,
+                skip_reason=skip_reason,
             )
         )
     return candidates
@@ -178,7 +225,24 @@ def apply_candidate(candidate: ArchiveCandidate) -> None:
         shutil.move(str(candidate.path), str(candidate.archive_path))
         return
     if candidate.action == "git_worktree_remove":
-        subprocess.run(["git", "worktree", "remove", "--force", str(candidate.path)], cwd=ROOT, check=True)
+        try:
+            result = subprocess.run(
+                ["git", "worktree", "remove", "--force", str(candidate.path)],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                timeout=GIT_COMMAND_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"skip git_worktree_remove_timeout path={candidate.path}", file=sys.stderr)
+            return
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or str(result.returncode)
+            print(f"skip git_worktree_remove_failed path={candidate.path} detail={detail}", file=sys.stderr)
+        return
+    if candidate.action == "skip":
         return
     raise ValueError(f"unsupported action: {candidate.action}")
 
@@ -230,6 +294,7 @@ def main() -> int:
                     archive_path=Path(item["archive_path"]) if item.get("archive_path") else None,
                     reason=item["reason"],
                     action=item["action"],
+                    skip_reason=item.get("skip_reason", ""),
                 )
             )
     if args.json:
@@ -245,7 +310,8 @@ def main() -> int:
         print("by_action:", " ".join(f"{key}={value}" for key, value in sorted(by_action.items())) or "none")
         print("by_kind:", " ".join(f"{key}={value}" for key, value in sorted(by_kind.items())) or "none")
         for item in plan["candidates"][:20]:
-            print(f"{item['action']} {item['kind']} {item['path']} -> {item['archive_path']} ({item['reason']})")
+            skip = f" skip_reason={item['skip_reason']}" if item.get("skip_reason") else ""
+            print(f"{item['action']} {item['kind']} {item['path']} -> {item['archive_path']} ({item['reason']}{skip})")
     return 0
 
 
