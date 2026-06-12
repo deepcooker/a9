@@ -108,6 +108,9 @@ python3 scripts/a9_runtime_archive.py --apply --limit 20
 - Git 注册但 `.git` 元数据缺失/损坏，或 `git status` 显示 dirty 的 worktree，
   只记录 `skip_reason`，不移动、不强删。
 - 单个 `git worktree remove` 失败只记录 stderr 并继续批次，不能中断整个减负流程。
+- Git status/remove 都有运行态清理专用短超时；超时记为 skip，不阻断控制面。
+- worktree-only 且设置 `--limit` 时，默认只扫描足量候选，不全量扫所有历史 worktree。
+- `--write-report <path>` 可把本次 dry-run/apply 计划写成 JSON 证据报告。
 - apply 前必须先 dry-run 并检查候选，尤其是 worktree。
 
 ## 第一批动作
@@ -213,5 +216,38 @@ python3 scripts/a9_runtime_archive.py --apply \
 - `.a9/archive/worktrees` 新增 13 个 plain worktree 归档。
 - 12 个 dirty/invalid registered worktree 被跳过，没有强删。
 - 第二个小批次移除 8 个干净 registered worktree。
+- `.a9/tasks/queue` 和 `.a9/tasks/running` 仍为空。
+- 后台 `supervisor`、`control-api`、`node-worker`、`recovery-loop` 仍在运行。
+
+## 第五批已完成
+
+修复第四批暴露的性能问题：worktree 清理不再默认全量扫描 600+ 历史目录。
+
+实现：
+
+- `worktree_candidates(..., scan_limit=N)` 支持扫描到足量候选即停。
+- worktree-only 且带 `--limit` 时，自动使用 `limit` 作为 `worktree_scan_limit`。
+- 输出 `scan_truncated: worktree_scan_limit=N`，明确本次不是全量盘点。
+- 新增 `--worktree-scan-limit`，需要人工指定扫描窗口时可覆盖默认值。
+- 新增 `--write-report`，把计划/执行候选写到 `.a9/archive/reports/*.json`。
+- 单测覆盖分页扫描和 auto scan limit。
+
+执行：
+
+```bash
+python3 scripts/a9_runtime_archive.py \
+  --no-include-runs --include-worktrees --no-include-tasks --limit 20
+
+python3 scripts/a9_runtime_archive.py --apply \
+  --no-include-runs --include-worktrees --no-include-tasks --limit 20 \
+  --write-report .a9/archive/reports/runtime-archive-worktree-20260612T151558Z.json
+```
+
+结果：
+
+- dry-run/apply 都只扫描 20 个候选，不再计算全量 `candidate_count=651`。
+- `.a9/worktrees` 从 663 降到 655。
+- 本批移除 8 个干净 registered worktree。
+- 12 个 dirty/invalid registered worktree 继续跳过。
 - `.a9/tasks/queue` 和 `.a9/tasks/running` 仍为空。
 - 后台 `supervisor`、`control-api`、`node-worker`、`recovery-loop` 仍在运行。

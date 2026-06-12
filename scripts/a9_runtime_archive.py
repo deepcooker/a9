@@ -186,7 +186,7 @@ def task_candidates(*, keep_done_files: int) -> list[ArchiveCandidate]:
     return candidates
 
 
-def worktree_candidates(*, keep_worktrees: int) -> list[ArchiveCandidate]:
+def worktree_candidates(*, keep_worktrees: int, scan_limit: int = 0) -> list[ArchiveCandidate]:
     worktrees = list_child_dirs(WORKTREES_DIR)
     stale_worktrees = list(reversed(worktrees[keep_worktrees:]))
     git_paths = git_worktree_paths()
@@ -214,6 +214,8 @@ def worktree_candidates(*, keep_worktrees: int) -> list[ArchiveCandidate]:
                 skip_reason=skip_reason,
             )
         )
+        if scan_limit > 0 and len(candidates) >= scan_limit:
+            break
     return candidates
 
 
@@ -249,12 +251,16 @@ def apply_candidate(candidate: ArchiveCandidate) -> None:
 
 def build_plan(args: argparse.Namespace) -> dict[str, Any]:
     candidates: list[ArchiveCandidate] = []
+    worktree_scan_limit = int(args.worktree_scan_limit or 0)
+    worktree_only = args.include_worktrees and not args.include_runs and not args.include_tasks
+    if worktree_scan_limit <= 0 and worktree_only and int(args.limit or 0) > 0:
+        worktree_scan_limit = int(args.limit)
     if args.include_runs:
         candidates.extend(run_candidates(keep_runs=args.keep_runs))
     if args.include_tasks:
         candidates.extend(task_candidates(keep_done_files=args.keep_task_files))
     if args.include_worktrees:
-        candidates.extend(worktree_candidates(keep_worktrees=args.keep_worktrees))
+        candidates.extend(worktree_candidates(keep_worktrees=args.keep_worktrees, scan_limit=worktree_scan_limit))
     limit = int(args.limit or 0)
     selected = candidates[:limit] if limit > 0 else candidates
     return {
@@ -265,6 +271,8 @@ def build_plan(args: argparse.Namespace) -> dict[str, Any]:
         "keep_runs": args.keep_runs,
         "keep_worktrees": args.keep_worktrees,
         "keep_task_files": args.keep_task_files,
+        "worktree_scan_limit": worktree_scan_limit,
+        "scan_truncated": bool(worktree_scan_limit > 0 and args.include_worktrees),
         "candidate_count": len(candidates),
         "selected_count": len(selected),
         "candidates": [candidate.to_dict() for candidate in selected],
@@ -281,6 +289,13 @@ def main() -> int:
     parser.add_argument("--include-runs", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-worktrees", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-tasks", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--worktree-scan-limit",
+        type=int,
+        default=0,
+        help="Limit worktree candidate scanning; 0 means auto for worktree-only limited runs, otherwise all.",
+    )
+    parser.add_argument("--write-report", type=Path, help="Write the JSON plan/report to this path.")
     parser.add_argument("--json", action="store_true", help="Print full JSON plan.")
     args = parser.parse_args()
 
@@ -302,6 +317,8 @@ def main() -> int:
     else:
         mode = "apply" if args.apply else "dry-run"
         print(f"runtime archive {mode}: candidates={plan['candidate_count']} selected={plan['selected_count']}")
+        if plan["scan_truncated"]:
+            print(f"scan_truncated: worktree_scan_limit={plan['worktree_scan_limit']}")
         by_action: dict[str, int] = {}
         by_kind: dict[str, int] = {}
         for item in plan["candidates"]:
@@ -312,6 +329,9 @@ def main() -> int:
         for item in plan["candidates"][:20]:
             skip = f" skip_reason={item['skip_reason']}" if item.get("skip_reason") else ""
             print(f"{item['action']} {item['kind']} {item['path']} -> {item['archive_path']} ({item['reason']}{skip})")
+    if args.write_report:
+        args.write_report.parent.mkdir(parents=True, exist_ok=True)
+        args.write_report.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return 0
 
 

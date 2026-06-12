@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import os
+from argparse import Namespace
 from contextlib import redirect_stderr
 from io import StringIO
 from pathlib import Path
@@ -120,6 +121,50 @@ class RuntimeArchiveTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].action, "skip")
         self.assertEqual(candidates[0].skip_reason, "status_timeout")
+
+    def test_worktree_candidates_respect_scan_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            worktrees = root / "worktrees"
+            tasks = root / "tasks"
+            worktrees.mkdir()
+            (tasks / "running").mkdir(parents=True)
+            first = worktrees / "first-task-attempt-1"
+            second = worktrees / "second-task-attempt-1"
+            third = worktrees / "third-task-attempt-1"
+            for index, path in enumerate([first, second, third]):
+                path.mkdir()
+                os.utime(path, (1000 + index, 1000 + index))
+            with mock.patch.object(mod, "WORKTREES_DIR", worktrees), mock.patch.object(mod, "TASKS_DIR", tasks), mock.patch.object(
+                mod, "git_worktree_paths", return_value=set()
+            ):
+                candidates = mod.worktree_candidates(keep_worktrees=0, scan_limit=2)
+
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual([candidate.path.name for candidate in candidates], ["first-task-attempt-1", "second-task-attempt-1"])
+
+    def test_build_plan_auto_limits_worktree_only_scan(self):
+        args = Namespace(
+            include_runs=False,
+            include_tasks=False,
+            include_worktrees=True,
+            keep_runs=50,
+            keep_worktrees=20,
+            keep_task_files=100,
+            limit=3,
+            worktree_scan_limit=0,
+            apply=False,
+        )
+        fake_candidates = [
+            mod.ArchiveCandidate("worktree", Path(f"/tmp/w{i}"), None, "test", "skip") for i in range(3)
+        ]
+        with mock.patch.object(mod, "worktree_candidates", return_value=fake_candidates) as worktree_candidates:
+            plan = mod.build_plan(args)
+
+        worktree_candidates.assert_called_once_with(keep_worktrees=20, scan_limit=3)
+        self.assertTrue(plan["scan_truncated"])
+        self.assertEqual(plan["worktree_scan_limit"], 3)
+        self.assertEqual(plan["selected_count"], 3)
 
     def test_apply_candidate_does_not_abort_when_git_worktree_remove_fails(self):
         candidate = mod.ArchiveCandidate(
