@@ -2,7 +2,7 @@
 
 只从这里进入文档，避免被旧草稿带偏。
 
-默认入口现在只有四份：
+默认入口只有四份：
 
 1. `AGENTS.md`
 2. `docs/context-governance.md`
@@ -19,7 +19,6 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `原始想法需求.md`: A9 原始哲学、产品脉络和需求源头。
 - `docs/project.md`: 项目状态和分层目标。
 - `docs/requirements-review-closure.md`: 评审博弈什么时候算完成，以及何时允许进入 `execution_next`。
-- `docs/stage-handoff-2026-06-01.md`: 当前通讯/control 阶段收口和下一轮 session 精读任务包。
 - `docs/role-memory-governance.md`: 主控窗口和各角色如何读取/接收精读记忆。
 - `docs/worker-method-packet.md`: analysis worker / execution worker 共用方法包，规定定案前博弈、定案后执行。
 - `docs/reference-adoption-decision.md`: 多轮博弈后的参考机制取舍，哪些现在进、哪些暂缓。
@@ -28,7 +27,6 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/communication-runtime-decision-packet.md`: 通讯运行时当前决策包，规定先做数据/状态模型校验，再允许实现。
 - `docs/communication-runtime-data-contract-v1.md`: 通讯运行时对象、状态、Redis/MySQL/evidence 合同，后续实现必须对齐。
 - `docs/communication-runtime-model-closure.md`: 运营闭包切片（`operator_session`、`event_cursor`、`reconnect_state`）的对象字段、状态、异常门控、持久化键与执行建议。
-- `docs/runtime-auto-next-review.md`: auto-next 治理评审，规定 phase-prefixed 才能自动续跑。
 
 ## Evidence
 
@@ -36,6 +34,8 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 
 - `docs/session-raw-summary.md`: raw session 滚动总结。
 - `docs/session-raw-close-reading.md`: raw session 精读索引，含 turn/line。
+- `docs/agent-runtime-observations.md`: archived evidence pointer.
+- `docs/communication-observation-log.md`: archived evidence pointer.
 - `docs/copied-mechanisms.md`: 已抄机制、来源、commit、license。
 - `docs/reference-selection-reassessment.md`: 参考项目优先级重排。
 - `docs/mistakes.md`: 错题本。
@@ -51,6 +51,9 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 阶段性研究、旧评审、旧任务模板和非当前主线文档放在：
 
 - `docs/archive/2026-06-history/`
+- `docs/archive/2026-06-noise-reduction/`
+- `docs/archive/2026-06-execution-results/`
+- `docs/archive/evidence/`
 
 worker 默认不得读取 archive。只有任务包明确点名某个归档文件和 bounded slice 时，
 才允许把它作为历史证据。

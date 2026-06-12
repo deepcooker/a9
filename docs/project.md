@@ -307,7 +307,8 @@ decided`、数据/状态合同、异常流、验收证据、out_of_scope、allow
 - 如果 closure 未完成，worker 只能做 `debate_next` 的资料精读、参考扫描、数据/状态
   建模、角色评审和 change request。
 
-- `docs/runtime-governance-review-2026-05-29.md` 已确认一次主线偏差：
+- `docs/archive/2026-06-noise-reduction/runtime-governance-review-2026-05-29.md`
+  已确认一次主线偏差：
   最近执行通路修得较快，但 reference review、Codex goal runtime、Hermes context
   engine/trajectory、执行链观测和 token/cost 架构治理没有进入硬流程。下一步先补
   reference-review gate、A9 goal 最小数据模型、execution chain summary 和 monitor
@@ -368,7 +369,7 @@ decided`、数据/状态合同、异常流、验收证据、out_of_scope、allow
 - 参考重排：`docs/reference-selection-reassessment.md`
 - 通讯治理：`docs/communication-governance-framework.md`
 
-旧 `docs/session-close-reading.md` 和 `docs/session-summary.md` 已删除；历史事实以
+旧 session close-reading 和 session summary 文档已删除；历史事实以
 raw session、`docs/session-raw-close-reading.md` 和 `docs/session-raw-summary.md`
 为准。
 

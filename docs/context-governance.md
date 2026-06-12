@@ -26,8 +26,6 @@ These files define the current mainline:
 - `AGENTS.md`: top-level agent rules, phase model, hard constraints.
 - `docs/context-governance.md`: this context routing table.
 - `docs/current-mainline.md`: current execution priority and freeze points.
-- `docs/mobile-control-source.md`: canonical mobile/control workspace path and
-  Git governance for the running Expo mobile control plane.
 - `docs/project.md`: current A9 product layers, architecture, progress, next work.
 - `docs/architecture/a9-runtime-monitor-foundation.md`: current P0 foundation
   architecture for runtime, monitor, and communication.
@@ -54,16 +52,15 @@ If these files conflict, resolve in this order:
 2. `AGENTS.md`
 3. `docs/context-governance.md`
 4. `docs/current-mainline.md`
-5. `docs/mobile-control-source.md` for mobile workspace routing only
-6. `docs/architecture/a9-runtime-monitor-foundation.md`
-7. `docs/decisions/ADR-0002-runtime-monitor-priority.md`
-8. `docs/decisions/ADR-0003-communication-foundation.md`
-9. `docs/requirements-review-closure.md`
-10. `docs/session-causal-memory.md`
-11. `docs/external-gpt/2026-06-04/intake.md`
-12. `docs/a9-ultimate-architecture-aggregation.md`
-13. `docs/project.md`
-14. `原始想法需求.md`
+5. `docs/architecture/a9-runtime-monitor-foundation.md`
+6. `docs/decisions/ADR-0002-runtime-monitor-priority.md`
+7. `docs/decisions/ADR-0003-communication-foundation.md`
+8. `docs/requirements-review-closure.md`
+9. `docs/session-causal-memory.md`
+10. `docs/external-gpt/2026-06-04/intake.md`
+11. `docs/a9-ultimate-architecture-aggregation.md`
+12. `docs/project.md`
+13. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.
@@ -72,13 +69,8 @@ recorded causal-memory update.
 
 These files shape current work but are not global truth forever:
 
-- `docs/a9-current-decision-packet.md`
-- `docs/a9-current-review-packet.md`
 - `docs/a9-current-role-review.md`
-- `docs/a9-runtime-review-closure-2026-06-03.md`
-- `docs/a9-worker-cost-discipline-closure-2026-06-03.md`
 - `docs/stage-handoff-2026-06-01.md`
-- `docs/communication-governance-worker-task.md`
 - `docs/a9-ultimate-architecture-aggregation.md` when the current task is
   architecture debate, GPT/web reconstruction, or highest-shape decision
   closure. It must not be treated as permission to implement every listed
@@ -121,12 +113,6 @@ These files support decisions and copying strategy:
 
 - `docs/reference-adoption-decision.md`
 - `docs/reference-selection-reassessment.md`
-- `docs/requirements-plan-file-reference-scan.md`
-- `docs/memory-graph-wiki-reference-scan.md`
-- `docs/role-memory-reference-scan.md`
-- `docs/agent-governance-research.md`
-- `docs/private-model-strategy.md`
-- `docs/runtime-governance-review-2026-05-29.md`
 - `docs/vendor-strategy.md`
 - `docs/external-gpt/2026-06-13/a9-a3b-boundary-intake.md`: accepted external
   review evidence for the A9/A3B boundary. It is not default worker context and
@@ -137,6 +123,16 @@ These files support decisions and copying strategy:
 - `docs/moe-review-methodology.md`
 - `session-governance.md`
 - `THIRD_PARTY_NOTICES.md`
+
+Archived research and old closures now live under:
+
+- `docs/archive/2026-06-history/`
+- `docs/archive/2026-06-noise-reduction/`
+- `docs/archive/2026-06-execution-results/`
+- `docs/archive/evidence/`
+
+They are not active task contracts or reference commands. Use them only as
+bounded evidence when a task names the exact file and reason.
 
 Research is not a command to build. A worker must extract a mechanism, compare
 it to A9's current requirement, and cite the exact source before copying.

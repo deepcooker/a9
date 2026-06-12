@@ -367,8 +367,8 @@ Current status:
   progress, mistakes and change requests.
 - Evidence: `docs/session-raw-summary.md` turns 455-465,
   `docs/role-memory-governance.md`,
-  `docs/role-memory-reference-scan.md`,
-  `docs/requirements-plan-file-reference-scan.md`,
+  `docs/archive/2026-06-noise-reduction/role-memory-reference-scan.md`,
+  `docs/archive/2026-06-noise-reduction/requirements-plan-file-reference-scan.md`,
   `docs/reference-adoption-decision.md`.
 
 Current status:
@@ -387,7 +387,7 @@ Current status:
   and contradiction reports from raw evidence. They should not become worker
   hot-path context or replace raw session/run/git/test evidence.
 - Evidence: `docs/session-raw-summary.md` turns 461-462,
-  `docs/memory-graph-wiki-reference-scan.md`,
+  `docs/archive/2026-06-noise-reduction/memory-graph-wiki-reference-scan.md`,
   `docs/reference-adoption-decision.md`.
 
 Current status:
