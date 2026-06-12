@@ -157,3 +157,25 @@ python3 scripts/a9_runtime_archive.py --apply \
 - 50 个最旧 run 移动到 `.a9/archive/runs/20260521/`。
 - 未触碰 `.a9/tasks/queue`、`.a9/tasks/running`、`.a9/worktrees`。
 - 执行后 `python3 scripts/a9_supervisor.py status` 正常，daemon `stale=false`。
+
+## 第三批已完成
+
+继续只处理低风险运行态，不触碰 Git worktree：
+
+```bash
+python3 scripts/a9_runtime_archive.py --apply \
+  --include-runs --no-include-worktrees --no-include-tasks --limit 200
+
+python3 scripts/a9_runtime_archive.py --apply \
+  --no-include-runs --no-include-worktrees --include-tasks --limit 100
+```
+
+结果：
+
+- `.a9/runs` 从 2289 降到 2089。
+- `.a9/archive/runs` 累计 250 个 run。
+- `.a9/tasks` 文件从 2243 降到 2143。
+- `.a9/archive/tasks` 累计 100 个 task 文件。
+- `.a9/tasks/queue` 和 `.a9/tasks/running` 仍为空。
+- 未触碰 `.a9/worktrees`。
+- 执行后 `python3 scripts/a9_supervisor.py status` 正常，daemon `stale=false`。
