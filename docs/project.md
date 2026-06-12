@@ -51,6 +51,17 @@ A9 的职责是稳定的执行控制面和任务环境：
 tool result、memory commit、wrongbook 和 trace；A9 可以消费 A3B 的意图、主线、
 方法论、路径选择和风险判断，再把它们转成 plan/backlog/worker prompt。
 
+2026-06-13 外部 GPT 评审进一步确认该边界，见
+`docs/external-gpt/2026-06-13/a9-a3b-boundary-intake.md`。结论是：
+
+- A9 是外部执行/control gateway、数据采集网关、24 小时 worker 和 trace 生产器。
+- A3B / A?B 是元认知动态激活系统和未来训练目标。
+- A9 不进入模型权重，也不成为 A3B 的大脑；A9 产出的 hard evidence 可以进入
+  wrongbook、trace store、truth gate 和训练样本 pipeline。
+- 当前 A3B 包仍是训练前行为编译器/样本审计骨架，不是真实权重训练器。
+- 当前 A9 runtime 清理、通讯和 24 小时稳定主线不应混入 tokenizer、LoRA、H800
+  或 A3B 源码改造任务。
+
 ## 目标
 
 做出 A9 自己的 agent client + supervisor stack：

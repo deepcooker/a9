@@ -128,6 +128,9 @@ These files support decisions and copying strategy:
 - `docs/private-model-strategy.md`
 - `docs/runtime-governance-review-2026-05-29.md`
 - `docs/vendor-strategy.md`
+- `docs/external-gpt/2026-06-13/a9-a3b-boundary-intake.md`: accepted external
+  review evidence for the A9/A3B boundary. It is not default worker context and
+  does not authorize A3B code or training work.
 - `docs/patch-diff-discipline.md`
 - `docs/production-daemon.md`
 - `docs/communication-governance-framework.md`
