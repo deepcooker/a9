@@ -33,12 +33,15 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 证据文档不是默认 prompt。只有任务包点名路径和 slice 时才读。
 
 - `docs/session-raw-summary.md`: raw session 滚动总结。
-- `docs/session-raw-close-reading.md`: raw session 精读索引，含 turn/line。
+- `docs/session-raw-close-reading.md`: raw session 精读 active 索引；全文归档在
+  `docs/archive/evidence/session-raw-close-reading-full-20260613.md`。
 - `docs/agent-runtime-observations.md`: archived evidence pointer.
 - `docs/communication-observation-log.md`: archived evidence pointer.
-- `docs/copied-mechanisms.md`: 已抄机制、来源、commit、license。
+- `docs/copied-mechanisms.md`: 已抄机制 active 索引；全文归档在
+  `docs/archive/evidence/copied-mechanisms-full-20260613.md`。
 - `docs/reference-selection-reassessment.md`: 参考项目优先级重排。
-- `docs/mistakes.md`: 错题本。
+- `docs/mistakes.md`: 错题本 active 索引；全文归档在
+  `docs/archive/evidence/mistakes-full-20260613.md`。
 
 ## Supporting
 

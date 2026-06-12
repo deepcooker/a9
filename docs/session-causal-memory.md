@@ -512,9 +512,10 @@ Current status:
 11. Plan contracts are owned by human/product/requirements/monitor roles.
     Execution workers can append findings/progress/mistakes/change requests,
     but cannot silently change goal, scope or acceptance.
-12. A9 highest-shape aggregation is now captured in
-    `docs/a9-ultimate-architecture-aggregation.md`, but remains a draft for
-    debate and GPT/web reconstruction, not a decided implementation plan.
+12. A9 highest-shape aggregation active index is now
+    `docs/a9-ultimate-architecture-aggregation.md`; the full draft is archived
+    at `docs/archive/2026-06-noise-reduction/a9-ultimate-architecture-aggregation.md`.
+    It remains debate evidence, not a decided implementation plan.
 13. The next architecture decision must account for NZX RWA, mobile trading
     workspace, private compute scheduler, role-scoped memory, and the original
     trading-philosophy/data-validation spine together.

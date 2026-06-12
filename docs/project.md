@@ -362,7 +362,8 @@ decided`、数据/状态合同、异常流、验收证据、out_of_scope、allow
 - 文档入口/噪音分层：`docs/context-governance.md`
 - 原始 session：`/root/.codex/sessions/2026/05/21/rollout-2026-05-21T11-20-49-019e488c-d5f9-7501-835a-bf6e8ff6d8a2.jsonl`
 - 原始想法：`原始想法需求.md`
-- raw 精读：`docs/session-raw-close-reading.md`
+- raw 精读 active 索引：`docs/session-raw-close-reading.md`
+- raw 精读全文归档：`docs/archive/evidence/session-raw-close-reading-full-20260613.md`
 - raw 总结：`docs/session-raw-summary.md`
 - 因果变迁总线：`docs/session-causal-memory.md`
 - session 治理：`session-governance.md`
@@ -370,7 +371,8 @@ decided`、数据/状态合同、异常流、验收证据、out_of_scope、allow
 - 通讯治理：`docs/communication-governance-framework.md`
 
 旧 session close-reading 和 session summary 文档已删除；历史事实以
-raw session、`docs/session-raw-close-reading.md` 和 `docs/session-raw-summary.md`
+raw session、`docs/session-raw-close-reading.md` / its archived full evidence
+and `docs/session-raw-summary.md`
 为准。
 
 Session 分两类：

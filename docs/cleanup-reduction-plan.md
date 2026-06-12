@@ -307,3 +307,42 @@ python3 scripts/a9_runtime_archive.py --apply \
 - `docs/stage-handoff-2026-06-01.md`：`AGENTS.md`、`tests/test_supervisor.py` 和
   role-memory 文档仍引用。
 - `docs/communication-runtime-*.md`：`scripts/a9_control_api.py` 和测试仍引用。
+
+## 第七批已完成
+
+继续处理剩余大文档，采用“全文归档 + 原路径短索引/热 lane”的方式，避免脚本
+硬引用断掉，同时减少默认上下文污染。
+
+归档全文：
+
+- `docs/session-raw-close-reading.md`
+  -> `docs/archive/evidence/session-raw-close-reading-full-20260613.md`
+- `docs/mistakes.md`
+  -> `docs/archive/evidence/mistakes-full-20260613.md`
+- `docs/copied-mechanisms.md`
+  -> `docs/archive/evidence/copied-mechanisms-full-20260613.md`
+- `docs/a9-ultimate-architecture-aggregation.md`
+  -> `docs/archive/2026-06-noise-reduction/a9-ultimate-architecture-aggregation.md`
+
+保留原路径短索引：
+
+- `docs/session-raw-close-reading.md`：active close-reading pointer，允许未来
+  `session_close_reading` 继续追加小批次；超过 active window 后再轮转。
+- `docs/mistakes.md`：active wrongbook lane，兼容测试和 patch/apply 示例。
+- `docs/copied-mechanisms.md`：active copied-mechanism/source lane。
+- `docs/a9-ultimate-architecture-aggregation.md`：最高形态短索引，全文只作 debate
+  evidence。
+
+同时更新：
+
+- `docs/README.md`
+- `docs/context-governance.md`
+- `docs/project.md`
+- `docs/session-causal-memory.md`
+
+结果：
+
+- `docs/session-raw-close-reading.md` 从 9041 行降为 active pointer。
+- `docs/mistakes.md` 从 1448 行降为 active pointer。
+- `docs/copied-mechanisms.md` 从 701 行降为 active pointer。
+- `docs/a9-ultimate-architecture-aggregation.md` 从 838 行降为 active index。

@@ -100,9 +100,10 @@ These files are evidence indexes, not default prompt material:
 - `docs/mistakes.md`
 - `docs/copied-mechanisms.md`
 
-Evidence files preserve facts and failure history. They are intentionally large.
-Workers may read only bounded slices named by a task packet, such as a section,
-line range, run id, turn id, or specific finding.
+Evidence index files preserve pointers to facts and failure history. Full
+historical evidence has been moved under `docs/archive/evidence/`. Workers may
+read archived evidence only through bounded slices named by a task packet, such
+as a section, line range, run id, turn id, or specific finding.
 
 The rule is: preserve evidence on disk, but do not hydrate it into worker
 context by default.
