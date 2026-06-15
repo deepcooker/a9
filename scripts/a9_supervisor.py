@@ -413,6 +413,28 @@ class Task:
     task_quality_warnings: list[str] = field(default_factory=list)
 
 
+OBSERVATION_ONLY_TASK_MARKERS = (
+    "observation-only",
+    "observation only",
+    "test-only",
+    "test only",
+    "read-only",
+    "read only",
+    "verify only",
+    "validate only",
+    "no production changes",
+    "without production changes",
+)
+
+
+def task_is_observation_only(task: Task) -> bool:
+    """Detect small verification tasks that should not hydrate broad memory."""
+    if task.phase not in {"test", "compare"}:
+        return False
+    prompt_lower = task.prompt.lower()
+    return any(marker in prompt_lower for marker in OBSERVATION_ONLY_TASK_MARKERS)
+
+
 def effective_worker_idle_timeout_seconds(task: Task) -> int:
     if any("tests/test_supervisor.py" in check for check in task.checks):
         return max(task.idle_timeout_seconds, 420)
@@ -1403,6 +1425,23 @@ def section_token_budgets_for_phase(phase: str, total_budget: int) -> dict[str, 
     return section_budgets
 
 
+def section_token_budgets_for_task(task: Task, total_budget: int) -> dict[str, int]:
+    section_budgets = section_token_budgets_for_phase(task.phase, total_budget)
+    if not task_is_observation_only(task):
+        return section_budgets
+    observation_profile = {
+        "doctrine": 700,
+        "method": 900,
+        "task": min(section_budgets["task"], 2600),
+        "previous_context": 700,
+        "repo_map": 1100,
+        "reference_mechanisms": 350,
+        "contract": 1000,
+    }
+    section_budgets.update(observation_profile)
+    return section_budgets
+
+
 def truncate_to_token_budget(text: str, budget: int, *, keep: str = "head") -> str:
     if budget <= 0 or approx_token_count(text) <= budget:
         return text
@@ -1904,6 +1943,14 @@ def mempalace_wakeup_enabled() -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
+def mempalace_wakeup_budget_for_task(task: Task) -> int:
+    if task_is_observation_only(task):
+        return 0
+    if task.phase in {"test", "compare"}:
+        return 400
+    return 1200
+
+
 def build_mempalace_wakeup_section(task: Task, budget_tokens: int = 1200) -> tuple[str, dict[str, Any]]:
     """Build a small source-preserving wakeup section for worker resume."""
     meta: dict[str, Any] = {
@@ -1911,8 +1958,13 @@ def build_mempalace_wakeup_section(task: Task, budget_tokens: int = 1200) -> tup
         "status": "disabled",
         "source": str(MEMPALACE_DRAWERS_PATH),
         "evidence_refs": [],
+        "budget_tokens": budget_tokens,
     }
     if not meta["enabled"]:
+        return "", meta
+    if budget_tokens <= 0:
+        meta["status"] = "skipped_observation_only"
+        meta["reason"] = "observation/test tasks use task contract and declared checks without broad recall"
         return "", meta
     if not MEMPALACE_DRAWERS_PATH.exists():
         meta["status"] = "missing_drawers"
@@ -1985,7 +2037,7 @@ def build_context_packet(task: Task) -> dict[str, Any]:
     and leave raw evidence on disk instead of inlining everything.
     """
     total_budget = token_budget()
-    section_budgets = section_token_budgets_for_phase(task.phase, total_budget)
+    section_budgets = section_token_budgets_for_task(task, total_budget)
     workspace_root = task_workspace_root(task)
 
     doctrine_source, doctrine = build_canonical_doctrine_section(task, section_budgets["doctrine"])
@@ -2041,7 +2093,11 @@ LangGraph/mem0/OpenHands/Continue complement persistence:
             requirements_method_packet(),
             section_budgets.get("method", 0),
         )
-    mempalace_wakeup_body, mempalace_wakeup_meta = build_mempalace_wakeup_section(task)
+    mempalace_wakeup_budget = mempalace_wakeup_budget_for_task(task)
+    mempalace_wakeup_body, mempalace_wakeup_meta = build_mempalace_wakeup_section(
+        task,
+        budget_tokens=mempalace_wakeup_budget,
+    )
 
     evidence_edit_contract = truncate_to_token_budget(worker_evidence_and_edit_contract(task), 900)
     task_prompt = truncate_to_token_budget(worker_prompt_with_default_envelope(task), section_budgets["task"], keep="tail")
@@ -2168,7 +2224,7 @@ Hard rules:
                 "name": "MemPalace Wakeup Evidence",
                 "source": mempalace_wakeup_meta.get("source", "none"),
                 "role": "memory",
-                "budget_tokens": 1200,
+                "budget_tokens": mempalace_wakeup_budget,
                 "reference_only": True,
                 "body": mempalace_wakeup_body or "(none)",
             },

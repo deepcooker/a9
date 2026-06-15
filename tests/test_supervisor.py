@@ -894,6 +894,32 @@ Do the work.
         self.assertEqual(packet["mempalace_wakeup"]["status"], "ok")
         self.assertEqual(packet["mempalace_wakeup"]["evidence_refs"][0]["content_hash"], "contenthash")
 
+    def test_build_context_packet_slims_observation_only_test_context(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="observation-only-test",
+            prompt=(
+                "observation-only verification: read only the latest run summary and validate only "
+                "that declared checks are supervisor-owned; no production changes."
+            ),
+            phase="test",
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            checks=["python3 -m unittest tests.test_supervisor.SupervisorTests.test_one"],
+        )
+
+        packet = mod.build_context_packet(task)
+
+        self.assertEqual(packet["mempalace_wakeup"]["status"], "skipped_observation_only")
+        self.assertEqual(packet["mempalace_wakeup"]["budget_tokens"], 0)
+        self.assertLessEqual(packet["section_budgets"]["repo_map"], 1100)
+        self.assertLessEqual(packet["section_budgets"]["doctrine"], 700)
+        self.assertLessEqual(packet["section_budgets"]["reference_mechanisms"], 350)
+        mempalace_section = next(
+            section for section in packet["context_router"]["sections"] if section["name"] == "MemPalace Wakeup Evidence"
+        )
+        self.assertEqual(mempalace_section["budget_tokens"], 0)
+
     def test_build_context_packet_uses_canonical_context_index_for_doctrine_by_default(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
