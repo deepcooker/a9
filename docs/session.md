@@ -1,6 +1,7 @@
 # A9 Session
 
-This is the single hot session governance file.
+This is the human-readable session snapshot. It is not the canonical memory
+store and not the canonical evidence store.
 
 Raw external Codex/operator session:
 
@@ -15,9 +16,12 @@ Raw external Codex/operator session:
 4. Session governance has two lanes:
    external operator session and A9 runtime session. Link by evidence, do not
    mix storage.
-5. Requirements debate is part of the 24h workflow.
-6. Data first, performance second.
-7. Noise cleanup is part of requirements analysis.
+5. MemPalace-first is the session/memory/context governance mainline.
+6. A9 markdown close-reading is downgraded to adapter, fallback, audit view,
+   evaluator baseline and human snapshot.
+7. Requirements debate is part of the 24h workflow.
+8. Data first, performance second.
+9. Noise cleanup is part of requirements analysis.
 
 ## Current Mainline
 
@@ -32,8 +36,10 @@ Raw external Codex/operator session:
 ## Use
 
 - Default workers do not read raw session.
-- `session_refresh` and `session_close_reading` may append bounded extracts
-  here.
+- `session_refresh` and `session_close_reading` are legacy/fallback routes.
+- New session initialization should use Codex raw JSONL -> MemPalace-compatible
+  per-message drawer records first.
+- Recall is not truth. Raw evidence, source refs and hashes remain canonical.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 

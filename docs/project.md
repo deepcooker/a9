@@ -21,7 +21,7 @@ supervisor + control API + worker orchestration
 + SSH/Tailscale/tmux/private node connectivity
 + Redis/MySQL state and evidence lanes
 + git worktree/check/guard/governance
-+ session refresh/close-reading
++ MemPalace-first session/memory/context governance
 + monitor intervention and recovery
 ```
 
@@ -68,8 +68,11 @@ P7 NZX technical MVP
   guards, evidence, session mini-flow and managed-flow integration.
 - `scripts/a9_control_api.py` exposes control/mobile-facing status and command
   surfaces.
-- `scripts/a9_session_refresh.py` indexes/extracts external Codex/operator
-  session turns.
+- `scripts/a9_session_refresh.py` is legacy bounded extraction and snapshot
+  fallback for external Codex/operator sessions.
+- `scripts/a9_codex_session_adapter.py` converts Codex raw JSONL into
+  MemPalace-compatible per-message drawer records without treating recall as
+  truth.
 - `crates/a9-gateway`, `crates/a9-worker` and `crates/a9-client` are Rust-side
   control/runtime pieces.
 - `.a9/` contains runtime evidence and archives, not source truth.

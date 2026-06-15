@@ -13,6 +13,9 @@ tests and evidence.
 
 ## Priority References
 
+- MemPalace: verbatim-first raw storage, per-message drawer, palace hierarchy,
+  semantic + hybrid retrieval, wakeup/bootstrap packs, temporal KG,
+  precompact/save hooks, provider/backend abstraction and rebuildable indexes.
 - Codex: loop, tools, sandbox, approval, context and compaction.
 - OpenClaw/Lobster: managed flow, approval/wait/resume, policy attestation,
   plugin/extension shape, memory governance and tool envelope.
@@ -32,3 +35,8 @@ repo/license is verified.
 
 Keep this section small. New direct source copies must update
 `vendor-src/MANIFEST.jsonl`.
+
+MemPalace is the default mechanism reference for A9 session/memory/context
+governance, but recall must not be treated as truth. Any recalled item entering
+worker, monitor or operator context must keep source path, line/message id,
+hash, role and timestamp.
