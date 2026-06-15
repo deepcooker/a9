@@ -4576,7 +4576,10 @@ def shell_pipeline_parts(command: str) -> list[str]:
 
 def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> bool:
     pipe_parts = shell_pipeline_parts(inner)
-    if len(pipe_parts) == 2 and re.fullmatch(r"head\s+(?:-n\s+\d+|-\d+)", pipe_parts[1]):
+    if len(pipe_parts) == 2 and (
+        re.fullmatch(r"head\s+(?:-n\s+\d+|-\d+)", pipe_parts[1])
+        or re.fullmatch(r"sed\s+-n\s+['\"]?1\s*,\s*\d+p['\"]?", pipe_parts[1])
+    ):
         return command_fragment_is_bounded_read_of_paths(pipe_parts[0], paths)
     if len(pipe_parts) > 1:
         return False
@@ -5086,6 +5089,8 @@ def command_runs_uncapped_rg(command: str) -> bool:
     if re.search(r"(?:^|\s)(?:-m|--max-count)(?:=|\s*)\d+", normalized):
         return False
     if re.search(r"\|\s*(?:head|tail)(?:\s|$)", normalized):
+        return False
+    if re.search(r"\|\s*sed\s+-n\s+['\"]?1\s*,\s*\d+p['\"]?", normalized):
         return False
     if re.search(r">\s*[^|&;]+", normalized):
         return False

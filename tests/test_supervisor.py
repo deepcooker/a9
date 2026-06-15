@@ -8812,6 +8812,10 @@ Findings are ready.
         runtime_root = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 token .a9/runs'")
         broad_sed = mod.live_worker_command_violation(task, "/bin/bash -lc \"sed -n '1,241p' scripts/a9_supervisor.py\"")
         capped_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 needle scripts/a9_supervisor.py'")
+        sed_capped_rg = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'rg -n needle scripts/a9_supervisor.py | sed -n \"1,20p\"'",
+        )
         low_cost_ls = mod.live_worker_command_violation(
             task,
             "/bin/bash -lc 'cd /root/a9/.a9/worktrees/example && ls docs | head'",
@@ -8826,6 +8830,7 @@ Findings are ready.
         self.assertIn(runtime_root["kind"], {"runtime_evidence_root_read", "outside_bounded_read_scope"})
         self.assertEqual(broad_sed, {})
         self.assertEqual(capped_rg, {})
+        self.assertEqual(sed_capped_rg, {})
         self.assertEqual(low_cost_ls, {})
         self.assertEqual(recursive_ls["kind"], "outside_bounded_read_scope")
 
