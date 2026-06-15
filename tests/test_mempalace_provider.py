@@ -5,11 +5,22 @@ import json
 import subprocess
 import tempfile
 import unittest
+import importlib.util
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER = ROOT / "scripts" / "a9_mempalace_provider.py"
+
+
+def load_provider():
+    spec = importlib.util.spec_from_file_location("a9_mempalace_provider_test", PROVIDER)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def write_drawers(path: Path) -> None:
@@ -198,6 +209,66 @@ class MempalaceProviderTests(unittest.TestCase):
             self.assertIn("monitor", payload["role_packets"])
             self.assertIn("must_include", payload["next_task_memory"])
             self.assertGreaterEqual(payload["recall_packet"]["fallback_evidence_ref_count"], 1)
+
+    def test_causal_commit_dry_run_requires_approval_and_plans_kg_diary(self):
+        mod = load_provider()
+        packet = {
+            "schema": "a9.causal_memory_packet.v1",
+            "kg_candidates": {
+                "current_facts": [
+                    {
+                        "text": "A9 current mainline is supervisor runtime.",
+                        "valid_from": "2026-01-01T00:00:00Z",
+                        "source_drawer_id": "d1",
+                        "evidence_ref": {"drawer_id": "d1", "source_ref": "session.jsonl:10"},
+                    }
+                ],
+                "stale_branches": [
+                    {
+                        "text": "Page monitoring is stale.",
+                        "valid_from": "2026-01-01T00:00:00Z",
+                        "source_drawer_id": "d2",
+                        "evidence_ref": {"drawer_id": "d2", "source_ref": "session.jsonl:11"},
+                    }
+                ],
+                "causal_changes": [
+                    {
+                        "change": "page monitor -> supervisor runtime because control is stronger",
+                        "valid_from": "2026-01-01T00:00:00Z",
+                        "evidence_ref": {"drawer_id": "d3", "source_ref": "session.jsonl:12"},
+                    }
+                ],
+            },
+            "role_packets": {
+                "monitor": {
+                    "entries": [
+                        {
+                            "kind": "causal_change",
+                            "text": "page monitor -> supervisor runtime",
+                            "evidence_ref": {"drawer_id": "d3"},
+                        }
+                    ]
+                }
+            },
+        }
+
+        invalid = mod.commit_causal_memory_packet(packet, approved_by="", approval_reason="", dry_run=True)
+        self.assertEqual(invalid["status"], "invalid_request")
+
+        result = mod.commit_causal_memory_packet(
+            packet,
+            approved_by="codex-monitor",
+            approval_reason="bounded dry run",
+            dry_run=True,
+        )
+
+        self.assertEqual(result["schema"], "a9.causal_memory_commit_result.v1")
+        self.assertEqual(result["status"], "dry_run")
+        operations = result["plan"]["operations"]
+        self.assertEqual(result["plan"]["approved_by"], "codex-monitor")
+        self.assertTrue(any(op["operation"] == "kg_add" and op["predicate"] == "has_current_fact" for op in operations))
+        self.assertTrue(any(op["operation"] == "kg_add" and op["valid_to"] for op in operations))
+        self.assertTrue(any(op["operation"] == "diary_write" and op["agent_name"] == "monitor" for op in operations))
 
 
 if __name__ == "__main__":

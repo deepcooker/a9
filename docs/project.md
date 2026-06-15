@@ -84,8 +84,10 @@ P7 NZX technical MVP
   first deterministic `recall -> causal memory` compiler that turns recalled
   drawers into candidate time-valid facts, stale-branch invalidation candidates,
   causal-change notes, role-scoped packets and next-task memory packets. These
-  outputs remain candidate memory, not truth; the next gap is monitor-reviewed
-  KG/diary writes and contradiction/drift handling.
+  outputs remain candidate memory, not truth. A dry-run/approved commit path now
+  plans MemPalace-style KG temporal triples and role diary writes; actual writes
+  require `approved_by`, `approval_reason` and `commit=true`. The remaining gap
+  is contradiction/drift handling after commit.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

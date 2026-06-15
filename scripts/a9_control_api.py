@@ -3444,6 +3444,7 @@ def controller_discovery() -> dict[str, Any]:
             "mempalace_wakeup": "/api/memory/mempalace/wakeup",
             "mempalace_recall": "/api/memory/mempalace/recall",
             "mempalace_causal_compile": "/api/memory/mempalace/causal-compile",
+            "mempalace_causal_commit": "/api/memory/mempalace/causal-commit",
             "runtime_plan_decision_approve": "/api/runtime/plan-decision-approve",
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
@@ -8560,6 +8561,26 @@ def mempalace_causal_compile(payload: dict[str, Any]) -> dict[str, Any]:
     return packet
 
 
+def mempalace_causal_commit(payload: dict[str, Any]) -> dict[str, Any]:
+    packet = payload.get("causal_packet")
+    if not isinstance(packet, dict):
+        return {
+            "schema": "a9.control_api.mempalace_causal_commit.v1",
+            "status": "invalid_request",
+            "error": "causal_packet_required",
+            "results": [],
+        }
+    provider = mempalace_provider()
+    result = provider.commit_causal_memory_packet(
+        packet,
+        approved_by=str(payload.get("approved_by") or ""),
+        approval_reason=str(payload.get("approval_reason") or ""),
+        dry_run=not bool(payload.get("commit")),
+    )
+    result["schema"] = "a9.control_api.mempalace_causal_commit.v1"
+    return result
+
+
 def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     enqueue_service_control_audit(
         {
@@ -9528,6 +9549,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, mempalace_recall(payload))
             elif self.path == "/api/memory/mempalace/causal-compile":
                 self.write_json(200, mempalace_causal_compile(payload))
+            elif self.path == "/api/memory/mempalace/causal-commit":
+                self.write_json(200, mempalace_causal_commit(payload))
             elif self.path == "/api/runtime/plan-decision-approve":
                 self.write_json(200, runtime_plan_decision_approve(payload))
             elif self.path == "/api/runtime/plan-debate-next":

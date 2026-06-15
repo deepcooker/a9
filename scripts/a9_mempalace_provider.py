@@ -13,12 +13,14 @@ from __future__ import annotations
 import argparse
 import contextlib
 import heapq
+import hashlib
 import json
 import math
 import os
 import re
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -609,6 +611,216 @@ def build_causal_memory_from_query(
     }
 
 
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def kg_operation_from_candidate(kind: str, item: dict[str, Any], *, commit_at: str) -> dict[str, Any]:
+    evidence_ref = item.get("evidence_ref") if isinstance(item.get("evidence_ref"), dict) else {}
+    text = str(item.get("text") or item.get("change") or "")
+    predicate = {
+        "current_fact": "has_current_fact",
+        "stale_branch": "has_stale_branch",
+        "causal_change": "has_causal_change",
+    }.get(kind, "has_memory")
+    return {
+        "operation": "kg_add",
+        "kind": kind,
+        "subject": "A9",
+        "predicate": predicate,
+        "object": text,
+        "valid_from": item.get("valid_from"),
+        "valid_to": commit_at if kind == "stale_branch" else None,
+        "source_file": evidence_ref.get("source_ref"),
+        "source_drawer_id": evidence_ref.get("drawer_id") or item.get("source_drawer_id"),
+        "adapter_name": "a9_causal_memory_compiler",
+    }
+
+
+def diary_operation_from_role_packet(role: str, packet: dict[str, Any], *, commit_at: str) -> dict[str, Any] | None:
+    entries = packet.get("entries") if isinstance(packet.get("entries"), list) else []
+    if not entries:
+        return None
+    compact_entries = [
+        {
+            "kind": entry.get("kind"),
+            "text": entry.get("text"),
+            "evidence_ref": entry.get("evidence_ref"),
+        }
+        for entry in entries[:6]
+        if isinstance(entry, dict)
+    ]
+    content = json.dumps(
+        {
+            "schema": "a9.role_diary_entry.v1",
+            "role": role,
+            "committed_at": commit_at,
+            "entries": compact_entries,
+            "reader_rule": "Role-scoped continuity from approved causal memory; verify evidence before execution.",
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return {
+        "operation": "diary_write",
+        "agent_name": role,
+        "wing": "a9-causal-memory",
+        "topic": "causal-memory",
+        "content": content,
+    }
+
+
+def causal_memory_commit_plan(
+    causal_packet: dict[str, Any],
+    *,
+    approved_by: str,
+    approval_reason: str,
+    commit_at: str | None = None,
+) -> dict[str, Any]:
+    commit_at = commit_at or utc_now_iso()
+    kg = causal_packet.get("kg_candidates") if isinstance(causal_packet.get("kg_candidates"), dict) else {}
+    operations: list[dict[str, Any]] = []
+    for item in (kg.get("current_facts") or [])[:8]:
+        if isinstance(item, dict):
+            operations.append(kg_operation_from_candidate("current_fact", item, commit_at=commit_at))
+    for item in (kg.get("stale_branches") or [])[:8]:
+        if isinstance(item, dict):
+            operations.append(kg_operation_from_candidate("stale_branch", item, commit_at=commit_at))
+    for item in (kg.get("causal_changes") or [])[:8]:
+        if isinstance(item, dict):
+            operations.append(kg_operation_from_candidate("causal_change", item, commit_at=commit_at))
+    role_packets = causal_packet.get("role_packets") if isinstance(causal_packet.get("role_packets"), dict) else {}
+    for role, packet in role_packets.items():
+        if isinstance(packet, dict):
+            op = diary_operation_from_role_packet(str(role), packet, commit_at=commit_at)
+            if op:
+                operations.append(op)
+    return {
+        "schema": "a9.causal_memory_commit_plan.v1",
+        "status": "planned",
+        "truth_policy": "approved_candidate_memory_not_absolute_truth",
+        "approved_by": approved_by,
+        "approval_reason": approval_reason,
+        "commit_at": commit_at,
+        "operations": operations,
+        "operation_count": len(operations),
+        "copied_protocols": [
+            "MemPalace KG temporal triples keep valid_from/valid_to and source_drawer_id",
+            "MemPalace diary writes role/agent-scoped continuity entries",
+            "Changed or stale branches are explicit ended facts rather than silent overwrites",
+        ],
+    }
+
+
+def write_kg_operation(operation: dict[str, Any], *, palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
+    if not MEMPALACE_SOURCE.exists():
+        return {"status": "error", "error": "reference-projects/mempalace missing", "operation": operation}
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    try:
+        from mempalace.knowledge_graph import KnowledgeGraph  # type: ignore
+
+        kg = KnowledgeGraph(db_path=str(palace / "knowledge_graph.sqlite3"))
+        triple_id = kg.add_triple(
+            str(operation.get("subject") or "A9"),
+            str(operation.get("predicate") or "has_memory"),
+            str(operation.get("object") or ""),
+            valid_from=operation.get("valid_from"),
+            valid_to=operation.get("valid_to"),
+            source_file=operation.get("source_file"),
+            source_drawer_id=operation.get("source_drawer_id"),
+            adapter_name=str(operation.get("adapter_name") or "a9_causal_memory_compiler"),
+        )
+        kg.close()
+        return {"status": "ok", "operation": "kg_add", "triple_id": triple_id}
+    except Exception as exc:  # pragma: no cover - environment/index dependent
+        return {"status": "error", "operation": "kg_add", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def write_diary_operation(operation: dict[str, Any], *, palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
+    if not MEMPALACE_SOURCE.exists():
+        return {"status": "error", "error": "reference-projects/mempalace missing", "operation": operation}
+    if not (palace / "chroma.sqlite3").exists():
+        return {"status": "error", "error": "native palace index unavailable", "operation": operation}
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    try:
+        with suppress_native_stderr():
+            from mempalace.palace import get_collection  # type: ignore
+
+            collection = get_collection(str(palace), create=True)
+            now = utc_now_iso()
+            content = str(operation.get("content") or "")
+            wing = str(operation.get("wing") or "a9-causal-memory")
+            role = str(operation.get("agent_name") or "unknown")
+            topic = str(operation.get("topic") or "causal-memory")
+            digest = hashlib.sha256(f"{role}:{topic}:{content}:{now}".encode("utf-8")).hexdigest()[:20]
+            entry_id = f"a9_diary_{role}_{digest}"
+            collection.add(
+                ids=[entry_id],
+                documents=[content],
+                metadatas=[
+                    {
+                        "wing": wing,
+                        "room": "diary",
+                        "hall": "hall_diary",
+                        "topic": topic,
+                        "type": "diary_entry",
+                        "agent": role,
+                        "filed_at": now,
+                        "date": now[:10],
+                        "adapter_name": "a9_causal_memory_compiler",
+                    }
+                ],
+            )
+        return {"status": "ok", "operation": "diary_write", "entry_id": entry_id}
+    except Exception as exc:  # pragma: no cover - environment/index dependent
+        return {"status": "error", "operation": "diary_write", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def commit_causal_memory_packet(
+    causal_packet: dict[str, Any],
+    *,
+    approved_by: str,
+    approval_reason: str,
+    dry_run: bool = True,
+    palace: Path = DEFAULT_PALACE,
+) -> dict[str, Any]:
+    if not approved_by.strip() or not approval_reason.strip():
+        return {
+            "schema": "a9.causal_memory_commit_result.v1",
+            "status": "invalid_request",
+            "error": "approved_by_and_approval_reason_required",
+            "truth_policy": "approved_candidate_memory_not_absolute_truth",
+            "results": [],
+        }
+    plan = causal_memory_commit_plan(
+        causal_packet,
+        approved_by=approved_by.strip(),
+        approval_reason=approval_reason.strip(),
+    )
+    if dry_run:
+        return {
+            "schema": "a9.causal_memory_commit_result.v1",
+            "status": "dry_run",
+            "plan": plan,
+            "results": [],
+        }
+    results: list[dict[str, Any]] = []
+    for operation in plan["operations"]:
+        if operation.get("operation") == "kg_add":
+            results.append(write_kg_operation(operation, palace=palace))
+        elif operation.get("operation") == "diary_write":
+            results.append(write_diary_operation(operation, palace=palace))
+        else:
+            results.append({"status": "skip", "reason": "unknown_operation", "operation": operation})
+    status = "ok" if all(result.get("status") == "ok" for result in results) else "partial"
+    return {
+        "schema": "a9.causal_memory_commit_result.v1",
+        "status": status,
+        "plan": plan,
+        "results": results,
+    }
+
+
 def drawer_status(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {
@@ -802,6 +1014,12 @@ def main() -> int:
     causal.add_argument("--wing", default=DEFAULT_NATIVE_WING)
     causal.add_argument("--room", default=DEFAULT_NATIVE_ROOM)
 
+    commit = sub.add_parser("causal-commit")
+    commit.add_argument("--packet", required=True, type=Path)
+    commit.add_argument("--approved-by", required=True)
+    commit.add_argument("--approval-reason", required=True)
+    commit.add_argument("--commit", action="store_true", help="Actually write KG/diary entries; default is dry-run")
+
     args = parser.parse_args()
     drawers = Path(args.drawers)
     palace = Path(args.palace)
@@ -900,6 +1118,17 @@ def main() -> int:
                 wing=args.wing,
                 room=args.room,
                 native_enabled=native_enabled,
+                palace=palace,
+            )
+        )
+    elif args.command == "causal-commit":
+        packet = json.loads(args.packet.read_text(encoding="utf-8"))
+        print_json(
+            commit_causal_memory_packet(
+                packet,
+                approved_by=args.approved_by,
+                approval_reason=args.approval_reason,
+                dry_run=not args.commit,
                 palace=palace,
             )
         )
