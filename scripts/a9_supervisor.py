@@ -3226,15 +3226,27 @@ def run_worker(task: Task, worktree: Path, run_dir: Path, *, lease_path: Path | 
                             rationale=last_agent_rationale,
                         )
                         if violation:
+                            stop_live_violation = (
+                                prompt_requires_live_read_budget_stop(task.prompt)
+                                or violation.get("kind") == "direct_workspace_write"
+                            )
                             budget_observations.append(
                                 {
                                     "kind": violation.get("kind", "command_bounds"),
                                     "level": violation.get("level") or "warn",
                                     "reason": violation.get("reason", "worker command bound observed"),
                                     "command": violation.get("command", ""),
-                                    "action": "observe",
+                                    "action": "observe"
+                                    if not stop_live_violation
+                                    else "stop",
                                 }
                             )
+                            if stop_live_violation:
+                                budget_stopped = True
+                                budget_stop_kind = str(violation.get("kind") or "command_bounds")
+                                budget_reason = str(violation.get("reason") or "worker command bound violated")
+                                kill_process_group_if_still_running(proc)
+                                break
                     if event_count > max_events:
                         reason = f"worker event count exceeded {max_events}"
                         if event_budget_mode == "enforce":
@@ -9519,7 +9531,7 @@ def build_plan_debate_task(
     stage_id: str = "",
     task_id: str = "",
     extra: str = "",
-) -> tuple[str, str, dict[str, Any], dict[str, Any]]:
+) -> tuple[str, str, dict[str, Any], dict[str, Any], list[str]]:
     debate = requirements_debate_progress(plan)
     resolved_stage_id = str(stage_id or "").strip() or str(debate.get("current_stage") or "")
     if not resolved_stage_id:
@@ -9533,6 +9545,21 @@ def build_plan_debate_task(
             f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
         )
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    contract_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
+    read_paths = merge_unique_paths(
+        REQUIREMENTS_DEBATE_READ_PATHS,
+        [
+            str(plan_path(plan_id) / "plan.json"),
+            str(plan_path(plan_id) / "progress.md"),
+            str(plan_path(plan_id) / "change_request.md"),
+            str(plan_path(plan_id) / "findings.md"),
+            str(plan_path(plan_id) / "mistakes.md"),
+        ]
+        if plan_id
+        else [],
+        contract_paths,
+    )
+    bounded_read_lines = [f"bounded read: {path}" for path in read_paths[:10]]
     missing = [
         field
         for field in stage.get("required_contract_fields", [])
@@ -9554,6 +9581,8 @@ def build_plan_debate_task(
         f"exception_flow: {contract.get('exception_flow', '')}",
         f"acceptance: {contract.get('acceptance', '')}",
         f"out_of_scope: {contract.get('out_of_scope', '')}",
+        "live_read_budget_policy: stop",
+        *bounded_read_lines,
         "",
         "Debate task:",
         str(stage.get("prompt", "")),
@@ -9563,6 +9592,9 @@ def build_plan_debate_task(
         "- Keep the final worker envelope compact and valid JSON; summarize decision packet deltas instead of dumping the full packet.",
         "- Produce a decision packet draft only when the missing fields are supported by evidence, but keep large evidence in files and cite paths.",
         "- Do not implement production code in this task.",
+        "- Read only bounded slices from the declared bounded read paths; do not search /root/a9 or .a9 roots.",
+        "- Use capped `rg -n -m 20` or `rg ... | head -n 40`; never run uncapped rg in read-heavy phases.",
+        "- Keep each `sed -n` source window <= 120 lines and total requested source lines <= 180.",
         "- If the stage is ready, propose candidate execution_next backlog slices with allowed paths and checks.",
         "- When proposing execution slices, include at most 3 compact items under output.execution_backlog.items.",
         "- Final envelope shape:",
@@ -9570,7 +9602,7 @@ def build_plan_debate_task(
     ]
     if extra:
         prompt_lines.extend(["", "Extra operator direction:", str(extra).strip()])
-    return resolved_task_id, "\n".join(prompt_lines), debate, stage
+    return resolved_task_id, "\n".join(prompt_lines), debate, stage, read_paths
 
 
 def enqueue_plan_debate_task(
@@ -9584,7 +9616,7 @@ def enqueue_plan_debate_task(
     idle_timeout_seconds: int = 300,
     auto_next: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
-    resolved_task_id, prompt, debate, _stage = build_plan_debate_task(
+    resolved_task_id, prompt, debate, _stage, read_paths = build_plan_debate_task(
         plan,
         stage_id=stage_id,
         task_id=task_id,
@@ -9598,7 +9630,7 @@ def enqueue_plan_debate_task(
         timeout_seconds=timeout_seconds,
         idle_timeout_seconds=idle_timeout_seconds,
         max_attempts=1,
-        allowed_paths=[],
+        allowed_paths=read_paths,
         auto_next=auto_next,
     )
     return path, debate
@@ -12536,7 +12568,7 @@ def plan_change_request_continuation_item(
         "task_id": task_id,
         "phase": "mechanism_extract",
         "prompt": prompt,
-        "allowed_paths": allowed_paths,
+        "allowed_paths": bounded_read_paths,
         "checks": [],
         "source": "plan.change_request",
         "status": "ready",
@@ -12654,7 +12686,7 @@ def plan_backlog_generation_continuation_item(
         "task_id": task_id,
         "phase": "reference_scan",
         "prompt": prompt,
-        "allowed_paths": allowed_paths,
+        "allowed_paths": bounded_read_paths,
         "checks": [],
         "source": "plan.execution_backlog_generation",
         "status": "ready",

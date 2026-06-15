@@ -2701,6 +2701,51 @@ Do the work.
         self.assertEqual(worker["budget_observations"][0]["kind"], "compound_wide_read_command")
         self.assertEqual(worker["budget_observations"][0]["action"], "observe")
 
+    def test_run_worker_stops_live_read_budget_violation(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="command-bounds-stop",
+                phase="reference_scan",
+                prompt=(
+                    "live_read_budget_policy: stop\n"
+                    "bounded read: docs/project.md\n"
+                    "Read only bounded slices from allowed_paths.\n"
+                ),
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            command = "/bin/bash -lc 'rg -n needle /root/a9 -S'"
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    f"print(json.dumps({{'type':'item.completed','item':{{'type':'command_execution','command':{command!r},'status':'completed','exit_code':0}}}}), flush=True)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                worker = mod.run_worker(task, worktree, run_dir)
+
+        self.assertTrue(worker["budget_stopped"])
+        self.assertEqual(worker["budget_stop_kind"], "outside_bounded_read_scope")
+        self.assertEqual(worker["budget_observations"][0]["action"], "stop")
+
     def test_run_worker_closes_stdout_pipe(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -5981,6 +6026,9 @@ Findings are ready.
         self.assertIn("decision_status: not_decided", text)
         self.assertIn("route: debate_next", text)
         self.assertIn("debate_stage: requirement_audit", text)
+        self.assertIn("live_read_budget_policy: stop", text)
+        self.assertIn("bounded read: docs/method.md", text)
+        self.assertIn("docs/method.md", parsed.allowed_paths)
         self.assertIn("Idle 24h lane router selected requirements debate before execution.", text)
         self.assertNotIn("Generic goal fallback", text)
         self.assertTrue(parsed.auto_next_allowed)
@@ -6113,7 +6161,9 @@ Findings are ready.
         self.assertIn("decision_status: not_decided", text)
         self.assertIn("route: debate_next", text)
         self.assertIn("debate_stage: execution_backlog_generation", text)
+        self.assertIn("live_read_budget_policy: stop", text)
         self.assertIn("bounded read: docs/method.md", text)
+        self.assertIn("docs/method.md", parsed.allowed_paths)
         self.assertIn("Generate next decided execution backlog batch", text)
         self.assertNotIn("Generic goal fallback", text)
         self.assertTrue(
