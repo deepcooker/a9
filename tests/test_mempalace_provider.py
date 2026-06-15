@@ -313,6 +313,75 @@ class MempalaceProviderTests(unittest.TestCase):
         self.assertEqual(result["drift_check"]["conflict_count"], 1)
         write_kg.assert_not_called()
 
+    def test_causal_audit_reports_current_conflicts_and_invalidation_candidates(self):
+        mod = load_provider()
+        facts = [
+            {
+                "subject": "A9",
+                "predicate": "has_current_fact",
+                "object": "A9 current mainline is supervisor runtime.",
+                "valid_to": None,
+                "current": True,
+            },
+            {
+                "subject": "A9",
+                "predicate": "has_current_fact",
+                "object": "A9 current mainline is page monitor.",
+                "valid_to": None,
+                "current": True,
+            },
+            {
+                "subject": "A9",
+                "predicate": "has_stale_branch",
+                "object": "page monitor",
+                "valid_to": "2026-01-01T00:00:00Z",
+                "current": False,
+            },
+        ]
+        with mock.patch.object(mod, "query_kg_facts", return_value=facts):
+            result = mod.audit_causal_memory_state("A9")
+
+        self.assertEqual(result["schema"], "a9.causal_memory_audit.v1")
+        self.assertEqual(result["status"], "review_required")
+        self.assertEqual(result["conflict_count"], 1)
+        self.assertEqual(result["expired_fact_count"], 1)
+        self.assertEqual(result["invalidation_candidates"][0]["operation"], "kg_invalidate_candidate")
+        self.assertTrue(result["invalidation_candidates"][0]["requires_monitor_decision"])
+
+    def test_causal_commit_success_includes_post_commit_audit(self):
+        mod = load_provider()
+        packet = {
+            "schema": "a9.causal_memory_packet.v1",
+            "kg_candidates": {
+                "current_facts": [
+                    {
+                        "text": "A9 current mainline is supervisor runtime.",
+                        "valid_from": "2026-01-01T00:00:00Z",
+                        "evidence_ref": {"drawer_id": "d1", "source_ref": "session.jsonl:10"},
+                    }
+                ],
+                "stale_branches": [],
+                "causal_changes": [],
+            },
+            "role_packets": {},
+        }
+        with mock.patch.object(mod, "query_current_kg_facts", return_value=[]), mock.patch.object(
+            mod, "write_kg_operation", return_value={"status": "ok", "operation": "kg_add", "triple_id": "t1"}
+        ), mock.patch.object(
+            mod, "audit_causal_memory_state",
+            return_value={"schema": "a9.causal_memory_audit.v1", "status": "pass"},
+        ) as audit:
+            result = mod.commit_causal_memory_packet(
+                packet,
+                approved_by="codex-monitor",
+                approval_reason="approved current fact",
+                dry_run=False,
+            )
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["post_commit_audit"]["status"], "pass")
+        audit.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

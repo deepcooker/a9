@@ -751,6 +751,21 @@ def query_current_kg_facts(subject: str, *, palace: Path = DEFAULT_PALACE) -> li
         return []
 
 
+def query_kg_facts(subject: str, *, palace: Path = DEFAULT_PALACE) -> list[dict[str, Any]]:
+    if not MEMPALACE_SOURCE.exists():
+        return []
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    try:
+        from mempalace.knowledge_graph import KnowledgeGraph  # type: ignore
+
+        kg = KnowledgeGraph(db_path=str(palace / "knowledge_graph.sqlite3"))
+        facts = kg.query_entity(subject, direction="outgoing")
+        kg.close()
+        return facts
+    except Exception:
+        return []
+
+
 def drift_check_commit_plan(plan: dict[str, Any], *, palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
     """Check planned KG writes against current KG state before committing.
 
@@ -804,6 +819,87 @@ def drift_check_commit_plan(plan: dict[str, Any], *, palace: Path = DEFAULT_PALA
         "conflicts": conflicts,
         "conflict_count": len(conflicts),
         "policy": "Do not commit conflicting current facts without explicit monitor review and stale-fact invalidation.",
+    }
+
+
+def audit_causal_memory_state(subject: str = "A9", *, palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
+    """Audit MemPalace KG state after writes without changing facts.
+
+    This follows MemPalace's temporal KG semantics: active facts are
+    ``valid_to is NULL``; obsolete facts stay queryable as history. A9 turns
+    multiple active objects for the same subject/predicate into review
+    candidates instead of silently invalidating them.
+    """
+    facts = query_kg_facts(subject, palace=palace)
+    current = [fact for fact in facts if fact.get("current")]
+    expired = [fact for fact in facts if not fact.get("current")]
+    by_predicate: dict[str, list[dict[str, Any]]] = {}
+    for fact in current:
+        by_predicate.setdefault(str(fact.get("predicate") or ""), []).append(fact)
+
+    conflicts: list[dict[str, Any]] = []
+    duplicates: list[dict[str, Any]] = []
+    invalidation_candidates: list[dict[str, Any]] = []
+    for predicate, rows in by_predicate.items():
+        objects: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            objects.setdefault(str(row.get("object") or ""), []).append(row)
+        for obj, obj_rows in objects.items():
+            if len(obj_rows) > 1:
+                duplicates.append(
+                    {
+                        "subject": subject,
+                        "predicate": predicate,
+                        "object": obj,
+                        "count": len(obj_rows),
+                        "facts": obj_rows,
+                        "action": "dedupe_review",
+                    }
+                )
+        if len(objects) <= 1:
+            continue
+        conflict = {
+            "subject": subject,
+            "predicate": predicate,
+            "objects": sorted(objects),
+            "facts": rows,
+            "action": "choose_current_or_invalidate_stale",
+        }
+        conflicts.append(conflict)
+        for obj, obj_rows in objects.items():
+            invalidation_candidates.append(
+                {
+                    "operation": "kg_invalidate_candidate",
+                    "subject": subject,
+                    "predicate": predicate,
+                    "object": obj,
+                    "ended": utc_now_iso(),
+                    "candidate_reason": "multiple current objects for one subject/predicate",
+                    "matching_fact_count": len(obj_rows),
+                    "requires_monitor_decision": True,
+                }
+            )
+
+    status = "pass" if not conflicts and not duplicates else "review_required"
+    return {
+        "schema": "a9.causal_memory_audit.v1",
+        "status": status,
+        "subject": subject,
+        "fact_count": len(facts),
+        "current_fact_count": len(current),
+        "expired_fact_count": len(expired),
+        "conflict_count": len(conflicts),
+        "duplicate_count": len(duplicates),
+        "conflicts": conflicts,
+        "duplicates": duplicates,
+        "invalidation_candidates": invalidation_candidates,
+        "stale_history_sample": expired[:8],
+        "copied_protocols": [
+            "MemPalace KG keeps historical facts with valid_to instead of deleting them",
+            "MemPalace invalidate marks ended facts; A9 emits invalidation candidates for monitor approval",
+            "MemPalace fact-checker treats stale/conflicting facts as issues, not truth",
+        ],
+        "policy": "Audit is side-effect free; invalidation candidates require explicit monitor approval before KG mutation.",
     }
 
 
@@ -899,6 +995,7 @@ def commit_causal_memory_packet(
         "status": status,
         "plan": plan,
         "drift_check": drift_check,
+        "post_commit_audit": audit_causal_memory_state("A9", palace=palace),
         "results": results,
     }
 
@@ -1102,6 +1199,9 @@ def main() -> int:
     commit.add_argument("--approval-reason", required=True)
     commit.add_argument("--commit", action="store_true", help="Actually write KG/diary entries; default is dry-run")
 
+    audit = sub.add_parser("causal-audit")
+    audit.add_argument("--subject", default="A9")
+
     args = parser.parse_args()
     drawers = Path(args.drawers)
     palace = Path(args.palace)
@@ -1214,6 +1314,8 @@ def main() -> int:
                 palace=palace,
             )
         )
+    elif args.command == "causal-audit":
+        print_json(audit_causal_memory_state(args.subject, palace=palace))
     return 0
 
 

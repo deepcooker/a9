@@ -377,6 +377,27 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "dry_run")
         self.assertEqual(result["plan"]["approved_by"], "codex-monitor")
 
+    def test_mempalace_causal_audit_returns_side_effect_free_report(self):
+        mod = load_control_api()
+
+        def fake_audit(subject):
+            return {
+                "schema": "a9.causal_memory_audit.v1",
+                "status": "review_required",
+                "subject": subject,
+                "conflict_count": 1,
+                "invalidation_candidates": [{"operation": "kg_invalidate_candidate"}],
+            }
+
+        provider = SimpleNamespace(audit_causal_memory_state=fake_audit)
+        with mock.patch.object(mod, "mempalace_provider", return_value=provider):
+            result = mod.mempalace_causal_audit({"subject": "A9"})
+
+        self.assertEqual(result["schema"], "a9.control_api.mempalace_causal_audit.v1")
+        self.assertEqual(result["status"], "review_required")
+        self.assertEqual(result["subject"], "A9")
+        self.assertEqual(result["invalidation_candidates"][0]["operation"], "kg_invalidate_candidate")
+
     def test_supervisor_status_reads_existing_a9_state(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -11341,6 +11362,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["mempalace_recall"], "/api/memory/mempalace/recall")
         self.assertEqual(discovery["endpoints"]["mempalace_causal_compile"], "/api/memory/mempalace/causal-compile")
         self.assertEqual(discovery["endpoints"]["mempalace_causal_commit"], "/api/memory/mempalace/causal-commit")
+        self.assertEqual(discovery["endpoints"]["mempalace_causal_audit"], "/api/memory/mempalace/causal-audit")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
             discovery["endpoints"]["node_command_result_by_command"],

@@ -49,9 +49,11 @@ Raw external Codex/operator session:
   deterministic candidate layer. A9 can compile recall into candidate current
   facts, stale branches, causal changes, role packets and next-task memory, but
   KG/diary writes now go through a dry-run/approved commit path. Actual writes
-  require `approved_by`, `approval_reason` and `commit=true`; contradiction and
-  drift handling after commit is still unfinished, but the first pre-commit
-  drift checker blocks conflicting current KG facts before write.
+  require `approved_by`, `approval_reason` and `commit=true`; the first
+  pre-commit drift checker blocks conflicting current KG facts before write, and
+  the first post-write causal audit reports duplicate/conflicting current facts
+  plus monitor-approved invalidation candidates. Fully automated invalidation
+  and contradiction repair remain unfinished.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

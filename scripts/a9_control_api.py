@@ -3445,6 +3445,7 @@ def controller_discovery() -> dict[str, Any]:
             "mempalace_recall": "/api/memory/mempalace/recall",
             "mempalace_causal_compile": "/api/memory/mempalace/causal-compile",
             "mempalace_causal_commit": "/api/memory/mempalace/causal-commit",
+            "mempalace_causal_audit": "/api/memory/mempalace/causal-audit",
             "runtime_plan_decision_approve": "/api/runtime/plan-decision-approve",
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
@@ -8581,6 +8582,14 @@ def mempalace_causal_commit(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def mempalace_causal_audit(payload: dict[str, Any]) -> dict[str, Any]:
+    provider = mempalace_provider()
+    subject = str(payload.get("subject") or "A9").strip() or "A9"
+    result = provider.audit_causal_memory_state(subject)
+    result["schema"] = "a9.control_api.mempalace_causal_audit.v1"
+    return result
+
+
 def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     enqueue_service_control_audit(
         {
@@ -9551,6 +9560,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, mempalace_causal_compile(payload))
             elif self.path == "/api/memory/mempalace/causal-commit":
                 self.write_json(200, mempalace_causal_commit(payload))
+            elif self.path == "/api/memory/mempalace/causal-audit":
+                self.write_json(200, mempalace_causal_audit(payload))
             elif self.path == "/api/runtime/plan-decision-approve":
                 self.write_json(200, runtime_plan_decision_approve(payload))
             elif self.path == "/api/runtime/plan-debate-next":

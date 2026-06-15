@@ -87,8 +87,11 @@ P7 NZX technical MVP
   outputs remain candidate memory, not truth. A dry-run/approved commit path now
   plans MemPalace-style KG temporal triples and role diary writes; actual writes
   require `approved_by`, `approval_reason` and `commit=true`. The remaining gap
-  is deeper contradiction/drift handling after commit; the first pre-commit
-  drift checker now blocks conflicting current KG facts before write.
+  is fully automated invalidation and contradiction repair. A first pre-commit
+  drift checker blocks conflicting current KG facts before write, and a
+  side-effect-free causal audit now scans the MemPalace KG after writes for
+  duplicate/conflicting current facts and emits monitor-approved invalidation
+  candidates.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.
