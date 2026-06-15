@@ -14,7 +14,7 @@ A9 context has five layers:
 2. task contracts
 3. evidence and logs
 4. reference and research
-5. archive and noise
+5. deleted noise
 
 Only layers 1 and 2 are default worker context. Layers 3 to 5 are read only
 when the task packet names the exact path and explains why it is needed.
@@ -38,9 +38,6 @@ These files define the current mainline:
 - `docs/requirements-review-closure.md`: review completion standard and
   debate-to-execution closure gate.
 - `docs/session-causal-memory.md`: causal changes, stale branches, current decision memory.
-- `docs/external-gpt/2026-06-04/intake.md`: accepted intake of the GPT review
-  package. It upgrades the next default route to P0 architecture decision
-  packet before further runtime/mobile/communication implementation.
 
 If these files conflict, resolve in this order:
 
@@ -52,24 +49,16 @@ If these files conflict, resolve in this order:
 6. `docs/decisions/ADR-0003-communication-foundation.md`
 7. `docs/requirements-review-closure.md`
 8. `docs/session-causal-memory.md`
-9. `docs/external-gpt/2026-06-04/intake.md`
-10. `docs/project.md`
-11. `原始想法需求.md`
+9. `docs/project.md`
+10. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.
 
 ## Task Contracts
 
-These files shape current work but are not global truth forever:
-
-- `docs/a9-current-role-review.md`
-- `docs/external-gpt/2026-06-04/A9_AgentOS_金融交易环境重构决策包.md`
-  when the current task is P0/P1/P2 route planning. Its implementation
-  suggestions are candidates until converted into ADRs and task contracts.
-- `docs/execution_next/0001-runtime-monitor-foundation-packet.md` is the
-  current first execution packet for monitor review. It does not authorize code
-  implementation until monitor approval creates the next implementation slice.
+Task packets in `.a9/tasks` and `.a9/runs` shape current work but are not
+global truth forever. Old docs-based stage packets were deleted.
 
 Task contracts must state whether the route is `debate_next` or
 `execution_next`. If the task contract is stale or contradicts canonical
@@ -81,24 +70,12 @@ These files are evidence indexes, not default prompt material:
 
 - `docs/session-raw-close-reading.md`
 - `docs/session-raw-summary.md`
-- `docs/communication-observation-log.md`
-- `docs/agent-runtime-observations.md`
 - `docs/mistakes.md`
 - `docs/copied-mechanisms.md`
 
-Evidence index files preserve pointers to facts and failure history. Full
-historical evidence has been moved under `docs/archive/evidence/`. Workers may
-read archived evidence only through bounded slices named by a task packet, such
-as a section, line range, run id, turn id, or specific finding.
-
-`docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`,
-`docs/session-causal-memory.md`, `docs/project.md`, `docs/mistakes.md`, and
-`docs/copied-mechanisms.md` are active indexes. Their full historical versions
-are archived and must not be treated as default context.
-
-Communication, requirements, reference-selection and MoE methodology docs are
-also active indexes after the 2026-06-13 cleanup. Full versions are under
-`docs/archive/2026-06-noise-reduction/`.
+Evidence index files preserve only the hot facts needed for current work.
+Old full archives and phase logs were deleted during cleanup. Workers must not
+assume a hidden archive can be read to recover context.
 
 The rule is: preserve evidence on disk, but do not hydrate it into worker
 context by default.
@@ -116,17 +93,6 @@ These files support decisions and copying strategy:
 - `session-governance.md`
 - `THIRD_PARTY_NOTICES.md`
 
-Archived research and old closures now live under:
-
-- `docs/archive/active-indexes/2026-06-15/`
-- `docs/archive/2026-06-history/`
-- `docs/archive/2026-06-noise-reduction/`
-- `docs/archive/2026-06-execution-results/`
-- `docs/archive/evidence/`
-
-They are not active task contracts or reference commands. Use them only as
-bounded evidence when a task names the exact file and reason.
-
 Research is not a command to build. A worker must extract a mechanism, compare
 it to A9's current requirement, and cite the exact source before copying.
 
@@ -135,7 +101,6 @@ it to A9's current requirement, and cite the exact source before copying.
 These are preserved source materials:
 
 - `docs/source-extracts/requirements-management-analysis-guide.txt`
-- `docs/source-extracts/original/requirements-management-analysis-guide.doc`
 - `archive/original-ideas/*`
 
 They are not stale garbage. They are raw source material and must be routed

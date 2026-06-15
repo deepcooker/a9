@@ -2,10 +2,6 @@
 
 This is the active project index. It is intentionally small.
 
-Full historical project document archive:
-
-`docs/archive/2026-06-noise-reduction/project-full-20260613.md`
-
 ## Current Identity
 
 A9 is currently a private 24-hour agent execution/control foundation.
@@ -80,4 +76,3 @@ Read in this order:
 
 Do not broadly read archive, raw session, full evidence or reference projects
 unless the task names a bounded slice.
-

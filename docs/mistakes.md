@@ -2,15 +2,11 @@
 
 This file is the active wrongbook pointer and small hot lane.
 
-Full historical wrongbook was archived to:
-
-`docs/archive/evidence/mistakes-full-20260613.md`
-
 ## Current Use
 
-- Do not read the full archive by default.
 - New real failure modes may be appended here as small active entries.
-- Periodically fold active entries into the archive and keep this file short.
+- Periodically fold active entries into current doctrine, then delete process
+  noise and keep this file short.
 - Tests and patch/apply examples may still reference `docs/mistakes.md`; keep
   this path alive.
 
@@ -29,4 +25,3 @@ Full historical wrongbook was archived to:
 ## Active Entries
 
 New entries after 2026-06-13 should go below.
-

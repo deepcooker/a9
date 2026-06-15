@@ -200,7 +200,7 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
             "operator_session schema enforcement",
             "operator object status transitions",
         ],
-        "evidence": "docs/communication-runtime-data-contract-v1.md Current Code Mapping",
+        "evidence": "docs/communication-governance-framework.md Current Code Mapping",
     },
     "node": {
         "status": "partial",
@@ -220,7 +220,7 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
             "host-key/auth failure handling for terminal states",
             "identity snapshots/replay",
         ],
-        "evidence": "docs/communication-runtime-data-contract-v1.md Current Code Mapping",
+        "evidence": "docs/communication-governance-framework.md Current Code Mapping",
     },
     "tmux_session": {
         "status": "missing",
@@ -230,7 +230,7 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
             "attached/detached lifecycle state",
             "session evidence join to command lifecycle",
         ],
-        "evidence": "docs/communication-runtime-data-contract-v1.md Current Code Mapping",
+        "evidence": "docs/communication-governance-framework.md Current Code Mapping",
     },
     "command": {
         "status": "partial",
@@ -288,7 +288,7 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
             "repair_action lifecycle state persistence",
             "audit before/after for repair_action mutations",
         ],
-        "evidence": "docs/communication-runtime-data-contract-v1.md Current Code Mapping",
+        "evidence": "docs/communication-governance-framework.md Current Code Mapping",
     },
     "audit_event": {
         "status": "partial",
@@ -315,7 +315,7 @@ COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE = {
             "authority-reducing transitions require operator identity evidence",
             "last_seen_at can only move forward unless explicitly reset",
         ],
-        "evidence": "docs/communication-runtime-model-closure.md",
+        "evidence": "docs/communication-governance-framework.md",
     },
     "event_cursor": {
         "mysql_authority": "a9_event_cursors",
@@ -330,7 +330,7 @@ COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE = {
             "next_last_id is monotonic non-decreasing for a stream+consumer pair",
             "gap_detected is not a terminal success state",
         ],
-        "evidence": "docs/communication-runtime-model-closure.md",
+        "evidence": "docs/communication-governance-framework.md",
     },
     "reconnect_state": {
         "mysql_authority": "a9_reconnect_states",
@@ -347,7 +347,7 @@ COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE = {
             "attempt must not decrease without explicit reset",
             "terminal SSH/auth/host-key failures must not auto-loop",
         ],
-        "evidence": "docs/communication-runtime-model-closure.md",
+        "evidence": "docs/communication-governance-framework.md",
     },
 }
 

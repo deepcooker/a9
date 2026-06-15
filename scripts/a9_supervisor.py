@@ -120,8 +120,6 @@ FORBIDDEN_SESSION_CONTEXT_PATHS = (
     "docs/session-raw-summary.md",
     "docs/session-raw-close-reading.md",
     "docs/session-causal-memory.md",
-    "docs/communication-observation-log.md",
-    "docs/agent-runtime-observations.md",
     "docs/mistakes.md",
     "/root/.codex/sessions",
     ".a9/external_sessions",
@@ -1967,7 +1965,7 @@ Hard rules:
 - Do not inline huge raw logs or whole reference repositories.
 - Do not search `.a9/tasks/done`, `.a9/worktrees`, or `.a9/runs` as broad roots; read only explicit evidence paths.
 - Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, or raw session logs unless phase is `session_refresh`/`session_close_reading`.
-- Do not read `docs/agent-runtime-observations.md`, `docs/communication-observation-log.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless bounded by prompt evidence plan.
+- Do not read `docs/session-causal-memory.md`, `docs/mistakes.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless bounded by prompt evidence plan.
 - Do not edit repository files with shell redirection, `tee`, or `sed -i`; output SEARCH/REPLACE blocks in final and let A9 deterministic apply write files.
 - Cite local source paths when borrowing ideas from reference projects.
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
@@ -4585,8 +4583,7 @@ def task_allows_session_context_reads(task: Task, command: str) -> bool:
         for path in task.allowed_paths
         if path
         in {
-            "docs/agent-runtime-observations.md",
-            "docs/communication-observation-log.md",
+            "docs/session-causal-memory.md",
             "docs/mistakes.md",
         }
     ]
@@ -10008,7 +10005,7 @@ Core rule:
 - Task frontmatter `allowed_paths` is the only write-scope authority. Prompt context (including active-plan `allowed_execution`) is advisory only.
 - Declared checks are authoritative. Do not add pytest or cargo unless they are explicitly declared in this task.
 - Do not use web search or browsing unless the task explicitly asks for internet research.
-- Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, `docs/session-raw-*`, raw session logs, `docs/agent-runtime-observations.md`, `docs/communication-observation-log.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
+- Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, `docs/session-raw-*`, raw session logs, `docs/session-causal-memory.md`, `docs/mistakes.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
 - Use `rg -n` first, then read small line windows only; avoid broad `sed` ranges and full-file dumps.
 - If `strict_worker_envelope: true` is present, final output must include:
   {{"protocolVersion":1,"ok":true,"status":"ok","output":{{"changed_files":[],"copied_mechanisms":[],"worker_commands_run":[],"supervisor_declared_checks":[],"next_slice":""}}}}

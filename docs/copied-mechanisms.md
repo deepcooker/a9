@@ -2,13 +2,8 @@
 
 This file is the active source/copy index.
 
-Full historical copied-mechanisms record was archived to:
-
-`docs/archive/evidence/copied-mechanisms-full-20260613.md`
-
 ## Current Use
 
-- Do not load the full archive into worker prompts.
 - For new copied mechanisms, add a small active entry here with source URL,
   commit, license, copied path, purpose and A9 adaptation.
 - Before direct source copy, also update vendor/source evidence as required by
@@ -30,4 +25,3 @@ Full historical copied-mechanisms record was archived to:
 ## Active Entries
 
 New entries after 2026-06-13 should go below.
-

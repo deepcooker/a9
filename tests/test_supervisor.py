@@ -4356,7 +4356,7 @@ Do the work.
                         "exception_flow": "wrong contract -> change_request.",
                         "acceptance": "queued tasks contain decision packet and allowed paths.",
                         "out_of_scope": "no production execution in backlog generation.",
-                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py docs/communication-observation-log.md",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py docs/mistakes.md",
                         "reference_entry": "requirements guide and planning-with-files.",
                         "change_record": "Debate ready; generate backlog.",
                     },
@@ -7082,7 +7082,7 @@ Findings are ready.
                         json.dumps(
                             {
                                 "item_type": "command_execution",
-                                "command": "/bin/bash -lc \"sed -n '1,120p' docs/communication-runtime-decision-packet.md\"",
+                                "command": "/bin/bash -lc \"sed -n '1,120p' docs/communication-governance-framework.md\"",
                             }
                         ),
                         json.dumps(
@@ -7102,7 +7102,7 @@ Findings are ready.
                 phase="reference_scan",
                 prompt="Inspect only bounded slices from allowed_paths. Use bounded rg/sed reads only on allowed_paths.",
                 checks=[],
-                allowed_paths=["docs/communication-runtime-decision-packet.md"],
+                allowed_paths=["docs/communication-governance-framework.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7149,7 +7149,7 @@ Findings are ready.
                 json.dumps(
                     {
                         "item_type": "command_execution",
-                        "command": "/bin/bash -lc \"sed -n '1,120p' docs/communication-runtime-decision-packet.md\"",
+                        "command": "/bin/bash -lc \"sed -n '1,120p' docs/communication-governance-framework.md\"",
                     }
                 )
                 + "\n",
@@ -7247,13 +7247,13 @@ Findings are ready.
                         json.dumps(
                             {
                                 "item_type": "command_execution",
-                                "command": "/bin/bash -lc 'tail -n 80 docs/agent-runtime-observations.md'",
+                                "command": "/bin/bash -lc 'tail -n 80 docs/session-causal-memory.md'",
                             }
                         ),
                         json.dumps(
                             {
                                 "item_type": "command_execution",
-                                "command": "/bin/bash -lc 'tail -n 80 docs/communication-observation-log.md'",
+                                "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
                             }
                         ),
                         json.dumps(
@@ -7280,10 +7280,10 @@ Findings are ready.
         self.assertEqual(result["status"], "pass")
         self.assertEqual(len(findings), 4)
         paths = {item["path"] for item in findings}
-        self.assertIn("docs/agent-runtime-observations.md", paths)
-        self.assertIn("docs/communication-observation-log.md", paths)
-        self.assertIn("archive/original-ideas/notes.md", paths)
+        self.assertIn("docs/session-causal-memory.md", paths)
         self.assertIn("docs/mistakes.md", paths)
+        self.assertIn("archive/original-ideas/notes.md", paths)
+        self.assertIn("docs/session-raw-summary.md", paths)
 
     def test_process_governance_allows_task_allowed_observation_log_bounded_read(self):
         mod = load_supervisor()
@@ -7296,7 +7296,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'rg -n \"worker cost\" "
-                            "docs/agent-runtime-observations.md | head -40'"
+                            "docs/session-causal-memory.md | head -40'"
                         ),
                     }
                 )
@@ -7307,7 +7307,7 @@ Findings are ready.
                 path=Path("task.md"),
                 task_id="bounded-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
-                allowed_paths=["docs/agent-runtime-observations.md"],
+                allowed_paths=["docs/session-causal-memory.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7325,7 +7325,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'cd /tmp/worktree && rg -n \"worker cost\" "
-                            "docs/agent-runtime-observations.md | head -n 40'"
+                            "docs/session-causal-memory.md | head -n 40'"
                         ),
                     }
                 )
@@ -7336,7 +7336,7 @@ Findings are ready.
                 path=Path("task.md"),
                 task_id="cd-bounded-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
-                allowed_paths=["docs/agent-runtime-observations.md"],
+                allowed_paths=["docs/session-causal-memory.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7354,7 +7354,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'cd /tmp/worktree && rg -n \"f0b4f31\" "
-                            "docs/agent-runtime-observations.md scripts/a9_supervisor.py "
+                            "docs/session-causal-memory.md scripts/a9_supervisor.py "
                             "tests/test_supervisor.py | head -n 40'"
                         ),
                     }
@@ -7367,7 +7367,7 @@ Findings are ready.
                 task_id="cd-multi-bounded-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
                 allowed_paths=[
-                    "docs/agent-runtime-observations.md",
+                    "docs/session-causal-memory.md",
                     "scripts/a9_supervisor.py",
                     "tests/test_supervisor.py",
                 ],
@@ -7389,7 +7389,7 @@ Findings are ready.
                         "command": (
                             "/bin/bash -lc 'cd /tmp/worktree && rg -n "
                             "\"evidence contract|rg -n .* | head -n 40|broad\" "
-                            "docs/agent-runtime-observations.md | head -n 80'"
+                            "docs/session-causal-memory.md | head -n 80'"
                         ),
                     }
                 )
@@ -7400,7 +7400,7 @@ Findings are ready.
                 path=Path("task.md"),
                 task_id="pipe-pattern-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
-                allowed_paths=["docs/agent-runtime-observations.md"],
+                allowed_paths=["docs/session-causal-memory.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7418,7 +7418,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc \"sed -n '146,230p;680,730p;1158,1210p' "
-                            "docs/agent-runtime-observations.md\""
+                            "docs/session-causal-memory.md\""
                         ),
                     }
                 )
@@ -7429,7 +7429,7 @@ Findings are ready.
                 path=Path("task.md"),
                 task_id="multi-window-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
-                allowed_paths=["docs/agent-runtime-observations.md"],
+                allowed_paths=["docs/session-causal-memory.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7447,7 +7447,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'git show 0b9ea34 -- scripts/a9_supervisor.py "
-                            "tests/test_supervisor.py docs/agent-runtime-observations.md'"
+                            "tests/test_supervisor.py docs/session-causal-memory.md'"
                         ),
                     }
                 )
@@ -7459,7 +7459,7 @@ Findings are ready.
                 task_id="git-show-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
                 allowed_paths=[
-                    "docs/agent-runtime-observations.md",
+                    "docs/session-causal-memory.md",
                     "scripts/a9_supervisor.py",
                     "tests/test_supervisor.py",
                 ],
@@ -8265,7 +8265,7 @@ Findings are ready.
 
         agent_runtime_observations = mod.live_worker_command_violation(
             task,
-            "/bin/bash -lc 'tail -n 80 docs/agent-runtime-observations.md'",
+            "/bin/bash -lc 'tail -n 80 docs/session-causal-memory.md'",
         )
         mistakes = mod.live_worker_command_violation(
             task,
@@ -11026,7 +11026,7 @@ role_signoff: product, business, architecture, test approved.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'rg -n \"evidence|contract\" "
-                            "docs/agent-runtime-observations.md | head -n 40'"
+                            "docs/session-causal-memory.md | head -n 40'"
                         ),
                     }
                 )
@@ -11041,7 +11041,7 @@ role_signoff: product, business, architecture, test approved.
                         'phase: "test"',
                         "checks:",
                         "allowed_paths:",
-                        '  - "docs/agent-runtime-observations.md"',
+                        '  - "docs/session-causal-memory.md"',
                         "---",
                         "strict_worker_envelope: true",
                         "Verify bounded observation log read.",
@@ -12607,8 +12607,8 @@ role_signoff: product, business, architecture, test approved.
                 "problem: role review found missing execution contract fields.\n"
             ),
             phase="implement",
-            checks=["test -f docs/a9-current-role-review.md"],
-            allowed_paths=["docs/a9-current-role-review.md"],
+            checks=["test -f docs/project.md"],
+            allowed_paths=["docs/project.md"],
         )
         summary = {
             "task_id": task.task_id,
@@ -12648,8 +12648,8 @@ role_signoff: product, business, architecture, test approved.
                 "role_signoff: mainline approves the contract.\n"
             ),
             phase="implement",
-            checks=["test -f docs/agent-runtime-observations.md"],
-            allowed_paths=["docs/agent-runtime-observations.md", "scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            checks=["test -f docs/session-causal-memory.md"],
+            allowed_paths=["docs/session-causal-memory.md", "scripts/a9_supervisor.py", "tests/test_supervisor.py"],
         )
         summary = {
             "task_id": task.task_id,
@@ -13669,7 +13669,7 @@ role_signoff: product, business, architecture, test approved.
                     prompt="strict_worker_envelope: true\nRecord smoke.",
                     phase="record",
                     checks=["git diff --check"],
-                    allowed_paths=["docs/communication-observation-log.md"],
+                    allowed_paths=["docs/mistakes.md"],
                 )
                 summary = {
                     "task_id": task.task_id,

@@ -1,8 +1,4 @@
-# A9 Communication Governance Framework Index
-
-Full framework archive:
-
-`docs/archive/2026-06-noise-reduction/communication-governance-framework-full-20260613.md`
+# A9 Communication Governance Framework
 
 ## Decision
 
@@ -37,4 +33,3 @@ Before adding more UI or product features, make sure each communication task has
 - evidence keys
 - bounded tests
 - monitor visibility
-

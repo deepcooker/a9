@@ -20,40 +20,24 @@ worker 不能把 `docs/` 下所有 markdown 都当主线读。大日志、raw se
 - `docs/requirements-review-closure.md`: 评审博弈什么时候算完成，以及何时允许进入 `execution_next`。
 - `docs/worker-method-packet.md`: analysis worker / execution worker 共用方法包，规定定案前博弈、定案后执行。
 - `docs/reference-adoption-decision.md`: 多轮博弈后的参考机制取舍，哪些现在进、哪些暂缓。
-- `docs/communication-governance-framework.md`: 通讯治理 active index。
-- `docs/communication-runtime-decision-packet.md`: 通讯运行时 active decision index。
-- `docs/communication-runtime-data-contract-v1.md`: 通讯运行时 active data-contract index。
-- `docs/communication-runtime-model-closure.md`: 运营闭包 active model index。
+- `docs/communication-governance-framework.md`: 通讯治理、运行时决策、数据合同和模型闭包。
 
 ## Evidence
 
 证据文档不是默认 prompt。只有任务包点名路径和 slice 时才读。
 
-- `docs/session-raw-summary.md`: raw session active summary；全文归档在
-  `docs/archive/evidence/session-raw-summary-full-20260613.md`。
-- `docs/session-raw-close-reading.md`: raw session 精读 active 索引；全文归档在
-  `docs/archive/evidence/session-raw-close-reading-full-20260613.md`。
-- `docs/agent-runtime-observations.md`: archived evidence pointer.
-- `docs/communication-observation-log.md`: archived evidence pointer.
-- `docs/copied-mechanisms.md`: 已抄机制 active 索引；全文归档在
-  `docs/archive/evidence/copied-mechanisms-full-20260613.md`。
-- `docs/mistakes.md`: 错题本 active 索引；全文归档在
-  `docs/archive/evidence/mistakes-full-20260613.md`。
+- `docs/session-raw-summary.md`: raw session active summary。
+- `docs/session-raw-close-reading.md`: raw session 精读 active 索引。
+- `docs/session-causal-memory.md`: 因果变迁和当前决策索引。
+- `docs/copied-mechanisms.md`: 已抄机制 active 索引。
+- `docs/mistakes.md`: 错题本 active 索引。
 
 ## Supporting
 
 - `docs/vendor-strategy.md`: license 和 vendor 规则。
 - `原始想法需求.md`: A9 原始哲学、产品脉络和需求源头。
 
-## Archive
+## Deleted Noise
 
-阶段性研究、旧评审、旧任务模板和非当前主线文档放在：
-
-- `docs/archive/active-indexes/2026-06-15/`
-- `docs/archive/2026-06-history/`
-- `docs/archive/2026-06-noise-reduction/`
-- `docs/archive/2026-06-execution-results/`
-- `docs/archive/evidence/`
-
-worker 默认不得读取 archive。只有任务包明确点名某个归档文件和 bounded slice 时，
-才允许把它作为历史证据。
+阶段性研究、旧评审、旧任务模板、归档全文和非当前主线文档已经物理删除。
+worker 不得假设还有隐藏归档可读。

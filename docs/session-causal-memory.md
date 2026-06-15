@@ -2,10 +2,6 @@
 
 This is the active causal-memory index. It is intentionally small.
 
-Full historical causal memory archive:
-
-`docs/archive/evidence/session-causal-memory-full-20260613.md`
-
 ## Current Causal State
 
 1. The original financial/quant ambition became infrastructure first.
@@ -31,8 +27,8 @@ Full historical causal memory archive:
   communication/control foundation.
 - A9 worker prompts should hydrate from small current indexes and bounded
   evidence slices, not from full historical markdown.
-- Full archives under `docs/archive/evidence/` and
-  `docs/archive/2026-06-noise-reduction/` are evidence, not hot context.
+- Old archives and phase logs were deleted; current truth must be preserved in
+  this hot causal index or in task/run evidence.
 - A9 highest-shape aggregation is debate evidence, not implementation approval.
 - `execution_next` requires a task contract; otherwise the route is
   `debate_next`.
@@ -51,8 +47,7 @@ After any new close-reading or major external review:
 
 1. Update `docs/session-raw-summary.md` with only the active distilled state.
 2. Update this file with causal changes, stale branches and active decisions.
-3. Archive large/full evidence under `docs/archive/`.
+3. Delete large/full process noise after extracting the current causal fact.
 4. Update `AGENTS.md`, `docs/project.md` or task packets only when rules or
    execution priority actually changed.
 5. Commit the cleanup before resuming long-running worker execution.
-

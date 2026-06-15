@@ -25,7 +25,7 @@ copy source files or modules into an A9-controlled vendor area and modify them.
 | --- | --- | --- |
 | Codex CLI | Apache-2.0 | Copy/adapt allowed with notice. Primary source for session, context, compaction, sandbox, event loop. |
 | Aider | Apache-2.0 | Copy/adapt allowed with notice. Good for repo map, token budget mechanics, and SEARCH/REPLACE edit discipline. Aider is not the "Lobster/OpenClaw" reference. |
-| OpenClaw / Lobster | MIT for `reference-projects/openclaw`; Apache-2.0 for the local `mem0/openclaw` plugin slice. | Copy/adapt allowed with the matching notice. Primary source for A9 24-hour runtime/gateway, managed flows, approval/resume, extension/plugin shape, policy attestation, skills, memory-core, memory-wiki, agent-friendly CLI JSON, and per-agent isolation. Historical reassessment is archived at `docs/archive/active-indexes/2026-06-15/reference-selection-reassessment.md`. |
+| OpenClaw / Lobster | MIT for `reference-projects/openclaw`; Apache-2.0 for the local `mem0/openclaw` plugin slice. | Copy/adapt allowed with the matching notice. Primary source for A9 24-hour runtime/gateway, managed flows, approval/resume, extension/plugin shape, policy attestation, skills, memory-core, memory-wiki, agent-friendly CLI JSON, and per-agent isolation. |
 | mem0 | Apache-2.0 | Copy/adapt allowed with notice. Good for memory API shape, extraction, hybrid retrieval, entity boost, history. |
 | LangGraph | MIT | Copy/adapt allowed with notice. Good for checkpoint/channel lineage and state graph patterns. |
 | OpenHands | MIT plus segmented enterprise license | Copy OSS areas only; avoid `enterprise/` unless separately reviewed. |
