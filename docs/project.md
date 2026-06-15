@@ -94,7 +94,11 @@ P7 NZX technical MVP
   candidates. Approved invalidation now has a dry-run/commit path that calls
   MemPalace `KnowledgeGraph.invalidate()` instead of deleting facts, preserving
   temporal history. The remaining gap is automatic stale-branch selection and
-  contradiction repair policy.
+  contradiction repair policy. A deterministic fixture-based causal-memory
+  eval now checks current/stale/causal labels and wrongbook candidates before
+  claiming compiler quality; it already caught and fixed two noise patterns:
+  negated stale phrases and unmarked neutral logs being promoted to current
+  facts.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

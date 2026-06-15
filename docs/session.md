@@ -55,7 +55,10 @@ Raw external Codex/operator session:
   plus monitor-approved invalidation candidates. Approved invalidation now has
   a dry-run/commit path that uses MemPalace `KnowledgeGraph.invalidate()` and
   keeps old facts as temporal history. Fully automated stale-branch selection
-  and contradiction repair remain unfinished.
+  and contradiction repair remain unfinished. `scripts/a9_mempalace_eval.py`
+  now provides a deterministic fixture eval for current/stale/causal labels and
+  wrongbook candidates; the first eval pass fixed negated stale phrases and
+  neutral-log current-fact promotion.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

@@ -433,6 +433,20 @@ def has_any(text: str, markers: Iterable[str]) -> bool:
     return any(marker.lower() in lower for marker in markers)
 
 
+def has_stale_signal(text: str) -> bool:
+    lower = text.lower()
+    for marker in STALE_MARKERS:
+        marker_lower = marker.lower()
+        index = lower.find(marker_lower)
+        if index < 0:
+            continue
+        prefix = lower[max(0, index - 12):index]
+        if any(negation in prefix for negation in ("没有", "无", "not ", "no ")):
+            continue
+        return True
+    return False
+
+
 def sentence_snippets(text: str, limit: int = 3) -> list[str]:
     normalized = re.sub(r"\s+", " ", text or "").strip()
     if not normalized:
@@ -507,7 +521,8 @@ def build_causal_memory_packet(
                 "valid_from": evidence_ref.get("timestamp"),
                 "source_drawer_id": evidence_ref.get("drawer_id"),
             }
-            if has_any(snippet, STALE_MARKERS):
+            stale_signal = has_stale_signal(snippet)
+            if stale_signal:
                 stale_branches.append(
                     {
                         **record,
@@ -515,7 +530,8 @@ def build_causal_memory_packet(
                         "kg_action": "invalidate_candidate",
                     }
                 )
-            if has_any(snippet, CAUSAL_MARKERS):
+            causal_signal = has_any(snippet, CAUSAL_MARKERS)
+            if causal_signal:
                 causal_changes.append(
                     {
                         "change": snippet,
@@ -524,7 +540,7 @@ def build_causal_memory_packet(
                         "kg_action": "add_change_candidate",
                     }
                 )
-            if has_any(snippet, CURRENT_MARKERS) or not has_any(snippet, STALE_MARKERS):
+            if has_any(snippet, CURRENT_MARKERS) or (causal_signal and not stale_signal):
                 current_facts.append(
                     {
                         **record,

@@ -1,0 +1,5 @@
+{"id":"current-mainline","content":"当前主线必须是 supervisor runtime 和 MemPalace-first session governance。","expected":{"current":true,"stale":false,"causal":false}}
+{"id":"stale-page-monitor","content":"旧页面监控路线已过期，不再作为 A9 主架构。","expected":{"current":false,"stale":true,"causal":false}}
+{"id":"causal-change","content":"因为交互窗口不可强控，所以 A9 从页面监控变成 supervisor + control API + evidence runtime。","expected":{"current":true,"stale":false,"causal":true}}
+{"id":"neutral-noise","content":"今天只是记录一个普通运行日志，没有需求结论、过期支线或因果变迁。","expected":{"current":false,"stale":false,"causal":false}}
+{"id":"approved-invalidation","content":"已完成 approved invalidation dry-run，必须通过 monitor approval 才能调用 KnowledgeGraph.invalidate。","expected":{"current":true,"stale":false,"causal":false}}
