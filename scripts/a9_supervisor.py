@@ -1989,14 +1989,23 @@ def mempalace_wakeup_budget_for_task(task: Task) -> int:
     return 1200
 
 
-def build_mempalace_wakeup_section(task: Task, budget_tokens: int = 1200) -> tuple[str, dict[str, Any]]:
-    """Build a small source-preserving wakeup section for worker resume."""
+def build_mempalace_recall_section(task: Task, budget_tokens: int = 1200) -> tuple[str, dict[str, Any]]:
+    """Build a protocol-shaped MemPalace recall section for worker context.
+
+    MemPalace's official pattern is layered: search returns verbatim drawer
+    candidates, get_drawer hydrates exact content, KG/diary remain separate
+    continuity channels, and recall is never promoted to truth. A9 injects a
+    bounded slice of that protocol instead of a flat summary.
+    """
     meta: dict[str, Any] = {
         "enabled": mempalace_wakeup_enabled(),
         "status": "disabled",
         "source": str(MEMPALACE_DRAWERS_PATH),
         "evidence_refs": [],
+        "search_hits": [],
+        "hydrated_drawers": [],
         "budget_tokens": budget_tokens,
+        "protocol": "mempalace_recall_packet_v1",
     }
     if not meta["enabled"]:
         return "", meta
@@ -2010,36 +2019,94 @@ def build_mempalace_wakeup_section(task: Task, budget_tokens: int = 1200) -> tup
     query = f"{task.task_id} {task.phase} {truncate_to_token_budget(task.prompt, 240, keep='head')}"
     try:
         provider = mempalace_provider_module()
-        pack = provider.build_wakeup(MEMPALACE_DRAWERS_PATH, query=query, limit=3)
+        if hasattr(provider, "build_recall_packet"):
+            pack = provider.build_recall_packet(MEMPALACE_DRAWERS_PATH, query=query, limit=4, hydrate=2)
+        else:
+            pack = provider.build_wakeup(MEMPALACE_DRAWERS_PATH, query=query, limit=3)
     except Exception as exc:
         meta["status"] = "error"
         meta["error"] = f"{type(exc).__name__}: {exc}"
         return "", meta
-    recalls = pack.get("recall") if isinstance(pack, dict) else []
-    refs = pack.get("evidence_refs") if isinstance(pack, dict) else []
+    recalls = pack.get("fallback_recall") if isinstance(pack, dict) else []
+    if not isinstance(recalls, list):
+        recalls = pack.get("recall") if isinstance(pack, dict) else []
+    refs = pack.get("fallback_evidence_refs") if isinstance(pack, dict) else []
+    if not isinstance(refs, list):
+        refs = pack.get("evidence_refs") if isinstance(pack, dict) else []
+    search_hits = pack.get("search_hits") if isinstance(pack, dict) else []
+    hydrated_drawers = pack.get("hydrated_drawers") if isinstance(pack, dict) else []
+    official_protocol = pack.get("official_protocol") if isinstance(pack, dict) else []
     meta.update(
         {
             "status": "ok",
             "schema": pack.get("schema") if isinstance(pack, dict) else "",
             "query": query,
             "truth_policy": pack.get("truth_policy") if isinstance(pack, dict) else "recall_not_truth",
+            "official_protocol": official_protocol if isinstance(official_protocol, list) else [],
+            "search_hit_count": len(search_hits) if isinstance(search_hits, list) else 0,
+            "hydrated_drawer_count": len(hydrated_drawers) if isinstance(hydrated_drawers, list) else 0,
             "recall_count": len(recalls) if isinstance(recalls, list) else 0,
             "evidence_refs": refs if isinstance(refs, list) else [],
+            "search_hits": search_hits if isinstance(search_hits, list) else [],
+            "hydrated_drawers": hydrated_drawers if isinstance(hydrated_drawers, list) else [],
         }
     )
     lines = [
-        "MemPalace wakeup evidence is recall, not truth.",
-        "Use it only as a source-preserving recovery hint; task contract and allowed paths remain authoritative.",
+        "MemPalace recall protocol evidence is recall, not truth.",
+        "Use it only as a layered, source-preserving recovery hint; task contract and allowed paths remain authoritative.",
         "",
         f"query: {query}",
         "truth_policy: recall_not_truth",
+        "protocol_layers:",
+        "- wakeup/start context stays small",
+        "- search_hits are candidate drawer IDs with source hashes",
+        "- hydrated_drawers are exact drawer text selected from top hits",
+        "- fallback_evidence_refs keep raw JSONL/source hash auditability",
+        "- KG/diary are separate continuity layers and are not implied by this packet",
+        "",
         "must_not_do:",
         "- do not inject full raw recall into execution workers",
         "- do not replace raw JSONL/source hashes with summaries",
         "- do not treat old recalled decisions as current unless validated by task evidence",
         "",
-        "evidence_refs:",
+        "search_hits:",
     ]
+    if isinstance(search_hits, list):
+        for hit in search_hits[:4]:
+            if not isinstance(hit, dict):
+                continue
+            lines.append(
+                "- "
+                f"drawer_id={hit.get('drawer_id')} "
+                f"source_ref={hit.get('source_ref')} "
+                f"role={hit.get('role')} "
+                f"distance={hit.get('distance')} "
+                f"content_hash={hit.get('content_hash')}"
+            )
+    lines.extend(
+        [
+            "",
+            "hydrated_drawers:",
+        ]
+    )
+    if isinstance(hydrated_drawers, list):
+        for drawer in hydrated_drawers[:2]:
+            if not isinstance(drawer, dict):
+                continue
+            metadata = drawer.get("metadata") if isinstance(drawer.get("metadata"), dict) else {}
+            content = str(drawer.get("content") or "")
+            lines.append(
+                "- "
+                f"drawer_id={drawer.get('drawer_id')} "
+                f"source_ref={metadata.get('source_ref')} "
+                f"content={truncate_to_token_budget(content, 220, keep='head')}"
+            )
+    lines.extend(
+        [
+            "",
+            "fallback_evidence_refs:",
+        ]
+    )
     for ref in meta["evidence_refs"][:3]:
         if not isinstance(ref, dict):
             continue
@@ -2051,7 +2118,7 @@ def build_mempalace_wakeup_section(task: Task, budget_tokens: int = 1200) -> tup
             f"content_hash={ref.get('content_hash')}"
         )
     lines.append("")
-    lines.append("recall_preview:")
+    lines.append("fallback_recall_preview:")
     if isinstance(recalls, list):
         for item in recalls[:3]:
             if not isinstance(item, dict):
@@ -2065,6 +2132,11 @@ def build_mempalace_wakeup_section(task: Task, budget_tokens: int = 1200) -> tup
             )
     body = truncate_to_token_budget("\n".join(lines), budget_tokens, keep="head")
     return body, meta
+
+
+def build_mempalace_wakeup_section(task: Task, budget_tokens: int = 1200) -> tuple[str, dict[str, Any]]:
+    """Backward-compatible wrapper for older callers/tests."""
+    return build_mempalace_recall_section(task, budget_tokens=budget_tokens)
 
 
 def build_context_packet(task: Task) -> dict[str, Any]:
@@ -2132,7 +2204,7 @@ LangGraph/mem0/OpenHands/Continue complement persistence:
             section_budgets.get("method", 0),
         )
     mempalace_wakeup_budget = mempalace_wakeup_budget_for_task(task)
-    mempalace_wakeup_body, mempalace_wakeup_meta = build_mempalace_wakeup_section(
+    mempalace_wakeup_body, mempalace_wakeup_meta = build_mempalace_recall_section(
         task,
         budget_tokens=mempalace_wakeup_budget,
     )
@@ -2259,7 +2331,7 @@ Hard rules:
                 "body": previous_context or "(none)",
             },
             {
-                "name": "MemPalace Wakeup Evidence",
+                "name": "MemPalace Recall Protocol",
                 "source": mempalace_wakeup_meta.get("source", "none"),
                 "role": "memory",
                 "budget_tokens": mempalace_wakeup_budget,
@@ -2305,6 +2377,7 @@ Hard rules:
         "repo_map": repo_map_meta,
         "context_router": context_router_meta,
         "mempalace_wakeup": mempalace_wakeup_meta,
+        "mempalace_recall": mempalace_wakeup_meta,
     }
 
 
@@ -3107,6 +3180,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path, *, lease_path: Path | 
             "repo_map": context_packet["repo_map"],
             "context_router": context_packet.get("context_router", {}),
             "mempalace_wakeup": context_packet.get("mempalace_wakeup", {}),
+            "mempalace_recall": context_packet.get("mempalace_recall", {}),
             "reference_gate": reference_gate,
         }
     started = time.monotonic()
@@ -3338,6 +3412,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path, *, lease_path: Path | 
         "repo_map": context_packet["repo_map"],
         "context_router": context_packet.get("context_router", {}),
         "mempalace_wakeup": context_packet.get("mempalace_wakeup", {}),
+        "mempalace_recall": context_packet.get("mempalace_recall", {}),
         "reference_gate": reference_gate,
     }
 
@@ -5955,6 +6030,7 @@ def build_runtime_monitor_contract(task: Task, run_dir: Path, summary: dict[str,
             "section_budgets": worker.get("prompt_section_budgets", {}),
             "context_router": worker.get("context_router", {}),
             "mempalace_wakeup": worker.get("mempalace_wakeup", {}),
+            "mempalace_recall": worker.get("mempalace_recall", {}),
         },
         "reference_slices": {
             "declared_reference_paths": prompt_reference_paths(task.prompt),

@@ -73,12 +73,13 @@ P7 NZX technical MVP
 - `scripts/a9_codex_session_adapter.py` converts Codex raw JSONL into
   MemPalace-compatible per-message drawer records without treating recall as
   truth.
-- `scripts/a9_mempalace_provider.py` exposes the first runtime-facing
-  MemPalace provider facade: status, source-preserving search and wakeup over
-  drawer JSONL. Native MemPalace remains optional until its dependencies are
-  installed.
-- `scripts/a9_supervisor.py` injects bounded MemPalace wakeup evidence into
-  worker context. Recall is a recovery hint, not task authority.
+- `scripts/a9_mempalace_provider.py` exposes the runtime-facing MemPalace
+  facade: status, source-preserving search, wakeup and official-style recall
+  packets. Native MemPalace is the primary recall path; drawer JSONL remains
+  deterministic fallback evidence.
+- `scripts/a9_supervisor.py` injects bounded MemPalace recall protocol evidence
+  into worker context: search hits, hydrated drawer snippets and fallback raw
+  evidence refs stay separated. Recall is a recovery hint, not task authority.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

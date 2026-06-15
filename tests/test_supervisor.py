@@ -874,7 +874,7 @@ Do the work.
         self.assertIn("context_router", packet)
         self.assertIn("blocked by context router", packet["prompt"])
 
-    def test_build_context_packet_includes_mempalace_wakeup_evidence(self):
+    def test_build_context_packet_includes_mempalace_recall_protocol(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             tmp_root = Path(tmp)
@@ -911,6 +911,49 @@ Do the work.
                 prompt="continue MemPalace wakeup evidence implementation",
                 allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
             )
+            fake_provider = mock.Mock()
+            fake_provider.build_recall_packet.return_value = {
+                "schema": "a9.mempalace_recall_packet.v1",
+                "status": "ok",
+                "query": "mempalace",
+                "truth_policy": "recall_not_truth",
+                "official_protocol": ["verbatim drawer hits", "drawer_id hydration"],
+                "search_hits": [
+                    {
+                        "drawer_id": "native-d1",
+                        "source_ref": "session.jsonl:10",
+                        "role": "assistant",
+                        "distance": 0.12,
+                        "content_hash": "nativehash",
+                        "content": "native preview",
+                    }
+                ],
+                "hydrated_drawers": [
+                    {
+                        "drawer_id": "native-d1",
+                        "content": "Hydrated drawer exact text should be bounded and source preserving.",
+                        "metadata": {"source_ref": "session.jsonl:10", "content_hash": "nativehash"},
+                    }
+                ],
+                "fallback_evidence_refs": [
+                    {
+                        "source_ref": "session.jsonl:10",
+                        "source_sha256": "sourcehash",
+                        "content_hash": "contenthash",
+                        "role": "assistant",
+                        "event_kind": "message",
+                        "score": 9,
+                    }
+                ],
+                "fallback_recall": [
+                    {
+                        "source_ref": "session.jsonl:10",
+                        "role": "assistant",
+                        "event_kind": "message",
+                        "content": "MemPalace wakeup evidence keeps recall separate from truth.",
+                    }
+                ],
+            }
 
             original_root = mod.ROOT
             original_done_dir = mod.DONE_DIR
@@ -919,16 +962,27 @@ Do the work.
                 mod.ROOT = tmp_root
                 mod.DONE_DIR = tmp_root / ".a9" / "tasks" / "done"
                 mod.MEMPALACE_DRAWERS_PATH = drawers
-                packet = mod.build_context_packet(task)
+                with mock.patch.object(mod, "mempalace_provider_module", return_value=fake_provider):
+                    packet = mod.build_context_packet(task)
             finally:
                 mod.ROOT = original_root
                 mod.DONE_DIR = original_done_dir
                 mod.MEMPALACE_DRAWERS_PATH = original_drawers
 
-        self.assertIn("MemPalace Wakeup Evidence", packet["prompt"])
+        self.assertIn("MemPalace Recall Protocol", packet["prompt"])
         self.assertIn("recall, not truth", packet["prompt"])
+        self.assertIn("search_hits:", packet["prompt"])
+        self.assertIn("hydrated_drawers:", packet["prompt"])
+        self.assertIn("fallback_evidence_refs:", packet["prompt"])
+        self.assertIn("drawer_id=native-d1", packet["prompt"])
         self.assertIn("source_ref=session.jsonl:10", packet["prompt"])
         self.assertEqual(packet["mempalace_wakeup"]["status"], "ok")
+        self.assertEqual(packet["mempalace_recall"]["status"], "ok")
+        self.assertEqual(packet["mempalace_recall"]["protocol"], "mempalace_recall_packet_v1")
+        self.assertEqual(packet["mempalace_recall"]["search_hit_count"], 1)
+        self.assertEqual(packet["mempalace_recall"]["hydrated_drawer_count"], 1)
+        self.assertEqual(packet["mempalace_recall"]["search_hits"][0]["drawer_id"], "native-d1")
+        self.assertIn("drawer_id hydration", packet["mempalace_recall"]["official_protocol"])
         self.assertEqual(packet["mempalace_wakeup"]["evidence_refs"][0]["content_hash"], "contenthash")
 
     def test_build_context_packet_slims_observation_only_test_context(self):
@@ -953,9 +1007,10 @@ Do the work.
         self.assertLessEqual(packet["section_budgets"]["doctrine"], 700)
         self.assertLessEqual(packet["section_budgets"]["reference_mechanisms"], 350)
         mempalace_section = next(
-            section for section in packet["context_router"]["sections"] if section["name"] == "MemPalace Wakeup Evidence"
+            section for section in packet["context_router"]["sections"] if section["name"] == "MemPalace Recall Protocol"
         )
         self.assertEqual(mempalace_section["budget_tokens"], 0)
+        self.assertEqual(packet["mempalace_recall"]["status"], "skipped_observation_only")
 
     def test_build_context_packet_uses_canonical_context_index_for_doctrine_by_default(self):
         mod = load_supervisor()
@@ -2407,6 +2462,12 @@ Do the work.
                     "prompt_budget_tokens": 24000,
                     "prompt_section_budgets": {"task": 4000},
                     "context_router": {"strategy": "test"},
+                    "mempalace_recall": {
+                        "protocol": "mempalace_recall_packet_v1",
+                        "status": "ok",
+                        "search_hit_count": 2,
+                        "hydrated_drawer_count": 1,
+                    },
                     "reference_gate": {"status": "pass", "output_path": str(run_dir / "reference_gate.json")},
                 },
                 "worker_envelope": {"status": "pass", "output_path": str(run_dir / "worker_envelope.json")},
@@ -2445,6 +2506,8 @@ Do the work.
         self.assertEqual(contract["command_envelope"]["command_id"], "runtime-contract-test")
         self.assertEqual(contract["command_envelope"]["idempotency_key"], "runtime-contract-test:1")
         self.assertEqual(contract["monitor"]["next_action"], "continue")
+        self.assertEqual(contract["worker_prompt"]["mempalace_recall"]["protocol"], "mempalace_recall_packet_v1")
+        self.assertEqual(contract["worker_prompt"]["mempalace_recall"]["hydrated_drawer_count"], 1)
         self.assertTrue(contract["guardrails"]["page_details_frozen"])
         self.assertTrue(contract["guardrails"]["no_nzx_business_code"])
 
