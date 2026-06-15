@@ -3256,12 +3256,14 @@ Do the work.
             old_done = mod.DONE_DIR
             old_heartbeat = mod.DAEMON_HEARTBEAT_PATH
             old_health = mod.WORKER_TRANSPORT_HEALTH_PATH
+            old_lock = mod.RUN_LOOP_LOCK_PATH
             try:
                 mod.QUEUE_DIR = base / "queue"
                 mod.RUNNING_DIR = base / "running"
                 mod.DONE_DIR = base / "done"
                 mod.DAEMON_HEARTBEAT_PATH = base / "daemon_heartbeat.json"
                 mod.WORKER_TRANSPORT_HEALTH_PATH = base / "worker_transport_health.json"
+                mod.RUN_LOOP_LOCK_PATH = base / "run_loop.lock"
                 mod.ensure_dirs()
                 (mod.QUEUE_DIR / "blocked.md").write_text("---\nid: blocked\n---\nDo work.\n", encoding="utf-8")
                 future = (datetime.now(timezone.utc) + timedelta(seconds=60)).isoformat()
@@ -3292,8 +3294,37 @@ Do the work.
                 mod.DONE_DIR = old_done
                 mod.DAEMON_HEARTBEAT_PATH = old_heartbeat
                 mod.WORKER_TRANSPORT_HEALTH_PATH = old_health
+                mod.RUN_LOOP_LOCK_PATH = old_lock
 
         self.assertEqual(heartbeat["state"], "transport-cooldown")
+
+    def test_run_loop_exits_when_another_owner_holds_lock(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_heartbeat = mod.DAEMON_HEARTBEAT_PATH
+            old_lock = mod.RUN_LOOP_LOCK_PATH
+            try:
+                mod.DAEMON_HEARTBEAT_PATH = base / "daemon_heartbeat.json"
+                mod.RUN_LOOP_LOCK_PATH = base / "run_loop.lock"
+                with mod.acquire_run_loop_lock() as first_lock:
+                    self.assertEqual(first_lock["status"], "acquired")
+                    args = argparse.Namespace(
+                        sleep_seconds=0,
+                        max_tasks=0,
+                        keep_going_on_error=True,
+                        auto_next=False,
+                        exit_when_idle=True,
+                    )
+                    with mock.patch.object(mod, "run_loop_locked", side_effect=AssertionError("second owner should not run")):
+                        code = mod.run_loop(args)
+                heartbeat = mod.read_json_file(mod.DAEMON_HEARTBEAT_PATH)
+            finally:
+                mod.DAEMON_HEARTBEAT_PATH = old_heartbeat
+                mod.RUN_LOOP_LOCK_PATH = old_lock
+
+        self.assertEqual(code, 0)
+        self.assertEqual(heartbeat["state"], "owner-exists")
 
     def test_run_loop_stays_alive_when_idle_unless_exit_when_idle(self):
         mod = load_supervisor()
@@ -3304,12 +3335,14 @@ Do the work.
             old_done = mod.DONE_DIR
             old_heartbeat = mod.DAEMON_HEARTBEAT_PATH
             old_guard = mod.AUTO_LOOP_GUARD_PATH
+            old_lock = mod.RUN_LOOP_LOCK_PATH
             try:
                 mod.QUEUE_DIR = base / "queue"
                 mod.RUNNING_DIR = base / "running"
                 mod.DONE_DIR = base / "done"
                 mod.DAEMON_HEARTBEAT_PATH = base / "daemon_heartbeat.json"
                 mod.AUTO_LOOP_GUARD_PATH = base / "auto_loop_guard.json"
+                mod.RUN_LOOP_LOCK_PATH = base / "run_loop.lock"
                 mod.ensure_dirs()
                 args = argparse.Namespace(
                     sleep_seconds=0,
@@ -3328,6 +3361,7 @@ Do the work.
                 mod.DONE_DIR = old_done
                 mod.DAEMON_HEARTBEAT_PATH = old_heartbeat
                 mod.AUTO_LOOP_GUARD_PATH = old_guard
+                mod.RUN_LOOP_LOCK_PATH = old_lock
 
         self.assertEqual(heartbeat["state"], "idle")
         self.assertEqual(heartbeat["detail"], "no queued tasks")

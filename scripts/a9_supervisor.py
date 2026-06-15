@@ -9,6 +9,8 @@ the interactive UI.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import fnmatch
 import hashlib
 import importlib.util
@@ -52,6 +54,7 @@ EVAL_STORE_OVERRIDES_DIR = EVAL_STORE_DIR / "overrides"
 PROGRESS_PATH = STATE_DIR / "progress.json"
 DAEMON_HEARTBEAT_PATH = STATE_DIR / "daemon_heartbeat.json"
 AUTO_LOOP_GUARD_PATH = STATE_DIR / "auto_loop_guard.json"
+RUN_LOOP_LOCK_PATH = STATE_DIR / "run_loop.lock"
 RUNTIME_CONTROL_STATE_PATH = STATE_DIR / "runtime" / "control_state.json"
 WORKER_MODEL_POLICY_PATH = STATE_DIR / "runtime" / "worker_model_policy.json"
 WORKER_TRANSPORT_POLICY_PATH = STATE_DIR / "runtime" / "worker_transport_policy.json"
@@ -11878,7 +11881,58 @@ def run_one(*, auto_next: bool = False) -> int:
     return 1
 
 
+@contextlib.contextmanager
+def acquire_run_loop_lock() -> Any:
+    ensure_dirs()
+    RUN_LOOP_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    handle = RUN_LOOP_LOCK_PATH.open("a+", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.seek(0)
+            owner_text = handle.read().strip()
+            owner: dict[str, Any] = {}
+            if owner_text:
+                try:
+                    owner = json.loads(owner_text)
+                except json.JSONDecodeError:
+                    owner = {"raw": owner_text}
+            yield {
+                "schema": "a9.run_loop_lock.v1",
+                "status": "already_locked",
+                "lock_path": str(RUN_LOOP_LOCK_PATH),
+                "owner_pid": owner.get("pid"),
+                "owner_started_at": owner.get("started_at"),
+            }
+            return
+        owner = {
+            "schema": "a9.run_loop_lock.v1",
+            "pid": os.getpid(),
+            "started_at": utc_now(),
+        }
+        handle.seek(0)
+        handle.truncate()
+        handle.write(json.dumps(owner, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.flush()
+        yield {"schema": "a9.run_loop_lock.v1", "status": "acquired", "lock_path": str(RUN_LOOP_LOCK_PATH), **owner}
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
 def run_loop(args: argparse.Namespace) -> int:
+    with acquire_run_loop_lock() as lock:
+        if lock.get("status") != "acquired":
+            print(json.dumps(lock, ensure_ascii=False, indent=2, sort_keys=True))
+            write_daemon_heartbeat("owner-exists", detail=str(lock.get("owner_pid") or ""))
+            return 0
+        return run_loop_locked(args)
+
+
+def run_loop_locked(args: argparse.Namespace) -> int:
     ensure_dirs()
     completed = 0
     while True:
