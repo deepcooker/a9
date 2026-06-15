@@ -118,6 +118,11 @@ P7 NZX technical MVP
   diagnostics: MemPalace causal audit summary plus bounded repair proposals, so
   monitor/mobile can see whether closure is blocked by stale/conflicting memory
   before deciding to invalidate or generate more backlog.
+- Active-plan backlog generation no longer treats retryable execution-chain
+  failures as permanent closure. Budget/read-scope failures and orphaned
+  `no_live_worker_process` interruptions now produce a narrower retry prompt
+  with the previous failure reason and bounded read scope, while non-retryable
+  generation failures still wait for monitor review.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

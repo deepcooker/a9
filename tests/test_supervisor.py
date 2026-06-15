@@ -4703,6 +4703,132 @@ Do the work.
         self.assertIn("tests/test_supervisor.py", parsed.allowed_paths)
         self.assertFalse(parsed.auto_next_allowed)
 
+    def test_plan_backlog_generation_retries_after_retryable_budget_with_narrow_prompt(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.RUNS_DIR.mkdir(parents=True)
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-budget-retry",
+                    goal_id="goal-budget-retry",
+                    contract={
+                        "problem": "Need next backlog after previous generation hit read budget.",
+                        "why_now": "Budget observations must narrow retry instead of stopping the business lane.",
+                        "must": "Retry backlog generation with bounded context.",
+                        "system_requirement": "retryable budget failure creates a narrower backlog-generation task.",
+                        "data_shape": "run summary status and active plan backlog state.",
+                        "normal_flow": "budget failure -> narrow retry -> decided backlog candidates.",
+                        "exception_flow": "repeated budget failure stops for monitor review.",
+                        "acceptance": "retry prompt carries previous reason and forbidden paths.",
+                        "out_of_scope": "unbounded broad reads.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 budget observation policy.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-budget-retry",
+                        "exec-002-mechanism_extract-plan-budget-retry",
+                        "exec-003-vendor_import-plan-budget-retry",
+                        "exec-004-implement-plan-budget-retry",
+                        "exec-005-test-plan-budget-retry",
+                        "exec-006-record-plan-budget-retry",
+                        "exec-backlog-generation-plan-budget-retry-001",
+                    ]
+                )
+                run_dir = mod.RUNS_DIR / "budget-retry-run"
+                run_dir.mkdir()
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "exec-backlog-generation-plan-budget-retry-001",
+                        "status": "retryable-worker-budget",
+                        "worker_failure": {
+                            "category": "budget",
+                            "reason": "worker read a path outside the task's explicit allowed read scope",
+                        },
+                        "process_governance": {
+                            "findings": [
+                                {"kind": "read_outside_allowed_paths", "path": "docs/a9-current-decision-packet.md"}
+                            ]
+                        },
+                    },
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-budget-retry-002")
+        self.assertIn("previous_backlog_generation_status: retryable-worker-budget", items[0]["prompt"])
+        self.assertIn("previous_forbidden_read_paths: docs/a9-current-decision-packet.md", items[0]["prompt"])
+        self.assertIn("retry_scope: use docs/project.md, docs/method.md, docs/session.md", items[0]["prompt"])
+
+    def test_plan_backlog_generation_retries_after_orphaned_worker_interruption(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.RUNS_DIR.mkdir(parents=True)
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-interrupt-retry",
+                    goal_id="goal-interrupt-retry",
+                    contract={
+                        "problem": "Backlog generation worker was orphaned by process restart.",
+                        "why_now": "24h lane should resume after no-live-worker interruption.",
+                        "must": "Retry interrupted backlog generation.",
+                        "system_requirement": "orphaned no-live-worker generation creates a bounded retry task.",
+                        "data_shape": "latest generation summary with interrupted worker_failure.",
+                        "normal_flow": "interrupted worker -> narrow retry.",
+                        "exception_flow": "repeated same interruption stops for monitor review.",
+                        "acceptance": "retry prompt carries interruption reason.",
+                        "out_of_scope": "generic goal fallback.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 interrupted worker recovery.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-interrupt-retry",
+                        "exec-002-mechanism_extract-plan-interrupt-retry",
+                        "exec-003-vendor_import-plan-interrupt-retry",
+                        "exec-004-implement-plan-interrupt-retry",
+                        "exec-005-test-plan-interrupt-retry",
+                        "exec-006-record-plan-interrupt-retry",
+                        "exec-backlog-generation-plan-interrupt-retry-001",
+                    ]
+                )
+                run_dir = mod.RUNS_DIR / "interrupt-retry-run"
+                run_dir.mkdir()
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "exec-backlog-generation-plan-interrupt-retry-001",
+                        "status": "retryable-worker-interrupted",
+                        "worker_failure": {
+                            "category": "interrupted",
+                            "reason": "no_live_worker_process",
+                        },
+                    },
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-interrupt-retry-002")
+        self.assertIn("previous_backlog_generation_status: retryable-worker-interrupted", items[0]["prompt"])
+        self.assertIn("previous_interruption_reason: no_live_worker_process", items[0]["prompt"])
+
     def test_plan_backlog_add_persists_item_and_next_marks_queued(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

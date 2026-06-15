@@ -12816,6 +12816,61 @@ def latest_backlog_generation_summary(plan_ref: str) -> dict[str, Any]:
     return summaries[0][1]
 
 
+def backlog_generation_retryable_budget_summary(summary: dict[str, Any]) -> bool:
+    status = str(summary.get("status") or "")
+    worker_failure = summary.get("worker_failure") if isinstance(summary.get("worker_failure"), dict) else {}
+    return status == "retryable-worker-budget" or worker_failure.get("category") == "budget"
+
+
+def backlog_generation_retryable_interrupted_summary(summary: dict[str, Any]) -> bool:
+    status = str(summary.get("status") or "")
+    worker_failure = summary.get("worker_failure") if isinstance(summary.get("worker_failure"), dict) else {}
+    return (
+        status == "retryable-worker-interrupted"
+        and worker_failure.get("category") == "interrupted"
+        and worker_failure.get("reason") == "no_live_worker_process"
+    )
+
+
+def backlog_generation_retryable_budget_count(plan_ref: str) -> int:
+    prefix = f"exec-backlog-generation-{plan_ref}-"
+    count = 0
+    for summary_path in RUNS_DIR.glob("*/summary.json"):
+        data = read_json_file(summary_path)
+        if not data:
+            continue
+        task_id = str(data.get("task_id") or "")
+        if prefix not in task_id:
+            continue
+        if backlog_generation_retryable_budget_summary(data):
+            count += 1
+    return count
+
+
+def backlog_generation_consecutive_retryable_interrupted_count(plan_ref: str) -> int:
+    prefix = f"exec-backlog-generation-{plan_ref}-"
+    summaries: list[tuple[float, dict[str, Any]]] = []
+    for summary_path in RUNS_DIR.glob("*/summary.json"):
+        try:
+            mtime = summary_path.stat().st_mtime
+        except OSError:
+            continue
+        data = read_json_file(summary_path)
+        if not data:
+            continue
+        task_id = str(data.get("task_id") or "")
+        if prefix not in task_id:
+            continue
+        summaries.append((mtime, data))
+    summaries.sort(key=lambda item: item[0], reverse=True)
+    count = 0
+    for _, summary in summaries:
+        if not backlog_generation_retryable_interrupted_summary(summary):
+            break
+        count += 1
+    return count
+
+
 def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str]) -> bool:
     prefix = f"exec-backlog-generation-{plan_ref}-"
     if not any(prefix in str(task_id) for task_id in generated_task_ids):
@@ -12823,6 +12878,10 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str])
     summary = latest_backlog_generation_summary(plan_ref)
     if not summary:
         return False
+    if backlog_generation_retryable_budget_summary(summary):
+        return backlog_generation_retryable_budget_count(plan_ref) < 3
+    if backlog_generation_retryable_interrupted_summary(summary):
+        return backlog_generation_consecutive_retryable_interrupted_count(plan_ref) < 3
     if str(summary.get("status") or "") != "pass":
         return False
     plan_update = summary.get("active_plan_update", {})
@@ -12846,6 +12905,34 @@ def plan_backlog_generation_continuation_item(
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
     if not backlog_generation_can_continue(plan_ref, generated_task_ids):
         return None
+    latest_generation = latest_backlog_generation_summary(plan_ref)
+    retry_budget = backlog_generation_retryable_budget_summary(latest_generation)
+    retry_interrupted = backlog_generation_retryable_interrupted_summary(latest_generation)
+    retry_lines: list[str] = []
+    if retry_budget:
+        worker_failure = latest_generation.get("worker_failure") if isinstance(latest_generation.get("worker_failure"), dict) else {}
+        process = latest_generation.get("process_governance") if isinstance(latest_generation.get("process_governance"), dict) else {}
+        findings = process.get("findings") if isinstance(process.get("findings"), list) else []
+        bad_paths = sorted({
+            str(item.get("path") or "")
+            for item in findings
+            if isinstance(item, dict) and str(item.get("path") or "").strip()
+        })
+        retry_lines = [
+            "previous_backlog_generation_status: retryable-worker-budget",
+            f"previous_budget_reason: {worker_failure.get('reason', '')}",
+            f"previous_forbidden_read_paths: {', '.join(bad_paths[:8])}",
+            "retry_policy: generate backlog from the active plan contract and allowed bounded sources only; do not reread stale closure docs.",
+            "retry_scope: use docs/project.md, docs/method.md, docs/session.md, and active plan files only.",
+        ]
+    elif retry_interrupted:
+        worker_failure = latest_generation.get("worker_failure") if isinstance(latest_generation.get("worker_failure"), dict) else {}
+        retry_lines = [
+            "previous_backlog_generation_status: retryable-worker-interrupted",
+            f"previous_interruption_reason: {worker_failure.get('reason', '')}",
+            "retry_policy: previous worker had no live process; resume the same backlog-generation intent with bounded sources only.",
+            "retry_scope: use docs/project.md, docs/method.md, docs/session.md, and active plan files only.",
+        ]
     prefix = f"exec-backlog-generation-{plan_ref}-"
     existing_rounds = [
         str(task_id)
@@ -12871,6 +12958,7 @@ def plan_backlog_generation_continuation_item(
             f"out_of_scope: {contract.get('out_of_scope', '')}",
             f"allowed_execution: {contract.get('allowed_execution', '')}",
             *bounded_read_lines,
+            *retry_lines,
             "role_signoff: requirements are closed; active plan backlog is exhausted and needs the next decided batch.",
             "execution_backlog_id: execution_backlog_generation",
             "execution_backlog_phase: reference_scan",
@@ -12898,6 +12986,7 @@ def plan_backlog_generation_continuation_item(
             "- Do not search `.a9` roots; use exact evidence paths already provided in the prompt.",
             "- Use reference-first copying where a next slice requires it.",
             "- Preserve data-first and performance-second acceptance.",
+            "- Do not read stale closure drafts such as docs/a9-current-decision-packet.md, docs/requirements-review-closure.md, or docs/a9-24h-two-lane-review-closure.md unless they are explicitly listed in bounded read paths.",
             "- Avoid stale one-doc closure artifacts; current authority is AGENTS.md, docs/project.md, docs/method.md, docs/session.md, docs/reference.md and active plan evidence.",
         ]
     )

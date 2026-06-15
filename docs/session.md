@@ -75,7 +75,11 @@ Raw external Codex/operator session:
   or commit reviewed merges. Runtime backlog `no_items` now carries a bounded
   review-closure diagnostic packet with causal audit counts and repair proposal
   candidates, keeping stale-memory repair visible to monitor/mobile without
-  mutating KG state.
+  mutating KG state. Active-plan backlog generation now retries boundedly after
+  retryable worker-budget failures or orphaned `no_live_worker_process`
+  interruptions by injecting the previous failure reason into a narrower
+  generation prompt; non-retryable generation failures still wait for monitor
+  review.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.
