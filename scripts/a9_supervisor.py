@@ -12441,6 +12441,75 @@ def plan_change_request_continuation_item(
     }
 
 
+def plan_backlog_generation_continuation_item(
+    plan: dict[str, Any],
+    *,
+    generated_task_ids: set[str],
+) -> dict[str, Any] | None:
+    contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
+    allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
+    plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
+    prefix = f"exec-backlog-generation-{plan_ref}-"
+    existing_rounds = [
+        str(task_id)
+        for task_id in generated_task_ids
+        if prefix in str(task_id)
+    ]
+    round_no = len(existing_rounds) + 1
+    task_id = f"{prefix}{round_no:03d}"
+    prompt = "\n".join(
+        [
+            "decision_status: not_decided",
+            "route: debate_next",
+            f"plan_id: {plan.get('plan_id', '')}",
+            f"goal_id: {plan.get('goal_id', '')}",
+            "debate_stage: execution_backlog_generation",
+            "debate_stage_label: Generate next execution backlog batch",
+            f"problem: {contract.get('problem', '')}",
+            f"system_requirement: {contract.get('system_requirement', '')}",
+            f"data_contract: {contract.get('data_shape', '')}",
+            f"state_flow: {contract.get('normal_flow', '')}",
+            f"exception_flow: {contract.get('exception_flow', '')}",
+            f"acceptance: {contract.get('acceptance', '')}",
+            f"out_of_scope: {contract.get('out_of_scope', '')}",
+            f"allowed_execution: {contract.get('allowed_execution', '')}",
+            "role_signoff: requirements are closed; active plan backlog is exhausted and needs the next decided batch.",
+            "execution_backlog_id: execution_backlog_generation",
+            "execution_backlog_phase: reference_scan",
+            "execution_backlog_title: Generate next decided execution backlog batch",
+            "",
+            "Debate slice:",
+            "Review the active plan contract, latest progress, findings, mistakes, and current repository evidence. "
+            "Generate the next compact execution_next backlog batch only if the contract still supports it. "
+            "Do not implement code in this task.",
+            "",
+            "Output requirements:",
+            "- Return strict_worker_envelope JSON.",
+            "- If more implementation work is justified, set output.decision_status to decided, change_request.status to none,",
+            "  and include at most 3 compact output.execution_backlog.items.",
+            "- Each backlog item must include title, phase, prompt, allowed_paths, checks, and acceptance or clear validation notes.",
+            "- If the contract is stale or insufficient, set output.decision_status to not_decided and output.change_request.status to required.",
+            "- Do not mutate plan contract fields directly; use change_request for contract changes.",
+            "",
+            "Rules:",
+            "- This is requirements/backlog shaping, not execution.",
+            "- Use reference-first copying where a next slice requires it.",
+            "- Preserve data-first and performance-second acceptance.",
+            "- Avoid stale one-doc closure artifacts; current authority is AGENTS.md, docs/project.md, docs/method.md, docs/session.md, docs/reference.md and active plan evidence.",
+        ]
+    )
+    return {
+        "backlog_id": f"execution_backlog_generation_{round_no:03d}",
+        "task_id": task_id,
+        "phase": "reference_scan",
+        "prompt": prompt,
+        "allowed_paths": allowed_paths,
+        "checks": [],
+        "source": "plan.execution_backlog_generation",
+        "status": "ready",
+    }
+
+
 def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> list[dict[str, Any]]:
     debate = requirements_debate_progress(plan)
     if debate.get("status") != "ready_for_execution_backlog":
@@ -12457,7 +12526,18 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
     if ready_items:
         return ready_items[:count] if count > 0 else ready_items
     if raw_items:
-        terminal_statuses = {"pass", "passed", "done", "complete", "completed", "closed", "cancelled", "skipped"}
+        terminal_statuses = {
+            "pass",
+            "passed",
+            "done",
+            "complete",
+            "completed",
+            "closed",
+            "cancelled",
+            "skipped",
+            "blocked_not_decided",
+            "blocked-not-decided",
+        }
         raw_statuses = {str(item.get("status") or "").strip().lower() for item in raw_items}
         if any(status not in terminal_statuses for status in raw_statuses):
             return []
@@ -12514,6 +12594,13 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
         change_request_item = plan_change_request_continuation_item(plan, generated_task_ids=generated_task_ids)
         if change_request_item:
             items.append(change_request_item)
+    if not items:
+        backlog_generation_item = plan_backlog_generation_continuation_item(
+            plan,
+            generated_task_ids=generated_task_ids,
+        )
+        if backlog_generation_item:
+            items.append(backlog_generation_item)
     return items
 
 
@@ -12577,7 +12664,11 @@ def enqueue_execution_backlog_items(
         queued_item["task_id"] = task_id
         queued_items.append(queued_item)
         created.append(path)
-    if any(str(item.get("source") or "") in {"plan.execution_backlog.items", "plan.change_request"} for item in queued_items):
+    if any(
+        str(item.get("source") or "")
+        in {"plan.execution_backlog.items", "plan.change_request", "plan.execution_backlog_generation"}
+        for item in queued_items
+    ):
         mark_execution_backlog_items_queued(plan, queued_items, created)
         write_plan_files(plan)
     return created

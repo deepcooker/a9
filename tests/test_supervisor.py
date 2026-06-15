@@ -6005,7 +6005,7 @@ Findings are ready.
         self.assertIn("route: execution_next", text)
         self.assertNotIn("route: debate_next", text)
 
-    def test_idle_lane_continuation_does_not_fallback_to_goal_when_active_plan_has_no_work(self):
+    def test_idle_lane_continuation_generates_next_backlog_when_active_plan_exhausted(self):
         mod = load_supervisor()
         old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
         with tempfile.TemporaryDirectory() as tmp:
@@ -6029,13 +6029,13 @@ Findings are ready.
                     goal_id="goal-no-plan-fallback",
                     contract={
                         "problem": "Plan has no remaining work.",
-                        "why_now": "Active plan should not drift into generic goal tasks.",
-                        "must": "Stay idle until monitor seeds a decided slice or debate request.",
-                        "system_requirement": "lane router blocks goal fallback while active plan exists.",
+                        "why_now": "Active plan should not drift into generic goal tasks or stop while the objective remains active.",
+                        "must": "Queue backlog generation debate before generic goal fallback.",
+                        "system_requirement": "lane router turns exhausted ready plans into backlog generation debate tasks.",
                         "data_shape": "active plan with exhausted generated ids.",
-                        "normal_flow": "idle -> no task.",
-                        "exception_flow": "monitor adds backlog or change_request.",
-                        "acceptance": "no queued task is created.",
+                        "normal_flow": "idle -> backlog generation debate task.",
+                        "exception_flow": "worker emits change_request when the contract is stale.",
+                        "acceptance": "queued task is debate_next backlog generation.",
                         "out_of_scope": "generic goal continuation.",
                         "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
                         "reference_entry": "A9 lane router tests.",
@@ -6052,6 +6052,11 @@ Findings are ready.
 
                 lane_task = mod.schedule_idle_lane_continuation()
                 queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+                assert lane_task is not None
+                lane, next_path = lane_task
+                text = next_path.read_text(encoding="utf-8")
+                parsed = mod.parse_task(next_path)
+                stored = mod.load_plan("plan-active-but-exhausted")
             finally:
                 mod.GOALS_DIR = old_goals
                 mod.PLANS_DIR = old_plans
@@ -6063,8 +6068,98 @@ Findings are ready.
                 else:
                     os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
 
-        self.assertIsNone(lane_task)
-        self.assertEqual(queued, [])
+        self.assertEqual(lane, "plan-continuation")
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(parsed.phase, "reference_scan")
+        self.assertIn("decision_status: not_decided", text)
+        self.assertIn("route: debate_next", text)
+        self.assertIn("debate_stage: execution_backlog_generation", text)
+        self.assertIn("Generate next decided execution backlog batch", text)
+        self.assertNotIn("Generic goal fallback", text)
+        self.assertTrue(
+            any(
+                "exec-backlog-generation-plan-active-but-exhausted-001" in task_id
+                for task_id in stored["execution_backlog"]["generated_task_ids"]
+            )
+        )
+
+    def test_idle_lane_continuation_treats_blocked_not_decided_as_closed_for_next_backlog(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-blocked-not-decided-exhausted",
+                    goal_id="goal-blocked-not-decided-exhausted",
+                    contract={
+                        "problem": "Old not-decided backlog should not freeze the active plan.",
+                        "why_now": "A prior debate slice was closed as blocked_not_decided.",
+                        "must": "Generate the next backlog batch.",
+                        "system_requirement": "blocked_not_decided is terminal for idle routing.",
+                        "data_shape": "execution_backlog item status taxonomy.",
+                        "normal_flow": "all old items terminal -> backlog generation debate.",
+                        "exception_flow": "ready item still queues first.",
+                        "acceptance": "queued task is route debate_next for backlog generation.",
+                        "out_of_scope": "generic goal continuation.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 backlog status governance.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].extend(
+                    [
+                        {"id": "old-pass", "title": "Passed old slice", "phase": "record", "prompt": "old", "status": "pass"},
+                        {
+                            "id": "old-blocked",
+                            "title": "Old not decided slice",
+                            "phase": "implement",
+                            "prompt": "old",
+                            "status": "blocked_not_decided",
+                        },
+                    ]
+                )
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-blocked-not-decided-exhausted",
+                        "exec-002-mechanism_extract-plan-blocked-not-decided-exhausted",
+                        "exec-003-vendor_import-plan-blocked-not-decided-exhausted",
+                        "exec-004-implement-plan-blocked-not-decided-exhausted",
+                        "exec-005-test-plan-blocked-not-decided-exhausted",
+                        "exec-006-record-plan-blocked-not-decided-exhausted",
+                    ]
+                )
+                mod.write_plan_files(plan)
+
+                lane_task = mod.schedule_idle_lane_continuation()
+                assert lane_task is not None
+                lane, next_path = lane_task
+                text = next_path.read_text(encoding="utf-8")
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertEqual(lane, "plan-continuation")
+        self.assertIn("route: debate_next", text)
+        self.assertIn("execution_backlog_generation", text)
 
     def test_idle_debate_continuation_waits_when_backlog_draft_exists_but_contract_not_ready(self):
         mod = load_supervisor()
