@@ -12831,6 +12831,20 @@ def backlog_generation_retryable_interrupted_summary(summary: dict[str, Any]) ->
     )
 
 
+def backlog_generation_needs_retry_after_code_update(summary: dict[str, Any]) -> bool:
+    status = str(summary.get("status") or "")
+    if status not in {"needs-followup", "needs-repair"}:
+        return False
+    summary_head = str(summary.get("repo_head") or "").strip()
+    if not summary_head:
+        return False
+    try:
+        current_head = git_head()
+    except RuntimeError:
+        return False
+    return bool(current_head and current_head != summary_head)
+
+
 def backlog_generation_retryable_budget_count(plan_ref: str) -> int:
     prefix = f"exec-backlog-generation-{plan_ref}-"
     count = 0
@@ -12881,6 +12895,8 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str])
         return backlog_generation_retryable_budget_count(plan_ref) < 3
     if backlog_generation_retryable_interrupted_summary(summary):
         return backlog_generation_consecutive_retryable_interrupted_count(plan_ref) < 3
+    if backlog_generation_needs_retry_after_code_update(summary):
+        return True
     if str(summary.get("status") or "") != "pass":
         return False
     plan_update = summary.get("active_plan_update", {})
@@ -12907,6 +12923,7 @@ def plan_backlog_generation_continuation_item(
     latest_generation = latest_backlog_generation_summary(plan_ref)
     retry_budget = backlog_generation_retryable_budget_summary(latest_generation)
     retry_interrupted = backlog_generation_retryable_interrupted_summary(latest_generation)
+    retry_after_code_update = backlog_generation_needs_retry_after_code_update(latest_generation)
     retry_lines: list[str] = []
     if retry_budget:
         worker_failure = latest_generation.get("worker_failure") if isinstance(latest_generation.get("worker_failure"), dict) else {}
@@ -12930,6 +12947,13 @@ def plan_backlog_generation_continuation_item(
             "previous_backlog_generation_status: retryable-worker-interrupted",
             f"previous_interruption_reason: {worker_failure.get('reason', '')}",
             "retry_policy: previous worker had no live process; resume the same backlog-generation intent with bounded sources only.",
+            "retry_scope: use docs/project.md, docs/method.md, docs/session.md, and active plan files only.",
+        ]
+    elif retry_after_code_update:
+        retry_lines = [
+            f"previous_backlog_generation_status: {latest_generation.get('status', '')}",
+            f"previous_repo_head: {latest_generation.get('repo_head', '')}",
+            "retry_policy: previous backlog-generation result came from an older supervisor revision; rerun with current bounded plan evidence before accepting its change_request.",
             "retry_scope: use docs/project.md, docs/method.md, docs/session.md, and active plan files only.",
         ]
     prefix = f"exec-backlog-generation-{plan_ref}-"

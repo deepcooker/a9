@@ -127,6 +127,9 @@ P7 NZX technical MVP
   (`plan.json`, `progress.md`, `change_request.md`, `findings.md`,
   `mistakes.md`) in bounded read scope. Without these files, workers can
   falsely report missing contract fields from docs-only evidence.
+  If a `needs-followup` / `needs-repair` backlog-generation result came from
+  an older supervisor `repo_head`, the current runtime may retry it after code
+  repair rather than freezing on stale review output.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

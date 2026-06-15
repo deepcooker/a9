@@ -83,6 +83,9 @@ Raw external Codex/operator session:
   from docs-only evidence; this was a scope defect, so backlog-generation tasks
   now include exact active-plan evidence files in bounded read scope before
   judging contract closure.
+  If a backlog-generation result is `needs-followup` or `needs-repair` from an
+  older supervisor `repo_head`, current runtime may retry it after code repair
+  instead of treating the stale result as permanent closure.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

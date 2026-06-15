@@ -4831,6 +4831,67 @@ Do the work.
         self.assertIn("previous_interruption_reason: no_live_worker_process", items[0]["prompt"])
         self.assertTrue(any(path.endswith("/plans/plan-interrupt-retry/plan.json") for path in items[0]["allowed_paths"]))
 
+    def test_plan_backlog_generation_retries_stale_needs_followup_after_code_update(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            old_git_head = mod.git_head
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.RUNS_DIR.mkdir(parents=True)
+            mod.git_head = lambda: "new-head"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-stale-followup",
+                    goal_id="goal-stale-followup",
+                    contract={
+                        "problem": "Previous followup was produced before supervisor repair.",
+                        "why_now": "The code now includes plan evidence in bounded read scope.",
+                        "must": "Retry stale needs-followup after code update.",
+                        "system_requirement": "old revision followup does not permanently block backlog generation.",
+                        "data_shape": "summary repo_head and current git head.",
+                        "normal_flow": "old needs-followup -> current code retry.",
+                        "exception_flow": "same revision needs-followup waits for monitor review.",
+                        "acceptance": "retry prompt includes previous repo head.",
+                        "out_of_scope": "blind retry without code change.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 active plan evidence scope repair.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-stale-followup",
+                        "exec-002-mechanism_extract-plan-stale-followup",
+                        "exec-003-vendor_import-plan-stale-followup",
+                        "exec-004-implement-plan-stale-followup",
+                        "exec-005-test-plan-stale-followup",
+                        "exec-006-record-plan-stale-followup",
+                        "exec-backlog-generation-plan-stale-followup-001",
+                    ]
+                )
+                run_dir = mod.RUNS_DIR / "stale-followup-run"
+                run_dir.mkdir()
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "exec-backlog-generation-plan-stale-followup-001",
+                        "status": "needs-followup",
+                        "repo_head": "old-head",
+                    },
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+                mod.git_head = old_git_head
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-stale-followup-002")
+        self.assertIn("previous_backlog_generation_status: needs-followup", items[0]["prompt"])
+        self.assertIn("previous_repo_head: old-head", items[0]["prompt"])
+        self.assertTrue(any(path.endswith("/plans/plan-stale-followup/plan.json") for path in items[0]["allowed_paths"]))
+
     def test_plan_backlog_add_persists_item_and_next_marks_queued(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
