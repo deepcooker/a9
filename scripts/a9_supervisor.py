@@ -4581,6 +4581,7 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
     if len(pipe_parts) == 2 and (
         re.fullmatch(r"head\s+(?:-n\s+\d+|-\d+)", pipe_parts[1])
         or re.fullmatch(r"sed\s+-n\s+['\"]?\d+\s*,\s*\d+p['\"]?", pipe_parts[1])
+        or command_fragment_is_stdin_rg_filter(pipe_parts[1])
     ):
         return command_fragment_is_bounded_read_of_paths(pipe_parts[0], paths)
     if len(pipe_parts) > 1:
@@ -4771,6 +4772,29 @@ def rg_target_looks_like_path(value: str) -> bool:
     if Path(text).suffix:
         return True
     return False
+
+
+def command_fragment_is_stdin_rg_filter(fragment: str) -> bool:
+    try:
+        parts = shlex.split(fragment)
+    except ValueError:
+        return False
+    if not parts or parts[0] != "rg":
+        return False
+    index = 1
+    while index < len(parts) and parts[index].startswith("-"):
+        flag = parts[index]
+        if flag in {"-m", "--max-count"}:
+            index += 2
+            continue
+        if flag.startswith("--max-count="):
+            index += 1
+            continue
+        index += 1
+    if index >= len(parts):
+        return False
+    targets = [part for part in parts[index + 1 :] if not part.startswith("-")]
+    return not any(rg_target_looks_like_path(target) for target in targets)
 
 
 def command_read_fragments(command: str) -> list[dict[str, Any]]:

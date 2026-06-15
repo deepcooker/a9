@@ -8820,6 +8820,10 @@ Findings are ready.
             task,
             "/bin/bash -lc 'rg -n \"def append_execution_backlog_items_from_debate_run\" -n scripts/a9_supervisor.py'",
         )
+        piped_rg_filter = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'rg -n \"route: debate_next|decision_status\" tests/test_supervisor.py | rg -n \"appended|needs\"'",
+        )
         malformed_pattern_word = mod.live_worker_command_violation(
             task,
             "/bin/bash -lc 'rg -n -m 40 \"def status|print(\" status\"\" scripts/a9_supervisor.py'",
@@ -8856,6 +8860,7 @@ Findings are ready.
         self.assertEqual(capped_rg, {})
         self.assertEqual(sed_capped_rg, {})
         self.assertEqual(repeated_flag_rg, {})
+        self.assertEqual(piped_rg_filter, {})
         self.assertEqual(malformed_pattern_word, {})
         self.assertEqual(worktree_absolute_read, {})
         self.assertEqual(numbered_worktree_read, {})
