@@ -15,6 +15,7 @@ import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -235,6 +236,51 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(tail["session_id"], "sess-1")
         self.assertEqual(len(tail["turns"]), 1)
         self.assertEqual(tail["turns"][0]["preview"], "second instruction")
+
+    def test_mempalace_search_returns_source_preserving_recall(self):
+        mod = load_control_api()
+        provider = SimpleNamespace(
+            DEFAULT_DRAWERS=Path("/tmp/drawers.jsonl"),
+            search_drawers=lambda drawers, query, limit, role=None, event_kind=None: [
+                {
+                    "source_ref": "session.jsonl:10",
+                    "source_sha256": "sourcehash",
+                    "content_hash": "contenthash",
+                    "role": role or "user",
+                    "event_kind": event_kind or "message",
+                    "content": "MemPalace first",
+                }
+            ],
+        )
+        with mock.patch.object(mod, "mempalace_provider", return_value=provider):
+            result = mod.mempalace_search(
+                {"query": "MemPalace first", "limit": 99, "role": "user", "event_kind": "message"}
+            )
+
+        self.assertEqual(result["schema"], "a9.control_api.mempalace_search.v1")
+        self.assertEqual(result["truth_policy"], "recall_not_truth")
+        self.assertEqual(result["results"][0]["source_ref"], "session.jsonl:10")
+        self.assertEqual(result["results"][0]["content_hash"], "contenthash")
+
+    def test_mempalace_wakeup_does_not_claim_truth(self):
+        mod = load_control_api()
+
+        def fake_wakeup(drawers, query, limit):
+            return {
+                "schema": "a9.wakeup_pack.v1",
+                "truth_policy": "recall_not_truth",
+                "evidence_refs": [{"source_ref": "session.jsonl:11", "content_hash": "hash"}],
+                "recall": [],
+            }
+
+        provider = SimpleNamespace(DEFAULT_DRAWERS=Path("/tmp/drawers.jsonl"), build_wakeup=fake_wakeup)
+        with mock.patch.object(mod, "mempalace_provider", return_value=provider):
+            result = mod.mempalace_wakeup({"query": "mainline", "limit": 2})
+
+        self.assertEqual(result["schema"], "a9.control_api.mempalace_wakeup.v1")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["truth_policy"], "recall_not_truth")
+        self.assertEqual(result["evidence_refs"][0]["source_ref"], "session.jsonl:11")
 
     def test_supervisor_status_reads_existing_a9_state(self):
         mod = load_control_api()
@@ -11194,6 +11240,9 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertEqual(discovery["endpoints"]["runtime_run_one_with_transport"], "/api/runtime/run-one-with-transport")
         self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_next"], "/api/runtime/plan-backlog-next")
+        self.assertEqual(discovery["endpoints"]["mempalace_status"], "/api/memory/mempalace/status")
+        self.assertEqual(discovery["endpoints"]["mempalace_search"], "/api/memory/mempalace/search")
+        self.assertEqual(discovery["endpoints"]["mempalace_wakeup"], "/api/memory/mempalace/wakeup")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
             discovery["endpoints"]["node_command_result_by_command"],

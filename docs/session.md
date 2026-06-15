@@ -39,6 +39,8 @@ Raw external Codex/operator session:
 - `session_refresh` and `session_close_reading` are legacy/fallback routes.
 - New session initialization should use Codex raw JSONL -> MemPalace-compatible
   per-message drawer records first.
+- Current provider entry is `scripts/a9_mempalace_provider.py`; it supports
+  `status`, `search` and `wakeup` against `.a9/mempalace/operator-session-drawers.jsonl`.
 - Recall is not truth. Raw evidence, source refs and hashes remain canonical.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.

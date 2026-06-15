@@ -7,3 +7,5 @@ model-lab/
 target/
 __pycache__/
 *.pyc
+.venv/
+.python-packages/

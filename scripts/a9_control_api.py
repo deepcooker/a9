@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CODEX_SESSIONS_DIR = Path("/root/.codex/sessions")
 SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
 SESSION_REFRESH_PATH = ROOT / "scripts" / "a9_session_refresh.py"
+MEMPALACE_PROVIDER_PATH = ROOT / "scripts" / "a9_mempalace_provider.py"
 REMOTE_PATH = ROOT / "scripts" / "a9_remote.py"
 NODE_HELPER_PATH = ROOT / "scripts" / "a9_node.py"
 NODES_DIR = ROOT / ".a9" / "nodes"
@@ -580,6 +581,10 @@ def supervisor() -> Any:
 
 def session_refresh() -> Any:
     return load_module("a9_session_refresh_control_api", SESSION_REFRESH_PATH)
+
+
+def mempalace_provider() -> Any:
+    return load_module("a9_mempalace_provider_control_api", MEMPALACE_PROVIDER_PATH)
 
 
 def remote() -> Any:
@@ -3434,6 +3439,9 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_run_one_with_transport": "/api/runtime/run-one-with-transport",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
             "runtime_session_lane_latest": "/api/runtime/session-lane-latest",
+            "mempalace_status": "/api/memory/mempalace/status",
+            "mempalace_search": "/api/memory/mempalace/search",
+            "mempalace_wakeup": "/api/memory/mempalace/wakeup",
             "runtime_plan_decision_approve": "/api/runtime/plan-decision-approve",
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
@@ -8412,6 +8420,64 @@ def runtime_session_lane_latest(payload: dict[str, Any], *, root: Path = ROOT) -
     )
 
 
+def mempalace_status() -> dict[str, Any]:
+    provider = mempalace_provider()
+    return {
+        "schema": "a9.control_api.mempalace_status.v1",
+        "native_mempalace": provider.native_status(),
+        "fallback_drawers": provider.drawer_status(provider.DEFAULT_DRAWERS),
+    }
+
+
+def _mempalace_limit(payload: dict[str, Any], *, default: int, maximum: int) -> int:
+    try:
+        value = int(payload.get("limit") or default)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be integer") from exc
+    return max(1, min(value, maximum))
+
+
+def mempalace_search(payload: dict[str, Any]) -> dict[str, Any]:
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        return {
+            "schema": "a9.control_api.mempalace_search.v1",
+            "status": "invalid_request",
+            "error": "query_required",
+            "truth_policy": "recall_not_truth",
+            "results": [],
+        }
+    provider = mempalace_provider()
+    drawers = Path(str(payload.get("drawers") or provider.DEFAULT_DRAWERS))
+    return {
+        "schema": "a9.control_api.mempalace_search.v1",
+        "status": "ok",
+        "query": query,
+        "truth_policy": "recall_not_truth",
+        "results": provider.search_drawers(
+            drawers,
+            query,
+            limit=_mempalace_limit(payload, default=8, maximum=50),
+            role=payload.get("role"),
+            event_kind=payload.get("event_kind"),
+        ),
+    }
+
+
+def mempalace_wakeup(payload: dict[str, Any]) -> dict[str, Any]:
+    provider = mempalace_provider()
+    drawers = Path(str(payload.get("drawers") or provider.DEFAULT_DRAWERS))
+    query = str(payload.get("query") or "A9 MemPalace current mainline next action")
+    pack = provider.build_wakeup(
+        drawers,
+        query=query,
+        limit=_mempalace_limit(payload, default=8, maximum=20),
+    )
+    pack["schema"] = "a9.control_api.mempalace_wakeup.v1"
+    pack["status"] = "ok"
+    return pack
+
+
 def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     enqueue_service_control_audit(
         {
@@ -9255,6 +9321,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", ["10"])[0])
                 source = query.get("source_session_path", [None])[0]
                 self.write_json(200, operator_tail(source, limit=limit))
+            elif parsed.path == "/api/memory/mempalace/status":
+                self.write_json(200, mempalace_status())
             elif parsed.path.startswith("/api/node-command-results/by-command/"):
                 command_id = unquote(parsed.path.removeprefix("/api/node-command-results/by-command/")).strip("/")
                 result_last_id = _resolve_event_last_id(
@@ -9370,6 +9438,10 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_session_refresh_trial(payload))
             elif self.path == "/api/runtime/session-lane-latest":
                 self.write_json(200, runtime_session_lane_latest(payload))
+            elif self.path == "/api/memory/mempalace/search":
+                self.write_json(200, mempalace_search(payload))
+            elif self.path == "/api/memory/mempalace/wakeup":
+                self.write_json(200, mempalace_wakeup(payload))
             elif self.path == "/api/runtime/plan-decision-approve":
                 self.write_json(200, runtime_plan_decision_approve(payload))
             elif self.path == "/api/runtime/plan-debate-next":

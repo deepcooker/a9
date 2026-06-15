@@ -40,6 +40,7 @@ WORKTREES_DIR = STATE_DIR / "worktrees"
 WORKER_CODEX_HOME = STATE_DIR / "codex-home"
 WORKER_TMP_DIR = STATE_DIR / "tmp"
 EXTERNAL_SESSIONS_DIR = STATE_DIR / "external_sessions"
+MEMPALACE_DRAWERS_PATH = STATE_DIR / "mempalace" / "operator-session-drawers.jsonl"
 CODEX_SESSIONS_DIR = Path(os.environ.get("A9_CODEX_SESSIONS_DIR", str(Path.home() / ".codex" / "sessions")))
 RECORDS_DIR = STATE_DIR / "records"
 GOALS_DIR = STATE_DIR / "goals"
@@ -64,6 +65,7 @@ DEFAULT_CRITICAL_WORKER_MODEL = ""
 DEFAULT_MAX_WORKER_EVENTS = 80
 DEFAULT_MAX_WORKER_EVENT_BYTES = 120_000
 DEFAULT_WORKER_EVENT_BUDGET_MODE = "observe"
+DEFAULT_MEMPALACE_WAKEUP_ENABLED = True
 DEFAULT_AUTO_LOOP_FAILURE_LIMIT = 2
 DEFAULT_REDIS_DEEP_MARK_LIMIT = 80
 DEFAULT_IDLE_GOAL_CONTINUATION_ENABLED = True
@@ -1880,6 +1882,98 @@ def build_context_router_sections(
     }
 
 
+def mempalace_provider_module() -> Any:
+    module_name = "a9_mempalace_provider_supervisor"
+    module_path = ROOT / "scripts" / "a9_mempalace_provider.py"
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    if not spec or not spec.loader:
+        raise RuntimeError("cannot load scripts/a9_mempalace_provider.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def mempalace_wakeup_enabled() -> bool:
+    value = os.environ.get("A9_MEMPALACE_WAKEUP_ENABLED")
+    if value is None:
+        return DEFAULT_MEMPALACE_WAKEUP_ENABLED
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def build_mempalace_wakeup_section(task: Task, budget_tokens: int = 1200) -> tuple[str, dict[str, Any]]:
+    """Build a small source-preserving wakeup section for worker resume."""
+    meta: dict[str, Any] = {
+        "enabled": mempalace_wakeup_enabled(),
+        "status": "disabled",
+        "source": str(MEMPALACE_DRAWERS_PATH),
+        "evidence_refs": [],
+    }
+    if not meta["enabled"]:
+        return "", meta
+    if not MEMPALACE_DRAWERS_PATH.exists():
+        meta["status"] = "missing_drawers"
+        return "", meta
+    query = f"{task.task_id} {task.phase} {truncate_to_token_budget(task.prompt, 240, keep='head')}"
+    try:
+        provider = mempalace_provider_module()
+        pack = provider.build_wakeup(MEMPALACE_DRAWERS_PATH, query=query, limit=3)
+    except Exception as exc:
+        meta["status"] = "error"
+        meta["error"] = f"{type(exc).__name__}: {exc}"
+        return "", meta
+    recalls = pack.get("recall") if isinstance(pack, dict) else []
+    refs = pack.get("evidence_refs") if isinstance(pack, dict) else []
+    meta.update(
+        {
+            "status": "ok",
+            "schema": pack.get("schema") if isinstance(pack, dict) else "",
+            "query": query,
+            "truth_policy": pack.get("truth_policy") if isinstance(pack, dict) else "recall_not_truth",
+            "recall_count": len(recalls) if isinstance(recalls, list) else 0,
+            "evidence_refs": refs if isinstance(refs, list) else [],
+        }
+    )
+    lines = [
+        "MemPalace wakeup evidence is recall, not truth.",
+        "Use it only as a source-preserving recovery hint; task contract and allowed paths remain authoritative.",
+        "",
+        f"query: {query}",
+        "truth_policy: recall_not_truth",
+        "must_not_do:",
+        "- do not inject full raw recall into execution workers",
+        "- do not replace raw JSONL/source hashes with summaries",
+        "- do not treat old recalled decisions as current unless validated by task evidence",
+        "",
+        "evidence_refs:",
+    ]
+    for ref in meta["evidence_refs"][:3]:
+        if not isinstance(ref, dict):
+            continue
+        lines.append(
+            "- "
+            f"source_ref={ref.get('source_ref')} "
+            f"role={ref.get('role')} "
+            f"event_kind={ref.get('event_kind')} "
+            f"content_hash={ref.get('content_hash')}"
+        )
+    lines.append("")
+    lines.append("recall_preview:")
+    if isinstance(recalls, list):
+        for item in recalls[:3]:
+            if not isinstance(item, dict):
+                continue
+            content = str(item.get("content") or "")
+            lines.append(
+                "- "
+                f"[{item.get('role')}/{item.get('event_kind')}] "
+                f"{item.get('source_ref')}: "
+                f"{truncate_to_token_budget(content, 180, keep='head')}"
+            )
+    body = truncate_to_token_budget("\n".join(lines), budget_tokens, keep="head")
+    return body, meta
+
+
 def build_context_packet(task: Task) -> dict[str, Any]:
     """Build a bounded prompt packet from durable channels.
 
@@ -1944,6 +2038,7 @@ LangGraph/mem0/OpenHands/Continue complement persistence:
             requirements_method_packet(),
             section_budgets.get("method", 0),
         )
+    mempalace_wakeup_body, mempalace_wakeup_meta = build_mempalace_wakeup_section(task)
 
     evidence_edit_contract = truncate_to_token_budget(worker_evidence_and_edit_contract(task), 900)
     task_prompt = truncate_to_token_budget(worker_prompt_with_default_envelope(task), section_budgets["task"], keep="tail")
@@ -2065,6 +2160,14 @@ Hard rules:
                 "body": previous_context or "(none)",
             },
             {
+                "name": "MemPalace Wakeup Evidence",
+                "source": mempalace_wakeup_meta.get("source", "none"),
+                "role": "memory",
+                "budget_tokens": 1200,
+                "reference_only": True,
+                "body": mempalace_wakeup_body or "(none)",
+            },
+            {
                 "name": "Repository Map",
                 "source": "repo-map",
                 "role": "repo_map",
@@ -2102,6 +2205,7 @@ Hard rules:
         "previous_context_compression": previous_context_meta,
         "repo_map": repo_map_meta,
         "context_router": context_router_meta,
+        "mempalace_wakeup": mempalace_wakeup_meta,
     }
 
 
@@ -2875,6 +2979,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path, *, lease_path: Path | 
             "previous_context_compression": context_packet["previous_context_compression"],
             "repo_map": context_packet["repo_map"],
             "context_router": context_packet.get("context_router", {}),
+            "mempalace_wakeup": context_packet.get("mempalace_wakeup", {}),
             "reference_gate": reference_gate,
         }
     started = time.monotonic()
@@ -3093,6 +3198,7 @@ def run_worker(task: Task, worktree: Path, run_dir: Path, *, lease_path: Path | 
         "previous_context_compression": context_packet["previous_context_compression"],
         "repo_map": context_packet["repo_map"],
         "context_router": context_packet.get("context_router", {}),
+        "mempalace_wakeup": context_packet.get("mempalace_wakeup", {}),
         "reference_gate": reference_gate,
     }
 
@@ -5518,6 +5624,7 @@ def build_runtime_monitor_contract(task: Task, run_dir: Path, summary: dict[str,
             "prompt_budget_tokens": worker.get("prompt_budget_tokens"),
             "section_budgets": worker.get("prompt_section_budgets", {}),
             "context_router": worker.get("context_router", {}),
+            "mempalace_wakeup": worker.get("mempalace_wakeup", {}),
         },
         "reference_slices": {
             "declared_reference_paths": prompt_reference_paths(task.prompt),

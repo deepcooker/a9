@@ -73,6 +73,10 @@ P7 NZX technical MVP
 - `scripts/a9_codex_session_adapter.py` converts Codex raw JSONL into
   MemPalace-compatible per-message drawer records without treating recall as
   truth.
+- `scripts/a9_mempalace_provider.py` exposes the first runtime-facing
+  MemPalace provider facade: status, source-preserving search and wakeup over
+  drawer JSONL. Native MemPalace remains optional until its dependencies are
+  installed.
 - `crates/a9-gateway`, `crates/a9-worker` and `crates/a9-client` are Rust-side
   control/runtime pieces.
 - `.a9/` contains runtime evidence and archives, not source truth.

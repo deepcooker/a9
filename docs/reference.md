@@ -40,3 +40,8 @@ MemPalace is the default mechanism reference for A9 session/memory/context
 governance, but recall must not be treated as truth. Any recalled item entering
 worker, monitor or operator context must keep source path, line/message id,
 hash, role and timestamp.
+
+Current local integration uses `reference-projects/mempalace` as the mechanism
+source and `scripts/a9_mempalace_provider.py` as an A9 facade. Native MemPalace
+collection access is enabled only when its Python dependencies are present;
+otherwise A9 uses the source-preserving drawer JSONL fallback.

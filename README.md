@@ -16,5 +16,16 @@ A9 是一个私有 24 小时 agent 执行机器。核心方法是抄成熟开源
 ```bash
 scripts/a9_supervisor.py status
 scripts/a9_soak.py run --tasks 1 --fake-worker
+scripts/a9_codex_session_adapter.py convert /path/to/session.jsonl --out .a9/mempalace/operator-session-drawers.jsonl
+scripts/a9_mempalace_provider.py status
+scripts/a9_mempalace_provider.py search "A9 MemPalace current mainline" --limit 5
 cargo run -p a9-client -- config
+```
+
+控制面 MemPalace 入口：
+
+```text
+GET  /api/memory/mempalace/status
+POST /api/memory/mempalace/search
+POST /api/memory/mempalace/wakeup
 ```

@@ -837,6 +837,63 @@ Do the work.
         self.assertIn("context_router", packet)
         self.assertIn("blocked by context router", packet["prompt"])
 
+    def test_build_context_packet_includes_mempalace_wakeup_evidence(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            (tmp_root / "scripts").mkdir()
+            (tmp_root / "tests").mkdir()
+            (tmp_root / ".a9" / "tasks" / "done").mkdir(parents=True)
+            drawers = tmp_root / ".a9" / "mempalace" / "operator-session-drawers.jsonl"
+            drawers.parent.mkdir(parents=True)
+            drawers.write_text(
+                json.dumps(
+                    {
+                        "schema": "a9.mempalace.drawer.v1",
+                        "drawer_id": "d1",
+                        "session_id": "s1",
+                        "role": "assistant",
+                        "event_kind": "message",
+                        "timestamp": "2026-01-01T00:00:00Z",
+                        "source_ref": "session.jsonl:10",
+                        "source_sha256": "sourcehash",
+                        "content_hash": "contenthash",
+                        "content": "MemPalace wakeup evidence keeps recall separate from truth.",
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (tmp_root / "scripts" / "a9_supervisor.py").write_text("def x():\n    return 1\n", encoding="utf-8")
+            shutil.copyfile(ROOT / "scripts" / "a9_mempalace_provider.py", tmp_root / "scripts" / "a9_mempalace_provider.py")
+            (tmp_root / "tests" / "test_supervisor.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="mempalace-wakeup",
+                prompt="continue MemPalace wakeup evidence implementation",
+                allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            )
+
+            original_root = mod.ROOT
+            original_done_dir = mod.DONE_DIR
+            original_drawers = mod.MEMPALACE_DRAWERS_PATH
+            try:
+                mod.ROOT = tmp_root
+                mod.DONE_DIR = tmp_root / ".a9" / "tasks" / "done"
+                mod.MEMPALACE_DRAWERS_PATH = drawers
+                packet = mod.build_context_packet(task)
+            finally:
+                mod.ROOT = original_root
+                mod.DONE_DIR = original_done_dir
+                mod.MEMPALACE_DRAWERS_PATH = original_drawers
+
+        self.assertIn("MemPalace Wakeup Evidence", packet["prompt"])
+        self.assertIn("recall, not truth", packet["prompt"])
+        self.assertIn("source_ref=session.jsonl:10", packet["prompt"])
+        self.assertEqual(packet["mempalace_wakeup"]["status"], "ok")
+        self.assertEqual(packet["mempalace_wakeup"]["evidence_refs"][0]["content_hash"], "contenthash")
+
     def test_build_context_packet_uses_canonical_context_index_for_doctrine_by_default(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
