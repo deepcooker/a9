@@ -2993,7 +2993,11 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         return {}
     if prompt_requires_targeted_rg(task.prompt) and command_runs_broad_rg(normalized):
         return {}
-    if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(normalized):
+    if (
+        task.phase in READ_HEAVY_PHASES
+        and command_runs_uncapped_rg(normalized)
+        and not (bounded_paths and command_is_single_bounded_read_of_paths(normalized, bounded_paths))
+    ):
         if live_read_budget_stop:
             return {
                 "kind": "uncapped_rg_command",
@@ -5268,7 +5272,11 @@ def classify_process_governance(
                     "command": command,
                 }
             )
-        if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(command):
+        if (
+            task.phase in READ_HEAVY_PHASES
+            and command_runs_uncapped_rg(command)
+            and not (bounded_read_paths and command_is_single_bounded_read_of_paths(command, bounded_read_paths))
+        ):
             findings.append(
                 {
                     "level": "warn",

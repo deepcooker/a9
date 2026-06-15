@@ -8263,6 +8263,33 @@ Findings are ready.
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["findings"], [])
 
+    def test_process_governance_allows_uncapped_rg_on_exact_bounded_file(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'rg -n \"role_signoff|state_flow\" /root/a9/.a9/plans/example/plan.json'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="bounded-plan-rg",
+                phase="mechanism_extract",
+                prompt="bounded read: /root/a9/.a9/plans/example/plan.json\nUse targeted rg -n only.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["findings"], [])
+
     def test_process_governance_warns_on_batched_sed_read_without_rationale(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -8780,17 +8807,30 @@ Findings are ready.
             ),
         )
 
-        uncapped_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n needle scripts/a9_supervisor.py'")
+        exact_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n needle scripts/a9_supervisor.py'")
         outside_scope = mod.live_worker_command_violation(task, "/bin/bash -lc 'sed -n \"1,80p\" docs/project.md'")
         runtime_root = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 token .a9/runs'")
         broad_sed = mod.live_worker_command_violation(task, "/bin/bash -lc \"sed -n '1,241p' scripts/a9_supervisor.py\"")
         capped_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 needle scripts/a9_supervisor.py'")
 
-        self.assertEqual(uncapped_rg["kind"], "uncapped_rg_command")
+        self.assertEqual(exact_rg, {})
         self.assertEqual(outside_scope["kind"], "outside_bounded_read_scope")
         self.assertIn(runtime_root["kind"], {"runtime_evidence_root_read", "outside_bounded_read_scope"})
         self.assertIn(broad_sed["kind"], {"command_window_exceeded", "command_window_missing_rationale"})
         self.assertEqual(capped_rg, {})
+
+    def test_live_worker_stops_uncapped_rg_without_bounded_scope(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="live-read-budget-stop-uncapped",
+            phase="mechanism_extract",
+            prompt="live_read_budget_policy: stop\nUse targeted rg -n only.\n",
+        )
+
+        uncapped_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n needle scripts/a9_supervisor.py'")
+
+        self.assertEqual(uncapped_rg["kind"], "uncapped_rg_command")
 
     def test_live_worker_allows_head_on_exact_bounded_evidence_path(self):
         mod = load_supervisor()
