@@ -42,11 +42,16 @@ Raw external Codex/operator session:
 - New session initialization should use Codex raw JSONL -> MemPalace-compatible
   per-message drawer records first.
 - Current provider entry is `scripts/a9_mempalace_provider.py`; it supports
-  `status`, `search` and `wakeup` against `.a9/mempalace/operator-session-drawers.jsonl`.
+  `status`, source-preserving `search`, `wakeup` and official-style `recall`
+  packets with native search hits, hydrated drawers and fallback evidence refs.
 - Recall is not truth. Raw evidence, source refs and hashes remain canonical.
+- Current shortfall: KG/diary/causal-change compilation is not fully automated.
+  Search and hydration recover evidence, but A9 still needs a deterministic
+  compiler for time-valid facts, role-scoped diary continuity, stale branch
+  invalidation, causal-change notes and next-task memory packets.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
-- MemPalace wakeup is wired into control API and supervisor context packets.
+- MemPalace recall protocol is wired into control API and supervisor context packets.
   The next execution lane is backlog generation/resume under the current
   five-doc contract, not recreation of old closure artifacts.
 
