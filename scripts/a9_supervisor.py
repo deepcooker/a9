@@ -3024,17 +3024,6 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
             "path": session_read_finding["path"],
         }
     for finding in sed_window_governance(task, normalized, rationale=rationale):
-        if live_read_budget_stop and finding.get("kind") in {
-            "broad_file_slice_observation",
-            "command_window_exceeded",
-            "command_window_missing_rationale",
-        }:
-            return {
-                "kind": str(finding.get("kind") or "sed_window_violation"),
-                "reason": str(finding.get("message") or "worker exceeded live sed read budget"),
-                "command": normalized,
-                "lines": finding.get("lines") or finding.get("line_count"),
-            }
         if finding.get("level") == "error":
             return {}
     return {}

@@ -8824,7 +8824,7 @@ Findings are ready.
         self.assertEqual(exact_rg, {})
         self.assertEqual(outside_scope["kind"], "outside_bounded_read_scope")
         self.assertIn(runtime_root["kind"], {"runtime_evidence_root_read", "outside_bounded_read_scope"})
-        self.assertIn(broad_sed["kind"], {"command_window_exceeded", "command_window_missing_rationale"})
+        self.assertEqual(broad_sed, {})
         self.assertEqual(capped_rg, {})
         self.assertEqual(low_cost_ls, {})
         self.assertEqual(recursive_ls["kind"], "outside_bounded_read_scope")
