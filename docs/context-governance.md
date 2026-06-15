@@ -25,7 +25,6 @@ These files define the current mainline:
 
 - `AGENTS.md`: top-level agent rules, phase model, hard constraints.
 - `docs/context-governance.md`: this context routing table.
-- `docs/current-mainline.md`: current execution priority and freeze points.
 - `docs/project.md`: current A9 product layers, architecture, progress, next work.
 - `docs/architecture/a9-runtime-monitor-foundation.md`: current P0 foundation
   architecture for runtime, monitor, and communication.
@@ -39,9 +38,6 @@ These files define the current mainline:
 - `docs/requirements-review-closure.md`: review completion standard and
   debate-to-execution closure gate.
 - `docs/session-causal-memory.md`: causal changes, stale branches, current decision memory.
-- `docs/a9-ultimate-architecture-aggregation.md`: current highest-shape
-  aggregation draft for human/GPT debate. It is current context for architecture
-  discussion, but not an implementation decision packet.
 - `docs/external-gpt/2026-06-04/intake.md`: accepted intake of the GPT review
   package. It upgrades the next default route to P0 architecture decision
   packet before further runtime/mobile/communication implementation.
@@ -51,16 +47,14 @@ If these files conflict, resolve in this order:
 1. newest explicit human direction in the current operator session
 2. `AGENTS.md`
 3. `docs/context-governance.md`
-4. `docs/current-mainline.md`
-5. `docs/architecture/a9-runtime-monitor-foundation.md`
-6. `docs/decisions/ADR-0002-runtime-monitor-priority.md`
-7. `docs/decisions/ADR-0003-communication-foundation.md`
-8. `docs/requirements-review-closure.md`
-9. `docs/session-causal-memory.md`
-10. `docs/external-gpt/2026-06-04/intake.md`
-11. `docs/a9-ultimate-architecture-aggregation.md`
-12. `docs/project.md`
-13. `原始想法需求.md`
+4. `docs/architecture/a9-runtime-monitor-foundation.md`
+5. `docs/decisions/ADR-0002-runtime-monitor-priority.md`
+6. `docs/decisions/ADR-0003-communication-foundation.md`
+7. `docs/requirements-review-closure.md`
+8. `docs/session-causal-memory.md`
+9. `docs/external-gpt/2026-06-04/intake.md`
+10. `docs/project.md`
+11. `原始想法需求.md`
 
 Raw session evidence can overturn summaries, but only after close reading and a
 recorded causal-memory update.
@@ -70,17 +64,9 @@ recorded causal-memory update.
 These files shape current work but are not global truth forever:
 
 - `docs/a9-current-role-review.md`
-- `docs/stage-handoff-2026-06-01.md`
-- `docs/a9-ultimate-architecture-aggregation.md` when the current task is
-  architecture debate, GPT/web reconstruction, or highest-shape decision
-  closure. It must not be treated as permission to implement every listed
-  layer.
 - `docs/external-gpt/2026-06-04/A9_AgentOS_金融交易环境重构决策包.md`
   when the current task is P0/P1/P2 route planning. Its implementation
   suggestions are candidates until converted into ADRs and task contracts.
-- `docs/current-mainline.md` when the current task could drift into mobile UI,
-  NZX implementation, compute RWA, or broad workspace refactor. It is the
-  current freeze/priority source.
 - `docs/execution_next/0001-runtime-monitor-foundation-packet.md` is the
   current first execution packet for monitor review. It does not authorize code
   implementation until monitor approval creates the next implementation slice.
@@ -122,20 +108,17 @@ context by default.
 These files support decisions and copying strategy:
 
 - `docs/reference-adoption-decision.md`
-- `docs/reference-selection-reassessment.md`
 - `docs/vendor-strategy.md`
 - `docs/external-gpt/2026-06-13/a9-a3b-boundary-intake.md`: accepted external
   review evidence for the A9/A3B boundary. It is not default worker context and
   does not authorize A3B code or training work.
-- `docs/patch-diff-discipline.md`
-- `docs/production-daemon.md`
 - `docs/communication-governance-framework.md`
-- `docs/moe-review-methodology.md`
 - `session-governance.md`
 - `THIRD_PARTY_NOTICES.md`
 
 Archived research and old closures now live under:
 
+- `docs/archive/active-indexes/2026-06-15/`
 - `docs/archive/2026-06-history/`
 - `docs/archive/2026-06-noise-reduction/`
 - `docs/archive/2026-06-execution-results/`

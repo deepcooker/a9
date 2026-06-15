@@ -22,7 +22,7 @@ Convert the clarified A9 mainline into a bounded execution foundation for:
 
 ## Inputs
 
-- `docs/current-mainline.md`
+- `docs/project.md`
 - `docs/architecture/a9-runtime-monitor-foundation.md`
 - `docs/decisions/ADR-0001-a9-highest-form.md`
 - `docs/decisions/ADR-0002-runtime-monitor-priority.md`
@@ -58,4 +58,3 @@ It should define or normalize the data contracts for:
 - runtime/monitor foundation architecture exists.
 - first implementation task is named and bounded.
 - no code implementation is included in this packet.
-
