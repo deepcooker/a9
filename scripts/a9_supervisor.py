@@ -4645,7 +4645,8 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
             if part.startswith("--max-count="):
                 path_index += 1
                 continue
-            rg_paths.append(part)
+            if rg_target_looks_like_path(part):
+                rg_paths.append(part)
             path_index += 1
         if not pattern or not rg_paths:
             return False
@@ -4743,10 +4744,23 @@ def command_read_targets(command: str) -> list[str]:
                     continue
                 index += 1
             if rg_files:
-                targets.extend(part for part in parts[index:] if not part.startswith("-"))
+                targets.extend(part for part in parts[index:] if not part.startswith("-") and rg_target_looks_like_path(part))
             elif index < len(parts):
-                targets.extend(part for part in parts[index + 1 :] if not part.startswith("-"))
+                targets.extend(part for part in parts[index + 1 :] if not part.startswith("-") and rg_target_looks_like_path(part))
     return targets
+
+
+def rg_target_looks_like_path(value: str) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if text in {".", ".."} or text.startswith(("./", "../", "/", ".a9/")):
+        return True
+    if "/" in text or "\\" in text:
+        return True
+    if Path(text).suffix:
+        return True
+    return False
 
 
 def command_read_fragments(command: str) -> list[dict[str, Any]]:
