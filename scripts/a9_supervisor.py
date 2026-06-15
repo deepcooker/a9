@@ -12484,6 +12484,45 @@ def plan_change_request_continuation_item(
     }
 
 
+def latest_backlog_generation_summary(plan_ref: str) -> dict[str, Any]:
+    prefix = f"exec-backlog-generation-{plan_ref}-"
+    summaries: list[tuple[float, dict[str, Any]]] = []
+    for summary_path in RUNS_DIR.glob("*/summary.json"):
+        try:
+            mtime = summary_path.stat().st_mtime
+        except OSError:
+            continue
+        data = read_json_file(summary_path)
+        if not data:
+            continue
+        task_id = str(data.get("task_id") or "")
+        if prefix not in task_id:
+            continue
+        summaries.append((mtime, data))
+    if not summaries:
+        return {}
+    summaries.sort(key=lambda item: item[0], reverse=True)
+    return summaries[0][1]
+
+
+def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str]) -> bool:
+    prefix = f"exec-backlog-generation-{plan_ref}-"
+    if not any(prefix in str(task_id) for task_id in generated_task_ids):
+        return True
+    summary = latest_backlog_generation_summary(plan_ref)
+    if not summary:
+        return False
+    if str(summary.get("status") or "") != "pass":
+        return False
+    plan_update = summary.get("active_plan_update", {})
+    if not isinstance(plan_update, dict):
+        return False
+    backlog_update = plan_update.get("execution_backlog_update", {})
+    if not isinstance(backlog_update, dict):
+        return False
+    return str(backlog_update.get("status") or "") == "appended" and int(backlog_update.get("added_count") or 0) > 0
+
+
 def plan_backlog_generation_continuation_item(
     plan: dict[str, Any],
     *,
@@ -12493,6 +12532,8 @@ def plan_backlog_generation_continuation_item(
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
     bounded_read_lines = [f"bounded read: {path}" for path in allowed_paths[:8]]
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
+    if not backlog_generation_can_continue(plan_ref, generated_task_ids):
+        return None
     prefix = f"exec-backlog-generation-{plan_ref}-"
     existing_rounds = [
         str(task_id)

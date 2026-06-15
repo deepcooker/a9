@@ -6163,6 +6163,155 @@ Findings are ready.
         self.assertIn("route: debate_next", text)
         self.assertIn("execution_backlog_generation", text)
 
+    def test_idle_lane_continuation_waits_after_failed_backlog_generation(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            old_runs = mod.RUNS_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            mod.RUNS_DIR = tmp_path / "runs"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-failed-generation",
+                    goal_id="goal-failed-generation",
+                    contract={
+                        "problem": "Failed generation must not loop.",
+                        "why_now": "A failed backlog-generation worker should be repaired or observed first.",
+                        "must": "Wait instead of opening a new generation round.",
+                        "system_requirement": "generation retry is gated by successful prior append.",
+                        "data_shape": "generated_task_ids plus latest generation summary.",
+                        "normal_flow": "failed generation -> no new generation.",
+                        "exception_flow": "monitor repairs prompt or contract.",
+                        "acceptance": "no queued task is created.",
+                        "out_of_scope": "generic goal fallback.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 backlog generation throttle.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-failed-generation",
+                        "exec-002-mechanism_extract-plan-failed-generation",
+                        "idle-backlog-exec-backlog-generation-plan-failed-generation-001",
+                    ]
+                )
+                mod.write_plan_files(plan)
+                run_dir = mod.RUNS_DIR / "failed-generation-run"
+                run_dir.mkdir(parents=True)
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "idle-backlog-exec-backlog-generation-plan-failed-generation-001",
+                        "status": "needs-repair",
+                    },
+                )
+
+                lane_task = mod.schedule_idle_lane_continuation()
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                mod.RUNS_DIR = old_runs
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertIsNone(lane_task)
+        self.assertEqual(queued, [])
+
+    def test_idle_lane_continuation_allows_next_generation_after_successful_append(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            old_runs = mod.RUNS_DIR
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            mod.RUNS_DIR = tmp_path / "runs"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-success-generation",
+                    goal_id="goal-success-generation",
+                    contract={
+                        "problem": "Successful generation can continue after generated work is exhausted.",
+                        "why_now": "24h needs multiple backlog batches without runaway loops.",
+                        "must": "Allow next generation after prior append succeeded.",
+                        "system_requirement": "generation throttle permits success-with-append continuation.",
+                        "data_shape": "generation summary active_plan_update.execution_backlog_update.",
+                        "normal_flow": "prior append pass -> next generation.",
+                        "exception_flow": "failed prior append -> wait.",
+                        "acceptance": "queued task is next generation round.",
+                        "out_of_scope": "generic goal fallback.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 backlog generation throttle.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-success-generation",
+                        "exec-002-mechanism_extract-plan-success-generation",
+                        "idle-backlog-exec-backlog-generation-plan-success-generation-001",
+                    ]
+                )
+                mod.write_plan_files(plan)
+                run_dir = mod.RUNS_DIR / "success-generation-run"
+                run_dir.mkdir(parents=True)
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "idle-backlog-exec-backlog-generation-plan-success-generation-001",
+                        "status": "pass",
+                        "active_plan_update": {
+                            "execution_backlog_update": {"status": "appended", "added_count": 2}
+                        },
+                    },
+                )
+
+                lane_task = mod.schedule_idle_lane_continuation()
+                assert lane_task is not None
+                lane, next_path = lane_task
+                text = next_path.read_text(encoding="utf-8")
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                mod.RUNS_DIR = old_runs
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertEqual(lane, "plan-continuation")
+        self.assertIn("exec-backlog-generation-plan-success-generation-002", text)
+
     def test_idle_debate_continuation_waits_when_backlog_draft_exists_but_contract_not_ready(self):
         mod = load_supervisor()
         old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
