@@ -2969,6 +2969,8 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
     bounded_paths = bounded_read_paths_from_prompt(task.prompt)
     if command_is_low_cost_directory_listing(normalized):
         return {}
+    if command_is_python_readonly_probe_on_allowed_paths(normalized, list(task.allowed_paths) + bounded_paths):
+        return {}
     if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
         if live_read_budget_stop:
             return {
@@ -5110,6 +5112,21 @@ def command_is_low_cost_directory_listing(command: str) -> bool:
     if target.startswith(".a9/") or target.startswith(f"{root_text}/.a9/"):
         return False
     return True
+
+
+def command_is_python_readonly_probe_on_allowed_paths(command: str, allowed_paths: list[str]) -> bool:
+    normalized = normalize_shell_command(command)
+    if not re.search(r"\bpython3?\s+-\s*<<", normalized):
+        return False
+    if not re.search(r"\bread_text\s*\(", normalized):
+        return False
+    write_markers = ("write_text(", "write_bytes(", ".write(", "open(", ">>", "tee ")
+    if any(marker in normalized for marker in write_markers):
+        return False
+    path_matches = re.findall(r"(?:pathlib\.)?Path\(['\"]([^'\"]+)['\"]\)", normalized)
+    if not path_matches:
+        return False
+    return all(any(bounded_read_path_matches(allowed, path) for allowed in allowed_paths) for path in path_matches)
 
 
 def command_runs_broad_rg(command: str) -> bool:
