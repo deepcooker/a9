@@ -8465,9 +8465,14 @@ def plan_path(plan_id: str) -> Path:
 
 def active_plan_id() -> str:
     try:
-        return ACTIVE_PLAN_PATH.read_text(encoding="utf-8").strip()
+        plan_id = ACTIVE_PLAN_PATH.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+    if not plan_id:
+        return ""
+    if not plan_path(plan_id).exists() or not (plan_path(plan_id) / "plan.json").exists():
+        return ""
+    return plan_id
 
 
 def load_plan(plan_id: str) -> dict[str, Any]:

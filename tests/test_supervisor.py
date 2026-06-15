@@ -6459,6 +6459,49 @@ Findings are ready.
         self.assertIsNone(lane_task)
         self.assertEqual(queued, [])
 
+    def test_idle_goal_continuation_falls_back_when_active_plan_pointer_is_stale(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            mod.GOALS_DIR.mkdir(parents=True, exist_ok=True)
+            mod.PLANS_DIR.mkdir(parents=True, exist_ok=True)
+            mod.QUEUE_DIR.mkdir(parents=True, exist_ok=True)
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                goal = mod.create_goal_payload("goal-stale-active-plan", "Generic goal fallback", 1000)
+                mod.write_goal(goal)
+                mod.ACTIVE_PLAN_PATH.write_text("plan-stale", encoding="utf-8")
+
+                lane_task = mod.schedule_idle_lane_continuation()
+                queued_text = lane_task[1].read_text(encoding="utf-8") if lane_task is not None else ""
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertIsNotNone(lane_task)
+        assert lane_task is not None
+        lane, _next_path = lane_task
+        self.assertEqual(lane, "goal-continuation")
+        self.assertIn("goal_objective: Generic goal fallback", queued_text)
+
     def test_idle_plan_continuation_schedules_change_request_review_when_backlog_exhausted(self):
         mod = load_supervisor()
         old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
