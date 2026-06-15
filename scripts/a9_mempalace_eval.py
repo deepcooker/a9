@@ -347,16 +347,127 @@ def generate_eval_candidates(drawers: Path, *, limit: int = 20, scan_limit: int 
     }
 
 
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def candidate_fixture_line(candidate: dict[str, Any]) -> dict[str, Any] | None:
+    if candidate.get("review_status") != "approved":
+        return None
+    fixture_line = candidate.get("fixture_line") if isinstance(candidate.get("fixture_line"), dict) else {}
+    content = str(fixture_line.get("content") or candidate.get("content") or "").strip()
+    expected = fixture_line.get("expected") if isinstance(fixture_line.get("expected"), dict) else {}
+    if not content:
+        return None
+    return {
+        "id": str(fixture_line.get("id") or candidate.get("id") or "").strip(),
+        "content": content,
+        "expected": {label: bool(expected.get(label)) for label in LABELS},
+        "source_ref": candidate.get("source_ref"),
+        "source_sha256": candidate.get("source_sha256"),
+        "content_hash": candidate.get("content_hash"),
+        "approved_by": candidate.get("approved_by"),
+        "approval_reason": candidate.get("approval_reason"),
+    }
+
+
+def merge_reviewed_candidates(
+    candidates_path: Path,
+    *,
+    fixture: Path = DEFAULT_FIXTURE,
+    approved_by: str,
+    approval_reason: str,
+    commit: bool = False,
+) -> dict[str, Any]:
+    if not approved_by.strip() or not approval_reason.strip():
+        return {
+            "schema": "a9.mempalace_causal_fixture_merge.v1",
+            "status": "invalid_request",
+            "error": "approved_by_and_approval_reason_required",
+            "merged_count": 0,
+        }
+    payload = read_json(candidates_path)
+    raw_candidates = payload.get("candidates") if isinstance(payload, dict) else payload
+    if not isinstance(raw_candidates, list):
+        return {
+            "schema": "a9.mempalace_causal_fixture_merge.v1",
+            "status": "invalid_request",
+            "error": "candidates_list_required",
+            "merged_count": 0,
+        }
+    existing = read_fixture(fixture) if fixture.exists() else []
+    existing_hashes = {str(row.get("content_hash") or "") for row in existing if row.get("content_hash")}
+    existing_ids = {str(row.get("id") or "") for row in existing if row.get("id")}
+    planned: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for candidate in raw_candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("review_status") != "approved":
+            skipped.append({"id": candidate.get("id"), "reason": "not_approved"})
+            continue
+        line = candidate_fixture_line(candidate)
+        if not line:
+            skipped.append({"id": candidate.get("id"), "reason": "invalid_fixture_line"})
+            continue
+        line["approved_by"] = line.get("approved_by") or approved_by.strip()
+        line["approval_reason"] = line.get("approval_reason") or approval_reason.strip()
+        if line.get("content_hash") and str(line["content_hash"]) in existing_hashes:
+            skipped.append({"id": line.get("id"), "reason": "duplicate_content_hash"})
+            continue
+        if line.get("id") and str(line["id"]) in existing_ids:
+            skipped.append({"id": line.get("id"), "reason": "duplicate_id"})
+            continue
+        planned.append(line)
+        if line.get("content_hash"):
+            existing_hashes.add(str(line["content_hash"]))
+        if line.get("id"):
+            existing_ids.add(str(line["id"]))
+    if commit and planned:
+        with fixture.open("a", encoding="utf-8") as handle:
+            for line in planned:
+                handle.write(json.dumps(line, ensure_ascii=False, sort_keys=True) + "\n")
+    return {
+        "schema": "a9.mempalace_causal_fixture_merge.v1",
+        "status": "committed" if commit else "dry_run",
+        "truth_policy": "only approved candidates become fixture truth; source_ref/source_sha256 preserved for audit",
+        "copied_protocols": [
+            "MemPalace tests pin reviewed behavior in fixtures",
+            "MemPalace drawers preserve source references for audit",
+            "A9 keeps candidate generation separate from fixture truth",
+        ],
+        "fixture": str(fixture),
+        "approved_by": approved_by.strip(),
+        "approval_reason": approval_reason.strip(),
+        "merged_count": len(planned),
+        "skipped_count": len(skipped),
+        "planned_lines": planned,
+        "skipped": skipped,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate A9 MemPalace causal-memory compiler quality")
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--generate-candidates", action="store_true")
+    parser.add_argument("--merge-reviewed", type=Path)
     parser.add_argument("--drawers", type=Path)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--scan-limit", type=int, default=5000)
+    parser.add_argument("--approved-by", default="")
+    parser.add_argument("--approval-reason", default="")
+    parser.add_argument("--commit", action="store_true")
     args = parser.parse_args()
-    if args.generate_candidates:
+    if args.merge_reviewed:
+        result = merge_reviewed_candidates(
+            args.merge_reviewed,
+            fixture=args.fixture,
+            approved_by=args.approved_by,
+            approval_reason=args.approval_reason,
+            commit=args.commit,
+        )
+    elif args.generate_candidates:
         provider = load_provider()
         drawers = args.drawers or provider.DEFAULT_DRAWERS
         result = generate_eval_candidates(drawers, limit=args.limit, scan_limit=args.scan_limit)

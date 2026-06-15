@@ -104,7 +104,10 @@ P7 NZX technical MVP
   detection. `scripts/a9_mempalace_eval.py --generate-candidates` now scans
   bounded MemPalace drawer evidence and writes review-only fixture candidates
   with source refs, scores and suggested labels; candidates are not merged into
-  the truth fixture until reviewed.
+  the truth fixture until reviewed. `--merge-reviewed` is the controlled merge
+  path: it only accepts candidates marked `review_status=approved`, requires
+  `approved_by` and `approval_reason`, preserves source refs/hashes, de-dupes
+  existing fixture rows, and defaults to dry-run unless `--commit` is passed.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

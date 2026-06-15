@@ -64,7 +64,9 @@ Raw external Codex/operator session:
   promotion, fallback-as-current, and retained-entry current detection. The
   candidate lane now scans bounded MemPalace drawers and writes review-only eval
   candidates with source refs and suggested labels; generated candidates are not
-  fixture truth until reviewed.
+  fixture truth until reviewed. Reviewed candidates enter the fixture only via
+  `--merge-reviewed`, which requires `review_status=approved`, `approved_by`,
+  `approval_reason`, source refs/hashes, de-dupe checks and explicit `--commit`.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

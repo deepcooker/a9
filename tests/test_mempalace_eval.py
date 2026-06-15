@@ -80,6 +80,83 @@ class MempalaceEvalTests(unittest.TestCase):
         self.assertTrue(candidate["suggested_expected"]["causal"])
         self.assertIn("fixture_line", candidate)
 
+    def test_merge_reviewed_candidates_requires_approval_and_preserves_source_refs(self):
+        mod = load_eval()
+        payload = {
+            "schema": "a9.mempalace_causal_eval_candidates.v1",
+            "candidates": [
+                {
+                    "id": "candidate-0001",
+                    "review_status": "approved",
+                    "source_ref": "session.jsonl:10",
+                    "source_sha256": "sourcehash",
+                    "content_hash": "hash1",
+                    "fixture_line": {
+                        "id": "reviewed-0001",
+                        "content": "当前主线是 supervisor runtime。",
+                        "expected": {"current": True, "stale": False, "causal": False},
+                    },
+                },
+                {
+                    "id": "candidate-0002",
+                    "review_status": "rejected",
+                    "fixture_line": {
+                        "id": "reviewed-0002",
+                        "content": "不要合并。",
+                        "expected": {"current": False, "stale": False, "causal": False},
+                    },
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Path(tmp) / "fixture.jsonl"
+            candidates = Path(tmp) / "candidates.json"
+            candidates.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+            invalid = mod.merge_reviewed_candidates(
+                candidates,
+                fixture=fixture,
+                approved_by="",
+                approval_reason="",
+                commit=False,
+            )
+            dry_run = mod.merge_reviewed_candidates(
+                candidates,
+                fixture=fixture,
+                approved_by="codex-monitor",
+                approval_reason="reviewed sample",
+                commit=False,
+            )
+            self.assertFalse(fixture.exists())
+
+            committed = mod.merge_reviewed_candidates(
+                candidates,
+                fixture=fixture,
+                approved_by="codex-monitor",
+                approval_reason="reviewed sample",
+                commit=True,
+            )
+            duplicate = mod.merge_reviewed_candidates(
+                candidates,
+                fixture=fixture,
+                approved_by="codex-monitor",
+                approval_reason="reviewed sample",
+                commit=True,
+            )
+
+            rows = [json.loads(line) for line in fixture.read_text(encoding="utf-8").splitlines()]
+
+        self.assertEqual(invalid["status"], "invalid_request")
+        self.assertEqual(dry_run["status"], "dry_run")
+        self.assertEqual(dry_run["merged_count"], 1)
+        self.assertEqual(committed["status"], "committed")
+        self.assertEqual(committed["merged_count"], 1)
+        self.assertEqual(rows[0]["source_ref"], "session.jsonl:10")
+        self.assertEqual(rows[0]["source_sha256"], "sourcehash")
+        self.assertEqual(rows[0]["approved_by"], "codex-monitor")
+        self.assertEqual(duplicate["merged_count"], 0)
+        self.assertEqual(duplicate["skipped"][0]["reason"], "duplicate_content_hash")
+
 
 if __name__ == "__main__":
     unittest.main()
