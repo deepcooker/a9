@@ -4246,6 +4246,47 @@ Do the work.
 
         self.assertEqual(items, [])
 
+    def test_plan_execution_backlog_item_overrides_stale_contract_acceptance(self):
+        mod = load_supervisor()
+        plan = mod.create_plan_payload(
+            plan_id="plan-item-override",
+            goal_id="goal-item-override",
+            contract={
+                "problem": "Need current slice to avoid stale plan acceptance.",
+                "why_now": "The plan contract predates document cleanup.",
+                "must": "Use item-specific execution scope when present.",
+                "system_requirement": "Backlog item contract overrides stale plan text.",
+                "data_shape": "execution_backlog item with item acceptance.",
+                "normal_flow": "ready item -> prompt uses item acceptance.",
+                "exception_flow": "missing item acceptance -> fall back to plan contract.",
+                "acceptance": "stale docs/a9-24h-two-lane-review-closure.md check",
+                "out_of_scope": "do not recreate stale closure artifacts.",
+                "allowed_execution": "stale/path.md",
+                "reference_entry": "A9 five-doc closure.",
+            },
+        )
+        backlog = mod.execution_backlog_state(plan)
+        backlog["items"].append(
+            {
+                "id": "backlog-001-current-slice",
+                "title": "Current slice",
+                "phase": "record",
+                "prompt": "Update current five-doc state only.",
+                "acceptance": "python3 scripts/a9_service.py readiness",
+                "allowed_execution": "docs/project.md docs/session.md",
+                "allowed_paths": ["docs/project.md", "docs/session.md"],
+                "status": "ready",
+            }
+        )
+
+        items = mod.plan_execution_backlog_items(plan, count=1)
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("acceptance: python3 scripts/a9_service.py readiness", items[0]["prompt"])
+        self.assertIn("allowed_execution: docs/project.md docs/session.md", items[0]["prompt"])
+        self.assertNotIn("docs/a9-24h-two-lane-review-closure.md", items[0]["prompt"])
+        self.assertNotIn("allowed_execution: stale/path.md", items[0]["prompt"])
+
     def test_plan_execution_backlog_items_fall_back_after_completed_custom_backlog(self):
         mod = load_supervisor()
         plan = mod.create_plan_payload(
@@ -4338,54 +4379,55 @@ Do the work.
         self.assertIn("Latest change_request:", items[0]["prompt"])
         self.assertIn("Add deterministic verification after gateway hint filtering.", items[0]["prompt"])
 
-    def test_plan_execution_backlog_items_ignore_satisfied_change_request(self):
+    def test_plan_execution_backlog_items_ignore_closed_change_request_statuses(self):
         mod = load_supervisor()
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            old_plans = mod.PLANS_DIR
-            old_active = mod.ACTIVE_PLAN_PATH
-            try:
-                mod.PLANS_DIR = tmp_path / "plans"
-                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
-                plan = mod.create_plan_payload(
-                    plan_id="plan-satisfied-change-request",
-                    goal_id="goal-satisfied-change-request",
-                    contract={
-                        "problem": "Do not revive closed change requests.",
-                        "why_now": "Satisfied requests are evidence, not new work.",
-                        "must": "Skip satisfied change_request blocks.",
-                        "system_requirement": "idle plan continuation only uses open change requests.",
-                        "data_shape": "change_request status plus proposal.",
-                        "normal_flow": "satisfied change_request -> no continuation item.",
-                        "exception_flow": "new proposed request -> continuation item.",
-                        "acceptance": "no backlog item is generated.",
-                        "out_of_scope": "no hidden re-open.",
-                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
-                        "reference_entry": "A9 active plan change_request tails.",
-                    },
-                )
-                backlog = mod.execution_backlog_state(plan)
-                backlog["generated_task_ids"].extend(
-                    [
-                        "exec-001-reference_scan-plan-satisfied-change-request",
-                        "exec-002-mechanism_extract-plan-satisfied-change-request",
-                    ]
-                )
-                plan_dir = mod.write_plan_files(plan)
-                (plan_dir / "change_request.md").write_text(
-                    "# Change Request\n\n"
-                    "## cr-1\n\n"
-                    "- status: satisfied\n"
-                    "- proposal: Add deterministic verification after gateway hint filtering.\n",
-                    encoding="utf-8",
-                )
+        for status in ["applied", "approved", "satisfied"]:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                old_plans = mod.PLANS_DIR
+                old_active = mod.ACTIVE_PLAN_PATH
+                try:
+                    mod.PLANS_DIR = tmp_path / "plans"
+                    mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                    plan = mod.create_plan_payload(
+                        plan_id=f"plan-{status}-change-request",
+                        goal_id=f"goal-{status}-change-request",
+                        contract={
+                            "problem": "Do not revive closed change requests.",
+                            "why_now": "Closed requests are evidence, not new work.",
+                            "must": "Skip closed change_request blocks.",
+                            "system_requirement": "idle plan continuation only uses open change requests.",
+                            "data_shape": "change_request status plus proposal.",
+                            "normal_flow": "closed change_request -> no continuation item.",
+                            "exception_flow": "new proposed request -> continuation item.",
+                            "acceptance": "no backlog item is generated.",
+                            "out_of_scope": "no hidden re-open.",
+                            "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                            "reference_entry": "A9 active plan change_request tails.",
+                        },
+                    )
+                    backlog = mod.execution_backlog_state(plan)
+                    backlog["generated_task_ids"].extend(
+                        [
+                            f"exec-001-reference_scan-plan-{status}-change-request",
+                            f"exec-002-mechanism_extract-plan-{status}-change-request",
+                        ]
+                    )
+                    plan_dir = mod.write_plan_files(plan)
+                    (plan_dir / "change_request.md").write_text(
+                        "# Change Request\n\n"
+                        "## cr-1\n\n"
+                        f"- status: {status}\n"
+                        "- proposal: Add deterministic verification after gateway hint filtering.\n",
+                        encoding="utf-8",
+                    )
 
-                items = mod.plan_execution_backlog_items(plan, count=1)
-            finally:
-                mod.PLANS_DIR = old_plans
-                mod.ACTIVE_PLAN_PATH = old_active
+                    items = mod.plan_execution_backlog_items(plan, count=1)
+                finally:
+                    mod.PLANS_DIR = old_plans
+                    mod.ACTIVE_PLAN_PATH = old_active
 
-        self.assertEqual(items, [])
+                self.assertEqual(items, [])
 
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()

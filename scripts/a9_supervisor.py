@@ -8594,7 +8594,7 @@ def latest_plan_change_request(plan: dict[str, Any], *, max_chars: int = 500) ->
             continue
         status_line = next((line for line in lines if line.startswith("- status:")), "")
         status = status_line.split(":", 1)[1].strip().lower() if ":" in status_line else "proposed"
-        if status in {"satisfied", "done", "closed", "cancelled", "rejected"}:
+        if status in {"applied", "approved", "satisfied", "done", "closed", "cancelled", "rejected"}:
             continue
         proposal = next((line for line in lines if line.startswith("- proposal:")), "")
         return bounded_inline(proposal, max_chars)
@@ -12178,6 +12178,8 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
     title = str(raw.get("title") or raw.get("objective") or phase).strip()
     objective = str(raw.get("objective") or raw.get("prompt") or title).strip()
     prompt_body = str(raw.get("prompt") or objective).strip()
+    acceptance = str(raw.get("acceptance") or contract.get("acceptance") or "").strip()
+    allowed_execution_text = str(raw.get("allowed_execution") or contract.get("allowed_execution") or "").strip()
     prompt = "\n".join(
         [
             "decision_status: decided",
@@ -12189,9 +12191,9 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
             f"data_contract: {contract.get('data_shape', '')}",
             f"state_flow: {contract.get('normal_flow', '')}",
             f"exception_flow: {contract.get('exception_flow', '')}",
-            f"acceptance: {contract.get('acceptance', '')}",
+            f"acceptance: {acceptance}",
             f"out_of_scope: {contract.get('out_of_scope', '')}",
-            f"allowed_execution: {contract.get('allowed_execution', '')}",
+            f"allowed_execution: {allowed_execution_text}",
             f"change_record: {contract.get('change_record', '') or 'Generated from requirements debate ready_for_execution_backlog.'}",
             "role_signoff: requirements debate pipeline reached ready_for_execution_backlog.",
             f"execution_backlog_id: {backlog_id}",
@@ -12304,7 +12306,7 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
     if ready_items:
         return ready_items[:count] if count > 0 else ready_items
     if raw_items:
-        terminal_statuses = {"done", "complete", "completed", "closed", "cancelled", "skipped"}
+        terminal_statuses = {"pass", "passed", "done", "complete", "completed", "closed", "cancelled", "skipped"}
         raw_statuses = {str(item.get("status") or "").strip().lower() for item in raw_items}
         if any(status not in terminal_statuses for status in raw_statuses):
             return []
