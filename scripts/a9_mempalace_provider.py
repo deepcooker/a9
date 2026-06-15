@@ -14,6 +14,7 @@ import argparse
 import contextlib
 import heapq
 import json
+import math
 import os
 import re
 import sys
@@ -184,6 +185,198 @@ def native_search(
         "filters": payload.get("filters") or {"wing": wing, "room": room},
         "total_before_filter": payload.get("total_before_filter"),
         "results": results,
+    }
+
+
+def distance_to_similarity(distance: Any) -> float | None:
+    if distance is None:
+        return None
+    try:
+        value = float(distance)
+    except (TypeError, ValueError):
+        return None
+    if value < 0:
+        return round(1.0 / (1.0 + math.exp(min(60.0, value))), 3)
+    return round(max(0.0, 1.0 - value), 3)
+
+
+def build_native_where(wing: str | None, room: str | None) -> dict[str, Any] | None:
+    conditions: list[dict[str, str]] = []
+    if wing:
+        conditions.append({"wing": wing})
+    if room:
+        conditions.append({"room": room})
+    if not conditions:
+        return None
+    if len(conditions) == 1:
+        return conditions[0]
+    return {"$and": conditions}
+
+
+def native_query_drawers(
+    query: str,
+    *,
+    limit: int = 8,
+    wing: str | None = None,
+    room: str | None = None,
+    palace: Path = DEFAULT_PALACE,
+    max_distance: float = 0.0,
+) -> dict[str, Any] | None:
+    """Return MemPalace native hits with drawer IDs and raw evidence metadata.
+
+    MemPalace MCP search intentionally returns concise drawer text. A9's
+    control plane also needs stable IDs/hashes so monitor, mobile, and workers
+    can hydrate exact drawers without trusting summaries.
+    """
+    if not (palace / "chroma.sqlite3").exists() or not MEMPALACE_SOURCE.exists():
+        return None
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    try:
+        with suppress_native_stderr():
+            from mempalace.palace import get_collection  # type: ignore
+
+            collection = get_collection(str(palace), create=False)
+            kwargs: dict[str, Any] = {
+                "query_texts": [query],
+                "n_results": max(1, limit),
+                "include": ["documents", "metadatas", "distances"],
+            }
+            where = build_native_where(wing, room)
+            if where:
+                kwargs["where"] = where
+            raw = collection.query(**kwargs)
+    except Exception as exc:  # pragma: no cover - environment/index dependent
+        return {
+            "source": "native_mempalace",
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "results": [],
+        }
+
+    ids = (getattr(raw, "ids", None) or [[]])[0]
+    docs = (getattr(raw, "documents", None) or [[]])[0]
+    metas = (getattr(raw, "metadatas", None) or [[]])[0]
+    distances = (getattr(raw, "distances", None) or [[]])[0]
+    results: list[dict[str, Any]] = []
+    for drawer_id, doc, meta, distance in zip(ids, docs, metas, distances):
+        meta = meta or {}
+        if max_distance > 0.0 and distance is not None and float(distance) > max_distance:
+            continue
+        results.append(
+            {
+                "drawer_id": drawer_id,
+                "similarity": distance_to_similarity(distance),
+                "distance": None if distance is None else round(float(distance), 4),
+                "wing": meta.get("wing"),
+                "room": meta.get("room"),
+                "role": meta.get("role"),
+                "event_kind": meta.get("event_kind"),
+                "timestamp": meta.get("filed_at"),
+                "source_ref": meta.get("source_ref"),
+                "source_file": meta.get("source_file"),
+                "source_sha256": meta.get("source_sha256"),
+                "raw_line_sha256": meta.get("raw_line_sha256"),
+                "content_hash": meta.get("content_hash"),
+                "source_line": meta.get("source_line"),
+                "content": compact(str(doc or "")),
+            }
+        )
+    return {
+        "source": "native_mempalace",
+        "status": "ok",
+        "palace_path": str(palace),
+        "filters": {"wing": wing, "room": room},
+        "results": results,
+    }
+
+
+def native_get_drawer(drawer_id: str, *, palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
+    if not drawer_id:
+        return {"status": "invalid_request", "error": "drawer_id_required"}
+    if not (palace / "chroma.sqlite3").exists() or not MEMPALACE_SOURCE.exists():
+        return {"status": "error", "error": "native palace index unavailable"}
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    try:
+        with suppress_native_stderr():
+            from mempalace.palace import get_collection  # type: ignore
+
+            collection = get_collection(str(palace), create=False)
+            raw = collection.get(ids=[drawer_id], include=["documents", "metadatas"])
+    except Exception as exc:  # pragma: no cover - environment/index dependent
+        return {"status": "error", "error": f"{type(exc).__name__}: {exc}"}
+    ids = getattr(raw, "ids", None) or []
+    if not ids:
+        return {"status": "not_found", "error": f"Drawer not found: {drawer_id}"}
+    docs = getattr(raw, "documents", None) or []
+    metas = getattr(raw, "metadatas", None) or []
+    meta = metas[0] if metas else {}
+    return {
+        "status": "ok",
+        "drawer_id": ids[0],
+        "content": docs[0] if docs else "",
+        "metadata": meta or {},
+    }
+
+
+def build_recall_packet(
+    path: Path,
+    *,
+    query: str,
+    limit: int,
+    hydrate: int = 3,
+    wing: str = DEFAULT_NATIVE_WING,
+    room: str = DEFAULT_NATIVE_ROOM,
+    palace: Path = DEFAULT_PALACE,
+    native_enabled: bool = True,
+) -> dict[str, Any]:
+    native = (
+        native_query_drawers(query, limit=limit, wing=wing, room=room, palace=palace)
+        if native_enabled
+        else None
+    )
+    fallback_hits = search_drawers(path, query, limit=limit, event_kind="message", exclude_context=True)
+    native_hits = native.get("results", []) if native and native.get("status") == "ok" else []
+    hydrated: list[dict[str, Any]] = []
+    for hit in native_hits[: max(0, hydrate)]:
+        drawer = native_get_drawer(str(hit.get("drawer_id") or ""), palace=palace)
+        if drawer.get("status") == "ok":
+            hydrated.append(
+                {
+                    "drawer_id": drawer.get("drawer_id"),
+                    "content": drawer.get("content"),
+                    "metadata": drawer.get("metadata"),
+                }
+            )
+    return {
+        "schema": "a9.mempalace_recall_packet.v1",
+        "source": "native_mempalace+fallback_drawer_jsonl" if native_hits else "mempalace-compatible-drawer-jsonl",
+        "status": "ok" if native is None or native.get("status") == "ok" else native.get("status"),
+        "query": query,
+        "truth_policy": "recall_not_truth",
+        "official_protocol": [
+            "short keyword search",
+            "verbatim drawer hits",
+            "drawer_id hydration",
+            "KG/diary are separate continuity layers",
+            "empty/conflicting recall must not be treated as truth",
+        ],
+        "filters": {"wing": wing, "room": room},
+        "native_error": None if not native or native.get("status") == "ok" else native.get("error"),
+        "search_hits": native_hits,
+        "hydrated_drawers": hydrated,
+        "fallback_evidence_refs": [
+            {
+                "source_ref": hit["source_ref"],
+                "source_sha256": hit["source_sha256"],
+                "content_hash": hit["content_hash"],
+                "role": hit["role"],
+                "event_kind": hit["event_kind"],
+                "score": hit["score"],
+            }
+            for hit in fallback_hits
+        ],
+        "fallback_recall": fallback_hits,
+        "next_reader_rule": "Use search_hits to select evidence, hydrated_drawers for verbatim reading, and raw source_ref/hash to audit. Do not answer from recall alone.",
     }
 
 
@@ -366,6 +559,13 @@ def main() -> int:
     wakeup.add_argument("--query", default="A9 MemPalace current mainline next action")
     wakeup.add_argument("--limit", type=int, default=8)
 
+    recall = sub.add_parser("recall")
+    recall.add_argument("query")
+    recall.add_argument("--limit", type=int, default=8)
+    recall.add_argument("--hydrate", type=int, default=3)
+    recall.add_argument("--wing", default=DEFAULT_NATIVE_WING)
+    recall.add_argument("--room", default=DEFAULT_NATIVE_ROOM)
+
     args = parser.parse_args()
     drawers = Path(args.drawers)
     palace = Path(args.palace)
@@ -437,6 +637,19 @@ def main() -> int:
                 drawers,
                 query=args.query,
                 limit=args.limit,
+                native_enabled=native_enabled,
+                palace=palace,
+            )
+        )
+    elif args.command == "recall":
+        print_json(
+            build_recall_packet(
+                drawers,
+                query=args.query,
+                limit=args.limit,
+                hydrate=args.hydrate,
+                wing=args.wing,
+                room=args.room,
                 native_enabled=native_enabled,
                 palace=palace,
             )

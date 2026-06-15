@@ -3442,6 +3442,7 @@ def controller_discovery() -> dict[str, Any]:
             "mempalace_status": "/api/memory/mempalace/status",
             "mempalace_search": "/api/memory/mempalace/search",
             "mempalace_wakeup": "/api/memory/mempalace/wakeup",
+            "mempalace_recall": "/api/memory/mempalace/recall",
             "runtime_plan_decision_approve": "/api/runtime/plan-decision-approve",
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
@@ -8508,6 +8509,31 @@ def mempalace_wakeup(payload: dict[str, Any]) -> dict[str, Any]:
     return pack
 
 
+def mempalace_recall(payload: dict[str, Any]) -> dict[str, Any]:
+    query = str(payload.get("query") or "").strip()
+    if not query:
+        return {
+            "schema": "a9.control_api.mempalace_recall.v1",
+            "status": "invalid_request",
+            "error": "query_required",
+            "truth_policy": "recall_not_truth",
+            "search_hits": [],
+            "hydrated_drawers": [],
+        }
+    provider = mempalace_provider()
+    drawers = Path(str(payload.get("drawers") or provider.DEFAULT_DRAWERS))
+    packet = provider.build_recall_packet(
+        drawers,
+        query=query,
+        limit=_mempalace_limit(payload, default=8, maximum=50),
+        hydrate=_mempalace_limit({"limit": payload.get("hydrate")}, default=3, maximum=10),
+        wing=payload.get("wing") or getattr(provider, "DEFAULT_NATIVE_WING", "operator-codex-native"),
+        room=payload.get("room") or getattr(provider, "DEFAULT_NATIVE_ROOM", "codex-message"),
+    )
+    packet["schema"] = "a9.control_api.mempalace_recall.v1"
+    return packet
+
+
 def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     enqueue_service_control_audit(
         {
@@ -9472,6 +9498,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, mempalace_search(payload))
             elif self.path == "/api/memory/mempalace/wakeup":
                 self.write_json(200, mempalace_wakeup(payload))
+            elif self.path == "/api/memory/mempalace/recall":
+                self.write_json(200, mempalace_recall(payload))
             elif self.path == "/api/runtime/plan-decision-approve":
                 self.write_json(200, runtime_plan_decision_approve(payload))
             elif self.path == "/api/runtime/plan-debate-next":

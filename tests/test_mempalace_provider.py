@@ -119,6 +119,39 @@ class MempalaceProviderTests(unittest.TestCase):
             self.assertEqual(payload["recall"][0]["event_kind"], "message")
             self.assertNotIn("AGENTS.md instructions", payload["recall"][0]["content"])
 
+    def test_recall_packet_separates_search_hydration_and_fallback_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            drawers = Path(tmp) / "drawers.jsonl"
+            write_drawers(drawers)
+            result = subprocess.run(
+                [
+                    str(PROVIDER),
+                    "--drawers",
+                    str(drawers),
+                    "--native-mode",
+                    "fallback",
+                    "recall",
+                    "session governance",
+                    "--limit",
+                    "2",
+                    "--hydrate",
+                    "1",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema"], "a9.mempalace_recall_packet.v1")
+            self.assertEqual(payload["truth_policy"], "recall_not_truth")
+            self.assertIn("drawer_id hydration", payload["official_protocol"])
+            self.assertEqual(payload["search_hits"], [])
+            self.assertEqual(payload["hydrated_drawers"], [])
+            self.assertEqual(payload["fallback_evidence_refs"][0]["source_ref"], "session.jsonl:10")
+            self.assertEqual(payload["fallback_recall"][0]["drawer_id"], "d1")
+
 
 if __name__ == "__main__":
     unittest.main()

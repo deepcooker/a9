@@ -282,6 +282,37 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["truth_policy"], "recall_not_truth")
         self.assertEqual(result["evidence_refs"][0]["source_ref"], "session.jsonl:11")
 
+    def test_mempalace_recall_uses_official_style_packet(self):
+        mod = load_control_api()
+
+        def fake_recall(drawers, query, limit, hydrate, wing, room):
+            return {
+                "schema": "a9.mempalace_recall_packet.v1",
+                "status": "ok",
+                "query": query,
+                "truth_policy": "recall_not_truth",
+                "official_protocol": ["verbatim drawer hits", "drawer_id hydration"],
+                "filters": {"wing": wing, "room": room},
+                "search_hits": [{"drawer_id": "d1"}],
+                "hydrated_drawers": [{"drawer_id": "d1", "content": "full text"}],
+                "fallback_evidence_refs": [],
+                "fallback_recall": [],
+            }
+
+        provider = SimpleNamespace(
+            DEFAULT_DRAWERS=Path("/tmp/drawers.jsonl"),
+            DEFAULT_NATIVE_WING="operator-codex-native",
+            DEFAULT_NATIVE_ROOM="codex-message",
+            build_recall_packet=fake_recall,
+        )
+        with mock.patch.object(mod, "mempalace_provider", return_value=provider):
+            result = mod.mempalace_recall({"query": "session governance", "limit": 2, "hydrate": 1})
+
+        self.assertEqual(result["schema"], "a9.control_api.mempalace_recall.v1")
+        self.assertEqual(result["truth_policy"], "recall_not_truth")
+        self.assertEqual(result["search_hits"][0]["drawer_id"], "d1")
+        self.assertEqual(result["hydrated_drawers"][0]["content"], "full text")
+
     def test_supervisor_status_reads_existing_a9_state(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -11243,6 +11274,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["mempalace_status"], "/api/memory/mempalace/status")
         self.assertEqual(discovery["endpoints"]["mempalace_search"], "/api/memory/mempalace/search")
         self.assertEqual(discovery["endpoints"]["mempalace_wakeup"], "/api/memory/mempalace/wakeup")
+        self.assertEqual(discovery["endpoints"]["mempalace_recall"], "/api/memory/mempalace/recall")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
             discovery["endpoints"]["node_command_result_by_command"],
