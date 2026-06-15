@@ -4870,6 +4870,104 @@ Findings are ready.
         self.assertEqual(summary["auto_next_backlog"]["status"], "scheduled")
         self.assertNotIn("auto_next_block", summary)
 
+    def test_schedule_idle_lane_queues_only_ready_backlog_from_mixed_statuses(self):
+        mod = load_supervisor()
+        old_idle = os.environ.get("A9_IDLE_GOAL_CONTINUATION")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_queue = mod.QUEUE_DIR
+            old_guard = mod.AUTO_LOOP_GUARD_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.AUTO_LOOP_GUARD_PATH = tmp_path / "auto_loop_guard.json"
+            os.environ["A9_IDLE_GOAL_CONTINUATION"] = "1"
+            try:
+                goal = mod.create_goal_payload("goal-mixed-backlog", "Mixed backlog continuation", 1000)
+                mod.write_goal(goal)
+                plan = mod.create_plan_payload(
+                    plan_id="plan-mixed-backlog",
+                    goal_id="goal-mixed-backlog",
+                    contract={
+                        "problem": "Mixed backlog statuses must not block a new ready slice.",
+                        "why_now": "Monitor-applied and failed historical items are evidence, not current work.",
+                        "must": "Queue only ready backlog entries.",
+                        "system_requirement": "idle lane continuation handles pass, queued, needs-repair and ready states deterministically.",
+                        "data_shape": "execution_backlog items with status and item-level acceptance.",
+                        "normal_flow": "idle loop -> one ready item -> queued task.",
+                        "exception_flow": "stale contract text must not leak into item prompt.",
+                        "acceptance": "old one-doc closure acceptance should be overridden by item acceptance.",
+                        "out_of_scope": "generic fallback.",
+                        "allowed_execution": "old/stale/path.md",
+                        "reference_entry": "A9 backlog status governance.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].extend(
+                    [
+                        {"id": "backlog-001-pass", "title": "Done", "phase": "record", "prompt": "Done.", "status": "pass"},
+                        {
+                            "id": "backlog-002-queued",
+                            "title": "Queued",
+                            "phase": "test",
+                            "prompt": "Already queued.",
+                            "status": "queued",
+                            "queued_task_id": "idle-backlog-queued",
+                        },
+                        {
+                            "id": "backlog-003-needs-repair",
+                            "title": "Needs repair",
+                            "phase": "record",
+                            "prompt": "Historical failed item.",
+                            "status": "needs-repair",
+                        },
+                        {
+                            "id": "backlog-004-ready",
+                            "title": "Ready current slice",
+                            "phase": "test",
+                            "prompt": "Run current contract checks only.",
+                            "acceptance": "declared unittest passes",
+                            "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                            "allowed_paths": ["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+                            "checks": ["python3 -m py_compile scripts/a9_supervisor.py"],
+                            "status": "ready",
+                        },
+                    ]
+                )
+                mod.write_plan_files(plan)
+
+                lane_task = mod.schedule_idle_lane_continuation()
+                queued = sorted(mod.QUEUE_DIR.glob("*.md"))
+                assert lane_task is not None
+                lane, next_path = lane_task
+                queued_text = next_path.read_text(encoding="utf-8")
+                parsed = mod.parse_task(next_path)
+                stored = mod.load_plan("plan-mixed-backlog")
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.QUEUE_DIR = old_queue
+                mod.AUTO_LOOP_GUARD_PATH = old_guard
+                if old_idle is None:
+                    os.environ.pop("A9_IDLE_GOAL_CONTINUATION", None)
+                else:
+                    os.environ["A9_IDLE_GOAL_CONTINUATION"] = old_idle
+
+        self.assertEqual(lane, "plan-continuation")
+        self.assertEqual(len(queued), 1)
+        self.assertIn("execution_backlog_id: backlog-004-ready", queued_text)
+        self.assertIn("acceptance: declared unittest passes", queued_text)
+        self.assertIn("allowed_execution: scripts/a9_supervisor.py tests/test_supervisor.py", queued_text)
+        self.assertNotIn("old/stale/path.md", queued_text)
+        self.assertIn("scripts/a9_supervisor.py", parsed.allowed_paths)
+        assert stored is not None
+        self.assertEqual(stored["execution_backlog"]["items"][3]["status"], "queued")
+
     def test_schedule_next_task_still_blocks_debate_without_backlog_append(self):
         mod = load_supervisor()
         task = mod.Task(
