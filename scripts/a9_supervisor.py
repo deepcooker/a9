@@ -2903,6 +2903,7 @@ def worker_workspace_escape_violation(command: str, worktree: Path | str) -> dic
 
 def live_worker_command_violation(task: Task, command: str, *, rationale: str = "") -> dict[str, Any]:
     normalized = normalize_shell_command(command)
+    live_read_budget_stop = prompt_requires_live_read_budget_stop(task.prompt)
     if command_looks_like_test(normalized) and task.checks and command_matches_declared_check(normalized, task.checks):
         return {
             "kind": "worker_declared_check_execution",
@@ -2929,6 +2930,13 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         return {}
     bounded_paths = bounded_read_paths_from_prompt(task.prompt)
     if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
+        if live_read_budget_stop:
+            return {
+                "kind": "outside_bounded_read_scope",
+                "reason": "worker command is outside the task's explicit bounded read scope",
+                "command": normalized,
+                "allowed_paths": bounded_paths,
+            }
         return {}
     compound_read_findings = compound_wide_read_command_findings(task, normalized)
     if compound_read_findings:
@@ -2948,8 +2956,20 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
     if prompt_requires_targeted_rg(task.prompt) and command_runs_broad_rg(normalized):
         return {}
     if task.phase in READ_HEAVY_PHASES and command_runs_uncapped_rg(normalized):
+        if live_read_budget_stop:
+            return {
+                "kind": "uncapped_rg_command",
+                "reason": "worker ran rg without an output cap in a read-heavy live-budget task",
+                "command": normalized,
+            }
         return {}
     if command_reads_runtime_evidence_root(normalized, bounded_paths):
+        if live_read_budget_stop:
+            return {
+                "kind": "runtime_evidence_root_read",
+                "reason": "worker searched a runtime evidence root instead of an exact bounded evidence path",
+                "command": normalized,
+            }
         return {}
     session_read_finding = forbidden_session_context_read(task, normalized)
     if session_read_finding and session_read_finding.get("level") == "error":
@@ -2960,6 +2980,17 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
             "path": session_read_finding["path"],
         }
     for finding in sed_window_governance(task, normalized, rationale=rationale):
+        if live_read_budget_stop and finding.get("kind") in {
+            "broad_file_slice_observation",
+            "command_window_exceeded",
+            "command_window_missing_rationale",
+        }:
+            return {
+                "kind": str(finding.get("kind") or "sed_window_violation"),
+                "reason": str(finding.get("message") or "worker exceeded live sed read budget"),
+                "command": normalized,
+                "lines": finding.get("lines") or finding.get("line_count"),
+            }
         if finding.get("level") == "error":
             return {}
     return {}
@@ -4597,6 +4628,11 @@ def prompt_enforces_allowed_read_paths(prompt: str) -> bool:
         "bounded read",
     )
     return any(marker in lowered for marker in markers)
+
+
+def prompt_requires_live_read_budget_stop(prompt: str) -> bool:
+    lowered = str(prompt or "").lower()
+    return "live_read_budget_policy: stop" in lowered or "stop on read budget violations" in lowered
 
 
 def command_read_targets(command: str) -> list[str]:
@@ -12331,6 +12367,7 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
     prompt_body = str(raw.get("prompt") or objective).strip()
     acceptance = str(raw.get("acceptance") or contract.get("acceptance") or "").strip()
     allowed_execution_text = str(raw.get("allowed_execution") or contract.get("allowed_execution") or "").strip()
+    bounded_read_lines = [f"bounded read: {path}" for path in allowed_paths[:8]]
     prompt = "\n".join(
         [
             "decision_status: decided",
@@ -12345,6 +12382,7 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
             f"acceptance: {acceptance}",
             f"out_of_scope: {contract.get('out_of_scope', '')}",
             f"allowed_execution: {allowed_execution_text}",
+            *bounded_read_lines,
             f"change_record: {contract.get('change_record', '') or 'Generated from requirements debate ready_for_execution_backlog.'}",
             "role_signoff: requirements debate pipeline reached ready_for_execution_backlog.",
             f"execution_backlog_id: {backlog_id}",
@@ -12358,6 +12396,11 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
             "Rules:",
             "- Execute only this bounded slice.",
             "- Use reference-first copying where the slice requires it.",
+            "- live_read_budget_policy: stop.",
+            "- Read only bounded slices from allowed_paths; do not cd to /root/a9 or search broad roots.",
+            "- Use capped `rg -n -m 20` or `rg ... | head -n 40`; never run uncapped rg in read-heavy phases.",
+            "- Keep each `sed -n` source window <= 120 lines and total requested source lines <= 180.",
+            "- Do not search `.a9` roots; use exact evidence paths already provided in the prompt.",
             "- Do not change product scope, data contract, state flow, acceptance, or out_of_scope.",
             "- If the contract is wrong, append a plan change_request instead of silently changing it.",
         ]
@@ -12448,6 +12491,7 @@ def plan_backlog_generation_continuation_item(
 ) -> dict[str, Any] | None:
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
+    bounded_read_lines = [f"bounded read: {path}" for path in allowed_paths[:8]]
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
     prefix = f"exec-backlog-generation-{plan_ref}-"
     existing_rounds = [
@@ -12473,6 +12517,7 @@ def plan_backlog_generation_continuation_item(
             f"acceptance: {contract.get('acceptance', '')}",
             f"out_of_scope: {contract.get('out_of_scope', '')}",
             f"allowed_execution: {contract.get('allowed_execution', '')}",
+            *bounded_read_lines,
             "role_signoff: requirements are closed; active plan backlog is exhausted and needs the next decided batch.",
             "execution_backlog_id: execution_backlog_generation",
             "execution_backlog_phase: reference_scan",
@@ -12493,6 +12538,11 @@ def plan_backlog_generation_continuation_item(
             "",
             "Rules:",
             "- This is requirements/backlog shaping, not execution.",
+            "- live_read_budget_policy: stop.",
+            "- Read only bounded slices from allowed_paths; do not cd to /root/a9 or search broad roots.",
+            "- Use capped `rg -n -m 20` or `rg ... | head -n 40`; never run uncapped rg in read-heavy phases.",
+            "- Keep each `sed -n` source window <= 120 lines and total requested source lines <= 180.",
+            "- Do not search `.a9` roots; use exact evidence paths already provided in the prompt.",
             "- Use reference-first copying where a next slice requires it.",
             "- Preserve data-first and performance-second acceptance.",
             "- Avoid stale one-doc closure artifacts; current authority is AGENTS.md, docs/project.md, docs/method.md, docs/session.md, docs/reference.md and active plan evidence.",
@@ -12542,6 +12592,7 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
         if any(status not in terminal_statuses for status in raw_statuses):
             return []
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
+    bounded_read_lines = [f"bounded read: {path}" for path in allowed_paths[:8]]
     selected_phases = list(EXECUTION_BACKLOG_PHASES)
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
     items: list[dict[str, Any]] = []
@@ -12563,6 +12614,7 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
                 f"acceptance: {contract.get('acceptance', '')}",
                 f"out_of_scope: {contract.get('out_of_scope', '')}",
                 f"allowed_execution: {contract.get('allowed_execution', '')}",
+                *bounded_read_lines,
                 f"change_record: {contract.get('change_record', '') or 'Generated from requirements debate ready_for_execution_backlog.'}",
                 "role_signoff: requirements debate pipeline reached ready_for_execution_backlog.",
                 f"execution_backlog_index: {index}",
@@ -12574,6 +12626,11 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
                 "Rules:",
                 "- Execute only this bounded phase.",
                 "- Use reference-first copying where the phase requires it.",
+                "- live_read_budget_policy: stop.",
+                "- Read only bounded slices from allowed_paths; do not cd to /root/a9 or search broad roots.",
+                "- Use capped `rg -n -m 20` or `rg ... | head -n 40`; never run uncapped rg in read-heavy phases.",
+                "- Keep each `sed -n` source window <= 120 lines and total requested source lines <= 180.",
+                "- Do not search `.a9` roots; use exact evidence paths already provided in the prompt.",
                 "- Do not change product scope, data contract, state flow, acceptance, or out_of_scope.",
                 "- If the contract is wrong, append a plan change_request instead of silently changing it.",
             ]

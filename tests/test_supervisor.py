@@ -5886,6 +5886,8 @@ Findings are ready.
         self.assertIn('phase: "reference_scan"', text)
         self.assertIn("decision_status: decided", text)
         self.assertIn("route: execution_next", text)
+        self.assertIn("live_read_budget_policy: stop", text)
+        self.assertIn("Read only bounded slices from allowed_paths", text)
         self.assertIn("plan_id: plan-idle-continuation", text)
         self.assertNotIn("Fallback goal should not win", text)
         self.assertEqual(parsed.phase, "reference_scan")
@@ -8490,6 +8492,35 @@ Findings are ready.
         self.assertEqual(undeclared, {})
         self.assertEqual(declared["kind"], "worker_declared_check_execution")
         self.assertEqual(declared["level"], "warn")
+
+    def test_live_worker_stops_read_budget_violations_when_prompt_requires_it(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="live-read-budget-stop",
+            phase="mechanism_extract",
+            prompt=(
+                "live_read_budget_policy: stop\n"
+                "allowed_paths: scripts/a9_supervisor.py tests/test_supervisor.py\n"
+                "bounded read: scripts/a9_supervisor.py\n"
+                "bounded read: tests/test_supervisor.py\n"
+                "Read only bounded slices from allowed_paths.\n"
+                "Use targeted rg -n only.\n"
+                "sed windows <= 120 lines.\n"
+            ),
+        )
+
+        uncapped_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n needle scripts/a9_supervisor.py'")
+        outside_scope = mod.live_worker_command_violation(task, "/bin/bash -lc 'sed -n \"1,80p\" docs/project.md'")
+        runtime_root = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 token .a9/runs'")
+        broad_sed = mod.live_worker_command_violation(task, "/bin/bash -lc \"sed -n '1,241p' scripts/a9_supervisor.py\"")
+        capped_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 needle scripts/a9_supervisor.py'")
+
+        self.assertEqual(uncapped_rg["kind"], "uncapped_rg_command")
+        self.assertEqual(outside_scope["kind"], "outside_bounded_read_scope")
+        self.assertIn(runtime_root["kind"], {"runtime_evidence_root_read", "outside_bounded_read_scope"})
+        self.assertIn(broad_sed["kind"], {"command_window_exceeded", "command_window_missing_rationale"})
+        self.assertEqual(capped_rg, {})
 
     def test_live_worker_observes_runtime_evidence_root_searches_without_blocking(self):
         mod = load_supervisor()
