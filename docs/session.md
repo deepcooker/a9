@@ -22,6 +22,8 @@ Raw external Codex/operator session:
 7. Requirements debate is part of the 24h workflow.
 8. Data first, performance second.
 9. Noise cleanup is part of requirements analysis.
+10. Old one-off closure docs are stale. Current closure state lives in the
+    five-doc packet plus active plan evidence.
 
 ## Current Mainline
 
@@ -44,6 +46,9 @@ Raw external Codex/operator session:
 - Recall is not truth. Raw evidence, source refs and hashes remain canonical.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
+- MemPalace wakeup is wired into control API and supervisor context packets.
+  The next execution lane is backlog generation/resume under the current
+  five-doc contract, not recreation of old closure artifacts.
 
 ## Active Appends
 

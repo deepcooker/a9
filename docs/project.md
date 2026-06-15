@@ -77,6 +77,11 @@ P7 NZX technical MVP
   MemPalace provider facade: status, source-preserving search and wakeup over
   drawer JSONL. Native MemPalace remains optional until its dependencies are
   installed.
+- `scripts/a9_supervisor.py` injects bounded MemPalace wakeup evidence into
+  worker context. Recall is a recovery hint, not task authority.
+- The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
+  Current two-lane closure must stay inside this five-doc packet and active
+  plan evidence.
 - `crates/a9-gateway`, `crates/a9-worker` and `crates/a9-client` are Rust-side
   control/runtime pieces.
 - `.a9/` contains runtime evidence and archives, not source truth.
