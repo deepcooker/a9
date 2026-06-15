@@ -2967,6 +2967,8 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
     if command_looks_like_test(normalized) and task.checks and not command_matches_declared_check(normalized, task.checks):
         return {}
     bounded_paths = bounded_read_paths_from_prompt(task.prompt)
+    if command_is_low_cost_directory_listing(normalized):
+        return {}
     if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
         if live_read_budget_stop:
             return {
@@ -5040,6 +5042,45 @@ def sed_window_governance(
 def command_runs_ls(command: str) -> bool:
     normalized = normalize_shell_command(command)
     return bool(re.search(r"(?:^|\s)(?:/bin/)?(?:bash|sh)\s+-lc\s+['\"]?ls(?:['\"]?|\s|$)", normalized)) or normalized == "ls"
+
+
+def command_is_low_cost_directory_listing(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    inner = shell_lc_inner_command(normalized).strip()
+    if re.search(r"\s(?:\|\||;)\s", inner):
+        return False
+    fragments = [part.strip() for part in re.split(r"\s+&&\s+", inner) if part.strip()]
+    fragments = [part for part in fragments if not command_fragment_is_cd(part)]
+    if len(fragments) != 1:
+        return False
+    pipe_parts = shell_pipeline_parts(fragments[0])
+    if len(pipe_parts) > 2:
+        return False
+    if len(pipe_parts) == 2 and not re.fullmatch(r"head(?:\s+(?:-n\s+\d+|-\d+))?", pipe_parts[1]):
+        return False
+    try:
+        parts = shlex.split(pipe_parts[0])
+    except ValueError:
+        return False
+    if not parts or parts[0] != "ls":
+        return False
+    targets: list[str] = []
+    for part in parts[1:]:
+        if part.startswith("-"):
+            if part in {"-1", "--format=single-column"}:
+                continue
+            return False
+        targets.append(part)
+    if len(targets) > 1:
+        return False
+    target = targets[0] if targets else "."
+    root_text = str(ROOT)
+    forbidden_targets = {".", root_text, f"{root_text}/", "/", ".a9", f"{root_text}/.a9"}
+    if target in forbidden_targets:
+        return False
+    if target.startswith(".a9/") or target.startswith(f"{root_text}/.a9/"):
+        return False
+    return True
 
 
 def command_runs_broad_rg(command: str) -> bool:
