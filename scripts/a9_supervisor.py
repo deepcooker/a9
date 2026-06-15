@@ -4811,6 +4811,19 @@ def prompt_sed_window_limit(prompt: str) -> int | None:
     return int(match.group(1))
 
 
+def total_sed_line_limit_for_task(task: Task) -> int | None:
+    match = re.search(
+        r"total requested source lines\s*<=\s*(\d+)",
+        str(task.prompt or ""),
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return int(match.group(1))
+    if task_is_observation_only(task):
+        return 180
+    return None
+
+
 READ_HEAVY_PHASES = {"reference_scan", "mechanism_extract", SESSION_CLOSE_READING_PHASE}
 BATCHED_READ_RATIONALE_HINTS = (
     "原因",
@@ -5028,6 +5041,10 @@ def classify_process_governance(
     direct_change_policy = effective_direct_file_change_policy(task)
     direct_change_enforce = deterministic_output_required and direct_change_policy == "repair"
     last_agent_rationale = ""
+    total_sed_line_limit = total_sed_line_limit_for_task(task)
+    cumulative_sed_lines = 0
+    cumulative_sed_command_count = 0
+    cumulative_sed_recorded = False
     for event in read_jsonl_file(event_path):
         if event.get("item_type") in {"agent_message", "reasoning"}:
             last_agent_rationale = str(event.get("text_preview") or "")
@@ -5192,6 +5209,28 @@ def classify_process_governance(
         session_read_finding = forbidden_session_context_read(task, command)
         if session_read_finding:
             findings.append(session_read_finding)
+        sed_windows = sed_windows_from_command(command)
+        if sed_windows:
+            cumulative_sed_command_count += 1
+            cumulative_sed_lines += sum(end - start + 1 for start, end in sed_windows)
+            if (
+                total_sed_line_limit is not None
+                and cumulative_sed_lines > total_sed_line_limit
+                and not cumulative_sed_recorded
+            ):
+                findings.append(
+                    {
+                        "level": "warn",
+                        "kind": "cumulative_sed_read_observation",
+                        "message": "worker stayed under per-window sed bounds but exceeded the task's cumulative source read budget",
+                        "command": command,
+                        "total_sed_lines": cumulative_sed_lines,
+                        "sed_command_count": cumulative_sed_command_count,
+                        "limit": total_sed_line_limit,
+                        "recommendation": "for observation-only tasks, prefer rg anchors and fewer targeted snippets before asking for more context",
+                    }
+                )
+                cumulative_sed_recorded = True
         findings.extend(sed_window_governance(task, command, rationale=last_agent_rationale))
     error_findings = [finding for finding in findings if finding.get("level") == "error"]
     result = {

@@ -7959,6 +7959,38 @@ Findings are ready.
         self.assertEqual(finding["read_span"], "1-260")
         self.assertEqual(finding["recommendation"], "use rg anchors (grep-like) to locate lines first, then read narrower sed slices")
 
+    def test_process_governance_observes_cumulative_sed_reads_for_observation_task(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    json.dumps({"item_type": "command_execution", "command": command})
+                    for command in [
+                        "/bin/bash -lc \"sed -n '1,80p' scripts/a9_supervisor.py\"",
+                        "/bin/bash -lc \"sed -n '120,200p' scripts/a9_supervisor.py\"",
+                        "/bin/bash -lc \"sed -n '900,980p' tests/test_supervisor.py\"",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="cumulative-observation-sed",
+                phase="test",
+                prompt="observation-only verification: read only bounded snippets; no production changes.",
+                checks=[],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        finding = next(item for item in result["findings"] if item["kind"] == "cumulative_sed_read_observation")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(finding["level"], "warn")
+        self.assertGreater(finding["total_sed_lines"], finding["limit"])
+        self.assertEqual(finding["sed_command_count"], 3)
+
     def test_process_governance_observes_compound_wide_read_command(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
