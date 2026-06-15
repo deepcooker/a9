@@ -288,6 +288,43 @@ Do the work.
                 mod.RUNNING_DIR = old_running
                 mod.INTERRUPTED_DIR = old_interrupted
 
+    def test_reconcile_orphaned_running_tasks_archives_stale_lease_when_summary_exists(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_running = mod.RUNNING_DIR
+            old_interrupted = mod.INTERRUPTED_DIR
+            try:
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.INTERRUPTED_DIR = Path(tmp) / "interrupted"
+                mod.RUNNING_DIR.mkdir(parents=True)
+                run_dir = Path(tmp) / "runs" / "run-summary"
+                run_dir.mkdir(parents=True)
+                original_summary = {"task_id": "task-summary", "status": "needs-repair"}
+                mod.write_json(run_dir / "summary.json", original_summary)
+                lease_path = mod.RUNNING_DIR / "task-summary.json"
+                mod.write_json(
+                    lease_path,
+                    {
+                        "task_id": "task-summary",
+                        "started_at": "2026-06-03T00:00:00+00:00",
+                        "run_dir": str(run_dir),
+                    },
+                )
+                (mod.RUNNING_DIR / "task-summary.md").write_text("do it\n", encoding="utf-8")
+
+                result = mod.reconcile_orphaned_running_tasks(max_age_seconds=0)
+
+                self.assertEqual(len(result), 1)
+                self.assertEqual(result[0]["status"], "stale-running-archived")
+                self.assertFalse(lease_path.exists())
+                self.assertFalse((mod.RUNNING_DIR / "task-summary.md").exists())
+                self.assertTrue(list(mod.INTERRUPTED_DIR.glob("task-summary-stale-running-*.json")))
+                self.assertTrue(list(mod.INTERRUPTED_DIR.glob("task-summary-stale-running-*.md")))
+                self.assertEqual(json.loads((run_dir / "summary.json").read_text(encoding="utf-8")), original_summary)
+            finally:
+                mod.RUNNING_DIR = old_running
+                mod.INTERRUPTED_DIR = old_interrupted
+
     def test_reconcile_orphaned_running_tasks_keeps_live_worker_lease(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

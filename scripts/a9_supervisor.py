@@ -1352,12 +1352,50 @@ def interrupt_running_task(
     return {"task_id": task_id, "status": "interrupted", "reason": reason, "target_json": str(target_json)}
 
 
+def archive_completed_running_lease(
+    lease_path: Path,
+    lease: dict[str, Any],
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    ensure_dirs()
+    task_id = str(lease.get("task_id") or lease_path.stem)
+    suffix = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target_json = INTERRUPTED_DIR / f"{lease_path.stem}-stale-running-{suffix}.json"
+    target_md = INTERRUPTED_DIR / f"{lease_path.stem}-stale-running-{suffix}.md"
+    task_md = RUNNING_DIR / f"{lease_path.stem}.md"
+    archived = {
+        **lease,
+        "status": "stale-running-archived",
+        "archived_at": utc_now(),
+        "archive_reason": reason,
+        "lease_path": str(lease_path),
+        "archived_task_json": str(target_json),
+        "archived_task_md": str(target_md) if task_md.exists() else "",
+    }
+    write_json(target_json, archived)
+    if task_md.exists():
+        shutil.move(str(task_md), str(target_md))
+    lease_path.unlink(missing_ok=True)
+    return {"task_id": task_id, "status": "stale-running-archived", "reason": reason, "target_json": str(target_json)}
+
+
 def reconcile_orphaned_running_tasks(*, max_age_seconds: int = 60) -> list[dict[str, Any]]:
     ensure_dirs()
     reconciled: list[dict[str, Any]] = []
     for lease_path in sorted(RUNNING_DIR.glob("*.json")):
         lease = read_json_file(lease_path)
         if not lease:
+            continue
+        run_dir = Path(str(lease.get("run_dir") or ""))
+        if run_dir and (run_dir / "summary.json").exists():
+            reconciled.append(
+                archive_completed_running_lease(
+                    lease_path,
+                    lease,
+                    reason="summary_exists_stale_running_lease",
+                )
+            )
             continue
         orphaned, reason = running_lease_is_orphaned(lease, max_age_seconds=max_age_seconds)
         if orphaned:
