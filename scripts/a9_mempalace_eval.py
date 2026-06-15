@@ -16,6 +16,44 @@ ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_PATH = ROOT / "scripts" / "a9_mempalace_provider.py"
 DEFAULT_FIXTURE = ROOT / "tests" / "fixtures" / "mempalace_causal_eval.jsonl"
 LABELS = ("current", "stale", "causal")
+RISK_TERMS = (
+    "过期",
+    "不再",
+    "不是主",
+    "旧",
+    "fallback",
+    "不要",
+    "没有",
+    "当前",
+    "主线",
+    "因为",
+    "所以",
+    "变成",
+    "从",
+    "迁移",
+    "保留",
+    "raw evidence",
+    "source hash",
+)
+DOMAIN_TERMS = (
+    "A9",
+    "主线",
+    "supervisor",
+    "MemPalace",
+    "session",
+    "页面监控",
+    "24h",
+    "24小时",
+    "worker",
+    "monitor",
+    "evidence",
+    "raw evidence",
+    "需求分析",
+    "博弈",
+    "fallback",
+    "KG",
+    "diary",
+)
 
 
 def load_provider() -> Any:
@@ -187,18 +225,149 @@ def run_eval(fixture: Path) -> dict[str, Any]:
     return result
 
 
+def candidate_labels(provider: Any, content: str) -> set[str]:
+    stale_signal = provider.has_stale_signal(content)
+    causal_signal = provider.has_any(content, provider.CAUSAL_MARKERS)
+    labels: set[str] = set()
+    if provider.has_current_signal(content, stale_signal=stale_signal) or (causal_signal and not stale_signal):
+        labels.add("current")
+    if stale_signal:
+        labels.add("stale")
+    if causal_signal:
+        labels.add("causal")
+    return labels
+
+
+def candidate_reasons(content: str, labels: set[str]) -> list[str]:
+    lower = content.lower()
+    reasons: list[str] = []
+    if {"current", "stale"}.issubset(labels):
+        reasons.append("same_text_current_and_stale")
+    if "stale" in labels and any(term in lower for term in ("fallback", "不再", "不是主", "旧")):
+        reasons.append("stale_branch_candidate")
+    if "causal" in labels:
+        reasons.append("causal_change_candidate")
+    if any(term in lower for term in ("没有", "不要", "not ", "no ")):
+        reasons.append("negation_edge_case")
+    if any(term in lower for term in ("从", "变成", "迁移", "replaced", "became")):
+        reasons.append("migration_or_replacement")
+    if any(term in lower for term in ("raw evidence", "source hash", "事实源")):
+        reasons.append("evidence_authority")
+    if not reasons:
+        reasons.append("marker_overlap")
+    return reasons
+
+
+def candidate_score(content: str, labels: set[str], reasons: list[str]) -> int:
+    lower = content.lower()
+    score_value = len(labels) * 5 + len(reasons) * 3
+    score_value += sum(4 for term in DOMAIN_TERMS if term.lower() in lower)
+    if {"current", "stale"}.issubset(labels):
+        score_value += 8
+    if {"current", "causal"}.issubset(labels):
+        score_value += 5
+    if "marker_overlap" == reasons[0]:
+        score_value -= 4
+    return score_value
+
+
+def generate_eval_candidates(drawers: Path, *, limit: int = 20, scan_limit: int = 5000) -> dict[str, Any]:
+    provider = load_provider()
+    candidates: list[tuple[int, dict[str, Any]]] = []
+    seen: set[str] = set()
+    scanned = 0
+    for row in provider.read_drawers(drawers):
+        if scan_limit > 0 and scanned >= scan_limit:
+            break
+        scanned += 1
+        if row.get("event_kind") != "message":
+            continue
+        content = str(row.get("content") or "")
+        if not content.strip() or provider.is_context_injection(content):
+            continue
+        compacted = provider.compact(content, 260)
+        lower = compacted.lower()
+        if not any(term.lower() in lower for term in RISK_TERMS):
+            continue
+        labels = candidate_labels(provider, compacted)
+        if not labels:
+            continue
+        reasons = candidate_reasons(compacted, labels)
+        score_value = candidate_score(compacted, labels, reasons)
+        if score_value < 10:
+            continue
+        key = str(row.get("content_hash") or compacted)
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(
+            (
+                score_value,
+                {
+                    "schema": "a9.mempalace_causal_eval_candidate.v1",
+                    "id": "",
+                    "content": compacted,
+                    "suggested_expected": {label: label in labels for label in LABELS},
+                    "candidate_reasons": reasons,
+                    "score": score_value,
+                    "source_ref": row.get("source_ref"),
+                    "source_sha256": row.get("source_sha256"),
+                    "content_hash": row.get("content_hash"),
+                    "drawer_id": row.get("drawer_id"),
+                    "role": row.get("role"),
+                    "timestamp": row.get("timestamp"),
+                    "review_required": True,
+                    "fixture_line": {
+                        "id": "",
+                        "content": compacted,
+                        "expected": {label: label in labels for label in LABELS},
+                    },
+                },
+            )
+        )
+    selected = [item for _, item in sorted(candidates, key=lambda entry: (-entry[0], str(entry[1].get("source_ref") or "")))[:limit]]
+    for index, candidate in enumerate(selected, start=1):
+        candidate_id = f"candidate-{index:04d}"
+        candidate["id"] = candidate_id
+        candidate["fixture_line"]["id"] = candidate_id
+    return {
+        "schema": "a9.mempalace_causal_eval_candidates.v1",
+        "status": "ok",
+        "truth_policy": "candidate_expected_labels_are_suggestions; human_or_monitor_review_required_before_fixture_merge",
+        "copied_protocols": [
+            "MemPalace keeps source refs with drawers so eval candidates remain auditable",
+            "MemPalace tests pin behavior after review instead of trusting summaries",
+            "A9 candidates are review material, not fixture truth",
+        ],
+        "drawers_path": str(drawers),
+        "scanned_rows": scanned,
+        "scan_limit": scan_limit,
+        "candidate_count": len(selected),
+        "candidates": selected,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate A9 MemPalace causal-memory compiler quality")
     parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--generate-candidates", action="store_true")
+    parser.add_argument("--drawers", type=Path)
+    parser.add_argument("--limit", type=int, default=20)
+    parser.add_argument("--scan-limit", type=int, default=5000)
     args = parser.parse_args()
-    result = run_eval(args.fixture)
+    if args.generate_candidates:
+        provider = load_provider()
+        drawers = args.drawers or provider.DEFAULT_DRAWERS
+        result = generate_eval_candidates(drawers, limit=args.limit, scan_limit=args.scan_limit)
+    else:
+        result = run_eval(args.fixture)
     text = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(text, encoding="utf-8")
     print(text, end="")
-    return 0 if result["status"] == "pass" else 1
+    return 0 if result["status"] in {"ok", "pass"} else 1
 
 
 if __name__ == "__main__":

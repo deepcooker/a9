@@ -61,7 +61,10 @@ Raw external Codex/operator session:
   current+stale, fallback-not-mainline, negated stale instructions, mem0 ->
   MemPalace migration, two-stage workflow, mobile-entry-vs-page-monitor, and raw
   evidence authority. It has fixed noisy stale negation, neutral-log current
-  promotion, fallback-as-current, and retained-entry current detection.
+  promotion, fallback-as-current, and retained-entry current detection. The
+  candidate lane now scans bounded MemPalace drawers and writes review-only eval
+  candidates with source refs and suggested labels; generated candidates are not
+  fixture truth until reviewed.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

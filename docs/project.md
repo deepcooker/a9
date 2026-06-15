@@ -101,7 +101,10 @@ P7 NZX technical MVP
   MemPalace migration, two-stage workflow, mobile-entry-vs-page-monitor, and raw
   evidence authority. It has already caught and fixed noisy stale negation,
   neutral-log current promotion, fallback-as-current, and retained-entry current
-  detection.
+  detection. `scripts/a9_mempalace_eval.py --generate-candidates` now scans
+  bounded MemPalace drawer evidence and writes review-only fixture candidates
+  with source refs, scores and suggested labels; candidates are not merged into
+  the truth fixture until reviewed.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.
