@@ -8792,6 +8792,26 @@ Findings are ready.
         self.assertIn(broad_sed["kind"], {"command_window_exceeded", "command_window_missing_rationale"})
         self.assertEqual(capped_rg, {})
 
+    def test_live_worker_allows_head_on_exact_bounded_evidence_path(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="live-head-bounded-evidence",
+            phase="reference_scan",
+            prompt=(
+                "live_read_budget_policy: stop\n"
+                "bounded read: /root/a9/.a9/plans/example/progress.md\n"
+                "Read only bounded slices from allowed_paths.\n"
+            ),
+        )
+
+        allowed = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'cd /root/a9/.a9/worktrees/example && head -n 120 /root/a9/.a9/plans/example/progress.md'",
+        )
+
+        self.assertEqual(allowed, {})
+
     def test_live_worker_observes_runtime_evidence_root_searches_without_blocking(self):
         mod = load_supervisor()
         task = mod.Task(path=Path("task.md"), task_id="runtime-root-read", prompt="Do bounded source work.")

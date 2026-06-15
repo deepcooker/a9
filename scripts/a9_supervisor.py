@@ -4591,7 +4591,7 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
     except ValueError:
         return False
 
-    if parts and parts[0] == "tail":
+    if parts and parts[0] in {"head", "tail"}:
         if len(parts) >= 4 and parts[1] == "-n":
             target = parts[-1]
             return any(bounded_read_path_matches(path, target) for path in paths)
