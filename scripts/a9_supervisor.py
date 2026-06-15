@@ -2060,6 +2060,8 @@ Hard rules:
 - Final answer must include files changed, reference ideas used, commands run, test result, and next recommended task.
 - Do not invoke nested supervisor or worker loops such as `a9_supervisor.py run-one`, `a9_supervisor.py run-loop`, or `codex exec`.
 - Declared checks are executed by the outer A9 supervisor after the worker final; do not call supervisor commands to run them.
+- Do not execute exact commands from Task Declared Checks even if the task body says "run declared checks";
+  copy them into supervisor_declared_checks and let the outer supervisor run them.
 - If the task asks for `strict_worker_envelope: true`, the final answer must include a JSON object
   shaped like OpenClaw/Lobster tool envelopes, but A9 protocol is numeric:
   {"protocolVersion":1,"ok":true,"status":"ok","output":{...}}.

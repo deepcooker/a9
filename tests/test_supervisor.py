@@ -10024,6 +10024,8 @@ Findings are ready.
         self.assertIn("# Task Declared Checks", packet["prompt"])
         self.assertIn("python3 -m unittest tests.test_supervisor.SupervisorTests.test_one", packet["prompt"])
         self.assertIn("python3 -m py_compile scripts/a9_supervisor.py", packet["prompt"])
+        self.assertIn("Do not execute exact commands from Task Declared Checks", packet["prompt"])
+        self.assertIn("let the outer supervisor run them", packet["prompt"])
 
     def test_build_context_packet_routes_compact_decided_test_task_to_execution_next(self):
         mod = load_supervisor()
