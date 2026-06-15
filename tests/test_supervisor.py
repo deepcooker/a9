@@ -8828,6 +8828,10 @@ Findings are ready.
             task,
             "/bin/bash -lc \"sed -n '9520,9720p' /root/a9/.a9/worktrees/example/scripts/a9_supervisor.py\"",
         )
+        numbered_worktree_read = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc \"nl -ba /root/a9/.a9/worktrees/example/scripts/a9_supervisor.py | sed -n '8288,8325p'\"",
+        )
         python_read_probe = mod.live_worker_command_violation(
             task,
             "/bin/bash -lc \"python3 - <<'PY'\nimport pathlib\np=pathlib.Path('scripts/a9_supervisor.py')\nprint(p.read_text()[:80])\nPY\"",
@@ -8854,6 +8858,7 @@ Findings are ready.
         self.assertEqual(repeated_flag_rg, {})
         self.assertEqual(malformed_pattern_word, {})
         self.assertEqual(worktree_absolute_read, {})
+        self.assertEqual(numbered_worktree_read, {})
         self.assertEqual(python_read_probe, {})
         self.assertNotEqual(python_write_probe, {})
         self.assertEqual(low_cost_ls, {})

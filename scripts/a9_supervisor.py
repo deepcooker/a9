@@ -4580,7 +4580,7 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
     pipe_parts = shell_pipeline_parts(inner)
     if len(pipe_parts) == 2 and (
         re.fullmatch(r"head\s+(?:-n\s+\d+|-\d+)", pipe_parts[1])
-        or re.fullmatch(r"sed\s+-n\s+['\"]?1\s*,\s*\d+p['\"]?", pipe_parts[1])
+        or re.fullmatch(r"sed\s+-n\s+['\"]?\d+\s*,\s*\d+p['\"]?", pipe_parts[1])
     ):
         return command_fragment_is_bounded_read_of_paths(pipe_parts[0], paths)
     if len(pipe_parts) > 1:
@@ -4596,6 +4596,12 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
             target = parts[-1]
             return any(bounded_read_path_matches(path, target) for path in paths)
         return False
+
+    if parts and parts[0] == "nl":
+        targets = [part for part in parts[1:] if not part.startswith("-")]
+        if len(targets) != 1:
+            return False
+        return any(bounded_read_path_matches(path, targets[0]) for path in paths)
 
     if parts and parts[0] == "sed":
         if len(parts) < 4 or parts[1] != "-n":
@@ -4727,6 +4733,8 @@ def command_read_targets(command: str) -> list[str]:
             targets.append(parts[3])
         elif name in {"tail", "head"} and len(parts) >= 4 and parts[1] == "-n":
             targets.append(parts[-1])
+        elif name == "nl" and len(parts) >= 2:
+            targets.extend(part for part in parts[1:] if not part.startswith("-"))
         elif name == "wc" and len(parts) >= 3 and parts[1] in {"-l", "-c", "-w"}:
             targets.extend(part for part in parts[2:] if not part.startswith("-"))
         elif name == "rg":
@@ -5144,7 +5152,7 @@ def command_runs_uncapped_rg(command: str) -> bool:
         return False
     if re.search(r"\|\s*(?:head|tail)(?:\s|$)", normalized):
         return False
-    if re.search(r"\|\s*sed\s+-n\s+['\"]?1\s*,\s*\d+p['\"]?", normalized):
+    if re.search(r"\|\s*sed\s+-n\s+['\"]?\d+\s*,\s*\d+p['\"]?", normalized):
         return False
     if re.search(r">\s*[^|&;]+", normalized):
         return False
