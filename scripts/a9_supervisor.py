@@ -9766,19 +9766,7 @@ def build_plan_debate_task(
         )
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     contract_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
-    read_paths = merge_unique_paths(
-        REQUIREMENTS_DEBATE_READ_PATHS,
-        [
-            str(plan_path(plan_id) / "plan.json"),
-            str(plan_path(plan_id) / "progress.md"),
-            str(plan_path(plan_id) / "change_request.md"),
-            str(plan_path(plan_id) / "findings.md"),
-            str(plan_path(plan_id) / "mistakes.md"),
-        ]
-        if plan_id
-        else [],
-        contract_paths,
-    )
+    read_paths = plan_bounded_read_paths(plan_id, contract_paths)
     bounded_read_lines = [f"bounded read: {path}" for path in read_paths[:10]]
     missing = [
         field
@@ -12638,6 +12626,17 @@ def merge_unique_paths(*groups: list[str]) -> list[str]:
 REQUIREMENTS_DEBATE_READ_PATHS = ["docs/project.md", "docs/method.md"]
 
 
+def plan_bounded_read_paths(plan_id: str, contract_paths: list[str] | None = None) -> list[str]:
+    plan_paths = [
+        str(plan_path(plan_id) / "plan.json"),
+        str(plan_path(plan_id) / "progress.md"),
+        str(plan_path(plan_id) / "change_request.md"),
+        str(plan_path(plan_id) / "findings.md"),
+        str(plan_path(plan_id) / "mistakes.md"),
+    ] if plan_id else []
+    return merge_unique_paths(REQUIREMENTS_DEBATE_READ_PATHS, plan_paths, contract_paths or [])
+
+
 def execution_backlog_state(plan: dict[str, Any]) -> dict[str, Any]:
     backlog = plan.get("execution_backlog")
     if not isinstance(backlog, dict):
@@ -12746,7 +12745,7 @@ def plan_change_request_continuation_item(
         return None
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
-    bounded_read_paths = merge_unique_paths(REQUIREMENTS_DEBATE_READ_PATHS, allowed_paths)
+    bounded_read_paths = plan_bounded_read_paths(str(plan.get("plan_id") or ""), allowed_paths)
     bounded_read_lines = [f"bounded read: {path}" for path in bounded_read_paths[:8]]
     prompt = "\n".join(
         [
@@ -12900,9 +12899,9 @@ def plan_backlog_generation_continuation_item(
 ) -> dict[str, Any] | None:
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
-    bounded_read_paths = merge_unique_paths(REQUIREMENTS_DEBATE_READ_PATHS, allowed_paths)
-    bounded_read_lines = [f"bounded read: {path}" for path in bounded_read_paths[:8]]
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
+    bounded_read_paths = plan_bounded_read_paths(str(plan.get("plan_id") or ""), allowed_paths)
+    bounded_read_lines = [f"bounded read: {path}" for path in bounded_read_paths[:10]]
     if not backlog_generation_can_continue(plan_ref, generated_task_ids):
         return None
     latest_generation = latest_backlog_generation_summary(plan_ref)

@@ -123,6 +123,10 @@ P7 NZX technical MVP
   `no_live_worker_process` interruptions now produce a narrower retry prompt
   with the previous failure reason and bounded read scope, while non-retryable
   generation failures still wait for monitor review.
+- Backlog-generation debate tasks now include exact active-plan evidence files
+  (`plan.json`, `progress.md`, `change_request.md`, `findings.md`,
+  `mistakes.md`) in bounded read scope. Without these files, workers can
+  falsely report missing contract fields from docs-only evidence.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

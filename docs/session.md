@@ -79,7 +79,10 @@ Raw external Codex/operator session:
   retryable worker-budget failures or orphaned `no_live_worker_process`
   interruptions by injecting the previous failure reason into a narrower
   generation prompt; non-retryable generation failures still wait for monitor
-  review.
+  review. A subsequent worker reported missing `change_record`/`role_signoff`
+  from docs-only evidence; this was a scope defect, so backlog-generation tasks
+  now include exact active-plan evidence files in bounded read scope before
+  judging contract closure.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

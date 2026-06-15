@@ -4768,6 +4768,7 @@ Do the work.
         self.assertIn("previous_backlog_generation_status: retryable-worker-budget", items[0]["prompt"])
         self.assertIn("previous_forbidden_read_paths: docs/a9-current-decision-packet.md", items[0]["prompt"])
         self.assertIn("retry_scope: use docs/project.md, docs/method.md, docs/session.md", items[0]["prompt"])
+        self.assertTrue(any(path.endswith("/plans/plan-budget-retry/plan.json") for path in items[0]["allowed_paths"]))
 
     def test_plan_backlog_generation_retries_after_orphaned_worker_interruption(self):
         mod = load_supervisor()
@@ -4828,6 +4829,7 @@ Do the work.
         self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-interrupt-retry-002")
         self.assertIn("previous_backlog_generation_status: retryable-worker-interrupted", items[0]["prompt"])
         self.assertIn("previous_interruption_reason: no_live_worker_process", items[0]["prompt"])
+        self.assertTrue(any(path.endswith("/plans/plan-interrupt-retry/plan.json") for path in items[0]["allowed_paths"]))
 
     def test_plan_backlog_add_persists_item_and_next_marks_queued(self):
         mod = load_supervisor()
@@ -6352,7 +6354,9 @@ Findings are ready.
         self.assertIn("debate_stage: execution_backlog_generation", text)
         self.assertIn("live_read_budget_policy: stop", text)
         self.assertIn("bounded read: docs/method.md", text)
+        self.assertIn("/plans/plan-active-but-exhausted/plan.json", text)
         self.assertIn("docs/method.md", parsed.allowed_paths)
+        self.assertTrue(any(path.endswith("/plans/plan-active-but-exhausted/plan.json") for path in parsed.allowed_paths))
         self.assertIn("Generate next decided execution backlog batch", text)
         self.assertNotIn("Generic goal fallback", text)
         self.assertTrue(
