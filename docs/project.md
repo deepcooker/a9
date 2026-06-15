@@ -96,9 +96,12 @@ P7 NZX technical MVP
   temporal history. The remaining gap is automatic stale-branch selection and
   contradiction repair policy. A deterministic fixture-based causal-memory
   eval now checks current/stale/causal labels and wrongbook candidates before
-  claiming compiler quality; it already caught and fixed two noise patterns:
-  negated stale phrases and unmarked neutral logs being promoted to current
-  facts.
+  claiming compiler quality. The fixture has been expanded to cover same-drawer
+  current+stale, fallback-not-mainline, negated stale instructions, mem0 ->
+  MemPalace migration, two-stage workflow, mobile-entry-vs-page-monitor, and raw
+  evidence authority. It has already caught and fixed noisy stale negation,
+  neutral-log current promotion, fallback-as-current, and retained-entry current
+  detection.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

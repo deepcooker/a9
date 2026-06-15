@@ -3,3 +3,10 @@
 {"id":"causal-change","content":"因为交互窗口不可强控，所以 A9 从页面监控变成 supervisor + control API + evidence runtime。","expected":{"current":true,"stale":false,"causal":true}}
 {"id":"neutral-noise","content":"今天只是记录一个普通运行日志，没有需求结论、过期支线或因果变迁。","expected":{"current":false,"stale":false,"causal":false}}
 {"id":"approved-invalidation","content":"已完成 approved invalidation dry-run，必须通过 monitor approval 才能调用 KnowledgeGraph.invalidate。","expected":{"current":true,"stale":false,"causal":false}}
+{"id":"current-and-stale-same-drawer","content":"现在不是继续做页面监控，页面监控旧路线已过期；当前主线是 24h supervisor runtime。","expected":{"current":true,"stale":true,"causal":false}}
+{"id":"fallback-not-mainline","content":"旧 session close-reading 只作为 fallback 和 human snapshot，不再作为主线。","expected":{"current":false,"stale":true,"causal":false}}
+{"id":"negated-stale-instruction","content":"如果没有发现过期支线，不要生成 stale branch，也不要污染 KG。","expected":{"current":false,"stale":false,"causal":false}}
+{"id":"mempalace-replaces-mem0","content":"从 mem0 思路迁移到 MemPalace，因为 MemPalace 提供 drawer、KG 和 diary 协议。","expected":{"current":true,"stale":false,"causal":true}}
+{"id":"two-stage-workflow","content":"需求分析博弈 -> execution 是当前 24h 工作流，页面只是入口。","expected":{"current":true,"stale":false,"causal":true}}
+{"id":"mobile-entry-not-main-architecture","content":"手机端控制入口仍然要保留，但页面监控作为主架构已过期。","expected":{"current":true,"stale":true,"causal":false}}
+{"id":"raw-evidence-not-summary","content":"必须以 raw evidence 和 source hash 为事实源，summary 只是索引。","expected":{"current":true,"stale":false,"causal":false}}

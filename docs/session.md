@@ -57,8 +57,11 @@ Raw external Codex/operator session:
   keeps old facts as temporal history. Fully automated stale-branch selection
   and contradiction repair remain unfinished. `scripts/a9_mempalace_eval.py`
   now provides a deterministic fixture eval for current/stale/causal labels and
-  wrongbook candidates; the first eval pass fixed negated stale phrases and
-  neutral-log current-fact promotion.
+  wrongbook candidates. The fixture now covers 12 cases including same-drawer
+  current+stale, fallback-not-mainline, negated stale instructions, mem0 ->
+  MemPalace migration, two-stage workflow, mobile-entry-vs-page-monitor, and raw
+  evidence authority. It has fixed noisy stale negation, neutral-log current
+  promotion, fallback-as-current, and retained-entry current detection.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

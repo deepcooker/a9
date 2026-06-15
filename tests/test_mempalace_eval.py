@@ -28,13 +28,13 @@ class MempalaceEvalTests(unittest.TestCase):
 
         self.assertEqual(result["schema"], "a9.mempalace_causal_eval.v1")
         self.assertEqual(result["status"], "pass")
-        self.assertEqual(result["sample_count"], 5)
+        self.assertEqual(result["sample_count"], 12)
         self.assertEqual(result["micro"]["precision"], 1.0)
         self.assertEqual(result["micro"]["recall"], 1.0)
         self.assertEqual(result["wrongbook_candidates"], [])
-        self.assertGreaterEqual(result["compiler"]["current_facts"], 3)
-        self.assertGreaterEqual(result["compiler"]["stale_branches"], 1)
-        self.assertGreaterEqual(result["compiler"]["causal_changes"], 1)
+        self.assertGreaterEqual(result["compiler"]["current_facts"], 8)
+        self.assertGreaterEqual(result["compiler"]["stale_branches"], 4)
+        self.assertGreaterEqual(result["compiler"]["causal_changes"], 3)
 
 
 if __name__ == "__main__":

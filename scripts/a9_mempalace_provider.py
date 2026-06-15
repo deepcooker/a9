@@ -441,10 +441,20 @@ def has_stale_signal(text: str) -> bool:
         if index < 0:
             continue
         prefix = lower[max(0, index - 12):index]
-        if any(negation in prefix for negation in ("没有", "无", "not ", "no ")):
+        if any(negation in prefix for negation in ("没有", "无", "不要", "not ", "no ")):
             continue
         return True
     return False
+
+
+def has_current_signal(text: str, *, stale_signal: bool = False) -> bool:
+    strong_markers = ("当前", "现在", "已完成", "必须", "decision", "accepted", "status", "仍然", "保留")
+    weak_markers = ("核心", "主线")
+    if has_any(text, strong_markers):
+        return True
+    if stale_signal:
+        return False
+    return has_any(text, weak_markers)
 
 
 def sentence_snippets(text: str, limit: int = 3) -> list[str]:
@@ -540,7 +550,7 @@ def build_causal_memory_packet(
                         "kg_action": "add_change_candidate",
                     }
                 )
-            if has_any(snippet, CURRENT_MARKERS) or (causal_signal and not stale_signal):
+            if has_current_signal(snippet, stale_signal=stale_signal) or (causal_signal and not stale_signal):
                 current_facts.append(
                     {
                         **record,
