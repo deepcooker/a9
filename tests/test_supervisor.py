@@ -8912,6 +8912,30 @@ Findings are ready.
         self.assertEqual(low_cost_ls, {})
         self.assertEqual(recursive_ls["kind"], "outside_bounded_read_scope")
 
+    def test_live_worker_allows_ls_of_bounded_absolute_parent_dir(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("task.md"),
+            task_id="bounded-plan-dir-ls",
+            phase="reference_scan",
+            prompt=(
+                "live_read_budget_policy: stop\n"
+                "bounded read: /root/a9/.a9/plans/example/plan.json\n"
+                "bounded read: /root/a9/.a9/plans/example/progress.md\n"
+                "Read only bounded slices from allowed_paths.\n"
+            ),
+            allowed_paths=[
+                "/root/a9/.a9/plans/example/plan.json",
+                "/root/a9/.a9/plans/example/progress.md",
+            ],
+        )
+
+        allowed_parent = mod.live_worker_command_violation(task, "/bin/bash -lc 'ls /root/a9/.a9/plans/example'")
+        blocked_root = mod.live_worker_command_violation(task, "/bin/bash -lc 'ls /root/a9/.a9/plans'")
+
+        self.assertEqual(allowed_parent, {})
+        self.assertEqual(blocked_root["kind"], "outside_bounded_read_scope")
+
     def test_live_worker_stops_uncapped_rg_without_bounded_scope(self):
         mod = load_supervisor()
         task = mod.Task(

@@ -2967,9 +2967,9 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
     if command_looks_like_test(normalized) and task.checks and not command_matches_declared_check(normalized, task.checks):
         return {}
     bounded_paths = bounded_read_paths_from_prompt(task.prompt)
-    if command_is_low_cost_directory_listing(normalized):
-        return {}
     if command_is_python_readonly_probe_on_allowed_paths(normalized, list(task.allowed_paths) + bounded_paths):
+        return {}
+    if command_is_low_cost_directory_listing(normalized, list(task.allowed_paths) + bounded_paths):
         return {}
     if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
         if live_read_budget_stop:
@@ -5107,7 +5107,7 @@ def command_runs_ls(command: str) -> bool:
     return bool(re.search(r"(?:^|\s)(?:/bin/)?(?:bash|sh)\s+-lc\s+['\"]?ls(?:['\"]?|\s|$)", normalized)) or normalized == "ls"
 
 
-def command_is_low_cost_directory_listing(command: str) -> bool:
+def command_is_low_cost_directory_listing(command: str, allowed_paths: list[str] | None = None) -> bool:
     normalized = normalize_shell_command(command)
     inner = shell_lc_inner_command(normalized).strip()
     if re.search(r"\s(?:\|\||;)\s", inner):
@@ -5141,7 +5141,17 @@ def command_is_low_cost_directory_listing(command: str) -> bool:
     forbidden_targets = {".", root_text, f"{root_text}/", "/", ".a9", f"{root_text}/.a9"}
     if target in forbidden_targets:
         return False
+    allowed_paths = allowed_paths or []
+    allowed_parent_dirs = {str(Path(path).parent) for path in allowed_paths if str(path).strip()}
+    normalized_target = target.rstrip("/")
+    if normalized_target in allowed_parent_dirs:
+        return True
     if target.startswith(".a9/") or target.startswith(f"{root_text}/.a9/"):
+        if any(
+            bounded_read_path_matches(allowed_parent, normalized_target)
+            for allowed_parent in allowed_parent_dirs
+        ):
+            return True
         return False
     return True
 
