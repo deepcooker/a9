@@ -8449,15 +8449,45 @@ def mempalace_search(payload: dict[str, Any]) -> dict[str, Any]:
         }
     provider = mempalace_provider()
     drawers = Path(str(payload.get("drawers") or provider.DEFAULT_DRAWERS))
+    limit = _mempalace_limit(payload, default=8, maximum=50)
+    native_mode = str(payload.get("native_mode") or "auto")
+    native = None
+    if native_mode in {"auto", "native"} and hasattr(provider, "native_search"):
+        native = provider.native_search(
+            query,
+            limit=limit,
+            wing=payload.get("wing") or "operator-codex",
+            room=payload.get("room"),
+        )
+        if native and native.get("status") == "ok":
+            return {
+                "schema": "a9.control_api.mempalace_search.v1",
+                "status": "ok",
+                "query": query,
+                "truth_policy": "recall_not_truth",
+                **native,
+            }
+    if native_mode == "native":
+        return {
+            "schema": "a9.control_api.mempalace_search.v1",
+            "status": "error",
+            "query": query,
+            "truth_policy": "recall_not_truth",
+            "source": "native_mempalace",
+            "error": (native or {}).get("error") if native else "native palace index unavailable",
+            "results": [],
+        }
     return {
         "schema": "a9.control_api.mempalace_search.v1",
         "status": "ok",
         "query": query,
         "truth_policy": "recall_not_truth",
+        "source": "mempalace-compatible-drawer-jsonl",
+        "native_fallback_reason": None if not native else native.get("error"),
         "results": provider.search_drawers(
             drawers,
             query,
-            limit=_mempalace_limit(payload, default=8, maximum=50),
+            limit=limit,
             role=payload.get("role"),
             event_kind=payload.get("event_kind"),
         ),

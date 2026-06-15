@@ -11,8 +11,10 @@ dependencies are available; this fallback keeps A9 usable today.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import heapq
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -22,8 +24,28 @@ from typing import Any, Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DRAWERS = ROOT / ".a9" / "mempalace" / "operator-session-drawers.jsonl"
+DEFAULT_PALACE = ROOT / ".a9" / "mempalace"
 MEMPALACE_SOURCE = ROOT / "reference-projects" / "mempalace"
 TOKEN_RE = re.compile(r"\w{2,}", re.UNICODE)
+
+
+@contextlib.contextmanager
+def suppress_native_stderr() -> Iterable[None]:
+    """Suppress C-extension stderr noise during native Chroma/ONNX calls.
+
+    onnxruntime can emit GPU discovery warnings directly to file descriptor 2,
+    bypassing Python logging and ``contextlib.redirect_stderr``. A9 provider
+    commands must remain machine-readable JSON, so native recall calls are
+    isolated from that noise.
+    """
+    saved = os.dup(2)
+    try:
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            os.dup2(sink.fileno(), 2)
+            yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
 
 
 def tokenize(text: str) -> list[str]:
@@ -48,12 +70,15 @@ def compact(text: str, limit: int = 420) -> str:
     return value[: limit - 3] + "..."
 
 
-def native_status() -> dict[str, Any]:
+def native_status(palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
     status: dict[str, Any] = {
         "source_path": str(MEMPALACE_SOURCE),
         "source_exists": MEMPALACE_SOURCE.exists(),
+        "palace_path": str(palace),
+        "palace_chroma_exists": (palace / "chroma.sqlite3").exists(),
         "python_import": False,
         "native_collection_ready": False,
+        "drawer_count": None,
         "version": None,
         "error": None,
     }
@@ -70,12 +95,87 @@ def native_status() -> dict[str, Any]:
         status["error"] = f"{type(exc).__name__}: {exc}"
         return status
     try:
-        from mempalace.palace import get_collection  # type: ignore  # noqa: F401
+        with suppress_native_stderr():
+            from mempalace.palace import get_collection  # type: ignore
 
-        status["native_collection_ready"] = True
+            if status["palace_chroma_exists"]:
+                collection = get_collection(str(palace), create=False)
+                status["drawer_count"] = collection.count()
+                status["native_collection_ready"] = True
     except Exception as exc:
         status["error"] = f"{type(exc).__name__}: {exc}"
     return status
+
+
+def native_search(
+    query: str,
+    *,
+    limit: int = 8,
+    wing: str | None = None,
+    room: str | None = None,
+    palace: Path = DEFAULT_PALACE,
+) -> dict[str, Any] | None:
+    """Search the native MemPalace index when it has been mined.
+
+    The fallback drawer JSONL remains the line-level evidence ledger. Native
+    search is the scalable recall path; fallback search is the deterministic
+    recovery path when Chroma/native dependencies are unavailable.
+    """
+    if not (palace / "chroma.sqlite3").exists():
+        return None
+    if not MEMPALACE_SOURCE.exists():
+        return None
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    try:
+        with suppress_native_stderr():
+            from mempalace.searcher import search_memories  # type: ignore
+
+            payload = search_memories(
+                query,
+                str(palace),
+                wing=wing,
+                room=room,
+                n_results=limit,
+            )
+    except Exception as exc:  # pragma: no cover - environment/index dependent
+        return {
+            "source": "native_mempalace",
+            "status": "error",
+            "error": f"{type(exc).__name__}: {exc}",
+            "results": [],
+        }
+    if payload.get("error"):
+        return {
+            "source": "native_mempalace",
+            "status": "error",
+            "error": payload.get("error"),
+            "results": [],
+        }
+    results: list[dict[str, Any]] = []
+    for row in payload.get("results") or []:
+        results.append(
+            {
+                "score": row.get("similarity"),
+                "similarity": row.get("similarity"),
+                "distance": row.get("distance"),
+                "effective_distance": row.get("effective_distance"),
+                "bm25_score": row.get("bm25_score"),
+                "matched_via": row.get("matched_via"),
+                "wing": row.get("wing"),
+                "room": row.get("room"),
+                "source_file": row.get("source_file"),
+                "created_at": row.get("created_at"),
+                "content": compact(str(row.get("text") or "")),
+            }
+        )
+    return {
+        "source": "native_mempalace",
+        "status": "ok",
+        "palace_path": str(palace),
+        "filters": payload.get("filters") or {"wing": wing, "room": room},
+        "total_before_filter": payload.get("total_before_filter"),
+        "results": results,
+    }
 
 
 def drawer_status(path: Path) -> dict[str, Any]:
@@ -175,11 +275,20 @@ def search_drawers(
     return [item for _, _, item in sorted(heap, reverse=True)]
 
 
-def build_wakeup(path: Path, *, query: str, limit: int) -> dict[str, Any]:
+def build_wakeup(
+    path: Path,
+    *,
+    query: str,
+    limit: int,
+    native_enabled: bool = True,
+    palace: Path = DEFAULT_PALACE,
+) -> dict[str, Any]:
+    native = native_search(query, limit=limit, wing="operator-codex", palace=palace) if native_enabled else None
     hits = search_drawers(path, query, limit=limit, event_kind="message")
+    native_hits = native.get("results", []) if native and native.get("status") == "ok" else []
     return {
         "schema": "a9.wakeup_pack.v1",
-        "source": "mempalace-compatible-drawer-jsonl",
+        "source": "native_mempalace+fallback_drawer_jsonl" if native_hits else "mempalace-compatible-drawer-jsonl",
         "truth_policy": "recall_not_truth",
         "query": query,
         "required_read_order": ["AGENTS.md", "docs/project.md", "docs/method.md", "docs/session.md"],
@@ -188,6 +297,7 @@ def build_wakeup(path: Path, *, query: str, limit: int) -> dict[str, Any]:
             "Do not inject full raw recall into execution workers.",
             "Do not replace raw JSONL or evidence hashes with summaries.",
         ],
+        "native_recall": native_hits,
         "evidence_refs": [
             {
                 "source_ref": hit["source_ref"],
@@ -210,6 +320,13 @@ def print_json(payload: Any) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="A9 MemPalace provider facade")
     parser.add_argument("--drawers", default=str(DEFAULT_DRAWERS), help="MemPalace-compatible drawer JSONL")
+    parser.add_argument("--palace", default=str(DEFAULT_PALACE), help="Native MemPalace palace directory")
+    parser.add_argument(
+        "--native-mode",
+        choices=["auto", "native", "fallback"],
+        default="auto",
+        help="Search native MemPalace first, force native, or force fallback drawer JSONL",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status")
@@ -219,6 +336,8 @@ def main() -> int:
     search.add_argument("--limit", type=int, default=8)
     search.add_argument("--role")
     search.add_argument("--event-kind")
+    search.add_argument("--wing", default="operator-codex")
+    search.add_argument("--room")
 
     wakeup = sub.add_parser("wakeup")
     wakeup.add_argument("--query", default="A9 MemPalace current mainline next action")
@@ -226,21 +345,60 @@ def main() -> int:
 
     args = parser.parse_args()
     drawers = Path(args.drawers)
+    palace = Path(args.palace)
+    native_enabled = args.native_mode != "fallback" and drawers == DEFAULT_DRAWERS
 
     if args.command == "status":
         print_json(
             {
                 "schema": "a9.mempalace_provider_status.v1",
-                "native_mempalace": native_status(),
+                "native_mempalace": native_status(palace if native_enabled else Path("/nonexistent-a9-mempalace-disabled")),
                 "fallback_drawers": drawer_status(drawers),
             }
         )
     elif args.command == "search":
+        use_native = args.native_mode in {"auto", "native"} and drawers == DEFAULT_DRAWERS
+        native = (
+            native_search(
+                args.query,
+                limit=args.limit,
+                wing=args.wing,
+                room=args.room,
+                palace=palace,
+            )
+            if use_native
+            else None
+        )
+        if native and native.get("status") == "ok":
+            print_json(
+                {
+                    "schema": "a9.mempalace_search.v1",
+                    "query": args.query,
+                    "truth_policy": "recall_not_truth",
+                    **native,
+                }
+            )
+            return 0
+        if args.native_mode == "native":
+            print_json(
+                {
+                    "schema": "a9.mempalace_search.v1",
+                    "query": args.query,
+                    "truth_policy": "recall_not_truth",
+                    "source": "native_mempalace",
+                    "status": "error",
+                    "error": (native or {}).get("error") or "native palace index unavailable",
+                    "results": [],
+                }
+            )
+            return 0
         print_json(
             {
                 "schema": "a9.mempalace_search.v1",
                 "query": args.query,
                 "truth_policy": "recall_not_truth",
+                "source": "mempalace-compatible-drawer-jsonl",
+                "native_fallback_reason": None if not native else native.get("error"),
                 "results": search_drawers(
                     drawers,
                     args.query,
@@ -251,7 +409,15 @@ def main() -> int:
             }
         )
     elif args.command == "wakeup":
-        print_json(build_wakeup(drawers, query=args.query, limit=args.limit))
+        print_json(
+            build_wakeup(
+                drawers,
+                query=args.query,
+                limit=args.limit,
+                native_enabled=native_enabled,
+                palace=palace,
+            )
+        )
     return 0
 
 
