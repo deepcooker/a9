@@ -25,6 +25,8 @@ from typing import Any, Iterable
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DRAWERS = ROOT / ".a9" / "mempalace" / "operator-session-drawers.jsonl"
 DEFAULT_PALACE = ROOT / ".a9" / "mempalace"
+DEFAULT_NATIVE_WING = "operator-codex-native"
+DEFAULT_NATIVE_ROOM = "codex-message"
 MEMPALACE_SOURCE = ROOT / "reference-projects" / "mempalace"
 TOKEN_RE = re.compile(r"\w{2,}", re.UNICODE)
 
@@ -68,6 +70,13 @@ def compact(text: str, limit: int = 420) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
+
+
+def is_context_injection(content: str) -> bool:
+    text = (content or "").lstrip()
+    return text.startswith("# AGENTS.md instructions for ") or (
+        "<INSTRUCTIONS>" in text and "<environment_context>" in text
+    )
 
 
 def native_status(palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
@@ -239,6 +248,7 @@ def search_drawers(
     limit: int = 8,
     role: str | None = None,
     event_kind: str | None = None,
+    exclude_context: bool = False,
 ) -> list[dict[str, Any]]:
     if not path.exists():
         raise SystemExit(f"drawer JSONL not found: {path}")
@@ -253,6 +263,9 @@ def search_drawers(
             continue
         if event_kind and row.get("event_kind") != event_kind:
             continue
+        content = str(row.get("content") or "")
+        if exclude_context and is_context_injection(content):
+            continue
         score = score_drawer(query, query_terms, row)
         if score <= 0:
             continue
@@ -265,7 +278,7 @@ def search_drawers(
             "source_sha256": row.get("source_sha256"),
             "content_hash": row.get("content_hash"),
             "drawer_id": row.get("drawer_id"),
-            "content": compact(str(row.get("content") or "")),
+            "content": compact(content),
         }
         entry = (score, scanned, item)
         if len(heap) < limit:
@@ -283,8 +296,18 @@ def build_wakeup(
     native_enabled: bool = True,
     palace: Path = DEFAULT_PALACE,
 ) -> dict[str, Any]:
-    native = native_search(query, limit=limit, wing="operator-codex", palace=palace) if native_enabled else None
-    hits = search_drawers(path, query, limit=limit, event_kind="message")
+    native = (
+        native_search(
+            query,
+            limit=limit,
+            wing=DEFAULT_NATIVE_WING,
+            room=DEFAULT_NATIVE_ROOM,
+            palace=palace,
+        )
+        if native_enabled
+        else None
+    )
+    hits = search_drawers(path, query, limit=limit, event_kind="message", exclude_context=True)
     native_hits = native.get("results", []) if native and native.get("status") == "ok" else []
     return {
         "schema": "a9.wakeup_pack.v1",
@@ -336,8 +359,8 @@ def main() -> int:
     search.add_argument("--limit", type=int, default=8)
     search.add_argument("--role")
     search.add_argument("--event-kind")
-    search.add_argument("--wing", default="operator-codex")
-    search.add_argument("--room")
+    search.add_argument("--wing", default=DEFAULT_NATIVE_WING)
+    search.add_argument("--room", default=DEFAULT_NATIVE_ROOM)
 
     wakeup = sub.add_parser("wakeup")
     wakeup.add_argument("--query", default="A9 MemPalace current mainline next action")

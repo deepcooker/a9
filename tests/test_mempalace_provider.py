@@ -50,6 +50,18 @@ def write_drawers(path: Path) -> None:
             "content_hash": "hash3",
             "content": "recall truth recall truth recall truth",
         },
+        {
+            "schema": "a9.mempalace.drawer.v1",
+            "drawer_id": "d4",
+            "session_id": "s1",
+            "role": "user",
+            "event_kind": "message",
+            "timestamp": "2026-01-01T00:00:03Z",
+            "source_ref": "session.jsonl:13",
+            "source_sha256": "sourcehash",
+            "content_hash": "hash4",
+            "content": "# AGENTS.md instructions for /root/a9\n<INSTRUCTIONS>recall truth</INSTRUCTIONS>\n<environment_context>x</environment_context>",
+        },
     ]
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
@@ -68,8 +80,8 @@ class MempalaceProviderTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout)
             payload = json.loads(result.stdout)
-            self.assertEqual(payload["fallback_drawers"]["drawer_count"], 3)
-            self.assertEqual(payload["fallback_drawers"]["roles"]["user"], 1)
+            self.assertEqual(payload["fallback_drawers"]["drawer_count"], 4)
+            self.assertEqual(payload["fallback_drawers"]["roles"]["user"], 2)
 
     def test_search_returns_source_and_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,6 +117,7 @@ class MempalaceProviderTests(unittest.TestCase):
             self.assertEqual(payload["truth_policy"], "recall_not_truth")
             self.assertTrue(payload["evidence_refs"])
             self.assertEqual(payload["recall"][0]["event_kind"], "message")
+            self.assertNotIn("AGENTS.md instructions", payload["recall"][0]["content"])
 
 
 if __name__ == "__main__":

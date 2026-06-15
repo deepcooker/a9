@@ -5,11 +5,20 @@ import json
 import subprocess
 import tempfile
 import unittest
+import importlib.util
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ADAPTER = ROOT / "scripts" / "a9_codex_session_adapter.py"
+
+
+def load_adapter():
+    spec = importlib.util.spec_from_file_location("a9_codex_session_adapter_test", ADAPTER)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
 
 
 def write_fake_session(path: Path) -> None:
@@ -51,6 +60,27 @@ def write_fake_session(path: Path) -> None:
             "timestamp": "2026-01-01T00:00:04Z",
             "type": "response_item",
             "payload": {"type": "function_call_output", "output": "ok"},
+        },
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
+def write_context_session(path: Path) -> None:
+    rows = [
+        {"timestamp": "2026-01-01T00:00:00Z", "type": "session_meta", "payload": {"id": "context-session"}},
+        {
+            "timestamp": "2026-01-01T00:00:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": "# AGENTS.md instructions for /root/a9\n<INSTRUCTIONS>rules</INSTRUCTIONS>\n<environment_context>x</environment_context>",
+                    }
+                ],
+            },
         },
     ]
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
@@ -103,6 +133,86 @@ class CodexSessionAdapterTests(unittest.TestCase):
             records = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
             self.assertEqual(len(records), 5)
             self.assertTrue(records[0]["source_ref"].endswith(":2"))
+
+    def test_native_documents_default_to_message_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session.jsonl"
+            write_fake_session(session)
+            mod = load_adapter()
+            payload = mod.codex_jsonl_to_drawers(session)
+            ids, docs, metas = mod.native_documents_from_records(payload["records"])
+
+            self.assertEqual(len(ids), 3)
+            self.assertEqual(docs, ["developer instruction", "first task", "first answer"])
+            self.assertEqual({meta["room"] for meta in metas}, {"codex-message"})
+            self.assertEqual(metas[0]["wing"], "operator-codex-native")
+            self.assertEqual(metas[0]["source_ref"], f"{session}:2")
+            self.assertEqual(metas[0]["ingest_mode"], "a9_codex_session_native")
+            self.assertEqual(metas[0]["role"], "developer")
+
+    def test_native_documents_can_include_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session.jsonl"
+            write_fake_session(session)
+            mod = load_adapter()
+            payload = mod.codex_jsonl_to_drawers(session)
+            _ids, _docs, metas = mod.native_documents_from_records(
+                payload["records"],
+                include_tools=True,
+            )
+
+            self.assertEqual(len(metas), 5)
+            self.assertEqual(metas[-1]["room"], "codex-tool")
+            self.assertEqual(metas[-1]["event_kind"], "tool_output")
+
+    def test_native_sweep_dry_run_is_machine_readable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session.jsonl"
+            write_fake_session(session)
+            result = subprocess.run(
+                [str(ADAPTER), "native-sweep", str(session), "--dry-run"],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "dry-run")
+            self.assertEqual(payload["native_docs"], 3)
+            self.assertFalse(payload["include_tools"])
+
+    def test_context_injection_routes_to_context_room(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session.jsonl"
+            write_context_session(session)
+            mod = load_adapter()
+            payload = mod.codex_jsonl_to_drawers(session)
+            _ids, _docs, metas = mod.native_documents_from_records(payload["records"])
+
+            self.assertEqual(len(metas), 1)
+            self.assertEqual(metas[0]["room"], "codex-context")
+
+            _ids, _docs, metas = mod.native_documents_from_records(
+                payload["records"],
+                context_only=True,
+            )
+            self.assertEqual(len(metas), 1)
+
+    def test_context_only_skips_normal_messages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = Path(tmp) / "session.jsonl"
+            write_fake_session(session)
+            mod = load_adapter()
+            payload = mod.codex_jsonl_to_drawers(session)
+            ids, docs, metas = mod.native_documents_from_records(
+                payload["records"],
+                context_only=True,
+            )
+
+            self.assertEqual(ids, [])
+            self.assertEqual(docs, [])
+            self.assertEqual(metas, [])
 
 
 if __name__ == "__main__":

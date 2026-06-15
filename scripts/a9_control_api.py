@@ -8456,8 +8456,8 @@ def mempalace_search(payload: dict[str, Any]) -> dict[str, Any]:
         native = provider.native_search(
             query,
             limit=limit,
-            wing=payload.get("wing") or "operator-codex",
-            room=payload.get("room"),
+            wing=payload.get("wing") or getattr(provider, "DEFAULT_NATIVE_WING", "operator-codex-native"),
+            room=payload.get("room") or getattr(provider, "DEFAULT_NATIVE_ROOM", "codex-message"),
         )
         if native and native.get("status") == "ok":
             return {

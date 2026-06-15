@@ -9,14 +9,33 @@ assistant or tool event. It does not summarize and does not decide truth.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PALACE = ROOT / ".a9" / "mempalace"
+DEFAULT_NATIVE_WING = "operator-codex-native"
+DEFAULT_NATIVE_ROOM = "codex-message"
+MEMPALACE_SOURCE = ROOT / "reference-projects" / "mempalace"
+NATIVE_CHUNK_CHARS = 8000
+
+
+@contextlib.contextmanager
+def suppress_native_stderr() -> Iterable[None]:
+    saved = os.dup(2)
+    try:
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            os.dup2(sink.fileno(), 2)
+            yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
 
 
 def utc_now() -> str:
@@ -214,6 +233,186 @@ def write_drawers(path: Path, out_path: Path) -> dict[str, Any]:
     }
 
 
+def chunk_text(text: str, limit: int = NATIVE_CHUNK_CHARS) -> list[str]:
+    if limit <= 0:
+        raise ValueError("chunk limit must be positive")
+    if not text:
+        return []
+    return [text[index : index + limit] for index in range(0, len(text), limit)]
+
+
+def native_room_for(record: dict[str, Any]) -> str:
+    if is_context_injection(str(record.get("content") or "")):
+        return "codex-context"
+    return "codex-tool" if str(record.get("event_kind") or "").startswith("tool_") else DEFAULT_NATIVE_ROOM
+
+
+def is_context_injection(content: str) -> bool:
+    text = (content or "").lstrip()
+    return text.startswith("# AGENTS.md instructions for ") or (
+        "<INSTRUCTIONS>" in text and "<environment_context>" in text
+    )
+
+
+def native_drawer_id(record: dict[str, Any], chunk_index: int) -> str:
+    basis = "|".join(
+        [
+            str(record.get("session_id") or ""),
+            str(record.get("source_line") or ""),
+            str(record.get("event_kind") or ""),
+            str(record.get("role") or ""),
+            str(chunk_index),
+            str(record.get("content_hash") or ""),
+        ]
+    )
+    return f"a9_codex_{sha256_text(basis)[:32]}"
+
+
+def native_documents_from_records(
+    records: Iterable[dict[str, Any]],
+    *,
+    wing: str = DEFAULT_NATIVE_WING,
+    include_tools: bool = False,
+    context_only: bool = False,
+    chunk_chars: int = NATIVE_CHUNK_CHARS,
+    agent: str = "a9-monitor",
+) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+    ids: list[str] = []
+    docs: list[str] = []
+    metas: list[dict[str, Any]] = []
+    for record in records:
+        event_kind = str(record.get("event_kind") or "")
+        if event_kind.startswith("tool_") and not include_tools:
+            continue
+        if context_only and not is_context_injection(str(record.get("content") or "")):
+            continue
+        content = str(record.get("content") or "")
+        chunks = chunk_text(content, chunk_chars)
+        for index, chunk in enumerate(chunks):
+            ids.append(native_drawer_id(record, index))
+            docs.append(chunk)
+            metas.append(
+                {
+                    "wing": wing,
+                    "room": native_room_for(record),
+                    "hall": "technical",
+                    "source_file": str(record.get("source_path") or ""),
+                    "source_ref": str(record.get("source_ref") or ""),
+                    "source_sha256": str(record.get("source_sha256") or ""),
+                    "raw_line_sha256": str(record.get("raw_line_sha256") or ""),
+                    "content_hash": str(record.get("content_hash") or ""),
+                    "session_id": str(record.get("session_id") or ""),
+                    "source_line": int(record.get("source_line") or 0),
+                    "role": str(record.get("role") or ""),
+                    "event_kind": event_kind,
+                    "message_id": str(record.get("message_id") or ""),
+                    "chunk_index": index,
+                    "chunk_count": len(chunks),
+                    "added_by": agent,
+                    "filed_at": utc_now(),
+                    "ingest_mode": "a9_codex_session_native",
+                    "source_type": "codex_jsonl",
+                    "schema": "a9.mempalace.native_codex_drawer.v1",
+                }
+            )
+    return ids, docs, metas
+
+
+def import_mempalace_get_collection():
+    if not MEMPALACE_SOURCE.exists():
+        raise SystemExit(f"MemPalace source not found: {MEMPALACE_SOURCE}")
+    import sys
+
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    with suppress_native_stderr():
+        from mempalace.palace import get_collection  # type: ignore
+
+    return get_collection
+
+
+def native_sweep(
+    path: Path,
+    *,
+    palace: Path = DEFAULT_PALACE,
+    wing: str = DEFAULT_NATIVE_WING,
+    include_tools: bool = False,
+    context_only: bool = False,
+    rewrite_existing: bool = False,
+    chunk_chars: int = NATIVE_CHUNK_CHARS,
+    agent: str = "a9-monitor",
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    payload = codex_jsonl_to_drawers(path)
+    ids, docs, metas = native_documents_from_records(
+        payload["records"],
+        wing=wing,
+        include_tools=include_tools,
+        context_only=context_only,
+        chunk_chars=chunk_chars,
+        agent=agent,
+    )
+    if dry_run:
+        return {
+            "status": "dry-run",
+            "session_id": payload["session_id"],
+            "source_session_path": payload["source_session_path"],
+            "source_sha256": payload["source_sha256"],
+            "native_ids": len(ids),
+            "native_docs": len(docs),
+            "include_tools": include_tools,
+            "context_only": context_only,
+            "rewrite_existing": rewrite_existing,
+            "wing": wing,
+            "palace": str(palace),
+        }
+    get_collection = import_mempalace_get_collection()
+    with suppress_native_stderr():
+        collection = get_collection(str(palace), create=True)
+    existing_count = 0
+    added_count = 0
+    rewritten_count = 0
+    batch_size = 128
+    for start in range(0, len(ids), batch_size):
+        batch_ids = ids[start : start + batch_size]
+        batch_docs = docs[start : start + batch_size]
+        batch_metas = metas[start : start + batch_size]
+        try:
+            existing = collection.get(ids=batch_ids, include=[])
+            present = set(existing.get("ids") or [])
+        except Exception:
+            present = set()
+        existing_count += len(present)
+        write_indexes = [
+            index for index, drawer_id in enumerate(batch_ids) if rewrite_existing or drawer_id not in present
+        ]
+        added_count += sum(1 for index in write_indexes if batch_ids[index] not in present)
+        rewritten_count += sum(1 for index in write_indexes if batch_ids[index] in present)
+        if not write_indexes:
+            continue
+        with suppress_native_stderr():
+            collection.upsert(
+                ids=[batch_ids[index] for index in write_indexes],
+                documents=[batch_docs[index] for index in write_indexes],
+                metadatas=[batch_metas[index] for index in write_indexes],
+            )
+    return {
+        "status": "written",
+        "schema": "a9.mempalace.native_codex_sweep.v1",
+        "session_id": payload["session_id"],
+        "source_session_path": payload["source_session_path"],
+        "source_sha256": payload["source_sha256"],
+        "native_docs": len(docs),
+        "native_added": added_count,
+        "native_already_present": existing_count,
+        "native_rewritten": rewritten_count,
+        "include_tools": include_tools,
+        "context_only": context_only,
+        "rewrite_existing": rewrite_existing,
+        "wing": wing,
+        "palace": str(palace),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Convert Codex session JSONL to MemPalace drawer JSONL")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -222,6 +421,17 @@ def main() -> int:
     convert.add_argument("session_jsonl")
     convert.add_argument("--out", help="Write newline-delimited drawer records to this path")
     convert.add_argument("--pretty", action="store_true", help="Print a pretty JSON envelope instead of JSONL")
+
+    native = sub.add_parser("native-sweep")
+    native.add_argument("session_jsonl")
+    native.add_argument("--palace", default=str(DEFAULT_PALACE))
+    native.add_argument("--wing", default=DEFAULT_NATIVE_WING)
+    native.add_argument("--agent", default="a9-monitor")
+    native.add_argument("--chunk-chars", type=int, default=NATIVE_CHUNK_CHARS)
+    native.add_argument("--include-tools", action="store_true")
+    native.add_argument("--context-only", action="store_true")
+    native.add_argument("--rewrite-existing", action="store_true")
+    native.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args()
     session_path = Path(args.session_jsonl)
@@ -238,6 +448,25 @@ def main() -> int:
             else:
                 for record in payload["records"]:
                     print(json.dumps(record, ensure_ascii=False, sort_keys=True))
+    elif args.command == "native-sweep":
+        print(
+            json.dumps(
+                native_sweep(
+                    session_path,
+                    palace=Path(args.palace),
+                    wing=args.wing,
+                    include_tools=args.include_tools,
+                    context_only=args.context_only,
+                    rewrite_existing=args.rewrite_existing,
+                    chunk_chars=args.chunk_chars,
+                    agent=args.agent,
+                    dry_run=args.dry_run,
+                ),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        )
     return 0
 
 
