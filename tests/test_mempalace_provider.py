@@ -348,6 +348,56 @@ class MempalaceProviderTests(unittest.TestCase):
         self.assertEqual(result["invalidation_candidates"][0]["operation"], "kg_invalidate_candidate")
         self.assertTrue(result["invalidation_candidates"][0]["requires_monitor_decision"])
 
+    def test_causal_repair_proposal_selects_stale_branch_without_mutation(self):
+        mod = load_provider()
+        audit_report = {
+            "schema": "a9.causal_memory_audit.v1",
+            "status": "review_required",
+            "subject": "A9",
+            "conflict_count": 1,
+            "conflicts": [
+                {
+                    "subject": "A9",
+                    "predicate": "has_current_fact",
+                    "objects": [
+                        "A9 current mainline is supervisor runtime.",
+                        "A9 old page monitor route is stale.",
+                    ],
+                    "facts": [
+                        {
+                            "subject": "A9",
+                            "predicate": "has_current_fact",
+                            "object": "A9 current mainline is supervisor runtime.",
+                            "valid_from": "2026-06-02T00:00:00Z",
+                            "current": True,
+                        },
+                        {
+                            "subject": "A9",
+                            "predicate": "has_current_fact",
+                            "object": "A9 old page monitor route is stale.",
+                            "valid_from": "2026-05-01T00:00:00Z",
+                            "current": True,
+                        },
+                    ],
+                }
+            ],
+        }
+
+        result = mod.propose_causal_memory_repairs(audit_report, subject="A9")
+
+        self.assertEqual(result["schema"], "a9.causal_memory_repair_proposal.v1")
+        self.assertEqual(result["status"], "review_required")
+        self.assertEqual(result["truth_policy"], "side_effect_free_repair_candidates_not_truth")
+        self.assertEqual(result["proposal_count"], 1)
+        self.assertEqual(len(result["invalidation_candidates"]), 1)
+        candidate = result["invalidation_candidates"][0]
+        self.assertEqual(candidate["operation"], "kg_invalidate_candidate")
+        self.assertEqual(candidate["object"], "A9 old page monitor route is stale.")
+        self.assertTrue(candidate["requires_monitor_decision"])
+        self.assertTrue(candidate["auto_selectable"])
+        self.assertIn("object_has_stale_signal", candidate["repair_reasons"])
+        self.assertIn("older_than_newest_current_fact", candidate["repair_reasons"])
+
     def test_causal_commit_success_includes_post_commit_audit(self):
         mod = load_provider()
         packet = {

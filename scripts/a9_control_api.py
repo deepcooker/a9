@@ -3453,6 +3453,7 @@ def controller_discovery() -> dict[str, Any]:
             "mempalace_causal_compile": "/api/memory/mempalace/causal-compile",
             "mempalace_causal_commit": "/api/memory/mempalace/causal-commit",
             "mempalace_causal_audit": "/api/memory/mempalace/causal-audit",
+            "mempalace_causal_repair_propose": "/api/memory/mempalace/causal-repair-propose",
             "mempalace_causal_invalidate": "/api/memory/mempalace/causal-invalidate",
             "mempalace_causal_eval_generate_candidates": "/api/memory/mempalace/causal-eval/generate-candidates",
             "mempalace_causal_eval_latest_candidates": "/api/memory/mempalace/causal-eval/latest-candidates",
@@ -8601,6 +8602,23 @@ def mempalace_causal_audit(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def mempalace_causal_repair_propose(payload: dict[str, Any]) -> dict[str, Any]:
+    provider = mempalace_provider()
+    subject = str(payload.get("subject") or "A9").strip() or "A9"
+    audit_report = payload.get("audit_report")
+    if audit_report is not None and not isinstance(audit_report, dict):
+        return {
+            "schema": "a9.control_api.mempalace_causal_repair_propose.v1",
+            "status": "invalid_request",
+            "error": "audit_report_must_be_object",
+            "proposal_count": 0,
+            "invalidation_candidates": [],
+        }
+    result = provider.propose_causal_memory_repairs(audit_report, subject=subject)
+    result["schema"] = "a9.control_api.mempalace_causal_repair_propose.v1"
+    return result
+
+
 def mempalace_causal_invalidate(payload: dict[str, Any]) -> dict[str, Any]:
     candidates = payload.get("invalidation_candidates")
     if not isinstance(candidates, list):
@@ -9670,6 +9688,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, mempalace_causal_commit(payload))
             elif self.path == "/api/memory/mempalace/causal-audit":
                 self.write_json(200, mempalace_causal_audit(payload))
+            elif self.path == "/api/memory/mempalace/causal-repair-propose":
+                self.write_json(200, mempalace_causal_repair_propose(payload))
             elif self.path == "/api/memory/mempalace/causal-invalidate":
                 self.write_json(200, mempalace_causal_invalidate(payload))
             elif self.path == "/api/memory/mempalace/causal-eval/generate-candidates":

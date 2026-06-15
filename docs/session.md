@@ -54,8 +54,11 @@ Raw external Codex/operator session:
   the first post-write causal audit reports duplicate/conflicting current facts
   plus monitor-approved invalidation candidates. Approved invalidation now has
   a dry-run/commit path that uses MemPalace `KnowledgeGraph.invalidate()` and
-  keeps old facts as temporal history. Fully automated stale-branch selection
-  and contradiction repair remain unfinished. `scripts/a9_mempalace_eval.py`
+  keeps old facts as temporal history. A first repair proposal lane now turns
+  audit conflicts into side-effect-free stale-branch selections using explicit
+  stale markers and temporal ordering, then routes them back through the
+  existing monitor-approved invalidation protocol. Fully automatic repair after
+  approval and broader contradiction policy remain unfinished. `scripts/a9_mempalace_eval.py`
   now provides a deterministic fixture eval for current/stale/causal labels and
   wrongbook candidates. The fixture now covers 12 cases including same-drawer
   current+stale, fallback-not-mainline, negated stale instructions, mem0 ->

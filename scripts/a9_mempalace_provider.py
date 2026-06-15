@@ -958,6 +958,130 @@ def audit_causal_memory_state(subject: str = "A9", *, palace: Path = DEFAULT_PAL
     }
 
 
+def _fact_temporal_key(fact: dict[str, Any]) -> str:
+    value = fact.get("valid_from") or fact.get("created_at") or ""
+    return str(value)
+
+
+def _score_stale_repair_candidate(
+    fact: dict[str, Any],
+    *,
+    newest_key: str,
+) -> dict[str, Any]:
+    obj = str(fact.get("object") or "")
+    reasons: list[str] = []
+    score = 0
+    if has_stale_signal(obj):
+        score += 70
+        reasons.append("object_has_stale_signal")
+    if newest_key and _fact_temporal_key(fact) and _fact_temporal_key(fact) < newest_key:
+        score += 35
+        reasons.append("older_than_newest_current_fact")
+    if has_current_signal(obj, stale_signal=has_stale_signal(obj)):
+        score -= 20
+        reasons.append("object_has_current_signal")
+    if not reasons:
+        reasons.append("ambiguous_conflict_member")
+    confidence = max(0.0, min(0.95, score / 100.0))
+    return {
+        "score": score,
+        "confidence": round(confidence, 2),
+        "reasons": reasons,
+        "auto_selectable": score >= 50,
+    }
+
+
+def propose_causal_memory_repairs(
+    audit_report: dict[str, Any] | None = None,
+    *,
+    subject: str = "A9",
+    palace: Path = DEFAULT_PALACE,
+) -> dict[str, Any]:
+    """Build side-effect-free stale-branch repair proposals from a KG audit.
+
+    MemPalace's protocol says changed facts should be handled by invalidating
+    the old fact and adding/querying the time-valid current fact. A9 keeps the
+    selection step explicit: this function ranks stale-looking conflict members
+    and emits invalidation candidates, but it never mutates the KG.
+    """
+    audit = audit_report if isinstance(audit_report, dict) else audit_causal_memory_state(subject, palace=palace)
+    conflicts = audit.get("conflicts") if isinstance(audit.get("conflicts"), list) else []
+    proposals: list[dict[str, Any]] = []
+    invalidation_candidates: list[dict[str, Any]] = []
+    for conflict_index, conflict in enumerate(conflicts, start=1):
+        if not isinstance(conflict, dict):
+            continue
+        rows = [row for row in (conflict.get("facts") or []) if isinstance(row, dict)]
+        if not rows:
+            continue
+        newest_key = max((_fact_temporal_key(row) for row in rows), default="")
+        ranked: list[dict[str, Any]] = []
+        for row in rows:
+            score = _score_stale_repair_candidate(row, newest_key=newest_key)
+            candidate = {
+                "operation": "kg_invalidate_candidate",
+                "subject": str(row.get("subject") or conflict.get("subject") or subject or "A9"),
+                "predicate": str(row.get("predicate") or conflict.get("predicate") or ""),
+                "object": str(row.get("object") or ""),
+                "ended": utc_now_iso(),
+                "candidate_reason": "causal_repair_policy_selected_stale_branch",
+                "requires_monitor_decision": True,
+                "source_fact": row,
+                "repair_score": score["score"],
+                "confidence": score["confidence"],
+                "repair_reasons": score["reasons"],
+                "auto_selectable": score["auto_selectable"],
+            }
+            ranked.append(candidate)
+        selected = [
+            candidate for candidate in sorted(
+                ranked,
+                key=lambda item: (-int(item.get("repair_score") or 0), str(item.get("object") or "")),
+            )
+            if candidate.get("auto_selectable")
+        ]
+        proposal_candidates = selected or ranked
+        invalidation_candidates.extend(selected)
+        proposals.append(
+            {
+                "schema": "a9.causal_memory_repair_proposal_item.v1",
+                "id": f"repair-{conflict_index:04d}",
+                "status": "review_required",
+                "subject": conflict.get("subject") or subject,
+                "predicate": conflict.get("predicate"),
+                "objects": conflict.get("objects") or sorted({str(row.get("object") or "") for row in rows}),
+                "recommended_action": "invalidate_selected_after_monitor_approval" if selected else "manual_review_required",
+                "selected_invalidation_candidates": selected,
+                "review_candidates": proposal_candidates,
+                "policy_reason": (
+                    "Prefer explicit stale markers and older temporal facts; "
+                    "do not mutate KG until monitor approval calls causal-invalidate."
+                ),
+            }
+        )
+    status = "review_required" if proposals else "pass"
+    return {
+        "schema": "a9.causal_memory_repair_proposal.v1",
+        "status": status,
+        "subject": subject,
+        "truth_policy": "side_effect_free_repair_candidates_not_truth",
+        "audit_status": audit.get("status"),
+        "audit_conflict_count": audit.get("conflict_count", len(conflicts)),
+        "proposal_count": len(proposals),
+        "proposals": proposals,
+        "invalidation_candidates": invalidation_candidates,
+        "copied_protocols": [
+            "MemPalace recall protocol: stale/conflicting facts prefer time-valid KG over model memory",
+            "MemPalace KG invalidate ends old facts with valid_to instead of deleting them",
+            "MemPalace fact_checker reports stale/conflicting facts as issues anchored to KG facts",
+        ],
+        "policy": (
+            "Repair proposal is side-effect free. Only candidates selected and approved "
+            "through causal-invalidate may mutate temporal KG state."
+        ),
+    }
+
+
 def approved_invalidation_plan(
     invalidation_candidates: list[dict[str, Any]],
     *,
@@ -1353,6 +1477,10 @@ def main() -> int:
     audit = sub.add_parser("causal-audit")
     audit.add_argument("--subject", default="A9")
 
+    repair = sub.add_parser("causal-repair-propose")
+    repair.add_argument("--subject", default="A9")
+    repair.add_argument("--audit-report", type=Path)
+
     invalidate = sub.add_parser("causal-invalidate")
     invalidate.add_argument("--candidates", required=True, type=Path)
     invalidate.add_argument("--approved-by", required=True)
@@ -1473,6 +1601,11 @@ def main() -> int:
         )
     elif args.command == "causal-audit":
         print_json(audit_causal_memory_state(args.subject, palace=palace))
+    elif args.command == "causal-repair-propose":
+        audit_report = None
+        if args.audit_report:
+            audit_report = json.loads(args.audit_report.read_text(encoding="utf-8"))
+        print_json(propose_causal_memory_repairs(audit_report, subject=args.subject, palace=palace))
     elif args.command == "causal-invalidate":
         candidates = json.loads(args.candidates.read_text(encoding="utf-8"))
         if isinstance(candidates, dict):

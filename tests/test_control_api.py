@@ -398,6 +398,44 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["subject"], "A9")
         self.assertEqual(result["invalidation_candidates"][0]["operation"], "kg_invalidate_candidate")
 
+    def test_mempalace_causal_repair_propose_returns_review_candidates(self):
+        mod = load_control_api()
+
+        def fake_repair(audit_report, subject):
+            return {
+                "schema": "a9.causal_memory_repair_proposal.v1",
+                "status": "review_required",
+                "subject": subject,
+                "truth_policy": "side_effect_free_repair_candidates_not_truth",
+                "proposal_count": 1,
+                "invalidation_candidates": [
+                    {
+                        "operation": "kg_invalidate_candidate",
+                        "object": "A9 old route is stale.",
+                        "requires_monitor_decision": True,
+                    }
+                ],
+            }
+
+        provider = SimpleNamespace(propose_causal_memory_repairs=fake_repair)
+        with mock.patch.object(mod, "mempalace_provider", return_value=provider):
+            invalid = mod.mempalace_causal_repair_propose({"audit_report": []})
+            result = mod.mempalace_causal_repair_propose(
+                {
+                    "subject": "A9",
+                    "audit_report": {
+                        "schema": "a9.causal_memory_audit.v1",
+                        "status": "review_required",
+                    },
+                }
+            )
+
+        self.assertEqual(invalid["status"], "invalid_request")
+        self.assertEqual(result["schema"], "a9.control_api.mempalace_causal_repair_propose.v1")
+        self.assertEqual(result["status"], "review_required")
+        self.assertEqual(result["truth_policy"], "side_effect_free_repair_candidates_not_truth")
+        self.assertEqual(result["invalidation_candidates"][0]["operation"], "kg_invalidate_candidate")
+
     def test_mempalace_causal_invalidate_requires_candidates_and_returns_dry_run(self):
         mod = load_control_api()
 
@@ -11465,6 +11503,10 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["mempalace_causal_compile"], "/api/memory/mempalace/causal-compile")
         self.assertEqual(discovery["endpoints"]["mempalace_causal_commit"], "/api/memory/mempalace/causal-commit")
         self.assertEqual(discovery["endpoints"]["mempalace_causal_audit"], "/api/memory/mempalace/causal-audit")
+        self.assertEqual(
+            discovery["endpoints"]["mempalace_causal_repair_propose"],
+            "/api/memory/mempalace/causal-repair-propose",
+        )
         self.assertEqual(discovery["endpoints"]["mempalace_causal_invalidate"], "/api/memory/mempalace/causal-invalidate")
         self.assertEqual(
             discovery["endpoints"]["mempalace_causal_eval_generate_candidates"],

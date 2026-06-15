@@ -93,8 +93,12 @@ P7 NZX technical MVP
   duplicate/conflicting current facts and emits monitor-approved invalidation
   candidates. Approved invalidation now has a dry-run/commit path that calls
   MemPalace `KnowledgeGraph.invalidate()` instead of deleting facts, preserving
-  temporal history. The remaining gap is automatic stale-branch selection and
-  contradiction repair policy. A deterministic fixture-based causal-memory
+  temporal history. A first side-effect-free repair proposal policy now ranks
+  conflicting current KG facts, selects obvious stale branches by stale markers
+  and temporal ordering, and exposes monitor-approved invalidation candidates
+  without mutating the KG. The remaining gap is fully automatic repair after
+  monitor approval and broader contradiction policy. A deterministic
+  fixture-based causal-memory
   eval now checks current/stale/causal labels and wrongbook candidates before
   claiming compiler quality. The fixture has been expanded to cover same-drawer
   current+stale, fallback-not-mainline, negated stale instructions, mem0 ->
