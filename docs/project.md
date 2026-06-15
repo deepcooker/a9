@@ -108,6 +108,8 @@ P7 NZX technical MVP
   path: it only accepts candidates marked `review_status=approved`, requires
   `approved_by` and `approval_reason`, preserves source refs/hashes, de-dupes
   existing fixture rows, and defaults to dry-run unless `--commit` is passed.
+  Control API now exposes the same lane for monitor/mobile use:
+  generate candidates, read latest candidates, and merge reviewed candidates.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

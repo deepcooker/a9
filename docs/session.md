@@ -67,6 +67,9 @@ Raw external Codex/operator session:
   fixture truth until reviewed. Reviewed candidates enter the fixture only via
   `--merge-reviewed`, which requires `review_status=approved`, `approved_by`,
   `approval_reason`, source refs/hashes, de-dupe checks and explicit `--commit`.
+  The same review lane is now exposed through control API for monitor/mobile
+  operation: generate latest candidates, inspect latest candidates, and dry-run
+  or commit reviewed merges.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

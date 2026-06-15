@@ -31,6 +31,7 @@ CODEX_SESSIONS_DIR = Path("/root/.codex/sessions")
 SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
 SESSION_REFRESH_PATH = ROOT / "scripts" / "a9_session_refresh.py"
 MEMPALACE_PROVIDER_PATH = ROOT / "scripts" / "a9_mempalace_provider.py"
+MEMPALACE_EVAL_PATH = ROOT / "scripts" / "a9_mempalace_eval.py"
 REMOTE_PATH = ROOT / "scripts" / "a9_remote.py"
 NODE_HELPER_PATH = ROOT / "scripts" / "a9_node.py"
 NODES_DIR = ROOT / ".a9" / "nodes"
@@ -42,6 +43,8 @@ NODE_ONLINE_TTL_SECONDS = 90
 NODE_STALE_TTL_SECONDS = 300
 PHONE_ADMIN_SCOPE = "operator.admin"
 RECOVERY_LOOP_LATEST_REL_PATH = Path(".a9") / "services" / "recovery-loop-latest.json"
+MEMPALACE_CAUSAL_EVAL_CANDIDATES_REL_PATH = Path(".a9") / "eval_store" / "runs" / "latest-mempalace-causal-candidates.json"
+MEMPALACE_CAUSAL_EVAL_RESULT_REL_PATH = Path(".a9") / "eval_store" / "runs" / "latest-mempalace-causal-eval.json"
 COMMUNICATION_OBSERVATION_REL_PATH = Path(".a9") / "services" / "communication-observation.json"
 COMMUNICATION_REPAIR_SUGGESTIONS_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestions.json"
 COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH = Path(".a9") / "services" / "communication-repair-suggestion-audit.jsonl"
@@ -585,6 +588,10 @@ def session_refresh() -> Any:
 
 def mempalace_provider() -> Any:
     return load_module("a9_mempalace_provider_control_api", MEMPALACE_PROVIDER_PATH)
+
+
+def mempalace_eval() -> Any:
+    return load_module("a9_mempalace_eval_control_api", MEMPALACE_EVAL_PATH)
 
 
 def remote() -> Any:
@@ -3447,6 +3454,9 @@ def controller_discovery() -> dict[str, Any]:
             "mempalace_causal_commit": "/api/memory/mempalace/causal-commit",
             "mempalace_causal_audit": "/api/memory/mempalace/causal-audit",
             "mempalace_causal_invalidate": "/api/memory/mempalace/causal-invalidate",
+            "mempalace_causal_eval_generate_candidates": "/api/memory/mempalace/causal-eval/generate-candidates",
+            "mempalace_causal_eval_latest_candidates": "/api/memory/mempalace/causal-eval/latest-candidates",
+            "mempalace_causal_eval_merge_reviewed": "/api/memory/mempalace/causal-eval/merge-reviewed",
             "runtime_plan_decision_approve": "/api/runtime/plan-decision-approve",
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
@@ -8613,6 +8623,79 @@ def mempalace_causal_invalidate(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def mempalace_causal_eval_generate_candidates(payload: dict[str, Any]) -> dict[str, Any]:
+    evaluator = mempalace_eval()
+    provider = mempalace_provider()
+    drawers = Path(str(payload.get("drawers") or provider.DEFAULT_DRAWERS))
+    limit = _mempalace_limit(payload, default=20, maximum=100)
+    try:
+        scan_limit = int(payload.get("scan_limit") or 5000)
+    except (TypeError, ValueError):
+        scan_limit = 5000
+    scan_limit = max(1, min(scan_limit, 50000))
+    result = evaluator.generate_eval_candidates(drawers, limit=limit, scan_limit=scan_limit)
+    result["schema"] = "a9.control_api.mempalace_causal_eval_generate_candidates.v1"
+    output = ROOT / MEMPALACE_CAUSAL_EVAL_CANDIDATES_REL_PATH
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    result["output_path"] = str(output)
+    result["truth_policy"] = "review_only_candidates_not_fixture_truth"
+    return result
+
+
+def mempalace_causal_eval_latest_candidates() -> dict[str, Any]:
+    path = ROOT / MEMPALACE_CAUSAL_EVAL_CANDIDATES_REL_PATH
+    if not path.exists():
+        return {
+            "schema": "a9.control_api.mempalace_causal_eval_latest_candidates.v1",
+            "status": "not_found",
+            "path": str(path),
+            "candidate_count": 0,
+            "candidates": [],
+        }
+    result = json.loads(path.read_text(encoding="utf-8"))
+    result["schema"] = "a9.control_api.mempalace_causal_eval_latest_candidates.v1"
+    result["path"] = str(path)
+    result["truth_policy"] = "review_only_candidates_not_fixture_truth"
+    return result
+
+
+def mempalace_causal_eval_merge_reviewed(payload: dict[str, Any]) -> dict[str, Any]:
+    evaluator = mempalace_eval()
+    request_path = ROOT / ".a9" / "eval_store" / "runs" / "mempalace-causal-merge-request.json"
+    request_path.parent.mkdir(parents=True, exist_ok=True)
+    candidates_path = payload.get("candidates_path")
+    if candidates_path:
+        source_path = Path(str(candidates_path))
+    else:
+        candidates_payload = payload.get("candidates")
+        if candidates_payload is None:
+            latest_path = ROOT / MEMPALACE_CAUSAL_EVAL_CANDIDATES_REL_PATH
+            if not latest_path.exists():
+                return {
+                    "schema": "a9.control_api.mempalace_causal_eval_merge_reviewed.v1",
+                    "status": "invalid_request",
+                    "error": "candidates_or_existing_latest_candidates_required",
+                    "merged_count": 0,
+                }
+            source_path = latest_path
+        else:
+            request_payload = {"candidates": candidates_payload} if isinstance(candidates_payload, list) else candidates_payload
+            request_path.write_text(json.dumps(request_payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            source_path = request_path
+    fixture = Path(str(payload.get("fixture") or evaluator.DEFAULT_FIXTURE))
+    result = evaluator.merge_reviewed_candidates(
+        source_path,
+        fixture=fixture,
+        approved_by=str(payload.get("approved_by") or ""),
+        approval_reason=str(payload.get("approval_reason") or ""),
+        commit=bool(payload.get("commit")),
+    )
+    result["schema"] = "a9.control_api.mempalace_causal_eval_merge_reviewed.v1"
+    result["source_path"] = str(source_path)
+    return result
+
+
 def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     enqueue_service_control_audit(
         {
@@ -9458,6 +9541,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, operator_tail(source, limit=limit))
             elif parsed.path == "/api/memory/mempalace/status":
                 self.write_json(200, mempalace_status())
+            elif parsed.path == "/api/memory/mempalace/causal-eval/latest-candidates":
+                self.write_json(200, mempalace_causal_eval_latest_candidates())
             elif parsed.path.startswith("/api/node-command-results/by-command/"):
                 command_id = unquote(parsed.path.removeprefix("/api/node-command-results/by-command/")).strip("/")
                 result_last_id = _resolve_event_last_id(
@@ -9587,6 +9672,10 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, mempalace_causal_audit(payload))
             elif self.path == "/api/memory/mempalace/causal-invalidate":
                 self.write_json(200, mempalace_causal_invalidate(payload))
+            elif self.path == "/api/memory/mempalace/causal-eval/generate-candidates":
+                self.write_json(200, mempalace_causal_eval_generate_candidates(payload))
+            elif self.path == "/api/memory/mempalace/causal-eval/merge-reviewed":
+                self.write_json(200, mempalace_causal_eval_merge_reviewed(payload))
             elif self.path == "/api/runtime/plan-decision-approve":
                 self.write_json(200, runtime_plan_decision_approve(payload))
             elif self.path == "/api/runtime/plan-debate-next":

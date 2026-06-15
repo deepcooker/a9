@@ -430,6 +430,76 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["status"], "dry_run")
         self.assertEqual(result["plan"]["operations"][0]["operation"], "kg_invalidate")
 
+    def test_mempalace_causal_eval_generate_latest_and_merge_reviewed(self):
+        mod = load_control_api()
+
+        def fake_generate(drawers, limit, scan_limit):
+            return {
+                "schema": "a9.mempalace_causal_eval_candidates.v1",
+                "status": "ok",
+                "drawers_path": str(drawers),
+                "candidate_count": 1,
+                "candidates": [
+                    {
+                        "id": "candidate-0001",
+                        "review_status": "approved",
+                        "fixture_line": {
+                            "id": "reviewed-0001",
+                            "content": "当前主线是 supervisor runtime。",
+                            "expected": {"current": True, "stale": False, "causal": False},
+                        },
+                    }
+                ],
+                "scanned_rows": scan_limit,
+            }
+
+        def fake_merge(path, fixture, approved_by, approval_reason, commit):
+            payload = json.loads(Path(path).read_text(encoding="utf-8"))
+            return {
+                "schema": "a9.mempalace_causal_fixture_merge.v1",
+                "status": "dry_run" if not commit else "committed",
+                "fixture": str(fixture),
+                "approved_by": approved_by,
+                "approval_reason": approval_reason,
+                "merged_count": len(payload.get("candidates", [])),
+            }
+
+        evaluator = SimpleNamespace(
+            DEFAULT_FIXTURE=Path("/tmp/fixture.jsonl"),
+            generate_eval_candidates=fake_generate,
+            merge_reviewed_candidates=fake_merge,
+        )
+        provider = SimpleNamespace(DEFAULT_DRAWERS=Path("/tmp/drawers.jsonl"))
+        old_root = mod.ROOT
+        with tempfile.TemporaryDirectory() as tmp:
+            mod.ROOT = Path(tmp)
+            try:
+                with mock.patch.object(mod, "mempalace_eval", return_value=evaluator), mock.patch.object(
+                    mod, "mempalace_provider", return_value=provider
+                ):
+                    generated = mod.mempalace_causal_eval_generate_candidates({"limit": 1, "scan_limit": 7})
+                    generated_output_exists = Path(generated["output_path"]).exists()
+                    latest = mod.mempalace_causal_eval_latest_candidates()
+                    merged = mod.mempalace_causal_eval_merge_reviewed(
+                        {
+                            "candidates": generated["candidates"],
+                            "approved_by": "codex-monitor",
+                            "approval_reason": "reviewed",
+                            "commit": False,
+                        }
+                    )
+            finally:
+                mod.ROOT = old_root
+
+        self.assertEqual(generated["schema"], "a9.control_api.mempalace_causal_eval_generate_candidates.v1")
+        self.assertEqual(generated["candidate_count"], 1)
+        self.assertTrue(generated_output_exists)
+        self.assertEqual(latest["schema"], "a9.control_api.mempalace_causal_eval_latest_candidates.v1")
+        self.assertEqual(latest["candidate_count"], 1)
+        self.assertEqual(merged["schema"], "a9.control_api.mempalace_causal_eval_merge_reviewed.v1")
+        self.assertEqual(merged["status"], "dry_run")
+        self.assertEqual(merged["merged_count"], 1)
+
     def test_supervisor_status_reads_existing_a9_state(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -11396,6 +11466,18 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["mempalace_causal_commit"], "/api/memory/mempalace/causal-commit")
         self.assertEqual(discovery["endpoints"]["mempalace_causal_audit"], "/api/memory/mempalace/causal-audit")
         self.assertEqual(discovery["endpoints"]["mempalace_causal_invalidate"], "/api/memory/mempalace/causal-invalidate")
+        self.assertEqual(
+            discovery["endpoints"]["mempalace_causal_eval_generate_candidates"],
+            "/api/memory/mempalace/causal-eval/generate-candidates",
+        )
+        self.assertEqual(
+            discovery["endpoints"]["mempalace_causal_eval_latest_candidates"],
+            "/api/memory/mempalace/causal-eval/latest-candidates",
+        )
+        self.assertEqual(
+            discovery["endpoints"]["mempalace_causal_eval_merge_reviewed"],
+            "/api/memory/mempalace/causal-eval/merge-reviewed",
+        )
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
             discovery["endpoints"]["node_command_result_by_command"],
