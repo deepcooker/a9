@@ -4631,7 +4631,22 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
         if not saw_line_flag or index >= len(parts):
             return False
         pattern = parts[index]
-        rg_paths = parts[index + 1 :]
+        raw_rg_paths = parts[index + 1 :]
+        rg_paths: list[str] = []
+        path_index = 0
+        while path_index < len(raw_rg_paths):
+            part = raw_rg_paths[path_index]
+            if part in allowed_flags:
+                path_index += 1
+                continue
+            if part in allowed_value_flags:
+                path_index += 2
+                continue
+            if part.startswith("--max-count="):
+                path_index += 1
+                continue
+            rg_paths.append(part)
+            path_index += 1
         if not pattern or not rg_paths:
             return False
         return all(any(bounded_read_path_matches(pattern_text, rg_path) for pattern_text in paths) for rg_path in rg_paths)
