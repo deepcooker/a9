@@ -91,7 +91,10 @@ P7 NZX technical MVP
   drift checker blocks conflicting current KG facts before write, and a
   side-effect-free causal audit now scans the MemPalace KG after writes for
   duplicate/conflicting current facts and emits monitor-approved invalidation
-  candidates.
+  candidates. Approved invalidation now has a dry-run/commit path that calls
+  MemPalace `KnowledgeGraph.invalidate()` instead of deleting facts, preserving
+  temporal history. The remaining gap is automatic stale-branch selection and
+  contradiction repair policy.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

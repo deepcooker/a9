@@ -3446,6 +3446,7 @@ def controller_discovery() -> dict[str, Any]:
             "mempalace_causal_compile": "/api/memory/mempalace/causal-compile",
             "mempalace_causal_commit": "/api/memory/mempalace/causal-commit",
             "mempalace_causal_audit": "/api/memory/mempalace/causal-audit",
+            "mempalace_causal_invalidate": "/api/memory/mempalace/causal-invalidate",
             "runtime_plan_decision_approve": "/api/runtime/plan-decision-approve",
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
@@ -8590,6 +8591,28 @@ def mempalace_causal_audit(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def mempalace_causal_invalidate(payload: dict[str, Any]) -> dict[str, Any]:
+    candidates = payload.get("invalidation_candidates")
+    if not isinstance(candidates, list):
+        candidates = payload.get("candidates")
+    if not isinstance(candidates, list):
+        return {
+            "schema": "a9.control_api.mempalace_causal_invalidate.v1",
+            "status": "invalid_request",
+            "error": "invalidation_candidates_required",
+            "results": [],
+        }
+    provider = mempalace_provider()
+    result = provider.apply_approved_invalidations(
+        candidates,
+        approved_by=str(payload.get("approved_by") or ""),
+        approval_reason=str(payload.get("approval_reason") or ""),
+        dry_run=not bool(payload.get("commit")),
+    )
+    result["schema"] = "a9.control_api.mempalace_causal_invalidate.v1"
+    return result
+
+
 def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     enqueue_service_control_audit(
         {
@@ -9562,6 +9585,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, mempalace_causal_commit(payload))
             elif self.path == "/api/memory/mempalace/causal-audit":
                 self.write_json(200, mempalace_causal_audit(payload))
+            elif self.path == "/api/memory/mempalace/causal-invalidate":
+                self.write_json(200, mempalace_causal_invalidate(payload))
             elif self.path == "/api/runtime/plan-decision-approve":
                 self.write_json(200, runtime_plan_decision_approve(payload))
             elif self.path == "/api/runtime/plan-debate-next":

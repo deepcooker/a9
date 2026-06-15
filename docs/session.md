@@ -52,7 +52,9 @@ Raw external Codex/operator session:
   require `approved_by`, `approval_reason` and `commit=true`; the first
   pre-commit drift checker blocks conflicting current KG facts before write, and
   the first post-write causal audit reports duplicate/conflicting current facts
-  plus monitor-approved invalidation candidates. Fully automated invalidation
+  plus monitor-approved invalidation candidates. Approved invalidation now has
+  a dry-run/commit path that uses MemPalace `KnowledgeGraph.invalidate()` and
+  keeps old facts as temporal history. Fully automated stale-branch selection
   and contradiction repair remain unfinished.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.

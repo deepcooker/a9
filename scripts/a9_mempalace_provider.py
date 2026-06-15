@@ -736,6 +736,35 @@ def write_kg_operation(operation: dict[str, Any], *, palace: Path = DEFAULT_PALA
         return {"status": "error", "operation": "kg_add", "error": f"{type(exc).__name__}: {exc}"}
 
 
+def write_kg_invalidate_operation(operation: dict[str, Any], *, palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
+    if operation.get("operation") not in {"kg_invalidate", "kg_invalidate_candidate"}:
+        return {"status": "invalid_request", "error": "kg_invalidate_operation_required", "operation": operation}
+    if not MEMPALACE_SOURCE.exists():
+        return {"status": "error", "error": "reference-projects/mempalace missing", "operation": operation}
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    try:
+        from mempalace.knowledge_graph import KnowledgeGraph  # type: ignore
+
+        kg = KnowledgeGraph(db_path=str(palace / "knowledge_graph.sqlite3"))
+        kg.invalidate(
+            str(operation.get("subject") or "A9"),
+            str(operation.get("predicate") or ""),
+            str(operation.get("object") or ""),
+            ended=operation.get("ended") or utc_now_iso(),
+        )
+        kg.close()
+        return {
+            "status": "ok",
+            "operation": "kg_invalidate",
+            "subject": operation.get("subject") or "A9",
+            "predicate": operation.get("predicate"),
+            "object": operation.get("object"),
+            "ended": operation.get("ended"),
+        }
+    except Exception as exc:  # pragma: no cover - environment/index dependent
+        return {"status": "error", "operation": "kg_invalidate", "error": f"{type(exc).__name__}: {exc}"}
+
+
 def query_current_kg_facts(subject: str, *, palace: Path = DEFAULT_PALACE) -> list[dict[str, Any]]:
     if not MEMPALACE_SOURCE.exists():
         return []
@@ -900,6 +929,102 @@ def audit_causal_memory_state(subject: str = "A9", *, palace: Path = DEFAULT_PAL
             "MemPalace fact-checker treats stale/conflicting facts as issues, not truth",
         ],
         "policy": "Audit is side-effect free; invalidation candidates require explicit monitor approval before KG mutation.",
+    }
+
+
+def approved_invalidation_plan(
+    invalidation_candidates: list[dict[str, Any]],
+    *,
+    approved_by: str,
+    approval_reason: str,
+    ended: str | None = None,
+) -> dict[str, Any]:
+    ended_at = ended or utc_now_iso()
+    operations: list[dict[str, Any]] = []
+    for candidate in invalidation_candidates[:16]:
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("operation") not in {"kg_invalidate_candidate", "kg_invalidate"}:
+            continue
+        subject = str(candidate.get("subject") or "A9").strip()
+        predicate = str(candidate.get("predicate") or "").strip()
+        obj = str(candidate.get("object") or "").strip()
+        if not subject or not predicate or not obj:
+            continue
+        operations.append(
+            {
+                "operation": "kg_invalidate",
+                "subject": subject,
+                "predicate": predicate,
+                "object": obj,
+                "ended": candidate.get("ended") or ended_at,
+                "source_candidate": candidate,
+                "adapter_name": "a9_causal_memory_audit",
+            }
+        )
+    return {
+        "schema": "a9.causal_memory_invalidation_plan.v1",
+        "status": "planned",
+        "approved_by": approved_by,
+        "approval_reason": approval_reason,
+        "ended_at": ended_at,
+        "operations": operations,
+        "operation_count": len(operations),
+        "copied_protocols": [
+            "MemPalace KG invalidate sets valid_to instead of deleting triples",
+            "MemPalace temporal facts remain queryable as history after invalidation",
+            "A9 only executes invalidation candidates after explicit monitor approval",
+        ],
+    }
+
+
+def apply_approved_invalidations(
+    invalidation_candidates: list[dict[str, Any]],
+    *,
+    approved_by: str,
+    approval_reason: str,
+    dry_run: bool = True,
+    palace: Path = DEFAULT_PALACE,
+) -> dict[str, Any]:
+    if not approved_by.strip() or not approval_reason.strip():
+        return {
+            "schema": "a9.causal_memory_invalidation_result.v1",
+            "status": "invalid_request",
+            "error": "approved_by_and_approval_reason_required",
+            "results": [],
+        }
+    plan = approved_invalidation_plan(
+        invalidation_candidates,
+        approved_by=approved_by.strip(),
+        approval_reason=approval_reason.strip(),
+    )
+    if not plan["operations"]:
+        return {
+            "schema": "a9.causal_memory_invalidation_result.v1",
+            "status": "invalid_request",
+            "error": "valid_invalidation_candidate_required",
+            "plan": plan,
+            "results": [],
+        }
+    if dry_run:
+        return {
+            "schema": "a9.causal_memory_invalidation_result.v1",
+            "status": "dry_run",
+            "plan": plan,
+            "results": [],
+        }
+    results = [write_kg_invalidate_operation(operation, palace=palace) for operation in plan["operations"]]
+    status = "ok" if all(result.get("status") == "ok" for result in results) else "partial"
+    subjects = sorted({str(operation.get("subject") or "A9") for operation in plan["operations"]})
+    return {
+        "schema": "a9.causal_memory_invalidation_result.v1",
+        "status": status,
+        "plan": plan,
+        "results": results,
+        "post_invalidation_audit": {
+            subject: audit_causal_memory_state(subject, palace=palace)
+            for subject in subjects
+        },
     }
 
 
@@ -1202,6 +1327,12 @@ def main() -> int:
     audit = sub.add_parser("causal-audit")
     audit.add_argument("--subject", default="A9")
 
+    invalidate = sub.add_parser("causal-invalidate")
+    invalidate.add_argument("--candidates", required=True, type=Path)
+    invalidate.add_argument("--approved-by", required=True)
+    invalidate.add_argument("--approval-reason", required=True)
+    invalidate.add_argument("--commit", action="store_true", help="Actually invalidate KG triples; default is dry-run")
+
     args = parser.parse_args()
     drawers = Path(args.drawers)
     palace = Path(args.palace)
@@ -1316,6 +1447,19 @@ def main() -> int:
         )
     elif args.command == "causal-audit":
         print_json(audit_causal_memory_state(args.subject, palace=palace))
+    elif args.command == "causal-invalidate":
+        candidates = json.loads(args.candidates.read_text(encoding="utf-8"))
+        if isinstance(candidates, dict):
+            candidates = candidates.get("invalidation_candidates") or candidates.get("candidates") or []
+        print_json(
+            apply_approved_invalidations(
+                candidates if isinstance(candidates, list) else [],
+                approved_by=args.approved_by,
+                approval_reason=args.approval_reason,
+                dry_run=not args.commit,
+                palace=palace,
+            )
+        )
     return 0
 
 

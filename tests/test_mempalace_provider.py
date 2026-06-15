@@ -382,6 +382,64 @@ class MempalaceProviderTests(unittest.TestCase):
         self.assertEqual(result["post_commit_audit"]["status"], "pass")
         audit.assert_called_once()
 
+    def test_approved_invalidation_dry_run_requires_approval_and_plans_operations(self):
+        mod = load_provider()
+        candidates = [
+            {
+                "operation": "kg_invalidate_candidate",
+                "subject": "A9",
+                "predicate": "has_current_fact",
+                "object": "A9 current mainline is page monitor.",
+                "ended": "2026-06-01T00:00:00Z",
+            }
+        ]
+
+        invalid = mod.apply_approved_invalidations(candidates, approved_by="", approval_reason="", dry_run=True)
+        self.assertEqual(invalid["status"], "invalid_request")
+
+        result = mod.apply_approved_invalidations(
+            candidates,
+            approved_by="codex-monitor",
+            approval_reason="current fact superseded",
+            dry_run=True,
+        )
+
+        self.assertEqual(result["schema"], "a9.causal_memory_invalidation_result.v1")
+        self.assertEqual(result["status"], "dry_run")
+        self.assertEqual(result["plan"]["operation_count"], 1)
+        self.assertEqual(result["plan"]["operations"][0]["operation"], "kg_invalidate")
+
+    def test_approved_invalidation_commit_calls_mempalace_invalidate_and_audits(self):
+        mod = load_provider()
+        candidates = [
+            {
+                "operation": "kg_invalidate_candidate",
+                "subject": "A9",
+                "predicate": "has_current_fact",
+                "object": "A9 current mainline is page monitor.",
+            }
+        ]
+        with mock.patch.object(
+            mod,
+            "write_kg_invalidate_operation",
+            return_value={"status": "ok", "operation": "kg_invalidate"},
+        ) as write_invalidate, mock.patch.object(
+            mod,
+            "audit_causal_memory_state",
+            return_value={"schema": "a9.causal_memory_audit.v1", "status": "pass"},
+        ) as audit:
+            result = mod.apply_approved_invalidations(
+                candidates,
+                approved_by="codex-monitor",
+                approval_reason="monitor selected stale branch",
+                dry_run=False,
+            )
+
+        self.assertEqual(result["status"], "ok")
+        write_invalidate.assert_called_once()
+        audit.assert_called_once_with("A9", palace=mod.DEFAULT_PALACE)
+        self.assertEqual(result["post_invalidation_audit"]["A9"]["status"], "pass")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -398,6 +398,38 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["subject"], "A9")
         self.assertEqual(result["invalidation_candidates"][0]["operation"], "kg_invalidate_candidate")
 
+    def test_mempalace_causal_invalidate_requires_candidates_and_returns_dry_run(self):
+        mod = load_control_api()
+
+        def fake_invalidate(candidates, approved_by, approval_reason, dry_run):
+            return {
+                "schema": "a9.causal_memory_invalidation_result.v1",
+                "status": "dry_run" if dry_run else "ok",
+                "plan": {
+                    "approved_by": approved_by,
+                    "approval_reason": approval_reason,
+                    "operations": [{"operation": "kg_invalidate"}],
+                },
+                "results": [],
+            }
+
+        provider = SimpleNamespace(apply_approved_invalidations=fake_invalidate)
+        with mock.patch.object(mod, "mempalace_provider", return_value=provider):
+            invalid = mod.mempalace_causal_invalidate({"approved_by": "monitor"})
+            result = mod.mempalace_causal_invalidate(
+                {
+                    "invalidation_candidates": [{"operation": "kg_invalidate_candidate"}],
+                    "approved_by": "codex-monitor",
+                    "approval_reason": "stale branch selected",
+                    "commit": False,
+                }
+            )
+
+        self.assertEqual(invalid["status"], "invalid_request")
+        self.assertEqual(result["schema"], "a9.control_api.mempalace_causal_invalidate.v1")
+        self.assertEqual(result["status"], "dry_run")
+        self.assertEqual(result["plan"]["operations"][0]["operation"], "kg_invalidate")
+
     def test_supervisor_status_reads_existing_a9_state(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -11363,6 +11395,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["mempalace_causal_compile"], "/api/memory/mempalace/causal-compile")
         self.assertEqual(discovery["endpoints"]["mempalace_causal_commit"], "/api/memory/mempalace/causal-commit")
         self.assertEqual(discovery["endpoints"]["mempalace_causal_audit"], "/api/memory/mempalace/causal-audit")
+        self.assertEqual(discovery["endpoints"]["mempalace_causal_invalidate"], "/api/memory/mempalace/causal-invalidate")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
             discovery["endpoints"]["node_command_result_by_command"],
