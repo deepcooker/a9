@@ -80,11 +80,12 @@ P7 NZX technical MVP
 - `scripts/a9_supervisor.py` injects bounded MemPalace recall protocol evidence
   into worker context: search hits, hydrated drawer snippets and fallback raw
   evidence refs stay separated. Recall is a recovery hint, not task authority.
-- MemPalace recall is not yet the full memory governance system. The current
-  gap is KG/diary/causal-change compilation: search/hydration can recover
-  evidence, but A9 still needs an automated compiler that turns recalled
-  drawers into time-valid facts, role-scoped diary continuity, stale-branch
-  invalidation, causal-change notes and next-task memory packets.
+- MemPalace recall is not yet the full memory governance system. A9 now has a
+  first deterministic `recall -> causal memory` compiler that turns recalled
+  drawers into candidate time-valid facts, stale-branch invalidation candidates,
+  causal-change notes, role-scoped packets and next-task memory packets. These
+  outputs remain candidate memory, not truth; the next gap is monitor-reviewed
+  KG/diary writes and contradiction/drift handling.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

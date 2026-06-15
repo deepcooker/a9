@@ -62,6 +62,18 @@ def write_drawers(path: Path) -> None:
             "content_hash": "hash4",
             "content": "# AGENTS.md instructions for /root/a9\n<INSTRUCTIONS>recall truth</INSTRUCTIONS>\n<environment_context>x</environment_context>",
         },
+        {
+            "schema": "a9.mempalace.drawer.v1",
+            "drawer_id": "d5",
+            "session_id": "s1",
+            "role": "assistant",
+            "event_kind": "message",
+            "timestamp": "2026-01-01T00:00:04Z",
+            "source_ref": "session.jsonl:14",
+            "source_sha256": "sourcehash",
+            "content_hash": "hash5",
+            "content": "旧页面监控路线已过期，因为当前主线变成 supervisor runtime -> MemPalace recall protocol。",
+        },
     ]
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
@@ -80,7 +92,7 @@ class MempalaceProviderTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout)
             payload = json.loads(result.stdout)
-            self.assertEqual(payload["fallback_drawers"]["drawer_count"], 4)
+            self.assertEqual(payload["fallback_drawers"]["drawer_count"], 5)
             self.assertEqual(payload["fallback_drawers"]["roles"]["user"], 2)
 
     def test_search_returns_source_and_hashes(self):
@@ -151,6 +163,41 @@ class MempalaceProviderTests(unittest.TestCase):
             self.assertEqual(payload["hydrated_drawers"], [])
             self.assertEqual(payload["fallback_evidence_refs"][0]["source_ref"], "session.jsonl:10")
             self.assertEqual(payload["fallback_recall"][0]["drawer_id"], "d1")
+
+    def test_causal_compile_outputs_candidates_and_role_packets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            drawers = Path(tmp) / "drawers.jsonl"
+            write_drawers(drawers)
+            result = subprocess.run(
+                [
+                    str(PROVIDER),
+                    "--drawers",
+                    str(drawers),
+                    "--native-mode",
+                    "fallback",
+                    "causal-compile",
+                    "当前 主线 过期 因为 supervisor",
+                    "--limit",
+                    "4",
+                    "--hydrate",
+                    "0",
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema"], "a9.causal_memory_packet.v1")
+            self.assertEqual(payload["truth_policy"], "candidate_memory_not_truth")
+            self.assertTrue(payload["kg_candidates"]["current_facts"])
+            self.assertTrue(payload["kg_candidates"]["stale_branches"])
+            self.assertTrue(payload["kg_candidates"]["causal_changes"])
+            self.assertEqual(payload["kg_candidates"]["stale_branches"][0]["kg_action"], "invalidate_candidate")
+            self.assertIn("monitor", payload["role_packets"])
+            self.assertIn("must_include", payload["next_task_memory"])
+            self.assertGreaterEqual(payload["recall_packet"]["fallback_evidence_ref_count"], 1)
 
 
 if __name__ == "__main__":

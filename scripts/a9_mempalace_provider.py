@@ -30,6 +30,16 @@ DEFAULT_NATIVE_WING = "operator-codex-native"
 DEFAULT_NATIVE_ROOM = "codex-message"
 MEMPALACE_SOURCE = ROOT / "reference-projects" / "mempalace"
 TOKEN_RE = re.compile(r"\w{2,}", re.UNICODE)
+ROLE_KEYWORDS = {
+    "product": ("产品", "业务", "需求", "主线", "哲学", "数据第一", "must", "should", "out of scope"),
+    "architecture": ("架构", "状态", "数据", "Redis", "MySQL", "supervisor", "runtime", "gateway", "SSH", "tmux"),
+    "test": ("测试", "验收", "checks", "acceptance", "验证", "回归", "质量"),
+    "execution": ("执行", "worker", "allowed_paths", "execution_next", "backlog", "任务"),
+    "monitor": ("监控", "monitor", "偏离", "纠偏", "漂移", "review", "closure", "证据"),
+}
+STALE_MARKERS = ("过期", "不再", "不是主", "旧", "stale", "deprecated", "不要再", "不维护", "已删除")
+CURRENT_MARKERS = ("当前", "现在", "已完成", "必须", "核心", "主线", "decision", "accepted", "status")
+CAUSAL_MARKERS = ("因为", "所以", "后来", "变成", "从", "->", "原因", "导致", "replaced", "became")
 
 
 @contextlib.contextmanager
@@ -380,6 +390,225 @@ def build_recall_packet(
     }
 
 
+def evidence_ref_from_item(item: dict[str, Any]) -> dict[str, Any]:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    return {
+        "drawer_id": item.get("drawer_id") or metadata.get("drawer_id"),
+        "source_ref": item.get("source_ref") or metadata.get("source_ref"),
+        "source_sha256": item.get("source_sha256") or metadata.get("source_sha256"),
+        "raw_line_sha256": item.get("raw_line_sha256") or metadata.get("raw_line_sha256"),
+        "content_hash": item.get("content_hash") or metadata.get("content_hash"),
+        "role": item.get("role") or metadata.get("role"),
+        "event_kind": item.get("event_kind") or metadata.get("event_kind"),
+        "timestamp": item.get("timestamp") or metadata.get("filed_at"),
+    }
+
+
+def recall_evidence_items(recall_packet: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for drawer in recall_packet.get("hydrated_drawers") or []:
+        if not isinstance(drawer, dict):
+            continue
+        metadata = drawer.get("metadata") if isinstance(drawer.get("metadata"), dict) else {}
+        items.append(
+            {
+                "drawer_id": drawer.get("drawer_id"),
+                "content": str(drawer.get("content") or ""),
+                "metadata": metadata,
+            }
+        )
+    for hit in recall_packet.get("fallback_recall") or []:
+        if isinstance(hit, dict):
+            items.append(hit)
+    for hit in recall_packet.get("search_hits") or []:
+        if isinstance(hit, dict) and hit.get("content"):
+            items.append(hit)
+    return items
+
+
+def has_any(text: str, markers: Iterable[str]) -> bool:
+    lower = text.lower()
+    return any(marker.lower() in lower for marker in markers)
+
+
+def sentence_snippets(text: str, limit: int = 3) -> list[str]:
+    normalized = re.sub(r"\s+", " ", text or "").strip()
+    if not normalized:
+        return []
+    parts = re.split(r"(?<=[。！？.!?])\s+|[；;]\s*", normalized)
+    snippets = [part.strip() for part in parts if part.strip()]
+    if not snippets:
+        snippets = [normalized]
+    return [compact(part, 220) for part in snippets[:limit]]
+
+
+def build_role_packets(facts: list[dict[str, Any]], stale: list[dict[str, Any]], changes: list[dict[str, Any]]) -> dict[str, Any]:
+    packets: dict[str, Any] = {}
+    combined = [
+        ("current_fact", item) for item in facts
+    ] + [
+        ("stale_branch", item) for item in stale
+    ] + [
+        ("causal_change", item) for item in changes
+    ]
+    for role, keywords in ROLE_KEYWORDS.items():
+        entries = []
+        for kind, item in combined:
+            text = str(item.get("text") or item.get("change") or "")
+            if has_any(text, keywords):
+                entries.append(
+                    {
+                        "kind": kind,
+                        "text": text,
+                        "evidence_ref": item.get("evidence_ref"),
+                    }
+                )
+        packets[role] = {
+            "schema": "a9.role_memory_packet.v1",
+            "role": role,
+            "entries": entries[:6],
+            "reader_rule": "Treat as role-scoped recall candidates; verify against task contract and evidence before acting.",
+        }
+    return packets
+
+
+def build_causal_memory_packet(
+    recall_packet: dict[str, Any],
+    *,
+    query: str,
+    max_items: int = 8,
+) -> dict[str, Any]:
+    """Compile recall evidence into an A9 causal-memory candidate packet.
+
+    This follows MemPalace's protocol boundaries: search/hydration provide
+    verbatim evidence, KG-style facts remain time-valid candidates with source
+    drawers, diary output is role-scoped continuity, and stale facts are
+    explicit invalidation candidates rather than silent overwrites.
+    """
+    current_facts: list[dict[str, Any]] = []
+    stale_branches: list[dict[str, Any]] = []
+    causal_changes: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in recall_evidence_items(recall_packet):
+        content = str(item.get("content") or "")
+        if not content.strip():
+            continue
+        evidence_ref = evidence_ref_from_item(item)
+        for snippet in sentence_snippets(content, limit=3):
+            key = f"{evidence_ref.get('source_ref')}:{snippet}"
+            if key in seen:
+                continue
+            seen.add(key)
+            record = {
+                "text": snippet,
+                "evidence_ref": evidence_ref,
+                "valid_from": evidence_ref.get("timestamp"),
+                "source_drawer_id": evidence_ref.get("drawer_id"),
+            }
+            if has_any(snippet, STALE_MARKERS):
+                stale_branches.append(
+                    {
+                        **record,
+                        "status": "candidate_stale",
+                        "kg_action": "invalidate_candidate",
+                    }
+                )
+            if has_any(snippet, CAUSAL_MARKERS):
+                causal_changes.append(
+                    {
+                        "change": snippet,
+                        "evidence_ref": evidence_ref,
+                        "valid_from": evidence_ref.get("timestamp"),
+                        "kg_action": "add_change_candidate",
+                    }
+                )
+            if has_any(snippet, CURRENT_MARKERS) or not has_any(snippet, STALE_MARKERS):
+                current_facts.append(
+                    {
+                        **record,
+                        "status": "candidate_current",
+                        "kg_action": "add_fact_candidate",
+                    }
+                )
+            if len(current_facts) >= max_items and len(stale_branches) >= max_items and len(causal_changes) >= max_items:
+                break
+        if len(current_facts) >= max_items and len(stale_branches) >= max_items and len(causal_changes) >= max_items:
+            break
+    current_facts = current_facts[:max_items]
+    stale_branches = stale_branches[:max_items]
+    causal_changes = causal_changes[:max_items]
+    role_packets = build_role_packets(current_facts, stale_branches, causal_changes)
+    next_task_memory = {
+        "schema": "a9.next_task_memory_packet.v1",
+        "query": query,
+        "must_include": [
+            item
+            for item in current_facts[:4]
+        ],
+        "must_exclude_or_verify": [
+            item
+            for item in stale_branches[:4]
+        ],
+        "causal_changes_to_review": causal_changes[:4],
+        "reader_rule": "Inject only bounded entries relevant to the next task; do not paste raw recall wholesale.",
+    }
+    return {
+        "schema": "a9.causal_memory_packet.v1",
+        "status": "ok",
+        "query": query,
+        "truth_policy": "candidate_memory_not_truth",
+        "copied_protocols": [
+            "MemPalace search returns verbatim evidence candidates",
+            "MemPalace get_drawer hydrates exact drawer text by drawer_id",
+            "MemPalace KG uses valid_from/valid_to/source_drawer_id for changing facts",
+            "MemPalace diary uses role/agent scoped continuity entries",
+        ],
+        "kg_candidates": {
+            "current_facts": current_facts,
+            "stale_branches": stale_branches,
+            "causal_changes": causal_changes,
+        },
+        "role_packets": role_packets,
+        "next_task_memory": next_task_memory,
+        "evidence_policy": "All compiler output is candidate memory; verify against source_ref/hash before changing plan or worker contract.",
+    }
+
+
+def build_causal_memory_from_query(
+    path: Path,
+    *,
+    query: str,
+    limit: int = 8,
+    hydrate: int = 4,
+    wing: str = DEFAULT_NATIVE_WING,
+    room: str = DEFAULT_NATIVE_ROOM,
+    palace: Path = DEFAULT_PALACE,
+    native_enabled: bool = True,
+) -> dict[str, Any]:
+    recall_packet = build_recall_packet(
+        path,
+        query=query,
+        limit=limit,
+        hydrate=hydrate,
+        wing=wing,
+        room=room,
+        palace=palace,
+        native_enabled=native_enabled,
+    )
+    compiled = build_causal_memory_packet(recall_packet, query=query)
+    return {
+        **compiled,
+        "recall_packet": {
+            "schema": recall_packet.get("schema"),
+            "source": recall_packet.get("source"),
+            "filters": recall_packet.get("filters"),
+            "search_hit_count": len(recall_packet.get("search_hits") or []),
+            "hydrated_drawer_count": len(recall_packet.get("hydrated_drawers") or []),
+            "fallback_evidence_ref_count": len(recall_packet.get("fallback_evidence_refs") or []),
+        },
+    }
+
+
 def drawer_status(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {
@@ -566,6 +795,13 @@ def main() -> int:
     recall.add_argument("--wing", default=DEFAULT_NATIVE_WING)
     recall.add_argument("--room", default=DEFAULT_NATIVE_ROOM)
 
+    causal = sub.add_parser("causal-compile")
+    causal.add_argument("query")
+    causal.add_argument("--limit", type=int, default=8)
+    causal.add_argument("--hydrate", type=int, default=4)
+    causal.add_argument("--wing", default=DEFAULT_NATIVE_WING)
+    causal.add_argument("--room", default=DEFAULT_NATIVE_ROOM)
+
     args = parser.parse_args()
     drawers = Path(args.drawers)
     palace = Path(args.palace)
@@ -644,6 +880,19 @@ def main() -> int:
     elif args.command == "recall":
         print_json(
             build_recall_packet(
+                drawers,
+                query=args.query,
+                limit=args.limit,
+                hydrate=args.hydrate,
+                wing=args.wing,
+                room=args.room,
+                native_enabled=native_enabled,
+                palace=palace,
+            )
+        )
+    elif args.command == "causal-compile":
+        print_json(
+            build_causal_memory_from_query(
                 drawers,
                 query=args.query,
                 limit=args.limit,

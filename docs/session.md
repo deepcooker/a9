@@ -45,10 +45,11 @@ Raw external Codex/operator session:
   `status`, source-preserving `search`, `wakeup` and official-style `recall`
   packets with native search hits, hydrated drawers and fallback evidence refs.
 - Recall is not truth. Raw evidence, source refs and hashes remain canonical.
-- Current shortfall: KG/diary/causal-change compilation is not fully automated.
-  Search and hydration recover evidence, but A9 still needs a deterministic
-  compiler for time-valid facts, role-scoped diary continuity, stale branch
-  invalidation, causal-change notes and next-task memory packets.
+- Current shortfall: KG/diary/causal-change compilation is only at the first
+  deterministic candidate layer. A9 can compile recall into candidate current
+  facts, stale branches, causal changes, role packets and next-task memory, but
+  it does not yet perform monitor-reviewed KG/diary writes or contradiction
+  drift handling.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

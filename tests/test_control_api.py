@@ -313,6 +313,38 @@ class ControlApiTests(unittest.TestCase):
         self.assertEqual(result["search_hits"][0]["drawer_id"], "d1")
         self.assertEqual(result["hydrated_drawers"][0]["content"], "full text")
 
+    def test_mempalace_causal_compile_returns_candidate_memory_packet(self):
+        mod = load_control_api()
+
+        def fake_compile(drawers, query, limit, hydrate, wing, room):
+            return {
+                "schema": "a9.causal_memory_packet.v1",
+                "status": "ok",
+                "query": query,
+                "truth_policy": "candidate_memory_not_truth",
+                "kg_candidates": {
+                    "current_facts": [{"text": "current", "kg_action": "add_fact_candidate"}],
+                    "stale_branches": [{"text": "old", "kg_action": "invalidate_candidate"}],
+                    "causal_changes": [{"change": "old -> current"}],
+                },
+                "role_packets": {"monitor": {"entries": []}},
+                "next_task_memory": {"must_include": []},
+            }
+
+        provider = SimpleNamespace(
+            DEFAULT_DRAWERS=Path("/tmp/drawers.jsonl"),
+            DEFAULT_NATIVE_WING="operator-codex-native",
+            DEFAULT_NATIVE_ROOM="codex-message",
+            build_causal_memory_from_query=fake_compile,
+        )
+        with mock.patch.object(mod, "mempalace_provider", return_value=provider):
+            result = mod.mempalace_causal_compile({"query": "mainline changed", "limit": 2, "hydrate": 1})
+
+        self.assertEqual(result["schema"], "a9.control_api.mempalace_causal_compile.v1")
+        self.assertEqual(result["truth_policy"], "candidate_memory_not_truth")
+        self.assertEqual(result["kg_candidates"]["stale_branches"][0]["kg_action"], "invalidate_candidate")
+        self.assertIn("monitor", result["role_packets"])
+
     def test_supervisor_status_reads_existing_a9_state(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -11275,6 +11307,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["mempalace_search"], "/api/memory/mempalace/search")
         self.assertEqual(discovery["endpoints"]["mempalace_wakeup"], "/api/memory/mempalace/wakeup")
         self.assertEqual(discovery["endpoints"]["mempalace_recall"], "/api/memory/mempalace/recall")
+        self.assertEqual(discovery["endpoints"]["mempalace_causal_compile"], "/api/memory/mempalace/causal-compile")
         self.assertEqual(discovery["endpoints"]["node_command_result"], "/api/node-command-results/{result_event_id}")
         self.assertEqual(
             discovery["endpoints"]["node_command_result_by_command"],
