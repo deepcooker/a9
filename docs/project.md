@@ -114,6 +114,10 @@ P7 NZX technical MVP
   existing fixture rows, and defaults to dry-run unless `--commit` is passed.
   Control API now exposes the same lane for monitor/mobile use:
   generate candidates, read latest candidates, and merge reviewed candidates.
+  The runtime backlog `no_items` path now also returns review-closure
+  diagnostics: MemPalace causal audit summary plus bounded repair proposals, so
+  monitor/mobile can see whether closure is blocked by stale/conflicting memory
+  before deciding to invalidate or generate more backlog.
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.

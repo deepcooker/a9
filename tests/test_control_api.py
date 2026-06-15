@@ -12376,6 +12376,84 @@ Do risky work.
         self.assertTrue(result["audit_async"])
         self.assertEqual(audit_calls[0][0]["status"], "enqueued")
 
+    def test_runtime_plan_backlog_next_no_items_returns_review_closure_diagnostics(self):
+        mod = load_control_api()
+
+        class FakeSupervisor:
+            @staticmethod
+            def runtime_state_from_summary(*args, **kwargs):
+                return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+            @staticmethod
+            def active_plan_id():
+                return "active-plan"
+
+            @staticmethod
+            def load_plan(plan_id):
+                return {"plan_id": plan_id, "execution_backlog": {}}
+
+            @staticmethod
+            def plan_execution_backlog_items(plan, *, count=0):
+                return []
+
+        class FakeProvider:
+            @staticmethod
+            def audit_causal_memory_state(subject):
+                return {
+                    "schema": "a9.causal_memory_audit.v1",
+                    "status": "review_required",
+                    "subject": subject,
+                    "conflict_count": 1,
+                    "duplicate_count": 0,
+                    "invalidation_candidates": [{"operation": "kg_invalidate_candidate"}],
+                }
+
+            @staticmethod
+            def propose_causal_memory_repairs(audit, subject):
+                return {
+                    "schema": "a9.causal_memory_repair_proposal.v1",
+                    "status": "review_required",
+                    "proposal_count": 1,
+                    "invalidation_candidates": [
+                        {
+                            "operation": "kg_invalidate_candidate",
+                            "object": "A9 old route is stale.",
+                            "requires_monitor_decision": True,
+                        }
+                    ],
+                    "proposals": [{"id": "repair-0001", "status": "review_required"}],
+                }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_provider = mod.mempalace_provider
+            original_audit = mod.enqueue_service_control_audit
+            audit_calls = []
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.mempalace_provider = lambda: FakeProvider
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_next({"operator_scopes": ["operator.admin"], "count": 1}, root=root)
+            finally:
+                mod.supervisor = original_supervisor
+                mod.mempalace_provider = original_provider
+                mod.enqueue_service_control_audit = original_audit
+
+        self.assertEqual(result["status"], "no_items")
+        diagnostics = result["review_closure_diagnostics"]
+        self.assertEqual(diagnostics["schema"], "a9.runtime_review_closure_diagnostics.v1")
+        self.assertEqual(diagnostics["status"], "review_required")
+        self.assertEqual(diagnostics["audit"]["conflict_count"], 1)
+        self.assertEqual(diagnostics["repair_proposal"]["proposal_count"], 1)
+        self.assertEqual(
+            diagnostics["repair_proposal"]["invalidation_candidates"][0]["operation"],
+            "kg_invalidate_candidate",
+        )
+        self.assertEqual(audit_calls[0][0]["review_closure_status"], "review_required")
+        self.assertEqual(audit_calls[0][0]["review_closure_repair_proposals"], 1)
+
     def test_runtime_plan_debate_next_blocked_without_runtime_gate(self):
         mod = load_control_api()
 

@@ -72,7 +72,10 @@ Raw external Codex/operator session:
   `approval_reason`, source refs/hashes, de-dupe checks and explicit `--commit`.
   The same review lane is now exposed through control API for monitor/mobile
   operation: generate latest candidates, inspect latest candidates, and dry-run
-  or commit reviewed merges.
+  or commit reviewed merges. Runtime backlog `no_items` now carries a bounded
+  review-closure diagnostic packet with causal audit counts and repair proposal
+  candidates, keeping stale-memory repair visible to monitor/mobile without
+  mutating KG state.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.

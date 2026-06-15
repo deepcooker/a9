@@ -8619,6 +8619,61 @@ def mempalace_causal_repair_propose(payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def runtime_review_closure_diagnostics(
+    *,
+    runtime_state: str,
+    runtime_state_reason: str,
+    subject: str = "A9",
+) -> dict[str, Any]:
+    if runtime_state != "waiting_for_review_closure":
+        return {
+            "schema": "a9.runtime_review_closure_diagnostics.v1",
+            "status": "not_required",
+            "runtime_state": runtime_state,
+            "runtime_state_reason": runtime_state_reason,
+        }
+    try:
+        provider = mempalace_provider()
+        audit = provider.audit_causal_memory_state(subject)
+        repair = provider.propose_causal_memory_repairs(audit, subject=subject)
+    except Exception as exc:
+        return {
+            "schema": "a9.runtime_review_closure_diagnostics.v1",
+            "status": "degraded",
+            "runtime_state": runtime_state,
+            "runtime_state_reason": runtime_state_reason,
+            "error": f"{type(exc).__name__}: {exc}",
+            "policy": "Closure diagnostics must not block backlog recovery; retry MemPalace audit/repair separately.",
+        }
+    return {
+        "schema": "a9.runtime_review_closure_diagnostics.v1",
+        "status": "review_required" if repair.get("status") == "review_required" else "pass",
+        "runtime_state": runtime_state,
+        "runtime_state_reason": runtime_state_reason,
+        "subject": subject,
+        "audit": {
+            "schema": audit.get("schema"),
+            "status": audit.get("status"),
+            "conflict_count": audit.get("conflict_count", 0),
+            "duplicate_count": audit.get("duplicate_count", 0),
+            "invalidation_candidate_count": len(audit.get("invalidation_candidates") or []),
+        },
+        "repair_proposal": {
+            "schema": repair.get("schema"),
+            "status": repair.get("status"),
+            "proposal_count": repair.get("proposal_count", 0),
+            "invalidation_candidate_count": len(repair.get("invalidation_candidates") or []),
+            "invalidation_candidates": repair.get("invalidation_candidates", [])[:8],
+            "proposals": repair.get("proposals", [])[:4],
+        },
+        "next_actions": [
+            "If repair candidates are correct, call /api/memory/mempalace/causal-invalidate with approved_by, approval_reason and commit=true.",
+            "If memory is clean but backlog is empty, continue requirements debate or generate a new execution backlog batch.",
+        ],
+        "truth_policy": "diagnostic_only_not_execution_authority",
+    }
+
+
 def mempalace_causal_invalidate(payload: dict[str, Any]) -> dict[str, Any]:
     candidates = payload.get("invalidation_candidates")
     if not isinstance(candidates, list):
@@ -8727,6 +8782,10 @@ def audit_plan_backlog_next(result: dict[str, Any], *, root: Path = ROOT) -> dic
             "runtime_state_reason": result.get("runtime_state_reason"),
             "queued_count": result.get("queued_count"),
             "queued_task_paths": result.get("queued_task_paths", []),
+            "review_closure_status": (result.get("review_closure_diagnostics") or {}).get("status"),
+            "review_closure_repair_proposals": (
+                (result.get("review_closure_diagnostics") or {}).get("repair_proposal") or {}
+            ).get("proposal_count"),
         },
         root=root,
     )
@@ -8929,6 +8988,11 @@ def runtime_plan_backlog_next(payload: dict[str, Any], *, root: Path = ROOT) -> 
     auto_next = auto_next_raw if isinstance(auto_next_raw, bool) else str(auto_next_raw).lower() not in {"0", "false", "off", "no"}
     items = mod.plan_execution_backlog_items(plan, count=count)
     if not items:
+        closure_diagnostics = runtime_review_closure_diagnostics(
+            runtime_state=runtime_state,
+            runtime_state_reason=runtime_state_reason,
+            subject=str(payload.get("memory_subject") or "A9").strip() or "A9",
+        )
         return audit_plan_backlog_next(
             {
                 **base,
@@ -8937,6 +9001,7 @@ def runtime_plan_backlog_next(payload: dict[str, Any], *, root: Path = ROOT) -> 
                 "gate": gate,
                 "queued_count": 0,
                 "queued_task_paths": [],
+                "review_closure_diagnostics": closure_diagnostics,
             },
             root=root,
         )
