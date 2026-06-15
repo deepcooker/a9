@@ -6113,6 +6113,7 @@ Findings are ready.
         self.assertIn("decision_status: not_decided", text)
         self.assertIn("route: debate_next", text)
         self.assertIn("debate_stage: execution_backlog_generation", text)
+        self.assertIn("bounded read: docs/method.md", text)
         self.assertIn("Generate next decided execution backlog batch", text)
         self.assertNotIn("Generic goal fallback", text)
         self.assertTrue(
@@ -7673,6 +7674,39 @@ Findings are ready.
                 prompt="Inspect only bounded slices from allowed_paths. Use bounded rg/sed reads only on allowed_paths.",
                 checks=[],
                 allowed_paths=["crates/a9-worker/src/main.rs"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("read_outside_allowed_paths", kinds)
+
+    def test_process_governance_allows_prompt_bounded_read_without_write_scope(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc \"sed -n '1,90p' docs/method.md\"",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="bounded-read-prompt-scope",
+                phase="reference_scan",
+                prompt=(
+                    "Inspect only bounded slices from allowed_paths. "
+                    "Use bounded rg/sed reads only on allowed_paths.\n"
+                    "bounded read: docs/method.md"
+                ),
+                checks=[],
+                allowed_paths=["docs/project.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
