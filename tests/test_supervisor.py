@@ -752,8 +752,8 @@ Do the work.
         self.assertIn("scripts/a9_supervisor.py", repo_map)
         self.assertIn("tests/test_supervisor.py", repo_map)
         self.assertNotIn("session-governance.md", repo_map)
-        self.assertNotIn("docs/session-raw-summary.md", repo_map)
-        self.assertNotIn("docs/session-raw-close-reading.md", repo_map)
+        self.assertNotIn("docs/session.md", repo_map)
+        self.assertNotIn("docs/session.md", repo_map)
         self.assertEqual(meta["allowed_paths"], allowed)
         self.assertGreater(meta["included_files"], 0)
 
@@ -868,7 +868,7 @@ Do the work.
         self.assertEqual(doctrine_section["role"], "doctrine")
         self.assertIn("Canonical Context Index", prompt)
         self.assertIn("AGENTS.md", prompt)
-        self.assertIn("docs/context-governance.md", prompt)
+        self.assertIn("docs/project.md", prompt)
         self.assertNotIn("ORIGINAL_DOCTRINE_TEXT", prompt)
         self.assertNotIn("SESSION_GOVERNANCE_TEXT", prompt)
 
@@ -5843,7 +5843,7 @@ Findings are ready.
                         "title": "Draft backlog from debate",
                         "phase": "record",
                         "prompt": "Close the contract first.",
-                        "allowed_paths": ["docs/worker-method-packet.md"],
+                        "allowed_paths": ["docs/method.md"],
                         "checks": [],
                         "status": "ready",
                     }
@@ -7082,7 +7082,7 @@ Findings are ready.
                         json.dumps(
                             {
                                 "item_type": "command_execution",
-                                "command": "/bin/bash -lc \"sed -n '1,120p' docs/communication-governance-framework.md\"",
+                                "command": "/bin/bash -lc \"sed -n '1,120p' docs/project.md\"",
                             }
                         ),
                         json.dumps(
@@ -7102,7 +7102,7 @@ Findings are ready.
                 phase="reference_scan",
                 prompt="Inspect only bounded slices from allowed_paths. Use bounded rg/sed reads only on allowed_paths.",
                 checks=[],
-                allowed_paths=["docs/communication-governance-framework.md"],
+                allowed_paths=["docs/project.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7149,7 +7149,7 @@ Findings are ready.
                 json.dumps(
                     {
                         "item_type": "command_execution",
-                        "command": "/bin/bash -lc \"sed -n '1,120p' docs/communication-governance-framework.md\"",
+                        "command": "/bin/bash -lc \"sed -n '1,120p' docs/project.md\"",
                     }
                 )
                 + "\n",
@@ -7216,7 +7216,7 @@ Findings are ready.
                 json.dumps(
                     {
                         "item_type": "command_execution",
-                        "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                        "command": "/bin/bash -lc 'tail -n 80 docs/session.md'",
                     }
                 )
                 + "\n",
@@ -7234,7 +7234,7 @@ Findings are ready.
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["findings"][0]["level"], "warn")
         self.assertEqual(result["findings"][0]["kind"], "forbidden_session_context_read")
-        self.assertEqual(result["findings"][0]["path"], "docs/session-raw-summary.md")
+        self.assertEqual(result["findings"][0]["path"], "docs/session.md")
 
     def test_process_governance_observes_context_evidence_archive_reads_without_allowance(self):
         mod = load_supervisor()
@@ -7247,13 +7247,13 @@ Findings are ready.
                         json.dumps(
                             {
                                 "item_type": "command_execution",
-                                "command": "/bin/bash -lc 'tail -n 80 docs/session-causal-memory.md'",
+                                "command": "/bin/bash -lc 'tail -n 80 /root/.codex/sessions/2026/05/raw.jsonl'",
                             }
                         ),
                         json.dumps(
                             {
                                 "item_type": "command_execution",
-                                "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                                "command": "/bin/bash -lc 'tail -n 80 docs/session.md'",
                             }
                         ),
                         json.dumps(
@@ -7280,10 +7280,10 @@ Findings are ready.
         self.assertEqual(result["status"], "pass")
         self.assertEqual(len(findings), 4)
         paths = {item["path"] for item in findings}
-        self.assertIn("docs/session-causal-memory.md", paths)
+        self.assertIn("docs/session.md", paths)
         self.assertIn("docs/mistakes.md", paths)
         self.assertIn("archive/original-ideas/notes.md", paths)
-        self.assertIn("docs/session-raw-summary.md", paths)
+        self.assertIn("/root/.codex/sessions", paths)
 
     def test_process_governance_allows_task_allowed_observation_log_bounded_read(self):
         mod = load_supervisor()
@@ -7296,7 +7296,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'rg -n \"worker cost\" "
-                            "docs/session-causal-memory.md | head -40'"
+                            "docs/session.md | head -40'"
                         ),
                     }
                 )
@@ -7307,7 +7307,7 @@ Findings are ready.
                 path=Path("task.md"),
                 task_id="bounded-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
-                allowed_paths=["docs/session-causal-memory.md"],
+                allowed_paths=["docs/session.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7325,7 +7325,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'cd /tmp/worktree && rg -n \"worker cost\" "
-                            "docs/session-causal-memory.md | head -n 40'"
+                            "docs/session.md | head -n 40'"
                         ),
                     }
                 )
@@ -7336,7 +7336,7 @@ Findings are ready.
                 path=Path("task.md"),
                 task_id="cd-bounded-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
-                allowed_paths=["docs/session-causal-memory.md"],
+                allowed_paths=["docs/session.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7354,7 +7354,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'cd /tmp/worktree && rg -n \"f0b4f31\" "
-                            "docs/session-causal-memory.md scripts/a9_supervisor.py "
+                            "docs/session.md scripts/a9_supervisor.py "
                             "tests/test_supervisor.py | head -n 40'"
                         ),
                     }
@@ -7367,7 +7367,7 @@ Findings are ready.
                 task_id="cd-multi-bounded-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
                 allowed_paths=[
-                    "docs/session-causal-memory.md",
+                    "docs/session.md",
                     "scripts/a9_supervisor.py",
                     "tests/test_supervisor.py",
                 ],
@@ -7389,7 +7389,7 @@ Findings are ready.
                         "command": (
                             "/bin/bash -lc 'cd /tmp/worktree && rg -n "
                             "\"evidence contract|rg -n .* | head -n 40|broad\" "
-                            "docs/session-causal-memory.md | head -n 80'"
+                            "docs/session.md | head -n 80'"
                         ),
                     }
                 )
@@ -7400,7 +7400,7 @@ Findings are ready.
                 path=Path("task.md"),
                 task_id="pipe-pattern-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
-                allowed_paths=["docs/session-causal-memory.md"],
+                allowed_paths=["docs/session.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7418,7 +7418,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc \"sed -n '146,230p;680,730p;1158,1210p' "
-                            "docs/session-causal-memory.md\""
+                            "docs/session.md\""
                         ),
                     }
                 )
@@ -7429,7 +7429,7 @@ Findings are ready.
                 path=Path("task.md"),
                 task_id="multi-window-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
-                allowed_paths=["docs/session-causal-memory.md"],
+                allowed_paths=["docs/session.md"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7447,7 +7447,7 @@ Findings are ready.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'git show 0b9ea34 -- scripts/a9_supervisor.py "
-                            "tests/test_supervisor.py docs/session-causal-memory.md'"
+                            "tests/test_supervisor.py docs/session.md'"
                         ),
                     }
                 )
@@ -7459,7 +7459,7 @@ Findings are ready.
                 task_id="git-show-observation-log-read",
                 prompt="Verify a bounded observation log slice.",
                 allowed_paths=[
-                    "docs/session-causal-memory.md",
+                    "docs/session.md",
                     "scripts/a9_supervisor.py",
                     "tests/test_supervisor.py",
                 ],
@@ -7469,7 +7469,7 @@ Findings are ready.
         kinds = [item["kind"] for item in result["findings"]]
         self.assertNotIn("forbidden_session_context_read", kinds)
 
-    def test_process_governance_still_blocks_allowed_path_session_raw_read_without_session_phase(self):
+    def test_process_governance_still_blocks_allowed_raw_session_read_without_session_phase(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
             run_dir = Path(tmp)
@@ -7478,7 +7478,7 @@ Findings are ready.
                 json.dumps(
                     {
                         "item_type": "command_execution",
-                        "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                        "command": "/bin/bash -lc 'tail -n 80 /root/.codex/sessions/2026/05/raw.jsonl'",
                     }
                 )
                 + "\n",
@@ -7486,9 +7486,9 @@ Findings are ready.
             )
             task = mod.Task(
                 path=Path("task.md"),
-                task_id="session-raw-still-forbidden",
+                task_id="raw-session-still-forbidden",
                 prompt="Verify raw summary is protected.",
-                allowed_paths=["docs/session-raw-summary.md"],
+                allowed_paths=["/root/.codex/sessions/2026/05/raw.jsonl"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 
@@ -7504,7 +7504,7 @@ Findings are ready.
                 json.dumps(
                     {
                         "item_type": "command_execution",
-                        "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                        "command": "/bin/bash -lc 'tail -n 80 docs/session.md'",
                     }
                 )
                 + "\n",
@@ -7513,7 +7513,7 @@ Findings are ready.
             task = mod.Task(
                 path=Path("task.md"),
                 task_id="bounded-session-raw-allowance",
-                prompt="bounded read: docs/session-raw-*\nInspect reference governance docs.",
+                prompt="bounded read: docs/session.md\nInspect reference governance docs.",
                 checks=[],
             )
             result = mod.classify_process_governance(
@@ -7535,7 +7535,7 @@ Findings are ready.
                 json.dumps(
                     {
                         "item_type": "command_execution",
-                        "command": "/bin/bash -lc 'tail -n 80 docs/session-raw-summary.md'",
+                        "command": "/bin/bash -lc 'tail -n 80 docs/session.md'",
                     }
                 )
                 + "\n",
@@ -7544,7 +7544,7 @@ Findings are ready.
             task = mod.Task(
                 path=Path("task.md"),
                 task_id="forbidden-path-text-is-not-allowance",
-                prompt="Do not read docs/session-raw-summary.md unless this is a session task.",
+                prompt="Do not read docs/session.md unless this is a session task.",
                 checks=[],
             )
             result = mod.classify_process_governance(
@@ -7566,7 +7566,7 @@ Findings are ready.
                 json.dumps(
                     {
                         "item_type": "command_execution",
-                        "command": "/bin/bash -lc 'sed -n \"1,80p\" docs/session-causal-memory.md'",
+                        "command": "/bin/bash -lc 'sed -n \"1,80p\" docs/session.md'",
                     }
                 )
                 + "\n",
@@ -8248,7 +8248,7 @@ Findings are ready.
 
         violation = mod.live_worker_command_violation(
             task,
-            "/bin/bash -lc 'sed -n \"1,80p\" docs/session-causal-memory.md'",
+            "/bin/bash -lc 'sed -n \"1,80p\" docs/session.md'",
         )
 
         self.assertEqual(violation, {})
@@ -8265,7 +8265,7 @@ Findings are ready.
 
         agent_runtime_observations = mod.live_worker_command_violation(
             task,
-            "/bin/bash -lc 'tail -n 80 docs/session-causal-memory.md'",
+            "/bin/bash -lc 'tail -n 80 docs/session.md'",
         )
         mistakes = mod.live_worker_command_violation(
             task,
@@ -9543,7 +9543,7 @@ Findings are ready.
         self.assertIn("Declared checks are authoritative", prompt)
         self.assertIn("Do not add pytest or cargo unless they are explicitly declared", prompt)
         self.assertIn("Do not use web search or browsing unless the task explicitly asks", prompt)
-        self.assertIn("Do not read `docs/session-raw-summary.md`", prompt)
+        self.assertIn("Do not read `docs/session.md`", prompt)
         self.assertIn("raw session logs", prompt)
         self.assertIn("Use `rg -n` first", prompt)
         self.assertIn("one valid JSON object", prompt)
@@ -9709,7 +9709,7 @@ Findings are ready.
 
         self.assertIn("A9 Worker Method Packet", packet["prompt"])
         self.assertIn("Task Decision Packet", packet["prompt"])
-        self.assertIn("Canonical method source: docs/worker-method-packet.md", packet["prompt"])
+        self.assertIn("Canonical method source: docs/method.md", packet["prompt"])
         self.assertIn("debate before decision, execute after decision", packet["prompt"])
         self.assertIn("Execution worker may implement only decided slices", packet["prompt"])
         self.assertIn("route: debate_next", packet["prompt"])
@@ -9928,7 +9928,7 @@ Continue A9 24-hour automation.
 
         packet = mod.build_context_packet(task)
 
-        self.assertNotIn("Canonical method source: docs/worker-method-packet.md", packet["prompt"])
+        self.assertNotIn("Canonical method source: docs/method.md", packet["prompt"])
         self.assertNotIn("debate before decision, execute after decision", packet["prompt"])
         self.assertNotIn("route: debate_next", packet["prompt"])
 
@@ -11026,7 +11026,7 @@ role_signoff: product, business, architecture, test approved.
                         "item_type": "command_execution",
                         "command": (
                             "/bin/bash -lc 'rg -n \"evidence|contract\" "
-                            "docs/session-causal-memory.md | head -n 40'"
+                            "docs/session.md | head -n 40'"
                         ),
                     }
                 )
@@ -11041,7 +11041,7 @@ role_signoff: product, business, architecture, test approved.
                         'phase: "test"',
                         "checks:",
                         "allowed_paths:",
-                        '  - "docs/session-causal-memory.md"',
+                        '  - "docs/session.md"',
                         "---",
                         "strict_worker_envelope: true",
                         "Verify bounded observation log read.",
@@ -11339,7 +11339,7 @@ role_signoff: product, business, architecture, test approved.
         mod = load_supervisor()
         check = (
             "python3 -c \"from pathlib import Path; "
-            "assert Path('docs/runtime-continuity-smoke.txt').read_text().strip() == "
+            "assert Path('docs/project.md').read_text().strip() == "
             "'runtime continuity smoke'\""
         )
         with tempfile.TemporaryDirectory() as tmp:
@@ -11350,7 +11350,7 @@ role_signoff: product, business, architecture, test approved.
                     "quoted-check-roundtrip",
                     "Do implementation work.",
                     phase="implement",
-                    allowed_paths=["docs/runtime-continuity-smoke.txt"],
+                    allowed_paths=["docs/project.md"],
                     checks=[check],
                 )
                 parsed = mod.parse_task(queued)
@@ -11654,7 +11654,7 @@ role_signoff: product, business, architecture, test approved.
             task_id="docs-record",
             prompt="Update copied mechanism notes.",
             phase="record",
-            allowed_paths=["docs/copied-mechanisms.md"],
+            allowed_paths=["docs/reference.md"],
         )
         summary = {
             "task_id": task.task_id,
@@ -12648,8 +12648,8 @@ role_signoff: product, business, architecture, test approved.
                 "role_signoff: mainline approves the contract.\n"
             ),
             phase="implement",
-            checks=["test -f docs/session-causal-memory.md"],
-            allowed_paths=["docs/session-causal-memory.md", "scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            checks=["test -f docs/session.md"],
+            allowed_paths=["docs/session.md", "scripts/a9_supervisor.py", "tests/test_supervisor.py"],
         )
         summary = {
             "task_id": task.task_id,
@@ -13824,8 +13824,8 @@ flow_expected_revision: None
                     "task_id": "latest-session-tail-test",
                     "auto_continue": False,
                     "no_auto_close_reading": False,
-                    "close_reading_doc": "docs/session-raw-close-reading.md",
-                    "summary_doc": "docs/session-raw-summary.md",
+                    "close_reading_doc": "docs/session.md",
+                    "summary_doc": "docs/session.md",
                     "timeout_seconds": 120,
                     "idle_timeout_seconds": 120,
                 },
@@ -14220,8 +14220,8 @@ flow_expected_revision: None
                 "auto_continue": True,
                 "auto_close_reading": True,
                 "user_turn_count": 2,
-                "close_reading_doc": "docs/session-raw-close-reading.md",
-                "summary_doc": "docs/session-raw-summary.md",
+                "close_reading_doc": "docs/session.md",
+                "summary_doc": "docs/session.md",
             },
         }
 
@@ -14320,8 +14320,8 @@ flow_expected_revision: None
                 "auto_close_reading": True,
                 "user_turn_count": 12,
                 "extract_path": "/tmp/session/turns-1-5.json",
-                "close_reading_doc": "docs/session-raw-close-reading.md",
-                "summary_doc": "docs/session-raw-summary.md",
+                "close_reading_doc": "docs/session.md",
+                "summary_doc": "docs/session.md",
                 "flow_id": "flow-test",
                 "flow_revision": 3,
                 "flow_last_seq": 21,
@@ -14370,8 +14370,8 @@ flow_expected_revision: None
                 "auto_continue": True,
                 "auto_close_reading": True,
                 "user_turn_count": 12,
-                "close_reading_doc": "docs/session-raw-close-reading.md",
-                "summary_doc": "docs/session-raw-summary.md",
+                "close_reading_doc": "docs/session.md",
+                "summary_doc": "docs/session.md",
                 "flow_id": "flow-test",
                 "flow_revision": 4,
                 "flow_last_seq": 22,
@@ -14423,8 +14423,8 @@ flow_expected_revision: None
                 "auto_continue": True,
                 "auto_close_reading": True,
                 "user_turn_count": 12,
-                "close_reading_doc": "docs/session-raw-close-reading.md",
-                "summary_doc": "docs/session-raw-summary.md",
+                "close_reading_doc": "docs/session.md",
+                "summary_doc": "docs/session.md",
             },
         }
 

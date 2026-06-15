@@ -117,15 +117,12 @@ SESSION_REFRESH_PHASE = "session_refresh"
 SESSION_CLOSE_READING_PHASE = "session_close_reading"
 SESSION_CONTEXT_READ_PHASES = {SESSION_REFRESH_PHASE, SESSION_CLOSE_READING_PHASE}
 FORBIDDEN_SESSION_CONTEXT_PATHS = (
-    "docs/session-raw-summary.md",
-    "docs/session-raw-close-reading.md",
-    "docs/session-causal-memory.md",
+    "docs/session.md",
     "docs/mistakes.md",
     "/root/.codex/sessions",
     ".a9/external_sessions",
 )
 FORBIDDEN_SESSION_CONTEXT_PATH_PREFIXES = (
-    "docs/session-raw-",
     "archive/original-ideas/",
 )
 RUNTIME_EVIDENCE_ROOTS = (
@@ -1695,8 +1692,8 @@ def score_repo_file(rel_path: str, symbols: list[str], terms: set[str]) -> int:
     important_names = {
         "AGENTS.md",
         "docs/project.md",
-        "docs/communication-governance-framework.md",
-        "docs/copied-mechanisms.md",
+        "docs/project.md",
+        "docs/reference.md",
         "scripts/a9_supervisor.py",
         "scripts/a9_checkpoint.py",
         "scripts/a9_memory.py",
@@ -1815,21 +1812,17 @@ def build_canonical_doctrine_section(task: Task, budget: int) -> tuple[str, str]
 
     canonical_sources = [
         "AGENTS.md",
-        "docs/context-governance.md",
         "docs/project.md",
-        "docs/session-causal-memory.md",
-        "docs/worker-method-packet.md",
-        "docs/requirements-review-closure.md",
+        "docs/session.md",
+        "docs/method.md",
     ]
     doctrinal_notes = [
         "# Canonical Context Index",
         "Workers should load this index first for active mainline and routing rules.",
         "- AGENTS.md: stage model, hard rules, and task-level priorities.",
-        "- docs/context-governance.md: current context layering and evidence policy.",
-        "- docs/project.md: product/architecture/mainline summary.",
-        "- docs/session-causal-memory.md: causal lane and stale-branch memory.",
-        "- docs/worker-method-packet.md: requirements method and execution contract.",
-        "- docs/requirements-review-closure.md: review completion standard before execution.",
+        "- docs/project.md: product, architecture, runtime and context summary.",
+        "- docs/session.md: causal lane and stale-branch memory.",
+        "- docs/method.md: requirements method, review closure and execution contract.",
         "- Raw source doctrine references (preserved on disk): 原始想法需求.md, session-governance.md",
         "  Read these only when task packets explicitly allow bounded close reading.",
     ]
@@ -1964,8 +1957,8 @@ Hard rules:
 - Task-local hard rules override generic repository guidance when they conflict.
 - Do not inline huge raw logs or whole reference repositories.
 - Do not search `.a9/tasks/done`, `.a9/worktrees`, or `.a9/runs` as broad roots; read only explicit evidence paths.
-- Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, or raw session logs unless phase is `session_refresh`/`session_close_reading`.
-- Do not read `docs/session-causal-memory.md`, `docs/mistakes.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless bounded by prompt evidence plan.
+- Do not read `docs/session.md` or raw session logs unless phase is `session_refresh`/`session_close_reading`.
+- Do not read `docs/session.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless bounded by prompt evidence plan.
 - Do not edit repository files with shell redirection, `tee`, or `sed -i`; output SEARCH/REPLACE blocks in final and let A9 deterministic apply write files.
 - Cite local source paths when borrowing ideas from reference projects.
 - Preserve details by writing artifacts, evidence, state, checks, and patches.
@@ -2017,7 +2010,7 @@ Hard rules:
             },
             {
                 "name": "A9 Worker Method Packet",
-                "source": "docs/worker-method-packet.md",
+                "source": "docs/method.md",
                 "role": "policy",
                 "budget_tokens": section_budgets.get("method", 0),
                 "reference_only": False,
@@ -2081,7 +2074,7 @@ Hard rules:
             },
             {
                 "name": "Reference Mechanisms To Copy",
-                "source": "docs/copied-mechanisms.md",
+                "source": "docs/reference.md",
                 "role": "reference",
                 "budget_tokens": section_budgets["reference_mechanisms"],
                 "reference_only": True,
@@ -2089,7 +2082,7 @@ Hard rules:
             },
             {
                 "name": "Doctrine Excerpts",
-                "source": doctrine_source or "docs/context-governance.md",
+                "source": doctrine_source or "docs/project.md",
                 "role": "doctrine",
                 "budget_tokens": section_budgets["doctrine"],
                 "reference_only": True,
@@ -4583,7 +4576,7 @@ def task_allows_session_context_reads(task: Task, command: str) -> bool:
         for path in task.allowed_paths
         if path
         in {
-            "docs/session-causal-memory.md",
+            "docs/session.md",
             "docs/mistakes.md",
         }
     ]
@@ -7629,8 +7622,8 @@ def parse_session_refresh_spec(prompt: str) -> dict[str, Any]:
         "batch_size": batch_size,
         "auto_continue": auto_continue,
         "auto_close_reading": auto_close_reading,
-        "close_reading_doc": fields.get("close_reading_doc", "docs/session-raw-close-reading.md"),
-        "summary_doc": fields.get("summary_doc", "docs/session-raw-summary.md"),
+        "close_reading_doc": fields.get("close_reading_doc", "docs/session.md"),
+        "summary_doc": fields.get("summary_doc", "docs/session.md"),
         "flow_id": fields.get("flow_id", ""),
         "flow_expected_revision": parse_optional_int(fields.get("flow_expected_revision")),
         "flow_expected_last_seq": parse_optional_int(fields.get("flow_expected_last_seq")),
@@ -7968,8 +7961,8 @@ def parse_session_close_reading_spec(prompt: str) -> dict[str, Any]:
         raise ValueError("missing session_close_reading fields: extract_path")
     spec: dict[str, Any] = {
         "extract_path": extract_path,
-        "close_reading_doc": fields.get("close_reading_doc", "docs/session-raw-close-reading.md"),
-        "summary_doc": fields.get("summary_doc", "docs/session-raw-summary.md"),
+        "close_reading_doc": fields.get("close_reading_doc", "docs/session.md"),
+        "summary_doc": fields.get("summary_doc", "docs/session.md"),
         "source_session_path": fields.get("source_session_path", ""),
         "auto_continue": parse_bool_field(fields, "auto_continue", True),
         "auto_close_reading": parse_bool_field(fields, "auto_close_reading", True),
@@ -9136,7 +9129,7 @@ def active_goal_for_idle_continuation() -> dict[str, Any] | None:
 
 def requirements_method_packet() -> str:
     return """Requirements method packet:
-- Canonical method source: docs/worker-method-packet.md.
+- Canonical method source: docs/method.md.
 - Top-level rule: debate before decision, execute after decision.
 - debate_next means research/model/review/decision work only; do not implement production changes.
 - execution_next means a decided slice with data/state contract, reference mechanism, acceptance, and allowed execution.
@@ -10005,7 +9998,7 @@ Core rule:
 - Task frontmatter `allowed_paths` is the only write-scope authority. Prompt context (including active-plan `allowed_execution`) is advisory only.
 - Declared checks are authoritative. Do not add pytest or cargo unless they are explicitly declared in this task.
 - Do not use web search or browsing unless the task explicitly asks for internet research.
-- Do not read `docs/session-raw-summary.md`, `docs/session-raw-close-reading.md`, `docs/session-raw-*`, raw session logs, `docs/session-causal-memory.md`, `docs/mistakes.md`, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
+- Do not read `docs/session.md`, raw session logs, `docs/mistakes.md`, or `archive/original-ideas/*` as active context unless this task is a session_refresh/session_close_reading task or explicitly asks for those files.
 - Use `rg -n` first, then read small line windows only; avoid broad `sed` ranges and full-file dumps.
 - If `strict_worker_envelope: true` is present, final output must include:
   {{"protocolVersion":1,"ok":true,"status":"ok","output":{{"changed_files":[],"copied_mechanisms":[],"worker_commands_run":[],"supervisor_declared_checks":[],"next_slice":""}}}}
@@ -10739,8 +10732,8 @@ def schedule_next_session_refresh_task(task: Task, summary: dict[str, Any]) -> P
         parent_ref = compact_task_ref(task.task_id)
         task_id = f"auto-session-close-reading-{parent_ref}-{refresh.get('from_turn')}-{refresh.get('to_turn')}-{timestamp}"
         prompt = f"""extract_path: {refresh['extract_path']}
-close_reading_doc: {refresh.get('close_reading_doc', 'docs/session-raw-close-reading.md')}
-summary_doc: {refresh.get('summary_doc', 'docs/session-raw-summary.md')}
+close_reading_doc: {refresh.get('close_reading_doc', 'docs/session.md')}
+summary_doc: {refresh.get('summary_doc', 'docs/session.md')}
 source_session_path: {refresh['source_session_path']}
 to_turn: {refresh['to_turn']}
 user_turn_count: {refresh['user_turn_count']}
@@ -10790,8 +10783,8 @@ to_turn: {next_to}
 batch_size: {batch_size}
 auto_continue: true
 auto_close_reading: {str(refresh.get('auto_close_reading', True)).lower()}
-close_reading_doc: {refresh.get('close_reading_doc', 'docs/session-raw-close-reading.md')}
-summary_doc: {refresh.get('summary_doc', 'docs/session-raw-summary.md')}
+close_reading_doc: {refresh.get('close_reading_doc', 'docs/session.md')}
+summary_doc: {refresh.get('summary_doc', 'docs/session.md')}
 flow_id: {refresh.get('flow_id', '')}
 flow_expected_revision: {refresh.get('flow_revision', '')}
 flow_expected_last_seq: {refresh.get('flow_last_seq', '')}
@@ -10822,8 +10815,8 @@ def schedule_next_session_close_reading_task(task: Task, summary: dict[str, Any]
         "batch_size": reading.get("batch_size", 10),
         "auto_continue": reading.get("auto_continue", True),
         "auto_close_reading": reading.get("auto_close_reading", True),
-        "close_reading_doc": reading.get("close_reading_doc", "docs/session-raw-close-reading.md"),
-        "summary_doc": reading.get("summary_doc", "docs/session-raw-summary.md"),
+        "close_reading_doc": reading.get("close_reading_doc", "docs/session.md"),
+        "summary_doc": reading.get("summary_doc", "docs/session.md"),
         "flow_id": reading.get("flow_id", ""),
         "flow_revision": reading.get("flow_revision"),
         "flow_last_seq": reading.get("flow_last_seq"),
@@ -12838,8 +12831,8 @@ def main(argv: list[str]) -> int:
     session_latest_parser.add_argument("--task-id", default="")
     session_latest_parser.add_argument("--auto-continue", action="store_true")
     session_latest_parser.add_argument("--no-auto-close-reading", action="store_true")
-    session_latest_parser.add_argument("--close-reading-doc", default="docs/session-raw-close-reading.md")
-    session_latest_parser.add_argument("--summary-doc", default="docs/session-raw-summary.md")
+    session_latest_parser.add_argument("--close-reading-doc", default="docs/session.md")
+    session_latest_parser.add_argument("--summary-doc", default="docs/session.md")
     session_latest_parser.add_argument("--timeout-seconds", type=int, default=120)
     session_latest_parser.add_argument("--idle-timeout-seconds", type=int, default=120)
 

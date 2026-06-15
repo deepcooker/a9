@@ -71,7 +71,7 @@ class MonitorTests(unittest.TestCase):
                     },
                     {
                         "item_type": "command_execution",
-                        "command": "tail -n 40 docs/session-raw-summary.md",
+                        "command": "tail -n 40 docs/session.md",
                         "exit_code": 0,
                     },
                 ],

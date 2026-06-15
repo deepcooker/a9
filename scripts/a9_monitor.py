@@ -17,8 +17,7 @@ FORBIDDEN_COMMAND_PATTERNS = {
         "systemctl status",
     ],
     "session_docs": [
-        "docs/session-raw-summary.md",
-        "docs/session-raw-close-reading.md",
+        "docs/session.md",
         "/root/.codex/sessions",
     ],
     "run_artifacts": [
@@ -32,7 +31,7 @@ BROAD_SCAN_PATTERNS = [
 ]
 
 TEST_COMMAND_HINTS = ("pytest", "unittest", "cargo test", "npm test", "pnpm test", "yarn test")
-REFERENCE_HINTS = ("reference-projects/", "vendor-src/", "docs/copied-mechanisms.md", "docs/vendor-strategy.md")
+REFERENCE_HINTS = ("reference-projects/", "vendor-src/", "docs/reference.md")
 MAINLINE_HINTS = ("主线", "mainline", "philosophy", "哲学", "业务逻辑", "causal", "原始想法", "requirements", "需求")
 PRODUCT_PRESSURE_HINTS = ("tradeoff", "权衡", "reject", "拒绝", "推翻", "压榨", "shrink", "收缩", "scope", "边界")
 DATA_MODEL_HINTS = ("data", "schema", "model", "table", "event", "state", "数据", "表", "结构", "状态", "事件")

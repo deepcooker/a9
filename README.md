@@ -5,8 +5,10 @@ A9 是一个私有 24 小时 agent 执行机器。核心方法是抄成熟开源
 核心文档：
 
 - `AGENTS.md`：执行机器规则和“抄抄抄”核心方法。
-- `docs/context-governance.md`：当前上下文入口和文档分层。
 - `docs/project.md`：项目背景、目标、架构、进度、下一步。
+- `docs/method.md`：需求分析、评审闭包和执行方法。
+- `docs/reference.md`：参考项目和复制策略。
+- `docs/session.md`：session 精读、总结和因果变迁。
 - `docs/mistakes.md`：错题本。
 
 常用入口：

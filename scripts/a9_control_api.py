@@ -200,7 +200,7 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
             "operator_session schema enforcement",
             "operator object status transitions",
         ],
-        "evidence": "docs/communication-governance-framework.md Current Code Mapping",
+        "evidence": "docs/project.md Current Code Mapping",
     },
     "node": {
         "status": "partial",
@@ -220,7 +220,7 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
             "host-key/auth failure handling for terminal states",
             "identity snapshots/replay",
         ],
-        "evidence": "docs/communication-governance-framework.md Current Code Mapping",
+        "evidence": "docs/project.md Current Code Mapping",
     },
     "tmux_session": {
         "status": "missing",
@@ -230,7 +230,7 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
             "attached/detached lifecycle state",
             "session evidence join to command lifecycle",
         ],
-        "evidence": "docs/communication-governance-framework.md Current Code Mapping",
+        "evidence": "docs/project.md Current Code Mapping",
     },
     "command": {
         "status": "partial",
@@ -288,7 +288,7 @@ COMMUNICATION_DATA_CONTRACT_BASELINE = {
             "repair_action lifecycle state persistence",
             "audit before/after for repair_action mutations",
         ],
-        "evidence": "docs/communication-governance-framework.md Current Code Mapping",
+        "evidence": "docs/project.md Current Code Mapping",
     },
     "audit_event": {
         "status": "partial",
@@ -315,7 +315,7 @@ COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE = {
             "authority-reducing transitions require operator identity evidence",
             "last_seen_at can only move forward unless explicitly reset",
         ],
-        "evidence": "docs/communication-governance-framework.md",
+        "evidence": "docs/project.md",
     },
     "event_cursor": {
         "mysql_authority": "a9_event_cursors",
@@ -330,7 +330,7 @@ COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE = {
             "next_last_id is monotonic non-decreasing for a stream+consumer pair",
             "gap_detected is not a terminal success state",
         ],
-        "evidence": "docs/communication-governance-framework.md",
+        "evidence": "docs/project.md",
     },
     "reconnect_state": {
         "mysql_authority": "a9_reconnect_states",
@@ -347,7 +347,7 @@ COMMUNICATION_DATA_CONTRACT_MODEL_CLOSURE = {
             "attempt must not decrease without explicit reset",
             "terminal SSH/auth/host-key failures must not auto-loop",
         ],
-        "evidence": "docs/communication-governance-framework.md",
+        "evidence": "docs/project.md",
     },
 }
 
@@ -8275,8 +8275,8 @@ def runtime_session_refresh_trial(payload: dict[str, Any]) -> dict[str, Any]:
             "batch_size: 1",
             "auto_continue: false",
             "auto_close_reading: false",
-            "close_reading_doc: docs/session-raw-close-reading.md",
-            "summary_doc: docs/session-raw-summary.md",
+            "close_reading_doc: docs/session.md",
+            "summary_doc: docs/session.md",
             "",
             "Mobile runtime trial: deterministically refresh one latest operator session turn without calling a model.",
         ]
@@ -8365,8 +8365,8 @@ def runtime_session_lane_latest(payload: dict[str, Any], *, root: Path = ROOT) -
     )
     auto_continue = bool(payload.get("auto_continue", False))
     auto_close_reading = not bool(payload.get("no_auto_close_reading", False))
-    close_doc = str(payload.get("close_reading_doc") or "docs/session-raw-close-reading.md")
-    summary_doc = str(payload.get("summary_doc") or "docs/session-raw-summary.md")
+    close_doc = str(payload.get("close_reading_doc") or "docs/session.md")
+    summary_doc = str(payload.get("summary_doc") or "docs/session.md")
     prompt = "\n".join(
         [
             f"source_session_path: {tail['source_session_path']}",

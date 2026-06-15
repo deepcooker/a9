@@ -39,6 +39,16 @@ A3B may provide intent, mainline, methodology, candidate paths and risk
 judgment. A9 turns those into plan/backlog/worker prompts and still governs
 execution through queue, worktree, checks, git and monitor.
 
+Interface shape:
+
+```text
+A3B -> A9: mainline, execution_goal, methodology, required_data,
+allowed_tools, forbidden_actions, success_criteria, risk_boundary.
+
+A9 -> A3B: evidence_pack, tool_trace, test_report, diff_summary,
+failure_summary, cost_report, wrongbook_candidate, next_suggestion.
+```
+
 ## Current Priority
 
 ```text
@@ -69,10 +79,11 @@ P7 NZX technical MVP
 Read in this order:
 
 1. `AGENTS.md`
-2. `docs/context-governance.md`
-3. `docs/project.md`
-4. `docs/session-causal-memory.md`
-5. task-specific contract / plan / evidence slice
+2. `docs/project.md`
+3. `docs/method.md`
+4. `docs/session.md`
+5. `docs/reference.md`
+6. task-specific contract / plan / evidence slice
 
 Do not broadly read archive, raw session, full evidence or reference projects
 unless the task names a bounded slice.
