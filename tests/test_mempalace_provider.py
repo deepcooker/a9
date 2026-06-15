@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import importlib.util
 import sys
+from unittest import mock
 from pathlib import Path
 
 
@@ -266,9 +267,51 @@ class MempalaceProviderTests(unittest.TestCase):
         self.assertEqual(result["status"], "dry_run")
         operations = result["plan"]["operations"]
         self.assertEqual(result["plan"]["approved_by"], "codex-monitor")
+        self.assertEqual(result["drift_check"]["status"], "pass")
         self.assertTrue(any(op["operation"] == "kg_add" and op["predicate"] == "has_current_fact" for op in operations))
         self.assertTrue(any(op["operation"] == "kg_add" and op["valid_to"] for op in operations))
         self.assertTrue(any(op["operation"] == "diary_write" and op["agent_name"] == "monitor" for op in operations))
+
+    def test_causal_commit_blocks_conflicting_current_facts_before_write(self):
+        mod = load_provider()
+        packet = {
+            "schema": "a9.causal_memory_packet.v1",
+            "kg_candidates": {
+                "current_facts": [
+                    {
+                        "text": "A9 current mainline is supervisor runtime.",
+                        "valid_from": "2026-01-01T00:00:00Z",
+                        "evidence_ref": {"drawer_id": "d1", "source_ref": "session.jsonl:10"},
+                    }
+                ],
+                "stale_branches": [],
+                "causal_changes": [],
+            },
+            "role_packets": {},
+        }
+        existing = [
+            {
+                "subject": "A9",
+                "predicate": "has_current_fact",
+                "object": "A9 current mainline is page monitor.",
+                "valid_to": None,
+                "current": True,
+            }
+        ]
+        with mock.patch.object(mod, "query_current_kg_facts", return_value=existing), mock.patch.object(
+            mod, "write_kg_operation"
+        ) as write_kg:
+            result = mod.commit_causal_memory_packet(
+                packet,
+                approved_by="codex-monitor",
+                approval_reason="reviewed but conflicting",
+                dry_run=False,
+            )
+
+        self.assertEqual(result["status"], "review_required")
+        self.assertEqual(result["drift_check"]["status"], "review_required")
+        self.assertEqual(result["drift_check"]["conflict_count"], 1)
+        write_kg.assert_not_called()
 
 
 if __name__ == "__main__":

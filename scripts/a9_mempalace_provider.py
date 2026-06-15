@@ -736,6 +736,77 @@ def write_kg_operation(operation: dict[str, Any], *, palace: Path = DEFAULT_PALA
         return {"status": "error", "operation": "kg_add", "error": f"{type(exc).__name__}: {exc}"}
 
 
+def query_current_kg_facts(subject: str, *, palace: Path = DEFAULT_PALACE) -> list[dict[str, Any]]:
+    if not MEMPALACE_SOURCE.exists():
+        return []
+    sys.path.insert(0, str(MEMPALACE_SOURCE))
+    try:
+        from mempalace.knowledge_graph import KnowledgeGraph  # type: ignore
+
+        kg = KnowledgeGraph(db_path=str(palace / "knowledge_graph.sqlite3"))
+        facts = kg.query_entity(subject, direction="outgoing")
+        kg.close()
+        return [fact for fact in facts if fact.get("current")]
+    except Exception:
+        return []
+
+
+def drift_check_commit_plan(plan: dict[str, Any], *, palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
+    """Check planned KG writes against current KG state before committing.
+
+    This copies MemPalace's temporal KG contract: current facts are facts with
+    ``valid_to is NULL``. A9 treats a planned current fact with the same
+    subject/predicate but a different object as a drift/contradiction candidate
+    that requires review before write.
+    """
+    operations = plan.get("operations") if isinstance(plan.get("operations"), list) else []
+    planned_kg = [op for op in operations if isinstance(op, dict) and op.get("operation") == "kg_add"]
+    by_subject: dict[str, list[dict[str, Any]]] = {}
+    for op in planned_kg:
+        by_subject.setdefault(str(op.get("subject") or "A9"), []).append(op)
+    conflicts: list[dict[str, Any]] = []
+    duplicate_count = 0
+    checked_count = 0
+    for subject, subject_ops in by_subject.items():
+        existing = query_current_kg_facts(subject, palace=palace)
+        for op in subject_ops:
+            checked_count += 1
+            predicate = str(op.get("predicate") or "")
+            obj = str(op.get("object") or "")
+            if op.get("valid_to"):
+                continue
+            matches = [
+                fact for fact in existing
+                if str(fact.get("predicate") or "") == predicate
+            ]
+            for fact in matches:
+                existing_obj = str(fact.get("object") or "")
+                if existing_obj == obj:
+                    duplicate_count += 1
+                    continue
+                conflicts.append(
+                    {
+                        "subject": subject,
+                        "predicate": predicate,
+                        "planned_object": obj,
+                        "existing_object": existing_obj,
+                        "existing_fact": fact,
+                        "planned_operation": op,
+                        "action": "review_before_commit",
+                    }
+                )
+    status = "pass" if not conflicts else "review_required"
+    return {
+        "schema": "a9.causal_memory_drift_check.v1",
+        "status": status,
+        "checked_kg_operations": checked_count,
+        "duplicates": duplicate_count,
+        "conflicts": conflicts,
+        "conflict_count": len(conflicts),
+        "policy": "Do not commit conflicting current facts without explicit monitor review and stale-fact invalidation.",
+    }
+
+
 def write_diary_operation(operation: dict[str, Any], *, palace: Path = DEFAULT_PALACE) -> dict[str, Any]:
     if not MEMPALACE_SOURCE.exists():
         return {"status": "error", "error": "reference-projects/mempalace missing", "operation": operation}
@@ -797,11 +868,21 @@ def commit_causal_memory_packet(
         approved_by=approved_by.strip(),
         approval_reason=approval_reason.strip(),
     )
+    drift_check = drift_check_commit_plan(plan, palace=palace)
     if dry_run:
         return {
             "schema": "a9.causal_memory_commit_result.v1",
             "status": "dry_run",
             "plan": plan,
+            "drift_check": drift_check,
+            "results": [],
+        }
+    if drift_check.get("status") != "pass":
+        return {
+            "schema": "a9.causal_memory_commit_result.v1",
+            "status": "review_required",
+            "plan": plan,
+            "drift_check": drift_check,
             "results": [],
         }
     results: list[dict[str, Any]] = []
@@ -817,6 +898,7 @@ def commit_causal_memory_packet(
         "schema": "a9.causal_memory_commit_result.v1",
         "status": status,
         "plan": plan,
+        "drift_check": drift_check,
         "results": results,
     }
 
