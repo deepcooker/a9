@@ -8820,6 +8820,10 @@ Findings are ready.
             task,
             "/bin/bash -lc 'rg -n \"def append_execution_backlog_items_from_debate_run\" -n scripts/a9_supervisor.py'",
         )
+        worktree_absolute_read = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc \"sed -n '9520,9720p' /root/a9/.a9/worktrees/example/scripts/a9_supervisor.py\"",
+        )
         low_cost_ls = mod.live_worker_command_violation(
             task,
             "/bin/bash -lc 'cd /root/a9/.a9/worktrees/example && ls docs | head'",
@@ -8836,6 +8840,7 @@ Findings are ready.
         self.assertEqual(capped_rg, {})
         self.assertEqual(sed_capped_rg, {})
         self.assertEqual(repeated_flag_rg, {})
+        self.assertEqual(worktree_absolute_read, {})
         self.assertEqual(low_cost_ls, {})
         self.assertEqual(recursive_ls["kind"], "outside_bounded_read_scope")
 

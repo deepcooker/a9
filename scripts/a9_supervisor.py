@@ -4669,12 +4669,20 @@ def sed_window_is_bounded(window: str) -> bool:
 
 
 def bounded_read_path_matches(pattern: str, candidate: str) -> bool:
-    if pattern == candidate:
-        return True
-    if pattern.endswith("/") and candidate.startswith(pattern):
-        return True
-    if "*" in pattern and fnmatch.fnmatch(candidate, pattern):
-        return True
+    candidates = [candidate]
+    root_text = str(ROOT).rstrip("/")
+    if candidate.startswith(root_text + "/"):
+        candidates.append(candidate[len(root_text) + 1 :])
+    worktree_match = re.match(rf"^{re.escape(root_text)}/\.a9/worktrees/[^/]+/(.+)$", candidate)
+    if worktree_match:
+        candidates.append(worktree_match.group(1))
+    for item in candidates:
+        if pattern == item:
+            return True
+        if pattern.endswith("/") and item.startswith(pattern):
+            return True
+        if "*" in pattern and fnmatch.fnmatch(item, pattern):
+            return True
     return False
 
 
