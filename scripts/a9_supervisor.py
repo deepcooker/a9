@@ -5044,10 +5044,30 @@ def command_is_read_only_of_paths(command: str, paths: list[str]) -> bool:
     for fragment in fragments:
         targets = command_read_targets(fragment)
         if not targets:
+            if command_fragment_is_read_command_with_explicit_allowed_path(fragment, paths):
+                continue
             return False
         if not all(any(bounded_read_path_matches(pattern, target) for pattern in paths) for target in targets):
             return False
     return True
+
+
+def command_fragment_is_read_command_with_explicit_allowed_path(fragment: str, paths: list[str]) -> bool:
+    normalized = normalize_shell_command(fragment)
+    if not re.search(r"(?:^|\s)(rg|sed|awk|jq|wc|head|tail|nl|git)(?:\s|$)", normalized):
+        return False
+    for path in paths:
+        item = str(path or "").strip()
+        if not item:
+            continue
+        candidates = {item}
+        root_text = str(ROOT).rstrip("/")
+        if not item.startswith(root_text + "/"):
+            candidates.add(f"{root_text}/{item}")
+        for candidate in candidates:
+            if candidate and candidate in normalized:
+                return True
+    return False
 
 
 def rg_target_looks_like_path(value: str) -> bool:

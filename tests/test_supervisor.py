@@ -8516,6 +8516,40 @@ Findings are ready.
         self.assertEqual(result["status"], "pass")
         self.assertNotIn("outside_bounded_read_scope", kinds)
 
+    def test_process_governance_allows_malformed_rg_quote_when_exact_allowed_path_is_present(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            plan_path = "/root/a9/.a9/plans/a9-plan-24h-two-lane-runtime/plan.json"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": (
+                            "/bin/bash -lc \"rg -n -m 20 'ready_for_execution_backlog|"
+                            "decision_status\\\\\\\"\\\\s*:\\\\s*\\\"not_decided|out_of_scope\\\" "
+                            f"{plan_path}\""
+                        ),
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="allowed-malformed-rg-exact-path",
+                phase="reference_scan",
+                prompt=f"live_read_budget_policy: stop\nbounded read: {plan_path}",
+                checks=[],
+                allowed_paths=[plan_path],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("outside_bounded_read_scope", kinds)
+
     def test_process_governance_allows_explicit_session_doc_read_in_bounded_scope(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
