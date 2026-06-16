@@ -11346,8 +11346,15 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
             plan = active_plan()
         debate_state = requirements_debate_progress(plan) if isinstance(plan, dict) else {}
         plan_ready_for_execution_backlog = str(debate_state.get("status") or "") == "ready_for_execution_backlog"
+        stale_debate_evidence = explicit_decision.get("decision_status") in {
+            "not_decided",
+            "partial_decision",
+            "missing",
+        }
 
-        if summary["status"] in {"needs-followup", "needs-repair"} and plan_ready_for_execution_backlog:
+        if plan_ready_for_execution_backlog and (
+            summary["status"] in {"needs-followup", "needs-repair"} or stale_debate_evidence
+        ):
             summary["auto_next_block"] = {
                 "reason": "review_closure_wait",
                 "status": summary["status"],
