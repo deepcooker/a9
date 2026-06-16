@@ -4530,7 +4530,10 @@ Do the work.
         self.assertEqual(items[0]["source"], "plan.execution_backlog.items")
 
         backlog["generated_task_ids"].append("exec-002-mechanism_extract-plan-completed-custom-backlog")
-        self.assertEqual(mod.plan_execution_backlog_items(plan, count=2), [])
+        followup_items = mod.plan_execution_backlog_items(plan, count=2)
+        self.assertEqual(len(followup_items), 1)
+        self.assertEqual(followup_items[0]["source"], "plan.execution_backlog_generation")
+        self.assertIn("route: debate_next", followup_items[0]["prompt"])
 
     def test_plan_execution_backlog_items_fall_back_to_change_request_review(self):
         mod = load_supervisor()
@@ -5067,6 +5070,90 @@ Findings are ready.
         self.assertEqual(item["source"], "debate_final_json")
         self.assertEqual(item["title"], "Wire debate backlog extraction")
         self.assertIn("scripts/a9_supervisor.py", item["allowed_paths"])
+
+    def test_update_active_plan_blocks_broad_debate_backlog_contract(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-broad-backlog",
+                    goal_id="goal-broad-backlog",
+                    contract={
+                        "problem": "Need backlog contracts that do not make workers broad-search.",
+                        "why_now": "Broad paths caused runtime worker drift.",
+                        "must": "Block broad generated execution backlog items.",
+                        "system_requirement": "debate final backlog is quality checked before execution.",
+                        "data_shape": "execution_backlog item quality findings.",
+                        "normal_flow": "bad backlog item -> blocked_not_decided.",
+                        "exception_flow": "valid exact file paths stay ready.",
+                        "acceptance": "broad item is not queued as ready.",
+                        "out_of_scope": "no silent execution of broad tasks.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 bounded plan lane.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "debate-run"
+                run_dir.mkdir(parents=True)
+                final_path = run_dir / "final.md"
+                final_path.write_text(
+                    json.dumps(
+                        {
+                            "protocolVersion": 1,
+                            "ok": True,
+                            "status": "ok",
+                            "output": {
+                                "decision_status": "decided",
+                                "change_request": {"status": "none"},
+                                "execution_backlog": {
+                                    "items": [
+                                        {
+                                            "title": "Too broad",
+                                            "phase": "implement",
+                                            "prompt": "Search scripts and crates to implement this.",
+                                            "allowed_paths": ["scripts", "crates/a9-supervisor"],
+                                            "checks": ["No raw session content injected into execution task prompts"],
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                task = mod.Task(
+                    path=tmp_path / "task.md",
+                    task_id="debate-task",
+                    phase="reference_scan",
+                    prompt="decision_status: not_decided\nroute: debate_next\nplan_id: plan-broad-backlog\n",
+                )
+                summary = {
+                    "run_dir": str(run_dir),
+                    "status": "pass",
+                    "worker": {"final_path": str(final_path)},
+                    "git_governance": {},
+                }
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = mod.load_plan("plan-broad-backlog")
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["execution_backlog_update"]["status"], "appended")
+        item = stored["execution_backlog"]["items"][0]
+        self.assertEqual(item["status"], "blocked_not_decided")
+        self.assertEqual(item["blocked_reason"], "backlog_item_contract_quality")
+        self.assertIn("broad_allowed_path:scripts", item["quality_findings"])
+        self.assertIn("non_executable_check:No raw session content injected into execution task prompts", item["quality_findings"])
+        self.assertEqual(mod.plan_execution_backlog_items(stored), [])
 
     def test_update_active_plan_skips_not_decided_debate_backlog(self):
         mod = load_supervisor()
@@ -8021,6 +8108,35 @@ Findings are ready.
                 prompt="Inspect only bounded slices from allowed_paths. Use bounded rg/sed reads only on allowed_paths.",
                 checks=[],
                 allowed_paths=["crates/a9-worker/src/main.rs"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("read_outside_allowed_paths", kinds)
+
+    def test_process_governance_ignores_rg_glob_value_as_read_target(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc \"rg -n -g '*.py' 'ready_for_execution_backlog|change_request' scripts/a9_supervisor.py | head -n 40\"",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="allowed-read-rg-glob",
+                phase="reference_scan",
+                prompt="Inspect only bounded slices from allowed_paths. Use bounded rg/sed reads only on allowed_paths.",
+                checks=[],
+                allowed_paths=["scripts/a9_supervisor.py"],
             )
             result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
 

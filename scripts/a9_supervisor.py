@@ -4697,7 +4697,7 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
 
     if parts and parts[0] == "rg":
         allowed_flags = {"-n", "--line-number", "-F", "--fixed-strings"}
-        allowed_value_flags = {"-m", "--max-count"}
+        allowed_value_flags = {"-m", "--max-count", "-g", "--glob"}
         saw_line_flag = False
         index = 1
         while index < len(parts) and parts[index].startswith("-"):
@@ -4822,17 +4822,32 @@ def command_read_targets(command: str) -> list[str]:
                     rg_files = True
                     index += 1
                     continue
-                if flag in {"-m", "--max-count"}:
+                if flag in {"-m", "--max-count", "-g", "--glob"}:
                     index += 2
                     continue
                 if flag.startswith("--max-count="):
+                    index += 1
+                    continue
+                if flag.startswith("--glob="):
                     index += 1
                     continue
                 index += 1
             if rg_files:
                 targets.extend(part for part in parts[index:] if not part.startswith("-") and rg_target_looks_like_path(part))
             elif index < len(parts):
-                targets.extend(part for part in parts[index + 1 :] if not part.startswith("-") and rg_target_looks_like_path(part))
+                raw_targets = parts[index + 1 :]
+                target_index = 0
+                while target_index < len(raw_targets):
+                    part = raw_targets[target_index]
+                    if part in {"-m", "--max-count", "-g", "--glob"}:
+                        target_index += 2
+                        continue
+                    if part.startswith("--max-count=") or part.startswith("--glob="):
+                        target_index += 1
+                        continue
+                    if not part.startswith("-") and rg_target_looks_like_path(part):
+                        targets.append(part)
+                    target_index += 1
     return targets
 
 
@@ -13050,8 +13065,6 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
             "closed",
             "cancelled",
             "skipped",
-            "blocked_not_decided",
-            "blocked-not-decided",
         }
         raw_statuses = {str(item.get("status") or "").strip().lower() for item in raw_items}
         if any(status not in terminal_statuses for status in raw_statuses):
@@ -13278,6 +13291,79 @@ def extract_execution_backlog_items_from_final(final_path: Path) -> list[dict[st
     return items
 
 
+def execution_backlog_allowed_path_findings(paths: list[str]) -> list[str]:
+    findings: list[str] = []
+    if not paths:
+        return ["allowed_paths_missing"]
+    broad_roots = {
+        ".",
+        "./",
+        "scripts",
+        "scripts/",
+        "crates",
+        "crates/",
+        "crates/a9-supervisor",
+        "crates/a9-supervisor/",
+        "crates/a9-worker",
+        "crates/a9-worker/",
+        ".a9",
+        ".a9/",
+        "/root/a9/.a9",
+        "/root/a9/.a9/",
+    }
+    for raw_path in paths:
+        path = str(raw_path or "").strip()
+        if not path:
+            continue
+        normalized = path.rstrip("/")
+        if path in broad_roots or normalized in broad_roots:
+            findings.append(f"broad_allowed_path:{path}")
+            continue
+        if path.startswith(".a9/") or path.startswith("/root/a9/.a9/"):
+            if path.startswith(".a9/plans/"):
+                continue
+            if path.startswith("/root/a9/.a9/plans/") and Path(path).suffix:
+                continue
+            findings.append(f"runtime_root_allowed_path:{path}")
+            continue
+        if "*" in path and not Path(path.replace("*", "x")).suffix:
+            findings.append(f"broad_glob_allowed_path:{path}")
+    return findings
+
+
+def execution_backlog_check_looks_executable(check: str) -> bool:
+    text = str(check or "").strip()
+    if not text:
+        return False
+    executable_prefixes = (
+        "python",
+        "python3",
+        "pytest",
+        "cargo ",
+        "npm ",
+        "pnpm ",
+        "yarn ",
+        "node ",
+        "bash ",
+        "sh ",
+        "test ",
+        "rg ",
+        "grep ",
+        "curl ",
+        "redis-cli ",
+        "git ",
+    )
+    return text.startswith(executable_prefixes)
+
+
+def execution_backlog_check_findings(checks: list[str]) -> list[str]:
+    findings: list[str] = []
+    for check in checks:
+        if not execution_backlog_check_looks_executable(check):
+            findings.append(f"non_executable_check:{bounded_inline(check, 80)}")
+    return findings
+
+
 def execution_backlog_final_decision(final_path: Path) -> dict[str, Any]:
     if not final_path.exists():
         return {"status": "missing", "reason": "final_path_missing"}
@@ -13348,22 +13434,34 @@ def append_execution_backlog_items_from_debate_run(
             continue
         existing_fingerprints.add(fingerprint)
         item_index = len([item for item in items if isinstance(item, dict)]) + 1
+        allowed_paths = (
+            [str(path).strip() for path in raw.get("allowed_paths", []) if str(path).strip()]
+            if isinstance(raw.get("allowed_paths"), list)
+            else extract_allowed_paths_from_execution_text(str(raw.get("allowed_execution") or ""))
+        )
+        checks = (
+            [str(check).strip() for check in raw.get("checks", []) if str(check).strip()]
+            if isinstance(raw.get("checks"), list)
+            else []
+        )
+        quality_findings = execution_backlog_allowed_path_findings(allowed_paths)
+        quality_findings.extend(execution_backlog_check_findings(checks))
         item = {
             "id": str(raw.get("id") or raw.get("backlog_id") or f"backlog-{item_index:03d}-{slugify(title)[:40]}"),
             "title": title,
             "phase": phase,
             "prompt": prompt,
-            "allowed_paths": [str(path).strip() for path in raw.get("allowed_paths", []) if str(path).strip()]
-            if isinstance(raw.get("allowed_paths"), list)
-            else extract_allowed_paths_from_execution_text(str(raw.get("allowed_execution") or "")),
-            "checks": [str(check).strip() for check in raw.get("checks", []) if str(check).strip()]
-            if isinstance(raw.get("checks"), list)
-            else [],
-            "status": "ready",
+            "allowed_paths": allowed_paths,
+            "checks": checks,
+            "status": "blocked_not_decided" if quality_findings else "ready",
             "source": "debate_final_json",
             "source_run": str(run_dir),
             "created_at": utc_now(),
         }
+        if quality_findings:
+            item["blocked_reason"] = "backlog_item_contract_quality"
+            item["quality_findings"] = quality_findings
+            item["blocked_at"] = utc_now()
         if str(raw.get("task_id") or "").strip():
             item["task_id"] = str(raw.get("task_id")).strip()
         items.append(item)
