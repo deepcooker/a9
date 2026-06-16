@@ -3132,6 +3132,7 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         task.phase in READ_HEAVY_PHASES
         and command_runs_uncapped_rg(normalized)
         and not (bounded_paths and command_is_single_bounded_read_of_paths(normalized, bounded_paths))
+        and not command_is_read_only_of_paths(normalized, list(task.allowed_paths) + bounded_paths)
     ):
         if live_read_budget_stop:
             return {

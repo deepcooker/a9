@@ -2854,6 +2854,48 @@ Do the work.
         self.assertEqual(worker["return_code"], 0)
         self.assertFalse(worker["budget_stopped"])
 
+    def test_run_worker_observes_uncapped_rg_on_allowed_path_without_stopping(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            plan_path = "/root/a9/.a9/plans/a9-plan-24h-two-lane-runtime/plan.json"
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="uncapped-rg-allowed-path-observe",
+                phase="reference_scan",
+                prompt=f"live_read_budget_policy: stop\nbounded read: {plan_path}\n",
+                allowed_paths=[plan_path],
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            command = f"/bin/bash -lc \"rg -n -C 4 'backlog-024|backlog-026' {plan_path}\""
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    f"print(json.dumps({{'type':'item.completed','item':{{'type':'command_execution','command':{command!r},'status':'completed','exit_code':0}}}}), flush=True)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                worker = mod.run_worker(task, worktree, run_dir)
+
+        self.assertEqual(worker["return_code"], 0)
+        self.assertFalse(worker["budget_stopped"])
+
     def test_run_worker_closes_stdout_pipe(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
