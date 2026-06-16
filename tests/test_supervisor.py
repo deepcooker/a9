@@ -4777,6 +4777,70 @@ Do the work.
         self.assertIn("retry_scope: use docs/project.md, docs/method.md, docs/session.md", items[0]["prompt"])
         self.assertTrue(any(path.endswith("/plans/plan-budget-retry/plan.json") for path in items[0]["allowed_paths"]))
 
+    def test_plan_backlog_generation_retries_budget_after_code_update_even_after_limit(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.RUNS_DIR.mkdir(parents=True)
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-budget-code-update",
+                    goal_id="goal-budget-code-update",
+                    contract={
+                        "problem": "Budget retry limit should not freeze after monitor fixes supervisor code.",
+                        "why_now": "Supervisor governance was repaired after retryable budget failures.",
+                        "must": "Allow one bounded retry after code revision changes.",
+                        "system_requirement": "old-revision budget failures are retryable once code changes.",
+                        "data_shape": "repo_head on generation summary.",
+                        "normal_flow": "budget failures -> code fix -> one more bounded generation retry.",
+                        "exception_flow": "same-code repeated failures still stop.",
+                        "acceptance": "retry item is produced despite three previous budget failures.",
+                        "out_of_scope": "unbounded retry loops.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 budget retry code-update policy.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-budget-code-update",
+                        "exec-002-mechanism_extract-plan-budget-code-update",
+                        "exec-003-vendor_import-plan-budget-code-update",
+                        "exec-004-implement-plan-budget-code-update",
+                        "exec-005-test-plan-budget-code-update",
+                        "exec-006-record-plan-budget-code-update",
+                        *[
+                            f"exec-backlog-generation-plan-budget-code-update-{index:03d}"
+                            for index in range(1, 4)
+                        ],
+                    ]
+                )
+                for index in range(1, 4):
+                    run_dir = mod.RUNS_DIR / f"budget-code-update-run-{index}"
+                    run_dir.mkdir()
+                    mod.write_json(
+                        run_dir / "summary.json",
+                        {
+                            "task_id": f"exec-backlog-generation-plan-budget-code-update-{index:03d}",
+                            "status": "retryable-worker-budget",
+                            "repo_head": "old-head-before-monitor-fix",
+                            "worker_failure": {
+                                "category": "budget",
+                                "reason": "worker command is outside the task's explicit bounded read scope",
+                            },
+                        },
+                    )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-budget-code-update-004")
+        self.assertIn("previous_backlog_generation_status: retryable-worker-budget", items[0]["prompt"])
+
     def test_plan_backlog_generation_retries_after_orphaned_worker_interruption(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

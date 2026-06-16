@@ -12867,7 +12867,7 @@ def backlog_generation_retryable_interrupted_summary(summary: dict[str, Any]) ->
 
 def backlog_generation_needs_retry_after_code_update(summary: dict[str, Any]) -> bool:
     status = str(summary.get("status") or "")
-    if status not in {"needs-followup", "needs-repair"}:
+    if status not in {"needs-followup", "needs-repair", "retryable-worker-budget"}:
         return False
     summary_head = str(summary.get("repo_head") or "").strip()
     if not summary_head:
@@ -12926,6 +12926,8 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str])
     if not summary:
         return False
     if backlog_generation_retryable_budget_summary(summary):
+        if backlog_generation_needs_retry_after_code_update(summary):
+            return True
         return backlog_generation_retryable_budget_count(plan_ref) < 3
     if backlog_generation_retryable_interrupted_summary(summary):
         return backlog_generation_consecutive_retryable_interrupted_count(plan_ref) < 3
