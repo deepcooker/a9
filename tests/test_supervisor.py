@@ -5100,9 +5100,11 @@ Do the work.
             tmp_path = Path(tmp)
             old_runs = mod.RUNS_DIR
             old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
             old_git_head = mod.git_head
             mod.RUNS_DIR = tmp_path / "runs"
             mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
             mod.RUNS_DIR.mkdir(parents=True)
             mod.PLANS_DIR.mkdir(parents=True)
             mod.git_head = lambda: "same-head"
@@ -5161,6 +5163,7 @@ Do the work.
             finally:
                 mod.RUNS_DIR = old_runs
                 mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
                 mod.git_head = old_git_head
 
         self.assertEqual(len(items), 1)
