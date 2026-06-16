@@ -8325,6 +8325,35 @@ Findings are ready.
         self.assertEqual(result["status"], "pass")
         self.assertNotIn("read_outside_allowed_paths", kinds)
 
+    def test_process_governance_allows_git_diff_on_explicit_allowed_paths(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'git diff -- scripts/a9_supervisor.py tests/test_supervisor.py'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="allowed-git-diff-scope",
+                phase="execution_next",
+                prompt="live_read_budget_policy: stop\nbounded read: scripts/a9_supervisor.py\nbounded read: tests/test_supervisor.py",
+                checks=[],
+                allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("outside_bounded_read_scope", kinds)
+
     def test_process_governance_ignores_rg_glob_value_as_read_target(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

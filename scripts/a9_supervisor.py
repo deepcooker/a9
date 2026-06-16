@@ -4747,6 +4747,13 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
             any(bounded_read_path_matches(pattern_text, target) for pattern_text in paths) for target in targets
         )
 
+    if parts and parts[0] == "git" and len(parts) >= 4 and parts[1] == "diff" and "--" in parts:
+        dash_index = parts.index("--")
+        targets = [part for part in parts[dash_index + 1 :] if part.strip()]
+        return bool(targets) and all(
+            any(bounded_read_path_matches(pattern_text, target) for pattern_text in paths) for target in targets
+        )
+
     if parts and parts[0] == "rg":
         allowed_flags = {"-n", "--line-number", "-F", "--fixed-strings"}
         allowed_value_flags = {"-m", "--max-count", "-g", "--glob"}
