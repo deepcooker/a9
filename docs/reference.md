@@ -170,15 +170,24 @@ Headroom use-through correction:
 
 Latest commercial-readiness read:
 
-- A9 should not choose Headroom as the raw `200万-500万 token / 10min`
-  ingestion engine. Its local ONNX path can approach that range for pure
-  embedding on small warmed batches, but full `save_memory` + SQLite/vector
-  indexing is far slower in the current default path.
+- The commercial-grade reference point from the operator is roughly
+  `200万-500万 token` and about `10MB/10兆` scale context processing. This is a
+  sizing lens, not a hard gate. Do not misread it as `10min` throughput or as a
+  fixed prompt-pack token budget.
+- The intended A9/A3B scenario is: A9 can receive a large context/data payload
+  from A9's own smaller model or upstream worker, hold that scale without
+  losing evidence, then split it into high-quality batches, filter noise, fold
+  repeated events, preserve source refs and feed refined context to A3B. The
+  target is not merely shrinking one prompt; it is controlled large-context
+  intake and staged cognition handoff.
+- A9 should not choose Headroom as the raw large-context ingestion engine. Its
+  local ONNX path is useful for pure embedding on small warmed batches, but full
+  `save_memory` + SQLite/vector indexing is far slower in the current default
+  path.
 - Measured on A9 operator session slices: pure ONNX embedding reached about
-  `236万 token / 10min` on one cold/warm mixed 20-item sample and about
-  `133万 token / 10min` on a 60-item warm sample. A previous 40-item cold
-  sample measured about `81万 token / 10min`. This is useful, but not enough
-  to justify putting raw session floods through it synchronously.
+  `236万`, `133万` and `81万` estimated-token rough throughput extrapolations
+  in short synthetic slices. These are only probes, not proof that Headroom can
+  handle the operator's large-context target end to end.
 - Measured full local memory path: clean 30-message operator sample took about
   `6.8s` init and `57.3s` save/index, while each scoped recall query returned
   in about `0.05s`. The quality was good only after A9 filtered out tool-output
@@ -186,13 +195,14 @@ Latest commercial-readiness read:
   curl/help/tool-output noise.
 - Therefore Headroom's A9 role is: context gateway, cache/live-zone protection,
   scoped recall, memory budget, CCR/retrieve tool protocol and observability.
-  It optimizes the recall/context slice that enters a worker prompt, usually
-  hundreds of tokens, not the raw evidence lake.
+  It optimizes the selected recall/context slice that enters a worker prompt,
+  not the raw evidence lake. The final prompt budget must be task-dependent,
+  not a fixed 200-500 token rule.
 - A9 must keep the high-throughput layer itself: stream parse raw session and
   worker JSONL, fold repeated events, drop tool-output noise, deduplicate
   context injection, classify role/session/project/run, then asynchronously
   index only high-value memory packets into MemPalace/Headroom-style storage.
-  Worker hot path should consume a bounded 200-500 token recall pack plus
+  Worker hot path should consume a bounded, task-shaped recall pack plus
   explicit evidence refs.
 
 Decision:
