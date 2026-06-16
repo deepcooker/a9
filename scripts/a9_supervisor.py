@@ -4657,6 +4657,7 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
     pipe_parts = shell_pipeline_parts(inner)
     if len(pipe_parts) == 2 and (
         re.fullmatch(r"head\s+(?:-n\s+\d+|-\d+)", pipe_parts[1])
+        or re.fullmatch(r"tail\s+(?:-n\s+\d+|-\d+)", pipe_parts[1])
         or re.fullmatch(r"sed\s+-n\s+['\"]?\d+\s*,\s*\d+p['\"]?", pipe_parts[1])
         or command_fragment_is_stdin_rg_filter(pipe_parts[1])
     ):

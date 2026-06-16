@@ -9347,6 +9347,10 @@ Findings are ready.
             task,
             "/bin/bash -lc 'rg -n needle scripts/a9_supervisor.py | sed -n \"1,20p\"'",
         )
+        tail_capped_rg = mod.live_worker_command_violation(
+            task,
+            "/bin/bash -lc 'rg -n needle scripts/a9_supervisor.py | tail -n 20'",
+        )
         repeated_flag_rg = mod.live_worker_command_violation(
             task,
             "/bin/bash -lc 'rg -n \"def append_execution_backlog_items_from_debate_run\" -n scripts/a9_supervisor.py'",
@@ -9391,6 +9395,7 @@ Findings are ready.
         self.assertEqual(broad_sed, {})
         self.assertEqual(capped_rg, {})
         self.assertEqual(sed_capped_rg, {})
+        self.assertEqual(tail_capped_rg, {})
         self.assertEqual(repeated_flag_rg, {})
         self.assertEqual(piped_rg_filter, {})
         self.assertEqual(malformed_pattern_word, {})
