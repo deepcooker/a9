@@ -133,6 +133,41 @@ reference-first copying.
 | Aider | `reference-projects/aider/aider/repomap.py`, `reference-projects/aider/aider/coders/architect_prompts.py`, `reference-projects/aider/aider/coders/udiff_prompts.py` | Repo map instead of full repo reads, architect/editor split, explicit edit format and git-friendly diff discipline. | A9 has repo map, bounded context, deterministic apply and git governance. | Worker still broad-searches (`scripts`, `tests`) after task generation. Next cut: generated backlog must include exact rg/sed commands or anchors, not just a file list. |
 | Headroom | `reference-projects/headroom/README.md`, `reference-projects/headroom/docs/content/docs/ccr.mdx`, `reference-projects/headroom/headroom/ccr/*`, `reference-projects/headroom/headroom/transforms/content_router.py`, `reference-projects/headroom/crates/headroom-core/src/ccr/mod.rs`, `reference-projects/headroom/crates/headroom-core/src/transforms/live_zone.rs`, `reference-projects/headroom/headroom/providers/codex/*`, `reference-projects/headroom/headroom/providers/openclaw/*` | Compress-Cache-Retrieve with source hash, retrieval tool injection, workspace-scoped context tracker, content-type router, live-zone byte-range surgery, cache volatility observation, proxy health/stats/metrics, Codex/OpenClaw wrapper config hygiene. | Source build passed in A9-isolated venv/toolchain; Python CCR/router/proxy/wrapper tests mostly pass; proxy smoke passed. Extra A9-shaped tests now cover cache stability, byte-faithful forwarding, system-prompt immutability, Codex WS lifecycle/timing, memory project isolation, learn analyzer/writer, compression failure action and streaming resilience. Real A9 replay showed good savings on a run prompt and summary, but zero savings and high latency on a 594 KB node-worker JSONL tail. This is still a use-through candidate, not a final architecture decision. | Primary strength appears to be context-gateway accident prevention and observability, not only token compression. It is not yet proven as a universal big-log reducer. Continue using it against real A9 worker/session logs before deciding what to copy. Do not put ML/ONNX Rust deps on A9 hot path yet. |
 
+Headroom use-through correction:
+
+- A9's earlier Headroom trial was too close to "call `compress()` and judge".
+  That is not Headroom's strongest opening.
+- The better opening is persistent gateway usage: `headroom proxy` or
+  `headroom wrap codex/claude` with the `agent-90` profile, proxy metrics,
+  CCR, cache-zone protection, retrieval hashes and provider-specific wrapper
+  hygiene.
+- A broader local matrix passed `2629` tests and failed `14`. The failures
+  split into environment/setup classes: optional memory bridge tests defaulted
+  to `sentence-transformers`, observability tests need OTEL/Langfuse extras,
+  two Codex wrap tests assume Python 3.11 `tomllib`, one persistent wrapper
+  test collided with A9's own port `8787`, and a direct env-path failure did
+  not reproduce in isolation.
+- Do not install Headroom's default `local` embedder casually. Its own config
+  marks it as `sentence-transformers` / torch-heavy. A9 should use the official
+  `onnx` embedder path for local memory trials unless a task explicitly asks
+  for the heavy backend.
+- A real ONNX memory-bridge smoke imported a small A9 memory file into
+  Headroom LocalBackend with `embedder_backend="onnx"`, producing `4` memories.
+  Cold init/import took about `21s`, but scoped semantic search returned in
+  about `0.05s` and found the A9 mainline plus "data before performance/gates".
+- Headroom's memory backend supports `user_id` and `session_id` scoping. A9
+  should never query a global memory heap by default; operator session, worker
+  session, project, role and run evidence must stay scoped and then be merged
+  by an explicit context pack.
+- The ONNX path emits an `onnxruntime` GPU discovery warning in this WSL
+  environment because `/sys/class/drm/card0/device/vendor` is missing. It is
+  not fatal for CPU execution, but deployment logs should suppress or classify
+  it so monitors do not treat it as memory failure.
+- Current Headroom conclusion: it is a serious context gateway/memory
+  candidate, but A9 still needs its own event folding and causal-memory
+  compiler. Raw A9 JSONL logs should be folded into meaningful events before
+  Headroom-style compression/retrieval; otherwise token savings can be zero.
+
 Decision:
 
 - The earlier high-quality debate came from durable context plus human
@@ -159,7 +194,7 @@ has been used locally, not when it is merely mentioned.
 | planning-with-files | Downloaded, templates and hook flow inspected. | File-backed task memory and resume. | Mechanism reference only; A9 will not import its role model or add extra doc sprawl. |
 | Hermes | Downloaded, not yet use-through tested. | Sidecar self-improvement, routines, wrongbook/eval feedback loop. | Candidate; must run a local spike before inclusion. |
 | ECC | Downloaded, not yet use-through tested. | Multi-agent/tool ecosystem shape and cross-IDE agent conventions. | Candidate; must be compared against A9 role model before inclusion. |
-| Headroom | Downloaded and source-run in A9 isolated environment. `headroom._core` build/import passed with Rust 1.95.0 under `.a9/rustup`; CCR tests passed `88/88`; content-router/decision/policy/cache-aligner/Codex/OpenClaw wrapper subset passed `225/227` with the two failures caused by Python 3.10 missing stdlib `tomllib`; proxy smoke passed `/livez`, `/readyz`, `/stats`, `/metrics`; proxy/cache/Codex-WS/memory/learn A9-shaped subset passed `226/226`; byte-faithful/system-prompt/failure-action/streaming/scalability/safety subset passed `134/134`; real A9 replay: run prompt `5688 -> 1649` tokens, run summary `1044 -> 491`, node-worker log tail `171653 -> 171653`; Rust `headroom-core` full test hit Ubuntu 22.04 glibc vs ONNX Runtime `__isoc23_*` link incompatibility. | Compression, token savings, Codex/Claude/OpenAI proxy behavior, model-aware context reduction and observability. | Not decided yet. Current hypothesis: Headroom's strongest value is context-gateway governance: keep unmutated bytes byte-faithful, protect system/cache hot zones, compress only safe live zones, preserve original evidence behind retrieval hashes, scope memory by workspace, surface metrics, and learn repeat failure patterns. Weakness seen so far: raw repetitive A9 JSONL logs need pre-aggregation/event folding before Headroom-style compression. Next use-through must replay real A9 worker/session payloads through proxy-shaped boundaries before A9 copies or replaces any existing context path. |
+| Headroom | Downloaded and source-run in A9 isolated environment. `headroom._core` build/import passed with Rust 1.95.0 under `.a9/rustup`; CCR tests passed `88/88`; content-router/decision/policy/cache-aligner/Codex/OpenClaw wrapper subset passed `225/227` with the two failures caused by Python 3.10 missing stdlib `tomllib`; proxy smoke passed `/livez`, `/readyz`, `/stats`, `/metrics`; proxy/cache/Codex-WS/memory/learn A9-shaped subset passed `226/226`; byte-faithful/system-prompt/failure-action/streaming/scalability/safety subset passed `134/134`; broader matrix passed `2629` and failed `14` mostly from optional/heavy deps, OTEL/Langfuse extras, Python 3.10 compatibility and A9 port `8787` collision; real A9 replay: run prompt `5688 -> 1649` tokens, run summary `1044 -> 491`, node-worker log tail `171653 -> 171653`; ONNX LocalBackend memory bridge smoke passed with `4` stored memories and `0.05s` scoped search; Rust `headroom-core` full test hit Ubuntu 22.04 glibc vs ONNX Runtime `__isoc23_*` link incompatibility. | Compression, token savings, Codex/Claude/OpenAI proxy behavior, model-aware context reduction, local memory bridge, scoped semantic retrieval and observability. | Not decided yet, but stronger than a plain compression library. Current hypothesis: Headroom's strongest value is context-gateway governance: keep unmutated bytes byte-faithful, protect system/cache hot zones, compress only safe live zones, preserve original evidence behind retrieval hashes, scope memory by workspace/session, surface metrics, and learn repeat failure patterns. Weakness seen so far: raw repetitive A9 JSONL logs need pre-aggregation/event folding before Headroom-style compression. Next use-through must replay real A9 worker/session payloads through proxy-shaped boundaries and ONNX memory before A9 copies or replaces any existing context path. |
 | MiroFish | Downloaded, not yet use-through tested. | Multi-agent prediction/simulation ideas and parallel-world evaluation flow. | Candidate; must prove it improves A9 debate/review quality before inclusion. |
 | Superpowers | Downloaded, not yet use-through tested. | Spec-first workflow, design confirmation, subagent execution discipline and agentic skills. | Candidate requirements/plan reference; must be run against an A9-shaped requirement before inclusion. |
 | gstack | Downloaded, not yet use-through tested. | Skillized roles, plan reviews, QA/benchmark/retro discipline. | Candidate role-review reference; only mechanisms that improve A9's own method roles should be copied. |
