@@ -4652,9 +4652,9 @@ def command_is_single_bounded_read_of_paths(command: str, paths: list[str]) -> b
     normalized = normalize_shell_command(command)
     inner = shell_lc_inner_command(normalized)
     inner = inner.strip()
-    if re.search(r"\s(?:\|\||;)\s", inner):
+    if "||" in shell_sequence_operators(inner) or ";" in shell_sequence_operators(inner):
         return False
-    fragments = [part.strip() for part in re.split(r"\s+&&\s+", inner) if part.strip()]
+    fragments = [part.strip() for part in shell_sequence_parts(inner, allow_and=True) if part.strip()]
     fragments = [part for part in fragments if not command_fragment_is_cd(part)]
     return bool(fragments) and all(command_fragment_is_bounded_read_of_paths(fragment, paths) for fragment in fragments)
 
@@ -4707,6 +4707,90 @@ def shell_pipeline_parts(command: str) -> list[str]:
         current.append(char)
     parts.append("".join(current).strip())
     return [part for part in parts if part]
+
+
+def shell_sequence_parts(command: str, *, allow_and: bool = False) -> list[str]:
+    parts: list[str] = []
+    current: list[str] = []
+    quote = ""
+    escaped = False
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            current.append(char)
+            escaped = True
+            index += 1
+            continue
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            current.append(char)
+            quote = char
+            index += 1
+            continue
+        if char == ";":
+            parts.append("".join(current).strip())
+            current = []
+            index += 1
+            continue
+        if command[index : index + 2] == "&&":
+            if allow_and:
+                parts.append("".join(current).strip())
+                current = []
+                index += 2
+                continue
+        current.append(char)
+        index += 1
+    parts.append("".join(current).strip())
+    return [part for part in parts if part]
+
+
+def shell_sequence_operators(command: str) -> set[str]:
+    operators: set[str] = set()
+    quote = ""
+    escaped = False
+    index = 0
+    while index < len(command):
+        char = command[index]
+        if escaped:
+            escaped = False
+            index += 1
+            continue
+        if char == "\\":
+            escaped = True
+            index += 1
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+            index += 1
+            continue
+        if char in {"'", '"'}:
+            quote = char
+            index += 1
+            continue
+        if char == ";":
+            operators.add(";")
+        if command[index : index + 2] == "||":
+            operators.add("||")
+            index += 2
+            continue
+        if command[index : index + 2] == "&&":
+            operators.add("&&")
+            index += 2
+            continue
+        index += 1
+    return operators
 
 
 def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> bool:
@@ -4861,7 +4945,7 @@ def prompt_requires_live_read_budget_stop(prompt: str) -> bool:
 def command_read_targets(command: str) -> list[str]:
     normalized = normalize_shell_command(command)
     inner = shell_lc_inner_command(normalized).strip()
-    fragments = [part.strip() for part in re.split(r"\s+(?:&&|;)\s+", inner) if part.strip()]
+    fragments = [part.strip() for part in shell_sequence_parts(inner, allow_and=True) if part.strip()]
     targets: list[str] = []
     for fragment in fragments or [inner]:
         pipe_head = shell_pipeline_parts(fragment)[0].strip()
@@ -4920,6 +5004,10 @@ def command_read_targets(command: str) -> list[str]:
             if len(git_parts) >= 4 and git_parts[1] in {"diff", "show"} and "--" in git_parts:
                 dash_index = git_parts.index("--")
                 targets.extend(part for part in git_parts[dash_index + 1 :] if part.strip())
+        elif name == "awk" and len(parts) >= 2:
+            awk_targets = [part for part in parts[1:] if not part.startswith("-") and rg_target_looks_like_path(part)]
+            if awk_targets:
+                targets.append(awk_targets[-1])
     return targets
 
 
@@ -4943,9 +5031,9 @@ def command_is_read_only_of_paths(command: str, paths: list[str]) -> bool:
         return False
     normalized = normalize_shell_command(command)
     inner = shell_lc_inner_command(normalized).strip()
-    if re.search(r"\s(?:\|\||;)\s", inner):
+    if "||" in shell_sequence_operators(inner) or ";" in shell_sequence_operators(inner):
         return False
-    fragments = [part.strip() for part in re.split(r"\s+&&\s+", inner) if part.strip()]
+    fragments = [part.strip() for part in shell_sequence_parts(inner, allow_and=True) if part.strip()]
     fragments = [part for part in fragments if not command_fragment_is_cd(part)]
     if not fragments:
         return False
