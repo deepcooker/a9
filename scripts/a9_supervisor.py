@@ -3042,6 +3042,8 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
     bounded_paths = bounded_read_paths_from_prompt(task.prompt)
     if command_is_python_readonly_probe_on_allowed_paths(normalized, list(task.allowed_paths) + bounded_paths):
         return {}
+    if command_is_low_cost_workspace_orientation(normalized):
+        return {}
     if command_is_low_cost_directory_listing(normalized, list(task.allowed_paths) + bounded_paths):
         return {}
     if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
@@ -5195,6 +5197,13 @@ def sed_window_governance(
 def command_runs_ls(command: str) -> bool:
     normalized = normalize_shell_command(command)
     return bool(re.search(r"(?:^|\s)(?:/bin/)?(?:bash|sh)\s+-lc\s+['\"]?ls(?:['\"]?|\s|$)", normalized)) or normalized == "ls"
+
+
+def command_is_low_cost_workspace_orientation(command: str) -> bool:
+    normalized = normalize_shell_command(command)
+    inner = shell_lc_inner_command(normalized).strip()
+    fragments = [part.strip() for part in re.split(r"\s*;\s*", inner) if part.strip()]
+    return fragments in (["pwd"], ["pwd", "ls"], ["pwd", "ls -1"])
 
 
 def command_is_low_cost_directory_listing(command: str, allowed_paths: list[str] | None = None) -> bool:

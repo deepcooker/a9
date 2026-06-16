@@ -9275,6 +9275,7 @@ Findings are ready.
         exact_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n needle scripts/a9_supervisor.py'")
         outside_scope = mod.live_worker_command_violation(task, "/bin/bash -lc 'sed -n \"1,80p\" docs/project.md'")
         runtime_root = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 token .a9/runs'")
+        orientation = mod.live_worker_command_violation(task, "/bin/bash -lc 'pwd; ls'")
         broad_sed = mod.live_worker_command_violation(task, "/bin/bash -lc \"sed -n '1,241p' scripts/a9_supervisor.py\"")
         capped_rg = mod.live_worker_command_violation(task, "/bin/bash -lc 'rg -n -m 20 needle scripts/a9_supervisor.py'")
         sed_capped_rg = mod.live_worker_command_violation(
@@ -9319,6 +9320,7 @@ Findings are ready.
         )
 
         self.assertEqual(exact_rg, {})
+        self.assertEqual(orientation, {})
         self.assertEqual(outside_scope["kind"], "outside_bounded_read_scope")
         self.assertIn(runtime_root["kind"], {"runtime_evidence_root_read", "outside_bounded_read_scope"})
         self.assertEqual(broad_sed, {})
