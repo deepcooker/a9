@@ -4775,6 +4775,8 @@ Do the work.
         self.assertIn("previous_backlog_generation_status: retryable-worker-budget", items[0]["prompt"])
         self.assertIn("previous_forbidden_read_paths: docs/a9-current-decision-packet.md", items[0]["prompt"])
         self.assertIn("retry_scope: use docs/project.md, docs/method.md, docs/session.md", items[0]["prompt"])
+        self.assertIn("allowed_paths, read_commands, checks", items[0]["prompt"])
+        self.assertIn("Each backlog item read_commands must be exact bounded commands", items[0]["prompt"])
         self.assertTrue(any(path.endswith("/plans/plan-budget-retry/plan.json") for path in items[0]["allowed_paths"]))
 
     def test_plan_backlog_generation_retries_budget_after_code_update_even_after_limit(self):
@@ -5102,6 +5104,7 @@ Findings are ready.
         "phase": "implement",
         "prompt": "Extract execution backlog JSON from debate final and persist it.",
         "allowed_paths": ["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        "read_commands": ["rg -n -m 20 'execution_backlog' scripts/a9_supervisor.py", "sed -n '5100,5160p' tests/test_supervisor.py"],
         "checks": ["python3 -m unittest tests.test_supervisor"]
       }
     ]
@@ -5138,6 +5141,7 @@ Findings are ready.
         self.assertEqual(item["source"], "debate_final_json")
         self.assertEqual(item["title"], "Wire debate backlog extraction")
         self.assertIn("scripts/a9_supervisor.py", item["allowed_paths"])
+        self.assertIn("rg -n -m 20 'execution_backlog' scripts/a9_supervisor.py", item["read_commands"])
 
     def test_update_active_plan_blocks_broad_debate_backlog_contract(self):
         mod = load_supervisor()
@@ -5187,6 +5191,7 @@ Findings are ready.
                                             "phase": "implement",
                                             "prompt": "Search scripts and crates to implement this.",
                                             "allowed_paths": ["scripts", "crates/a9-supervisor"],
+                                            "read_commands": ["rg -n 'router' scripts"],
                                             "checks": ["No raw session content injected into execution task prompts"],
                                         }
                                     ]
@@ -5220,6 +5225,7 @@ Findings are ready.
         self.assertEqual(item["status"], "blocked_not_decided")
         self.assertEqual(item["blocked_reason"], "backlog_item_contract_quality")
         self.assertIn("broad_allowed_path:scripts", item["quality_findings"])
+        self.assertIn("broad_read_command:rg -n 'router' scripts", item["quality_findings"])
         self.assertIn("non_executable_check:No raw session content injected into execution task prompts", item["quality_findings"])
         self.assertEqual(mod.plan_execution_backlog_items(stored), [])
 

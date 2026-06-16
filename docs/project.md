@@ -131,6 +131,13 @@ P7 NZX technical MVP
   stops. Task-quality blocks are now written back into the active plan instead
   of leaving false `queued` state. Next cut: backlog-generation must emit exact
   read commands or anchors, validated checks, and no broad root aliases.
+- 2026-06-16 follow-up: backlog-generation prompts now require each generated
+  execution item to include `read_commands` alongside `allowed_paths` and
+  checks. Debate-final backlog ingestion records `read_commands` and blocks
+  missing, broad, non-bounded, or outside-scope read commands as
+  `backlog_item_contract_quality`. Old hand-written backlog items get a safe
+  file-level `sed -n '1,120p'` read-command fallback so the schema upgrade does
+  not break the current 24h lane.
 - Backlog-generation debate tasks now include exact active-plan evidence files
   (`plan.json`, `progress.md`, `change_request.md`, `findings.md`,
   `mistakes.md`) in bounded read scope. Without these files, workers can

@@ -12752,6 +12752,9 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
     if not allowed_paths:
         allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
     checks = [str(check).strip() for check in raw.get("checks", []) if str(check).strip()] if isinstance(raw.get("checks"), list) else []
+    read_commands = execution_backlog_read_commands(raw)
+    if not read_commands:
+        read_commands = default_bounded_read_commands_for_paths(allowed_paths)
     title = str(raw.get("title") or raw.get("objective") or phase).strip()
     objective = str(raw.get("objective") or raw.get("prompt") or title).strip()
     prompt_body = str(raw.get("prompt") or objective).strip()
@@ -12785,6 +12788,7 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
             "",
             "Rules:",
             "- Execute only this bounded slice.",
+            "- Before reading source, use only the exact read_commands/anchors supplied in this task packet.",
             "- Use reference-first copying where the slice requires it.",
             "- live_read_budget_policy: stop.",
             "- Read only bounded slices from allowed_paths; do not cd to /root/a9 or search broad roots.",
@@ -12793,6 +12797,9 @@ def normalize_execution_backlog_item(raw: dict[str, Any], *, index: int, plan: d
             "- Do not search `.a9` roots; use exact evidence paths already provided in the prompt.",
             "- Do not change product scope, data contract, state flow, acceptance, or out_of_scope.",
             "- If the contract is wrong, append a plan change_request instead of silently changing it.",
+            "",
+            "Bounded read commands:",
+            *(f"- {command}" for command in read_commands[:8]),
         ]
     )
     return {
@@ -13081,14 +13088,15 @@ def plan_backlog_generation_continuation_item(
             "- Return strict_worker_envelope JSON.",
             "- If more implementation work is justified, set output.decision_status to decided, change_request.status to none,",
             "  and include at most 3 compact output.execution_backlog.items.",
-            "- Each backlog item must include title, phase, prompt, allowed_paths, checks, and acceptance or clear validation notes.",
+            "- Each backlog item must include title, phase, prompt, allowed_paths, read_commands, checks, and acceptance or clear validation notes.",
+            "- Each backlog item read_commands must be exact bounded commands such as `rg -n -m 20 'pattern' path` or `sed -n '10,80p' path`; no broad aliases like `scripts`, `tests`, `.a9`, or `/root/a9`.",
             "- If the contract is stale or insufficient, set output.decision_status to not_decided and output.change_request.status to required.",
             "- Do not mutate plan contract fields directly; use change_request for contract changes.",
             "",
             "Rules:",
             "- This is requirements/backlog shaping, not execution.",
             "- live_read_budget_policy: stop.",
-            "- Read only bounded slices from allowed_paths; do not cd to /root/a9 or search broad roots.",
+            "- Read only bounded slices from the exact read_commands you output; do not cd to /root/a9 or search broad roots.",
             "- Use capped `rg -n -m 20` or `rg ... | head -n 40`; never run uncapped rg in read-heavy phases.",
             "- Keep each `sed -n` source window <= 120 lines and total requested source lines <= 180.",
             "- Do not search `.a9` roots; use exact evidence paths already provided in the prompt.",
@@ -13434,6 +13442,58 @@ def execution_backlog_check_findings(checks: list[str]) -> list[str]:
     return findings
 
 
+def execution_backlog_read_commands(raw: dict[str, Any]) -> list[str]:
+    commands: list[str] = []
+    for key in ("read_commands", "bounded_read_commands", "evidence_commands"):
+        value = raw.get(key)
+        if isinstance(value, list):
+            commands.extend(str(item).strip() for item in value if str(item).strip())
+    return commands
+
+
+def default_bounded_read_commands_for_paths(paths: list[str]) -> list[str]:
+    commands: list[str] = []
+    for raw_path in paths:
+        path = str(raw_path or "").strip()
+        if not path or path.endswith("/") or "*" in path:
+            continue
+        if not Path(path).suffix:
+            continue
+        commands.append(f"sed -n '1,120p' {path}")
+    return commands[:8]
+
+
+def execution_backlog_read_command_findings(commands: list[str], allowed_paths: list[str]) -> list[str]:
+    findings: list[str] = []
+    if not commands:
+        return ["read_commands_missing"]
+    broad_terms = (
+        " /root/a9",
+        " . ",
+        " scripts ",
+        " tests ",
+        " crates ",
+        " .a9 ",
+        "find ",
+        "ls -R",
+        "tree ",
+    )
+    allowed = [path.rstrip("/") for path in allowed_paths if path.strip()]
+    for command in commands:
+        text = str(command or "").strip()
+        if not text:
+            continue
+        if not re.search(r"\b(rg|sed|nl)\b", text):
+            findings.append(f"non_bounded_read_command:{bounded_inline(text, 80)}")
+            continue
+        if any(term in f" {text} " for term in broad_terms):
+            findings.append(f"broad_read_command:{bounded_inline(text, 80)}")
+            continue
+        if allowed and not any(path and path in text for path in allowed):
+            findings.append(f"read_command_outside_allowed_paths:{bounded_inline(text, 80)}")
+    return findings
+
+
 def execution_backlog_final_decision(final_path: Path) -> dict[str, Any]:
     if not final_path.exists():
         return {"status": "missing", "reason": "final_path_missing"}
@@ -13514,14 +13574,17 @@ def append_execution_backlog_items_from_debate_run(
             if isinstance(raw.get("checks"), list)
             else []
         )
+        read_commands = execution_backlog_read_commands(raw)
         quality_findings = execution_backlog_allowed_path_findings(allowed_paths)
         quality_findings.extend(execution_backlog_check_findings(checks))
+        quality_findings.extend(execution_backlog_read_command_findings(read_commands, allowed_paths))
         item = {
             "id": str(raw.get("id") or raw.get("backlog_id") or f"backlog-{item_index:03d}-{slugify(title)[:40]}"),
             "title": title,
             "phase": phase,
             "prompt": prompt,
             "allowed_paths": allowed_paths,
+            "read_commands": read_commands,
             "checks": checks,
             "status": "blocked_not_decided" if quality_findings else "ready",
             "source": "debate_final_json",
