@@ -5033,6 +5033,123 @@ Do the work.
         self.assertIn("previous_interruption_reason: no_live_worker_process", items[0]["prompt"])
         self.assertTrue(any(path.endswith("/plans/plan-interrupt-retry/plan.json") for path in items[0]["allowed_paths"]))
 
+    def test_plan_backlog_generation_retries_after_transport_timeout(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.RUNS_DIR.mkdir(parents=True)
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-timeout-retry",
+                    goal_id="goal-timeout-retry",
+                    contract={
+                        "problem": "Backlog generation timed out during transport.",
+                        "why_now": "24h lane should retry network/model timeout without drifting.",
+                        "must": "Retry timeout with bounded context.",
+                        "system_requirement": "retryable-timeout creates a bounded backlog-generation retry.",
+                        "data_shape": "summary status and timeout worker_failure.",
+                        "normal_flow": "timeout -> bounded retry.",
+                        "exception_flow": "repeated timeout stops for monitor review.",
+                        "acceptance": "retry prompt carries timeout reason.",
+                        "out_of_scope": "generic goal fallback.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 transport timeout recovery.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-timeout-retry",
+                        "exec-002-mechanism_extract-plan-timeout-retry",
+                        "exec-003-vendor_import-plan-timeout-retry",
+                        "exec-004-implement-plan-timeout-retry",
+                        "exec-005-test-plan-timeout-retry",
+                        "exec-006-record-plan-timeout-retry",
+                        "exec-backlog-generation-plan-timeout-retry-001",
+                    ]
+                )
+                run_dir = mod.RUNS_DIR / "timeout-retry-run"
+                run_dir.mkdir()
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "exec-backlog-generation-plan-timeout-retry-001",
+                        "status": "retryable-timeout",
+                        "worker_failure": {
+                            "category": "timeout",
+                            "reason": "worker idle timed out",
+                        },
+                    },
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-timeout-retry-002")
+        self.assertIn("previous_backlog_generation_status: retryable-timeout", items[0]["prompt"])
+        self.assertIn("previous_timeout_reason: worker idle timed out", items[0]["prompt"])
+
+    def test_plan_backlog_generation_stops_after_three_transport_timeouts(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.RUNS_DIR.mkdir(parents=True)
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-timeout-stop",
+                    goal_id="goal-timeout-stop",
+                    contract={
+                        "problem": "Repeated timeout should not loop forever.",
+                        "why_now": "Network outage must not burn 24h tokens indefinitely.",
+                        "must": "Stop after repeated timeout.",
+                        "system_requirement": "three consecutive retryable-timeout summaries block continuation.",
+                        "data_shape": "latest generation summaries.",
+                        "normal_flow": "timeout x3 -> wait monitor.",
+                        "exception_flow": "code update or monitor closure may later reopen.",
+                        "acceptance": "no retry item after three consecutive timeouts.",
+                        "out_of_scope": "infinite retry.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 transport timeout recovery.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-timeout-stop",
+                        "exec-002-mechanism_extract-plan-timeout-stop",
+                        "exec-003-vendor_import-plan-timeout-stop",
+                        "exec-004-implement-plan-timeout-stop",
+                        "exec-005-test-plan-timeout-stop",
+                        "exec-006-record-plan-timeout-stop",
+                        "exec-backlog-generation-plan-timeout-stop-001",
+                        "exec-backlog-generation-plan-timeout-stop-002",
+                        "exec-backlog-generation-plan-timeout-stop-003",
+                    ]
+                )
+                for index in range(1, 4):
+                    run_dir = mod.RUNS_DIR / f"timeout-stop-run-{index}"
+                    run_dir.mkdir()
+                    mod.write_json(
+                        run_dir / "summary.json",
+                        {
+                            "task_id": f"exec-backlog-generation-plan-timeout-stop-{index:03d}",
+                            "status": "retryable-timeout",
+                            "worker_failure": {"category": "timeout", "reason": "worker idle timed out"},
+                        },
+                    )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(items, [])
+
     def test_plan_backlog_generation_retries_stale_needs_followup_after_code_update(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

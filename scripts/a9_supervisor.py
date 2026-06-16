@@ -13144,9 +13144,15 @@ def backlog_generation_retryable_interrupted_summary(summary: dict[str, Any]) ->
     )
 
 
+def backlog_generation_retryable_timeout_summary(summary: dict[str, Any]) -> bool:
+    status = str(summary.get("status") or "")
+    worker_failure = summary.get("worker_failure") if isinstance(summary.get("worker_failure"), dict) else {}
+    return status == "retryable-timeout" or worker_failure.get("category") == "timeout"
+
+
 def backlog_generation_needs_retry_after_code_update(summary: dict[str, Any]) -> bool:
     status = str(summary.get("status") or "")
-    if status not in {"needs-followup", "needs-repair", "retryable-worker-budget"}:
+    if status not in {"needs-followup", "needs-repair", "retryable-worker-budget", "retryable-timeout"}:
         return False
     summary_head = str(summary.get("repo_head") or "").strip()
     if not summary_head:
@@ -13221,6 +13227,30 @@ def backlog_generation_consecutive_retryable_interrupted_count(plan_ref: str) ->
     return count
 
 
+def backlog_generation_consecutive_retryable_timeout_count(plan_ref: str) -> int:
+    prefix = f"exec-backlog-generation-{plan_ref}-"
+    summaries: list[tuple[float, dict[str, Any]]] = []
+    for summary_path in RUNS_DIR.glob("*/summary.json"):
+        try:
+            mtime = summary_path.stat().st_mtime
+        except OSError:
+            continue
+        data = read_json_file(summary_path)
+        if not data:
+            continue
+        task_id = str(data.get("task_id") or "")
+        if prefix not in task_id:
+            continue
+        summaries.append((mtime, data))
+    summaries.sort(key=lambda item: item[0], reverse=True)
+    count = 0
+    for _, summary in summaries:
+        if not backlog_generation_retryable_timeout_summary(summary):
+            break
+        count += 1
+    return count
+
+
 def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str], *, plan: dict[str, Any] | None = None) -> bool:
     prefix = f"exec-backlog-generation-{plan_ref}-"
     if not any(prefix in str(task_id) for task_id in generated_task_ids):
@@ -13234,6 +13264,8 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str],
         return backlog_generation_retryable_budget_count(plan_ref) < 3
     if backlog_generation_retryable_interrupted_summary(summary):
         return backlog_generation_consecutive_retryable_interrupted_count(plan_ref) < 3
+    if backlog_generation_retryable_timeout_summary(summary):
+        return backlog_generation_consecutive_retryable_timeout_count(plan_ref) < 3
     if backlog_generation_needs_retry_after_code_update(summary):
         return True
     if plan is not None and backlog_generation_has_monitor_closure_after_summary(plan, summary):
@@ -13264,6 +13296,7 @@ def plan_backlog_generation_continuation_item(
     latest_generation = latest_backlog_generation_summary(plan_ref)
     retry_budget = backlog_generation_retryable_budget_summary(latest_generation)
     retry_interrupted = backlog_generation_retryable_interrupted_summary(latest_generation)
+    retry_timeout = backlog_generation_retryable_timeout_summary(latest_generation)
     retry_after_code_update = backlog_generation_needs_retry_after_code_update(latest_generation)
     retry_after_monitor_closure = backlog_generation_has_monitor_closure_after_summary(plan, latest_generation)
     retry_lines: list[str] = []
@@ -13289,6 +13322,14 @@ def plan_backlog_generation_continuation_item(
             "previous_backlog_generation_status: retryable-worker-interrupted",
             f"previous_interruption_reason: {worker_failure.get('reason', '')}",
             "retry_policy: previous worker had no live process; resume the same backlog-generation intent with bounded sources only.",
+            "retry_scope: use docs/project.md, docs/method.md, docs/session.md, and active plan files only.",
+        ]
+    elif retry_timeout:
+        worker_failure = latest_generation.get("worker_failure") if isinstance(latest_generation.get("worker_failure"), dict) else {}
+        retry_lines = [
+            "previous_backlog_generation_status: retryable-timeout",
+            f"previous_timeout_reason: {worker_failure.get('reason', '')}",
+            "retry_policy: previous worker timed out during transport/model response; retry the same backlog-generation intent with bounded sources only.",
             "retry_scope: use docs/project.md, docs/method.md, docs/session.md, and active plan files only.",
         ]
     elif retry_after_code_update:
