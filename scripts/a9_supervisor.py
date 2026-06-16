@@ -1426,6 +1426,24 @@ def archive_completed_running_lease(
     if task_md.exists():
         shutil.move(str(task_md), str(target_md))
     lease_path.unlink(missing_ok=True)
+    run_dir = Path(str(lease.get("run_dir") or ""))
+    if str(run_dir):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        with (run_dir / "evidence.jsonl").open("a", encoding="utf-8") as evidence_file:
+            evidence_file.write(
+                json.dumps(
+                    {
+                        "schema": "a9.evidence.v1",
+                        "kind": "stale_running_lease_archived",
+                        "task_id": task_id,
+                        "status": "stale-running-archived",
+                        "reason": reason,
+                        "archived_at": archived["archived_at"],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
     return {"task_id": task_id, "status": "stale-running-archived", "reason": reason, "target_json": str(target_json)}
 
 
@@ -1443,6 +1461,15 @@ def reconcile_orphaned_running_tasks(*, max_age_seconds: int = 60) -> list[dict[
                     lease_path,
                     lease,
                     reason="summary_exists_stale_running_lease",
+                )
+            )
+            continue
+        if run_dir and (run_dir / "final.md").exists():
+            reconciled.append(
+                archive_completed_running_lease(
+                    lease_path,
+                    lease,
+                    reason="final_exists_without_summary_stale_running_lease",
                 )
             )
             continue

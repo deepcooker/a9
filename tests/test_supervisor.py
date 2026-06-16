@@ -325,6 +325,45 @@ Do the work.
                 mod.RUNNING_DIR = old_running
                 mod.INTERRUPTED_DIR = old_interrupted
 
+    def test_reconcile_orphaned_running_tasks_archives_stale_lease_when_final_exists(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_running = mod.RUNNING_DIR
+            old_interrupted = mod.INTERRUPTED_DIR
+            try:
+                mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.INTERRUPTED_DIR = Path(tmp) / "interrupted"
+                mod.RUNNING_DIR.mkdir(parents=True)
+                run_dir = Path(tmp) / "runs" / "run-final"
+                run_dir.mkdir(parents=True)
+                (run_dir / "final.md").write_text('{"ok": true}\n', encoding="utf-8")
+                lease_path = mod.RUNNING_DIR / "task-final.json"
+                mod.write_json(
+                    lease_path,
+                    {
+                        "task_id": "task-final",
+                        "started_at": "2026-06-03T00:00:00+00:00",
+                        "run_dir": str(run_dir),
+                    },
+                )
+                (mod.RUNNING_DIR / "task-final.md").write_text("do it\n", encoding="utf-8")
+
+                with mock.patch.object(mod, "running_process_contains", return_value=False):
+                    result = mod.reconcile_orphaned_running_tasks(max_age_seconds=0)
+
+                self.assertEqual(len(result), 1)
+                self.assertEqual(result[0]["status"], "stale-running-archived")
+                self.assertEqual(result[0]["reason"], "final_exists_without_summary_stale_running_lease")
+                self.assertFalse(lease_path.exists())
+                self.assertFalse((run_dir / "summary.json").exists())
+                self.assertTrue((run_dir / "final.md").exists())
+                evidence_text = (run_dir / "evidence.jsonl").read_text(encoding="utf-8")
+                self.assertIn("stale_running_lease_archived", evidence_text)
+                self.assertIn("final_exists_without_summary_stale_running_lease", evidence_text)
+            finally:
+                mod.RUNNING_DIR = old_running
+                mod.INTERRUPTED_DIR = old_interrupted
+
     def test_reconcile_orphaned_running_tasks_keeps_live_worker_lease(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
