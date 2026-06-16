@@ -5954,25 +5954,92 @@ Findings are ready.
 
     def test_schedule_next_task_still_blocks_debate_without_backlog_append(self):
         mod = load_supervisor()
-        task = mod.Task(
-            path=Path("task.md"),
-            task_id="debate-no-backlog",
-            phase="reference_scan",
-            prompt="decision_status: not_decided\nroute: debate_next\nplan_id: missing\n",
-        )
-        summary = {
-            "status": "pass",
-            "active_plan_update": {
-                "status": "updated",
-                "plan_id": "missing",
-                "execution_backlog_update": {"status": "skipped", "reason": "no_execution_backlog_json"},
-            },
-        }
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            try:
+                mod.PLANS_DIR = tmp_path / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="debate-no-backlog",
+                    phase="reference_scan",
+                    prompt="decision_status: not_decided\nroute: debate_next\nplan_id: missing\n",
+                )
+                summary = {
+                    "status": "pass",
+                    "active_plan_update": {
+                        "status": "updated",
+                        "plan_id": "missing",
+                        "execution_backlog_update": {"status": "skipped", "reason": "no_execution_backlog_json"},
+                    },
+                }
 
-        next_path = mod.schedule_next_task(task, summary)
+                next_path = mod.schedule_next_task(task, summary)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
 
         self.assertIsNone(next_path)
         self.assertEqual(summary["auto_next_block"]["reason"], "debate_next_requires_monitor_decision")
+
+    def test_schedule_next_task_blocks_unclosed_backlog_draft_until_review_closure(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            try:
+                mod.PLANS_DIR = tmp_path / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                plan = mod.create_plan_payload(
+                    plan_id="plan-unclosed-backlog-draft",
+                    goal_id="goal-unclosed-backlog-draft",
+                    contract={
+                        "problem": "Debate produced a backlog draft before the contract closed.",
+                        "must": "Wait for review closure instead of repeating debate.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "draft-001",
+                        "title": "Draft execution slice",
+                        "phase": "implement",
+                        "prompt": "Only valid after review closure.",
+                        "status": "blocked_not_decided",
+                    }
+                )
+                mod.write_plan_files(plan)
+
+                task = mod.Task(
+                    path=tmp_path / "task.md",
+                    task_id="debate-with-unclosed-backlog-draft",
+                    phase="reference_scan",
+                    prompt=(
+                        "decision_status: not_decided\n"
+                        "route: debate_next\n"
+                        "plan_id: plan-unclosed-backlog-draft\n"
+                    ),
+                )
+                summary = {
+                    "status": "pass",
+                    "active_plan_update": {
+                        "status": "updated",
+                        "plan_id": "plan-unclosed-backlog-draft",
+                        "execution_backlog_update": {"status": "appended"},
+                    },
+                }
+
+                next_path = mod.schedule_next_task(task, summary)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertIsNone(next_path)
+        self.assertEqual(summary["auto_next_block"]["reason"], "review_closure_wait")
+        self.assertFalse(summary["auto_next_block"]["plan_ready_for_execution_backlog"])
 
     def test_update_active_plan_from_run_records_refs_and_progress(self):
         mod = load_supervisor()

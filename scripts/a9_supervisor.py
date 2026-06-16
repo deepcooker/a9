@@ -11365,11 +11365,45 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
             plan = active_plan()
         debate_state = requirements_debate_progress(plan) if isinstance(plan, dict) else {}
         plan_ready_for_execution_backlog = str(debate_state.get("status") or "") == "ready_for_execution_backlog"
+        has_unclosed_backlog_draft = False
+        if isinstance(plan, dict):
+            terminal_backlog_statuses = {
+                "pass",
+                "passed",
+                "done",
+                "complete",
+                "completed",
+                "closed",
+                "cancelled",
+                "skipped",
+            }
+            has_unclosed_backlog_draft = any(
+                isinstance(item, dict)
+                and str(item.get("status") or "ready").strip().lower() not in terminal_backlog_statuses
+                for item in execution_backlog_state(plan).get("items", [])
+            )
         stale_debate_evidence = explicit_decision.get("decision_status") in {
             "not_decided",
             "partial_decision",
             "missing",
         }
+
+        if (
+            not plan_ready_for_execution_backlog
+            and stale_debate_evidence
+            and has_unclosed_backlog_draft
+        ):
+            summary["auto_next_block"] = {
+                "reason": "review_closure_wait",
+                "status": summary["status"],
+                "plan_id": plan.get("plan_id") if isinstance(plan, dict) else "",
+                "plan_ready_for_execution_backlog": False,
+                "decision_status": explicit_decision.get("decision_status", "missing"),
+                "missing_fields": explicit_decision.get("missing_fields", []),
+                "recommendation": explicit_decision.get("recommendation", ""),
+                "task_id": task.task_id,
+            }
+            return None
 
         if plan_ready_for_execution_backlog and (
             summary["status"] in {"needs-followup", "needs-repair"} or stale_debate_evidence
