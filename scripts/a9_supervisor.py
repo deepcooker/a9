@@ -5008,6 +5008,10 @@ def command_read_targets(command: str) -> list[str]:
             awk_targets = [part for part in parts[1:] if not part.startswith("-") and rg_target_looks_like_path(part)]
             if awk_targets:
                 targets.append(awk_targets[-1])
+        elif name == "jq" and len(parts) >= 2:
+            jq_targets = [part for part in parts[1:] if not part.startswith("-") and rg_target_looks_like_path(part)]
+            if jq_targets:
+                targets.append(jq_targets[-1])
     return targets
 
 
@@ -5181,7 +5185,10 @@ def task_allows_session_context_reads(task: Task, command: str) -> bool:
     if task.phase in SESSION_CONTEXT_READ_PHASES:
         return True
     bounded_paths = bounded_read_paths_from_prompt(task.prompt)
-    if bounded_paths and command_is_single_bounded_read_of_paths(command, bounded_paths):
+    if bounded_paths and (
+        command_is_single_bounded_read_of_paths(command, bounded_paths)
+        or command_is_read_only_of_paths(command, bounded_paths)
+    ):
         return True
     allowed_context_paths = [
         path
@@ -5192,9 +5199,15 @@ def task_allows_session_context_reads(task: Task, command: str) -> bool:
             "docs/mistakes.md",
         }
     ]
-    if allowed_context_paths and command_is_single_bounded_read_of_paths(command, task.allowed_paths):
+    if allowed_context_paths and (
+        command_is_single_bounded_read_of_paths(command, task.allowed_paths)
+        or command_is_read_only_of_paths(command, task.allowed_paths)
+    ):
         return True
-    return bool(allowed_context_paths) and command_is_single_bounded_read_of_paths(command, allowed_context_paths)
+    return bool(allowed_context_paths) and (
+        command_is_single_bounded_read_of_paths(command, allowed_context_paths)
+        or command_is_read_only_of_paths(command, allowed_context_paths)
+    )
 
 
 def command_session_context_path(command: str, prefix: str) -> str:

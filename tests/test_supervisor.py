@@ -8486,6 +8486,66 @@ Findings are ready.
         self.assertEqual(result["status"], "pass")
         self.assertNotIn("outside_bounded_read_scope", kinds)
 
+    def test_process_governance_allows_jq_read_on_explicit_allowed_path(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            plan_path = "/root/a9/.a9/plans/a9-plan-24h-two-lane-runtime/plan.json"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": f"/bin/bash -lc \"jq '.execution_backlog.items[] | {{id,status}}' {plan_path}\"",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="allowed-jq-plan",
+                phase="reference_scan",
+                prompt=f"live_read_budget_policy: stop\nbounded read: {plan_path}",
+                checks=[],
+                allowed_paths=[plan_path],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("outside_bounded_read_scope", kinds)
+
+    def test_process_governance_allows_explicit_session_doc_read_in_bounded_scope(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "item_type": "command_execution",
+                        "command": "/bin/bash -lc 'wc -l docs/project.md docs/session.md'",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            task = mod.Task(
+                path=Path("task.md"),
+                task_id="allowed-session-doc-bounded",
+                phase="reference_scan",
+                prompt="live_read_budget_policy: stop\nbounded read: docs/project.md\nbounded read: docs/session.md",
+                checks=[],
+                allowed_paths=["docs/project.md", "docs/session.md"],
+            )
+            result = mod.classify_process_governance(task, {"event_summaries_path": str(events)}, run_dir)
+
+        kinds = [item["kind"] for item in result["findings"]]
+        self.assertEqual(result["status"], "pass")
+        self.assertNotIn("forbidden_session_context_read", kinds)
+        self.assertNotIn("outside_bounded_read_scope", kinds)
+
     def test_process_governance_ignores_rg_glob_value_as_read_target(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
