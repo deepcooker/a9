@@ -3095,7 +3095,12 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         return {}
     if command_is_low_cost_directory_listing(normalized, list(task.allowed_paths) + bounded_paths):
         return {}
-    if bounded_paths and not command_looks_like_test(normalized) and not command_is_single_bounded_read_of_paths(normalized, bounded_paths):
+    if (
+        bounded_paths
+        and not command_looks_like_test(normalized)
+        and not command_is_single_bounded_read_of_paths(normalized, bounded_paths)
+        and not command_is_read_only_of_paths(normalized, bounded_paths)
+    ):
         if live_read_budget_stop:
             return {
                 "kind": "outside_bounded_read_scope",
@@ -4907,7 +4912,30 @@ def command_read_targets(command: str) -> list[str]:
                     if not part.startswith("-") and rg_target_looks_like_path(part):
                         targets.append(part)
                     target_index += 1
+        elif name == "git" and len(parts) >= 4 and parts[1] in {"diff", "show"} and "--" in parts:
+            dash_index = parts.index("--")
+            targets.extend(part for part in parts[dash_index + 1 :] if part.strip())
     return targets
+
+
+def command_is_read_only_of_paths(command: str, paths: list[str]) -> bool:
+    if not paths:
+        return False
+    normalized = normalize_shell_command(command)
+    inner = shell_lc_inner_command(normalized).strip()
+    if re.search(r"\s(?:\|\||;)\s", inner):
+        return False
+    fragments = [part.strip() for part in re.split(r"\s+&&\s+", inner) if part.strip()]
+    fragments = [part for part in fragments if not command_fragment_is_cd(part)]
+    if not fragments:
+        return False
+    for fragment in fragments:
+        targets = command_read_targets(fragment)
+        if not targets:
+            return False
+        if not all(any(bounded_read_path_matches(pattern, target) for pattern in paths) for target in targets):
+            return False
+    return True
 
 
 def rg_target_looks_like_path(value: str) -> bool:
@@ -5519,9 +5547,11 @@ def classify_process_governance(
                     "declared_checks": task.checks,
                 }
             )
-        if bounded_read_paths and not command_looks_like_test(command) and not command_is_single_bounded_read_of_paths(
-            command,
-            bounded_read_paths,
+        if (
+            bounded_read_paths
+            and not command_looks_like_test(command)
+            and not command_is_single_bounded_read_of_paths(command, bounded_read_paths)
+            and not command_is_read_only_of_paths(command, bounded_read_paths)
         ):
             findings.append(
                 {
