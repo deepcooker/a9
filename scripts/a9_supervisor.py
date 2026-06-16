@@ -9819,6 +9819,8 @@ def build_plan_debate_task(
         "- Use capped `rg -n -m 20` or `rg ... | head -n 40`; never run uncapped rg in read-heavy phases.",
         "- Keep each `sed -n` source window <= 120 lines and total requested source lines <= 180.",
         "- If the stage is ready, propose candidate execution_next backlog slices with allowed paths and checks.",
+        "- If output.execution_backlog.items is non-empty, output.decision_status MUST be `decided` and output.change_request.status MUST be `none`; otherwise the backlog will be ignored as not closed.",
+        "- If output.decision_status is `not_decided`, do not include execution_backlog.items; return output.change_request.status `required` with the missing decision reason.",
         "- When proposing execution slices, include at most 3 compact items under output.execution_backlog.items.",
         "- Each execution backlog item must use file-level allowed_paths or narrow file globs; do not use broad roots such as `scripts`, `crates`, `.a9`, `/root/a9`, or runtime evidence directories.",
         "- Each execution backlog item check must be an executable command such as `python3 -m unittest ...`; put natural-language validation notes in the prompt, not in checks.",

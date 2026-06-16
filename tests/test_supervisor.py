@@ -4382,6 +4382,8 @@ Do the work.
         self.assertIn("debate_stage: requirement_audit", task_text)
         self.assertIn("Keep the final worker envelope compact and valid JSON", task_text)
         self.assertIn("include at most 3 compact items under output.execution_backlog.items", task_text)
+        self.assertIn("output.decision_status MUST be `decided`", task_text)
+        self.assertIn("If output.decision_status is `not_decided`, do not include execution_backlog.items", task_text)
         self.assertIn("file-level allowed_paths or narrow file globs", task_text)
         self.assertIn("check must be an executable command", task_text)
         self.assertIn('"protocolVersion":1', task_text)
