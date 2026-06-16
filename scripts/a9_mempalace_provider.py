@@ -39,9 +39,37 @@ ROLE_KEYWORDS = {
     "execution": ("执行", "worker", "allowed_paths", "execution_next", "backlog", "任务"),
     "monitor": ("监控", "monitor", "偏离", "纠偏", "漂移", "review", "closure", "证据"),
 }
-STALE_MARKERS = ("过期", "不再", "不是主", "旧", "stale", "deprecated", "不要再", "不维护", "已删除")
+STALE_MARKERS = (
+    "过期",
+    "不再",
+    "不是主",
+    "旧",
+    "stale",
+    "deprecated",
+    "rejected",
+    "invalidated",
+    "invalidation_reason",
+    "valid_to",
+    "不要再",
+    "不维护",
+    "已删除",
+)
 CURRENT_MARKERS = ("当前", "现在", "已完成", "必须", "核心", "主线", "decision", "accepted", "status")
 CAUSAL_MARKERS = ("因为", "所以", "后来", "变成", "从", "->", "原因", "导致", "replaced", "became")
+QUERY_EXPANSIONS = {
+    "当前主线": ("当前主线", "主线", "supervisor", "runtime", "页面监控", "主架构"),
+    "页面监控": ("页面监控", "旧路线", "过期", "不再", "主架构"),
+    "24小时": ("24h", "24小时", "worker", "需求分析", "博弈", "execution", "工作流"),
+    "24h": ("24h", "24小时", "worker", "需求分析", "博弈", "execution", "工作流"),
+    "两阶段": ("两阶段", "需求分析", "博弈", "execution", "先定案", "执行"),
+    "工作流": ("工作流", "需求分析", "博弈", "execution", "执行"),
+    "数据第一": ("数据第一", "数据结构", "业务结构", "表结构", "建模", "真实业务"),
+    "性能第二": ("性能第二", "性能", "稳定性", "压测", "成本"),
+    "A3B": ("A3B", "A9", "structured context", "execution evidence", "intent", "mainline", "risk judgment"),
+    "职责边界": ("职责边界", "A3B", "A9", "structured context", "execution evidence", "intent", "mainline"),
+    "MemPalace": ("MemPalace", "drawer", "KG", "diary", "fallback", "close-reading", "精读"),
+    "精读": ("精读", "close-reading", "fallback", "human snapshot", "MemPalace"),
+}
 
 
 @contextlib.contextmanager
@@ -65,6 +93,15 @@ def suppress_native_stderr() -> Iterable[None]:
 
 def tokenize(text: str) -> list[str]:
     return TOKEN_RE.findall((text or "").lower())
+
+
+def expanded_query_terms(query: str) -> set[str]:
+    terms = set(tokenize(query))
+    lower = (query or "").lower()
+    for trigger, expansions in QUERY_EXPANSIONS.items():
+        if trigger.lower() in lower:
+            terms.update(term.lower() for term in expansions)
+    return {term for term in terms if term}
 
 
 def read_drawers(path: Path) -> Iterable[dict[str, Any]]:
@@ -452,9 +489,39 @@ def has_current_signal(text: str, *, stale_signal: bool = False) -> bool:
     weak_markers = ("核心", "主线")
     if has_any(text, strong_markers):
         return True
+    lower = text.lower()
+    if ("a9" in lower or "a3b" in lower) and any(marker in lower for marker in ("提供", "负责", "职责", "边界")):
+        return True
+    if any(marker in lower for marker in ("数据第一", "性能第二", "数据验证第一")):
+        return True
     if stale_signal:
         return False
     return has_any(text, weak_markers)
+
+
+def text_relevance_score(text: str, query_terms: set[str]) -> float:
+    lower = (text or "").lower()
+    tokens = set(tokenize(text))
+    overlap = len(query_terms & tokens)
+    phrase_hits = sum(1 for term in query_terms if len(term) >= 2 and term in lower)
+    structured_stale_hits = sum(
+        1
+        for marker in ("rejected", "invalidated", "invalidation_reason", "valid_to", "superseded_by")
+        if marker in lower
+    )
+    return float(overlap * 3 + phrase_hits * 4 + structured_stale_hits * 6)
+
+
+def rank_memory_candidates(items: list[dict[str, Any]], query_terms: set[str], *, text_key: str) -> list[dict[str, Any]]:
+    return sorted(
+        items,
+        key=lambda item: (
+            text_relevance_score(str(item.get(text_key) or ""), query_terms),
+            str(item.get("valid_from") or ""),
+            str(item.get("source_drawer_id") or ""),
+        ),
+        reverse=True,
+    )
 
 
 def sentence_snippets(text: str, limit: int = 3) -> list[str]:
@@ -466,6 +533,26 @@ def sentence_snippets(text: str, limit: int = 3) -> list[str]:
     if not snippets:
         snippets = [normalized]
     return [compact(part, 220) for part in snippets[:limit]]
+
+
+def memory_candidate_snippets(text: str, *, limit: int = 8) -> list[str]:
+    snippets = sentence_snippets(text, limit=limit)
+    candidates: list[str] = []
+    for snippet in snippets:
+        stripped = snippet.strip()
+        lower = stripped.lower()
+        has_memory_signal = (
+            has_stale_signal(stripped)
+            or has_any(stripped, CURRENT_MARKERS)
+            or has_any(stripped, CAUSAL_MARKERS)
+            or any(marker in lower for marker in ("superseded_by", "status:", "valid_from", "valid_to"))
+        )
+        if len(stripped) < 12 and not has_memory_signal:
+            continue
+        if re.fullmatch(r"[*#`\-\s\d.]+", stripped):
+            continue
+        candidates.append(stripped)
+    return candidates
 
 
 def build_role_packets(facts: list[dict[str, Any]], stale: list[dict[str, Any]], changes: list[dict[str, Any]]) -> dict[str, Any]:
@@ -520,13 +607,14 @@ def build_causal_memory_packet(
     current_facts: list[dict[str, Any]] = []
     stale_branches: list[dict[str, Any]] = []
     causal_changes: list[dict[str, Any]] = []
+    query_terms = expanded_query_terms(query)
     seen: set[str] = set()
     for item in recall_evidence_items(recall_packet):
         content = str(item.get("content") or "")
         if not content.strip():
             continue
         evidence_ref = evidence_ref_from_item(item)
-        for snippet in sentence_snippets(content, limit=3):
+        for snippet in memory_candidate_snippets(content):
             key = f"{evidence_ref.get('source_ref')}:{snippet}"
             if key in seen:
                 continue
@@ -564,13 +652,9 @@ def build_causal_memory_packet(
                         "kg_action": "add_fact_candidate",
                     }
                 )
-            if len(current_facts) >= max_items and len(stale_branches) >= max_items and len(causal_changes) >= max_items:
-                break
-        if len(current_facts) >= max_items and len(stale_branches) >= max_items and len(causal_changes) >= max_items:
-            break
-    current_facts = current_facts[:max_items]
-    stale_branches = stale_branches[:max_items]
-    causal_changes = causal_changes[:max_items]
+    current_facts = rank_memory_candidates(current_facts, query_terms, text_key="text")[:max_items]
+    stale_branches = rank_memory_candidates(stale_branches, query_terms, text_key="text")[:max_items]
+    causal_changes = rank_memory_candidates(causal_changes, query_terms, text_key="change")[:max_items]
     role_packets = build_role_packets(current_facts, stale_branches, causal_changes)
     next_task_memory = {
         "schema": "a9.next_task_memory_packet.v1",
@@ -1316,9 +1400,10 @@ def score_drawer(query: str, query_terms: set[str], row: dict[str, Any]) -> floa
     lower = content.lower()
     tokens = set(tokenize(content))
     overlap = len(query_terms & tokens)
-    if not overlap and query.lower() not in lower:
+    phrase_hits = sum(1 for term in query_terms if len(term) >= 2 and term in lower)
+    if not overlap and not phrase_hits and query.lower() not in lower:
         return 0.0
-    score = float(overlap * 3)
+    score = float(overlap * 3 + phrase_hits * 4)
     if query.lower() in lower:
         score += 8.0
     role = row.get("role")
@@ -1345,7 +1430,7 @@ def search_drawers(
 ) -> list[dict[str, Any]]:
     if not path.exists():
         raise SystemExit(f"drawer JSONL not found: {path}")
-    query_terms = set(tokenize(query))
+    query_terms = expanded_query_terms(query)
     if not query_terms:
         raise SystemExit("query must contain at least one token")
     heap: list[tuple[float, int, dict[str, Any]]] = []

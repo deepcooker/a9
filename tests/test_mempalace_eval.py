@@ -12,6 +12,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EVAL_PATH = ROOT / "scripts" / "a9_mempalace_eval.py"
 FIXTURE = ROOT / "tests" / "fixtures" / "mempalace_causal_eval.jsonl"
+RECALL_QUALITY_FIXTURE = ROOT / "tests" / "fixtures" / "mempalace_recall_quality_eval.jsonl"
+RECALL_QUALITY_DRAWERS = ROOT / "tests" / "fixtures" / "mempalace_recall_quality_small_drawers.jsonl"
 
 
 def load_eval():
@@ -37,6 +39,27 @@ class MempalaceEvalTests(unittest.TestCase):
         self.assertGreaterEqual(result["compiler"]["current_facts"], 8)
         self.assertGreaterEqual(result["compiler"]["stale_branches"], 4)
         self.assertGreaterEqual(result["compiler"]["causal_changes"], 3)
+
+    def test_recall_quality_eval_scores_question_to_evidence_path(self):
+        mod = load_eval()
+        result = mod.run_recall_quality_eval(
+            RECALL_QUALITY_FIXTURE,
+            drawers=RECALL_QUALITY_DRAWERS,
+            limit=3,
+            hydrate=0,
+            native_enabled=False,
+        )
+
+        self.assertEqual(result["schema"], "a9.mempalace_recall_quality_eval.v1")
+        self.assertEqual(result["status"], "pass")
+        self.assertEqual(result["case_count"], 5)
+        self.assertEqual(result["pass_rate"], 1.0)
+        self.assertEqual(result["wrongbook_candidates"], [])
+        self.assertGreaterEqual(result["latency_seconds"]["max"], 0)
+        for case in result["cases"]:
+            self.assertEqual(case["status"], "pass")
+            self.assertGreater(case["recall_counts"]["evidence_item_count"], 0)
+            self.assertTrue(case["sample_evidence_refs"])
 
     def test_generate_candidates_keeps_source_refs_and_requires_review(self):
         mod = load_eval()

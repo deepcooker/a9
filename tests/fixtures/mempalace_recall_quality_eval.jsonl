@@ -1,0 +1,5 @@
+{"id":"mainline-current","query":"A9 当前主线是什么，页面监控是否还是主架构","expected":{"evidence_any":["当前主线","24h supervisor","页面监控"],"current_any":["当前主线","supervisor"],"stale_any":["页面监控"]},"max_latency_seconds":15}
+{"id":"mempalace-replaces-close-reading","query":"为什么 MemPalace 替代旧精读，旧 close-reading 现在是什么定位","expected":{"evidence_any":["MemPalace","fallback","human snapshot"],"current_any":["MemPalace"],"stale_any":["fallback","不再"]},"max_latency_seconds":15}
+{"id":"two-stage-workflow","query":"24小时机器的两阶段工作流是什么","expected":{"evidence_any":["需求分析","execution","24h"],"current_any":["需求分析","execution"],"causal_any":["->"]},"max_latency_seconds":15}
+{"id":"data-first-performance-second","query":"数据第一性能第二是什么意思，它如何约束执行","expected":{"evidence_any":["数据第一","性能第二"],"current_any":["数据第一","性能第二"]},"max_latency_seconds":15}
+{"id":"a9-a3b-boundary","query":"A9 和 A3B 的职责边界是什么","expected":{"evidence_any":["A3B","A9","structured context"],"current_any":["A9","A3B"]},"max_latency_seconds":15}

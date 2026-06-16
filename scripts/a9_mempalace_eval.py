@@ -15,6 +15,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 PROVIDER_PATH = ROOT / "scripts" / "a9_mempalace_provider.py"
 DEFAULT_FIXTURE = ROOT / "tests" / "fixtures" / "mempalace_causal_eval.jsonl"
+DEFAULT_RECALL_QUALITY_FIXTURE = ROOT / "tests" / "fixtures" / "mempalace_recall_quality_eval.jsonl"
 LABELS = ("current", "stale", "causal")
 RISK_TERMS = (
     "过期",
@@ -223,6 +224,158 @@ def run_eval(fixture: Path) -> dict[str, Any]:
         "causal_changes": len(packet.get("kg_candidates", {}).get("causal_changes") or []),
     }
     return result
+
+
+def text_contains_any(text: str, terms: list[str]) -> bool:
+    if not terms:
+        return True
+    lower = text.lower()
+    return any(term.lower() in lower for term in terms)
+
+
+def text_contains_all(text: str, terms: list[str]) -> bool:
+    lower = text.lower()
+    return all(term.lower() in lower for term in terms)
+
+
+def concat_texts(items: list[dict[str, Any]], *keys: str) -> str:
+    chunks: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        for key in keys:
+            value = str(item.get(key) or "").strip()
+            if value:
+                chunks.append(value)
+    return "\n".join(chunks)
+
+
+def recall_quality_case_result(
+    provider: Any,
+    row: dict[str, Any],
+    *,
+    drawers: Path,
+    limit: int,
+    hydrate: int,
+    native_enabled: bool,
+) -> dict[str, Any]:
+    query = str(row.get("query") or "").strip()
+    if not query:
+        raise SystemExit(f"quality fixture row missing query: {row.get('id')}")
+    start = time.perf_counter()
+    packet = provider.build_causal_memory_from_query(
+        drawers,
+        query=query,
+        limit=limit,
+        hydrate=hydrate,
+        native_enabled=native_enabled,
+    )
+    elapsed = time.perf_counter() - start
+    recall_packet = packet.get("recall_packet") if isinstance(packet.get("recall_packet"), dict) else {}
+    kg = packet.get("kg_candidates") if isinstance(packet.get("kg_candidates"), dict) else {}
+    evidence_items = provider.recall_evidence_items(
+        provider.build_recall_packet(
+            drawers,
+            query=query,
+            limit=limit,
+            hydrate=hydrate,
+            native_enabled=native_enabled,
+        )
+    )
+    evidence_text = concat_texts(evidence_items, "content")
+    current_text = concat_texts(kg.get("current_facts") or [], "text")
+    stale_text = concat_texts(kg.get("stale_branches") or [], "text")
+    causal_text = concat_texts(kg.get("causal_changes") or [], "change")
+    expectations = row.get("expected") if isinstance(row.get("expected"), dict) else {}
+    checks = {
+        "evidence_any": text_contains_any(evidence_text, list(expectations.get("evidence_any") or [])),
+        "evidence_all": text_contains_all(evidence_text, list(expectations.get("evidence_all") or [])),
+        "current_any": text_contains_any(current_text, list(expectations.get("current_any") or [])),
+        "stale_any": text_contains_any(stale_text, list(expectations.get("stale_any") or [])),
+        "causal_any": text_contains_any(causal_text, list(expectations.get("causal_any") or [])),
+    }
+    forbidden_current = list(expectations.get("forbidden_current_any") or [])
+    forbidden_stale = list(expectations.get("forbidden_stale_any") or [])
+    checks["forbidden_current_absent"] = not text_contains_any(current_text, forbidden_current) if forbidden_current else True
+    checks["forbidden_stale_absent"] = not text_contains_any(stale_text, forbidden_stale) if forbidden_stale else True
+    max_latency = float(row.get("max_latency_seconds") or 0)
+    checks["latency"] = elapsed <= max_latency if max_latency > 0 else True
+    failed = [name for name, ok in checks.items() if not ok]
+    return {
+        "id": row.get("id"),
+        "query": query,
+        "status": "pass" if not failed else "fail",
+        "failed_checks": failed,
+        "checks": checks,
+        "elapsed_seconds": round(elapsed, 4),
+        "recall_source": packet.get("recall_packet", {}).get("source"),
+        "recall_counts": {
+            "search_hit_count": recall_packet.get("search_hit_count", 0),
+            "hydrated_drawer_count": recall_packet.get("hydrated_drawer_count", 0),
+            "fallback_evidence_ref_count": recall_packet.get("fallback_evidence_ref_count", 0),
+            "evidence_item_count": len(evidence_items),
+        },
+        "compiler_counts": {
+            "current_facts": len(kg.get("current_facts") or []),
+            "stale_branches": len(kg.get("stale_branches") or []),
+            "causal_changes": len(kg.get("causal_changes") or []),
+        },
+        "sample_evidence_refs": [
+            provider.evidence_ref_from_item(item)
+            for item in evidence_items[:3]
+            if isinstance(item, dict)
+        ],
+        "truth_policy": "expected terms define eval truth for this case; recall output remains evidence candidates",
+    }
+
+
+def run_recall_quality_eval(
+    fixture: Path,
+    *,
+    drawers: Path | None = None,
+    limit: int = 8,
+    hydrate: int = 4,
+    native_enabled: bool = True,
+) -> dict[str, Any]:
+    provider = load_provider()
+    rows = read_fixture(fixture)
+    drawer_path = drawers or provider.DEFAULT_DRAWERS
+    case_results = [
+        recall_quality_case_result(
+            provider,
+            row,
+            drawers=drawer_path,
+            limit=limit,
+            hydrate=hydrate,
+            native_enabled=native_enabled,
+        )
+        for row in rows
+    ]
+    pass_count = sum(1 for case in case_results if case["status"] == "pass")
+    total = len(case_results)
+    latencies = [float(case["elapsed_seconds"]) for case in case_results]
+    return {
+        "schema": "a9.mempalace_recall_quality_eval.v1",
+        "status": "pass" if pass_count == total else "fail",
+        "truth_policy": "commercial_memory_quality_eval: question->evidence/current/stale/causal term checks with source refs",
+        "copied_protocols": [
+            "MemPalace recall is judged by source-backed evidence, not summary confidence",
+            "MemPalace drawers keep source refs so failed recalls become fixable wrongbook samples",
+            "A9 separates recall quality from causal compiler quality before injecting role packets",
+        ],
+        "fixture": str(fixture),
+        "drawers": str(drawer_path),
+        "case_count": total,
+        "pass_count": pass_count,
+        "fail_count": total - pass_count,
+        "pass_rate": round(pass_count / total, 4) if total else 1.0,
+        "latency_seconds": {
+            "max": round(max(latencies), 4) if latencies else 0.0,
+            "avg": round(sum(latencies) / len(latencies), 4) if latencies else 0.0,
+        },
+        "cases": case_results,
+        "wrongbook_candidates": [case for case in case_results if case["status"] != "pass"],
+    }
 
 
 def candidate_labels(provider: Any, content: str) -> set[str]:
@@ -452,9 +605,13 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--generate-candidates", action="store_true")
     parser.add_argument("--merge-reviewed", type=Path)
+    parser.add_argument("--recall-quality", action="store_true")
+    parser.add_argument("--recall-quality-fixture", type=Path, default=DEFAULT_RECALL_QUALITY_FIXTURE)
     parser.add_argument("--drawers", type=Path)
     parser.add_argument("--limit", type=int, default=20)
     parser.add_argument("--scan-limit", type=int, default=5000)
+    parser.add_argument("--hydrate", type=int, default=4)
+    parser.add_argument("--no-native", action="store_true")
     parser.add_argument("--approved-by", default="")
     parser.add_argument("--approval-reason", default="")
     parser.add_argument("--commit", action="store_true")
@@ -471,6 +628,14 @@ def main() -> int:
         provider = load_provider()
         drawers = args.drawers or provider.DEFAULT_DRAWERS
         result = generate_eval_candidates(drawers, limit=args.limit, scan_limit=args.scan_limit)
+    elif args.recall_quality:
+        result = run_recall_quality_eval(
+            args.recall_quality_fixture,
+            drawers=args.drawers,
+            limit=args.limit,
+            hydrate=args.hydrate,
+            native_enabled=not args.no_native,
+        )
     else:
         result = run_eval(args.fixture)
     text = json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
