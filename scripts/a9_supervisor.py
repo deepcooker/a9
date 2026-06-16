@@ -2136,7 +2136,7 @@ def build_mempalace_recall_section(task: Task, budget_tokens: int = 1200) -> tup
         "protocol_layers:",
         "- wakeup/start context stays small",
         "- search_hits are candidate drawer IDs with source hashes",
-        "- hydrated_drawers are exact drawer text selected from top hits",
+        "- hydrated_drawers are drawer-id pointers; hydrate by drawer_id when needed",
         "- fallback_evidence_refs keep raw JSONL/source hash auditability",
         "- KG/diary are separate continuity layers and are not implied by this packet",
         "",
@@ -2170,12 +2170,12 @@ def build_mempalace_recall_section(task: Task, budget_tokens: int = 1200) -> tup
             if not isinstance(drawer, dict):
                 continue
             metadata = drawer.get("metadata") if isinstance(drawer.get("metadata"), dict) else {}
-            content = str(drawer.get("content") or "")
+            source_hash = metadata.get("source_sha256") or metadata.get("content_hash")
             lines.append(
                 "- "
                 f"drawer_id={drawer.get('drawer_id')} "
                 f"source_ref={metadata.get('source_ref')} "
-                f"content={truncate_to_token_budget(content, 220, keep='head')}"
+                f"source_hash={source_hash}"
             )
     lines.extend(
         [
@@ -2186,26 +2186,18 @@ def build_mempalace_recall_section(task: Task, budget_tokens: int = 1200) -> tup
     for ref in meta["evidence_refs"][:3]:
         if not isinstance(ref, dict):
             continue
+        content_hash = ref.get("content_hash")
+        source_hash = ref.get("source_sha256") or content_hash
         lines.append(
             "- "
             f"source_ref={ref.get('source_ref')} "
+            f"source_hash={source_hash} "
+            f"content_hash={content_hash} "
             f"role={ref.get('role')} "
             f"event_kind={ref.get('event_kind')} "
-            f"content_hash={ref.get('content_hash')}"
+            f"run_id={ref.get('run_id') or ''}"
         )
     lines.append("")
-    lines.append("fallback_recall_preview:")
-    if isinstance(recalls, list):
-        for item in recalls[:3]:
-            if not isinstance(item, dict):
-                continue
-            content = str(item.get("content") or "")
-            lines.append(
-                "- "
-                f"[{item.get('role')}/{item.get('event_kind')}] "
-                f"{item.get('source_ref')}: "
-                f"{truncate_to_token_budget(content, 180, keep='head')}"
-            )
     body = truncate_to_token_budget("\n".join(lines), budget_tokens, keep="head")
     return body, meta
 

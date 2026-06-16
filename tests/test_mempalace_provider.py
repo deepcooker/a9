@@ -211,6 +211,35 @@ class MempalaceProviderTests(unittest.TestCase):
             self.assertIn("must_include", payload["next_task_memory"])
             self.assertGreaterEqual(payload["recall_packet"]["fallback_evidence_ref_count"], 1)
 
+    def test_role_packets_keep_evidence_refs_without_raw_text(self):
+        mod = load_provider()
+        facts = [
+            {
+                "text": "monitor must keep the current mainline evidence bounded",
+                "evidence_ref": {
+                    "run_id": "run-1",
+                    "source_sha256": "source-1",
+                    "content_hash": "content-1",
+                    "drawer_id": "drawer-1",
+                    "source_ref": "session.jsonl:10",
+                },
+            }
+        ]
+
+        packets = mod.build_role_packets(facts, [], [])
+        entries = packets["monitor"]["entries"]
+
+        self.assertEqual(len(entries), 1)
+        self.assertNotIn("text", entries[0])
+        self.assertEqual(
+            entries[0]["evidence_ref"],
+            {
+                "run_id": "run-1",
+                "source_hash": "source-1",
+                "drawer_id": "drawer-1",
+            },
+        )
+
     def test_causal_commit_dry_run_requires_approval_and_plans_kg_diary(self):
         mod = load_provider()
         packet = {

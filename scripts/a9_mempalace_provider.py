@@ -482,11 +482,17 @@ def build_role_packets(facts: list[dict[str, Any]], stale: list[dict[str, Any]],
         for kind, item in combined:
             text = str(item.get("text") or item.get("change") or "")
             if has_any(text, keywords):
+                evidence = item.get("evidence_ref") if isinstance(item.get("evidence_ref"), dict) else {}
+                evidence_refs = {
+                    "run_id": str(evidence.get("run_id") or evidence.get("source_ref") or ""),
+                    "source_hash": str(evidence.get("source_sha256") or evidence.get("content_hash") or ""),
+                    "drawer_id": str(evidence.get("drawer_id") or ""),
+                }
+                evidence_refs = {key: value for key, value in evidence_refs.items() if value}
                 entries.append(
                     {
                         "kind": kind,
-                        "text": text,
-                        "evidence_ref": item.get("evidence_ref"),
+                        "evidence_ref": evidence_refs,
                     }
                 )
         packets[role] = {
@@ -670,7 +676,6 @@ def diary_operation_from_role_packet(role: str, packet: dict[str, Any], *, commi
     compact_entries = [
         {
             "kind": entry.get("kind"),
-            "text": entry.get("text"),
             "evidence_ref": entry.get("evidence_ref"),
         }
         for entry in entries[:6]
