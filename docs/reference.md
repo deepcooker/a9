@@ -168,6 +168,33 @@ Headroom use-through correction:
   compiler. Raw A9 JSONL logs should be folded into meaningful events before
   Headroom-style compression/retrieval; otherwise token savings can be zero.
 
+Latest commercial-readiness read:
+
+- A9 should not choose Headroom as the raw `200万-500万 token / 10min`
+  ingestion engine. Its local ONNX path can approach that range for pure
+  embedding on small warmed batches, but full `save_memory` + SQLite/vector
+  indexing is far slower in the current default path.
+- Measured on A9 operator session slices: pure ONNX embedding reached about
+  `236万 token / 10min` on one cold/warm mixed 20-item sample and about
+  `133万 token / 10min` on a 60-item warm sample. A previous 40-item cold
+  sample measured about `81万 token / 10min`. This is useful, but not enough
+  to justify putting raw session floods through it synchronously.
+- Measured full local memory path: clean 30-message operator sample took about
+  `6.8s` init and `57.3s` save/index, while each scoped recall query returned
+  in about `0.05s`. The quality was good only after A9 filtered out tool-output
+  noise and AGENTS/context injection. Without that filter, retrieval returned
+  curl/help/tool-output noise.
+- Therefore Headroom's A9 role is: context gateway, cache/live-zone protection,
+  scoped recall, memory budget, CCR/retrieve tool protocol and observability.
+  It optimizes the recall/context slice that enters a worker prompt, usually
+  hundreds of tokens, not the raw evidence lake.
+- A9 must keep the high-throughput layer itself: stream parse raw session and
+  worker JSONL, fold repeated events, drop tool-output noise, deduplicate
+  context injection, classify role/session/project/run, then asynchronously
+  index only high-value memory packets into MemPalace/Headroom-style storage.
+  Worker hot path should consume a bounded 200-500 token recall pack plus
+  explicit evidence refs.
+
 Decision:
 
 - The earlier high-quality debate came from durable context plus human
