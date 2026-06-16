@@ -9345,7 +9345,8 @@ def update_execution_backlog_item_from_run(plan: dict[str, Any], task: Task, run
         }
 
     run_status = str(summary.get("status") or "").strip()
-    if run_status not in {"pass", "needs-followup", "needs-repair", "monitor-blocked", "worker-failed", "failed", "timeout"}:
+    known_terminal_statuses = {"pass", "needs-followup", "needs-repair", "monitor-blocked", "worker-failed", "failed", "timeout"}
+    if run_status not in known_terminal_statuses and not run_status.startswith("retryable-"):
         return {"status": "skipped", "reason": "non_terminal_or_unknown_status", "task_id": task_id, "run_status": run_status}
     now = utc_now()
     git_governance = summary.get("git_governance") if isinstance(summary.get("git_governance"), dict) else {}

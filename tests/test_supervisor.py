@@ -5570,6 +5570,54 @@ Findings are ready.
         self.assertEqual(item["last_summary_path"], str(run_dir / "summary.json"))
         self.assertIn("failed_at", item)
 
+    def test_update_active_plan_from_run_marks_execution_backlog_retryable_status(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-backlog-retryable",
+                    goal_id="goal-backlog-retryable",
+                    contract={"problem": "Retryable runs must not leave backlog items stuck queued."},
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "backlog-001-retryable",
+                        "title": "Retryable item",
+                        "phase": "test",
+                        "status": "queued",
+                        "queued_task_id": "queued-retryable-task",
+                    }
+                )
+                plan_dir = mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "queued-retryable-task-20260616T000000Z-a1"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "retryable-worker-budget",
+                    "phase": "test",
+                    "run_dir": str(run_dir),
+                    "worker_failure": {"status": "retryable-worker-budget"},
+                    "git_governance": {},
+                }
+                task = mod.Task(path=Path("task.md"), task_id="queued-retryable-task", prompt="demo", phase="test")
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        item = stored["execution_backlog"]["items"][0]
+        self.assertEqual(result["execution_backlog_item_update"]["status"], "updated")
+        self.assertEqual(result["execution_backlog_item_update"]["run_status"], "retryable-worker-budget")
+        self.assertEqual(item["status"], "retryable-worker-budget")
+        self.assertIn("failed_at", item)
+
     def test_update_active_plan_from_run_marks_parent_backlog_repaired(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
