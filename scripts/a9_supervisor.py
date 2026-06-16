@@ -9820,6 +9820,8 @@ def build_plan_debate_task(
         "- Keep each `sed -n` source window <= 120 lines and total requested source lines <= 180.",
         "- If the stage is ready, propose candidate execution_next backlog slices with allowed paths and checks.",
         "- When proposing execution slices, include at most 3 compact items under output.execution_backlog.items.",
+        "- Each execution backlog item must use file-level allowed_paths or narrow file globs; do not use broad roots such as `scripts`, `crates`, `.a9`, `/root/a9`, or runtime evidence directories.",
+        "- Each execution backlog item check must be an executable command such as `python3 -m unittest ...`; put natural-language validation notes in the prompt, not in checks.",
         "- Final envelope shape:",
         '  {"protocolVersion":1,"ok":true,"status":"ok","output":{"summary":"...","worker_commands_run":["..."],"supervisor_declared_checks":[],"decision_status":"not_decided|decided","change_request":{"status":"none|required","reason":"..."},"execution_backlog":{"items":[{"title":"...","phase":"reference_scan|mechanism_extract|implement|test|record","prompt":"...","allowed_paths":["..."],"checks":["..."]}]}}}',
     ]
