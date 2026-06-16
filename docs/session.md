@@ -48,6 +48,11 @@ Raw external Codex/operator session:
 - `session_refresh` and `session_close_reading` are legacy/fallback routes.
 - New session initialization should use Codex raw JSONL -> MemPalace-compatible
   per-message drawer records first.
+- Two-lane closure routing is active:
+  `session_refresh` / `session_close_reading` for external/operator causal
+  commits runs alongside requirements debate and backlog execution lanes. Each
+  lane has its own closure packet; stale one-off closure markdowns are not
+  recreated.
 - Current provider entry is `scripts/a9_mempalace_provider.py`; it supports
   `status`, source-preserving `search`, `wakeup` and official-style `recall`
   packets with native search hits, hydrated drawers and fallback evidence refs.

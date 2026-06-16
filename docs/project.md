@@ -66,6 +66,13 @@ P7 NZX technical MVP
 
 - `scripts/a9_supervisor.py` owns queue, run-loop, auto-next, worktree, checks,
   guards, evidence, session mini-flow and managed-flow integration.
+- Active runtime closure follows the two-lane model: external/operator session
+  closure lane (`session_refresh` -> `session_close_reading` -> causal commit)
+  and requirements-debate-to-execution backlog lane.
+- Default workers do not treat raw session as a direct truth source. Raw
+  session is evidence for session lanes only and is intentionally bounded.
+- Closure state is recorded in the five-doc packet plus active plan evidence;
+  stale one-off closure docs are intentionally out-of-scope.
 - `scripts/a9_control_api.py` exposes control/mobile-facing status and command
   surfaces.
 - `scripts/a9_session_refresh.py` is legacy bounded extraction and snapshot
