@@ -5618,6 +5618,71 @@ Findings are ready.
         self.assertEqual(item["status"], "retryable-worker-budget")
         self.assertIn("failed_at", item)
 
+    def test_update_active_plan_from_run_prefers_direct_backlog_match_over_parent(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-backlog-parent-direct",
+                    goal_id="goal-backlog-parent-direct",
+                    contract={"problem": "Child retries must update the child backlog item before parent attribution."},
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].extend(
+                    [
+                        {
+                            "id": "backlog-016-parent",
+                            "title": "Parent item",
+                            "phase": "implement",
+                            "status": "retryable-worker-budget",
+                            "queued_task_id": "idle-backlog-exec-016-parent",
+                        },
+                        {
+                            "id": "backlog-017-child",
+                            "title": "Child retry item",
+                            "phase": "implement",
+                            "status": "queued",
+                            "queued_task_id": "idle-backlog-exec-017-child",
+                        },
+                    ]
+                )
+                plan_dir = mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "idle-backlog-exec-017-child-20260616T000000Z-a1"
+                run_dir.mkdir(parents=True)
+                summary = {
+                    "status": "retryable-worker-budget",
+                    "phase": "implement",
+                    "run_dir": str(run_dir),
+                    "worker_failure": {"status": "retryable-worker-budget"},
+                    "git_governance": {},
+                }
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="idle-backlog-exec-017-child",
+                    prompt="parent_task_id: idle-backlog-exec-016-parent\n",
+                    phase="implement",
+                )
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        parent, child = stored["execution_backlog"]["items"]
+        self.assertEqual(result["execution_backlog_item_update"]["status"], "updated")
+        self.assertEqual(result["execution_backlog_item_update"]["match_kind"], "task")
+        self.assertEqual(result["execution_backlog_item_update"]["item_id"], "backlog-017-child")
+        self.assertEqual(parent["status"], "retryable-worker-budget")
+        self.assertNotEqual(parent.get("last_run_id"), "idle-backlog-exec-017-child-20260616T000000Z-a1")
+        self.assertEqual(child["status"], "retryable-worker-budget")
+        self.assertEqual(child["last_run_id"], "idle-backlog-exec-017-child-20260616T000000Z-a1")
+
     def test_update_active_plan_from_run_marks_parent_backlog_repaired(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

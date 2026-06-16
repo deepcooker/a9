@@ -9338,13 +9338,17 @@ def update_execution_backlog_item_from_run(plan: dict[str, Any], task: Task, run
         }:
             matched = item
             break
-        if parent_task_id and parent_task_id in {
-            str(item.get("queued_task_id") or "").strip(),
-            str(item.get("task_id") or "").strip(),
-        }:
-            matched = item
-            match_kind = "parent_task"
-            break
+    if matched is None and parent_task_id:
+        match_kind = "parent_task"
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if parent_task_id in {
+                str(item.get("queued_task_id") or "").strip(),
+                str(item.get("task_id") or "").strip(),
+            }:
+                matched = item
+                break
     if matched is None:
         return {
             "status": "skipped",
