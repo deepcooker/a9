@@ -5313,8 +5313,92 @@ Findings are ready.
         self.assertEqual(item["blocked_reason"], "backlog_item_contract_quality")
         self.assertIn("broad_allowed_path:scripts", item["quality_findings"])
         self.assertIn("broad_read_command:rg -n 'router' scripts", item["quality_findings"])
-        self.assertIn("non_executable_check:No raw session content injected into execution task prompts", item["quality_findings"])
+        self.assertEqual(item["checks"], [])
+        self.assertIn("No raw session content injected into execution task prompts", item["validation_notes"])
         self.assertEqual(mod.plan_execution_backlog_items(stored), [])
+
+    def test_update_active_plan_moves_prose_checks_to_validation_notes(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-prose-checks",
+                    goal_id="goal-prose-checks",
+                    contract={
+                        "problem": "Backlog generation may output prose validation as checks.",
+                        "why_now": "Reference/modeling/record tasks should not block only because checks are prose.",
+                        "must": "Move prose checks into validation_notes.",
+                        "system_requirement": "execution_backlog ingestion separates executable checks from validation notes.",
+                        "data_shape": "checks executable list plus validation_notes prose list.",
+                        "normal_flow": "decided debate final -> ready backlog item with validation notes.",
+                        "exception_flow": "broad paths still block.",
+                        "acceptance": "item is ready and checks list is empty.",
+                        "out_of_scope": "running prose as shell commands.",
+                        "allowed_execution": "docs/project.md",
+                        "reference_entry": "A9 backlog contract quality.",
+                    },
+                )
+                mod.write_plan_files(plan)
+                run_dir = tmp_path / "runs" / "debate-run"
+                run_dir.mkdir(parents=True)
+                final_path = run_dir / "final.md"
+                final_path.write_text(
+                    json.dumps(
+                        {
+                            "protocolVersion": 1,
+                            "ok": True,
+                            "status": "ok",
+                            "output": {
+                                "decision_status": "decided",
+                                "change_request": {"status": "none"},
+                                "execution_backlog": {
+                                    "items": [
+                                        {
+                                            "title": "Record stable fact",
+                                            "phase": "record",
+                                            "prompt": "Record the stable fact in docs/project.md.",
+                                            "allowed_paths": ["docs/project.md"],
+                                            "read_commands": ["rg -n -m 20 'Current Stable Facts' docs/project.md"],
+                                            "checks": ["Stable fact is documented."],
+                                        }
+                                    ]
+                                },
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                task = mod.Task(
+                    path=tmp_path / "task.md",
+                    task_id="debate-task",
+                    phase="reference_scan",
+                    prompt="decision_status: not_decided\nroute: debate_next\nplan_id: plan-prose-checks\n",
+                )
+                summary = {
+                    "run_dir": str(run_dir),
+                    "status": "pass",
+                    "worker": {"final_path": str(final_path)},
+                    "git_governance": {},
+                }
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored = mod.load_plan("plan-prose-checks")
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["execution_backlog_update"]["status"], "appended")
+        item = stored["execution_backlog"]["items"][0]
+        self.assertEqual(item["status"], "ready")
+        self.assertEqual(item["checks"], [])
+        self.assertEqual(item["validation_notes"], ["Stable fact is documented."])
 
     def test_execution_backlog_read_command_allows_exact_absolute_plan_evidence(self):
         mod = load_supervisor()

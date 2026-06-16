@@ -13286,6 +13286,7 @@ def plan_backlog_generation_continuation_item(
             "- If more implementation work is justified, set output.decision_status to decided, change_request.status to none,",
             "  and include at most 3 compact output.execution_backlog.items.",
             "- Each backlog item must include title, phase, prompt, allowed_paths, read_commands, checks, and acceptance or clear validation notes.",
+            "- `checks` must contain executable commands only. Put prose acceptance criteria under `acceptance` or `validation_notes`, never under `checks`.",
             "- Each backlog item read_commands must be exact bounded commands such as `rg -n -m 20 'pattern' path` or `sed -n '10,80p' path`; no broad aliases like `scripts`, `tests`, `.a9`, or `/root/a9`.",
             "- If the contract is stale or insufficient, set output.decision_status to not_decided and output.change_request.status to required.",
             "- Do not mutate plan contract fields directly; use change_request for contract changes.",
@@ -13639,6 +13640,20 @@ def execution_backlog_check_findings(checks: list[str]) -> list[str]:
     return findings
 
 
+def split_execution_backlog_checks(checks: list[str]) -> tuple[list[str], list[str]]:
+    executable: list[str] = []
+    validation_notes: list[str] = []
+    for check in checks:
+        text = str(check or "").strip()
+        if not text:
+            continue
+        if execution_backlog_check_looks_executable(text):
+            executable.append(text)
+        else:
+            validation_notes.append(text)
+    return executable, validation_notes
+
+
 def execution_backlog_read_commands(raw: dict[str, Any]) -> list[str]:
     commands: list[str] = []
     for key in ("read_commands", "bounded_read_commands", "evidence_commands"):
@@ -13770,11 +13785,14 @@ def append_execution_backlog_items_from_debate_run(
             if isinstance(raw.get("allowed_paths"), list)
             else extract_allowed_paths_from_execution_text(str(raw.get("allowed_execution") or ""))
         )
-        checks = (
+        raw_checks = (
             [str(check).strip() for check in raw.get("checks", []) if str(check).strip()]
             if isinstance(raw.get("checks"), list)
             else []
         )
+        checks, validation_notes = split_execution_backlog_checks(raw_checks)
+        if isinstance(raw.get("validation_notes"), list):
+            validation_notes.extend(str(note).strip() for note in raw.get("validation_notes", []) if str(note).strip())
         read_commands = execution_backlog_read_commands(raw)
         quality_findings = execution_backlog_allowed_path_findings(allowed_paths)
         quality_findings.extend(execution_backlog_check_findings(checks))
@@ -13787,6 +13805,7 @@ def append_execution_backlog_items_from_debate_run(
             "allowed_paths": allowed_paths,
             "read_commands": read_commands,
             "checks": checks,
+            "validation_notes": validation_notes,
             "status": "blocked_not_decided" if quality_findings else "ready",
             "source": "debate_final_json",
             "source_run": str(run_dir),
