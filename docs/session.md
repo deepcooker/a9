@@ -23,7 +23,8 @@ Raw external Codex/operator session:
 8. Data first, performance second.
 9. Noise cleanup is part of requirements analysis.
 10. Old one-off closure docs are stale. Current closure state lives in the
-    five-doc packet plus active plan evidence.
+    five-doc packet plus active plan evidence; do not recreate one-off
+    closure documents.
 11. 2026-06-16 clarification: earlier debate quality came from long context,
     human correction, repeated requirements shaping and causal memory together.
     It was not a sufficient production mechanism by itself. A9 must preserve
@@ -100,8 +101,13 @@ Raw external Codex/operator session:
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.
-  The next execution lane is backlog generation/resume under the current
-  five-doc contract, not recreation of old closure artifacts.
+  Session lane and active-plan lane evidence are separated: raw session evidence
+  flows only through `session_refresh -> session_close_reading -> causal commit`
+  and bounded `docs/session.md` notes, while active-plan execution evidence flows
+  through active contract/progress and role-scoped outputs.
+  Before execution backlog drains, role-scoped closure outputs and role_signoff
+  must be present in the active plan evidence, and no stale one-off closure docs
+  are recreated.
 
 ## Active Appends
 
