@@ -5229,6 +5229,29 @@ Findings are ready.
         self.assertIn("non_executable_check:No raw session content injected into execution task prompts", item["quality_findings"])
         self.assertEqual(mod.plan_execution_backlog_items(stored), [])
 
+    def test_execution_backlog_read_command_allows_exact_absolute_plan_evidence(self):
+        mod = load_supervisor()
+        allowed = [
+            "/root/a9/.a9/plans/a9-plan-24h-two-lane-runtime/plan.json",
+            "scripts/a9_supervisor.py",
+        ]
+
+        findings = mod.execution_backlog_read_command_findings(
+            [
+                'rg -n -m 20 "requirements_debate" /root/a9/.a9/plans/a9-plan-24h-two-lane-runtime/plan.json',
+                "sed -n '1,120p' /root/a9/.a9/plans/a9-plan-24h-two-lane-runtime/plan.json",
+            ],
+            allowed,
+        )
+        broad_findings = mod.execution_backlog_read_command_findings(
+            ["rg -n router /root/a9", "rg -n router scripts"],
+            allowed,
+        )
+
+        self.assertEqual(findings, [])
+        self.assertIn("broad_read_command:rg -n router /root/a9", broad_findings)
+        self.assertIn("broad_read_command:rg -n router scripts", broad_findings)
+
     def test_update_active_plan_skips_not_decided_debate_backlog(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

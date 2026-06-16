@@ -13468,7 +13468,6 @@ def execution_backlog_read_command_findings(commands: list[str], allowed_paths: 
     if not commands:
         return ["read_commands_missing"]
     broad_terms = (
-        " /root/a9",
         " . ",
         " scripts ",
         " tests ",
@@ -13479,12 +13478,17 @@ def execution_backlog_read_command_findings(commands: list[str], allowed_paths: 
         "tree ",
     )
     allowed = [path.rstrip("/") for path in allowed_paths if path.strip()]
+    broad_targets = {".", "./", "scripts", "tests", "crates", ".a9", "/root/a9", "/root/a9/.a9"}
     for command in commands:
         text = str(command or "").strip()
         if not text:
             continue
         if not re.search(r"\b(rg|sed|nl)\b", text):
             findings.append(f"non_bounded_read_command:{bounded_inline(text, 80)}")
+            continue
+        tokens = [token.strip("'\"") for token in shlex.split(text, posix=True)]
+        if any(token.rstrip("/") in broad_targets for token in tokens):
+            findings.append(f"broad_read_command:{bounded_inline(text, 80)}")
             continue
         if any(term in f" {text} " for term in broad_terms):
             findings.append(f"broad_read_command:{bounded_inline(text, 80)}")
