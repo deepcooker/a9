@@ -4747,16 +4747,17 @@ def command_fragment_is_bounded_read_of_paths(inner: str, paths: list[str]) -> b
         target = parts[3]
         return any(bounded_read_path_matches(path, target) for path in paths)
 
-    if parts and parts[0] == "git" and len(parts) >= 5 and parts[1] == "show" and "--" in parts:
-        dash_index = parts.index("--")
-        targets = [part for part in parts[dash_index + 1 :] if part.strip()]
+    git_parts = normalize_git_command_parts(parts)
+    if git_parts and len(git_parts) >= 5 and git_parts[0] == "git" and git_parts[1] == "show" and "--" in git_parts:
+        dash_index = git_parts.index("--")
+        targets = [part for part in git_parts[dash_index + 1 :] if part.strip()]
         return bool(targets) and all(
             any(bounded_read_path_matches(pattern_text, target) for pattern_text in paths) for target in targets
         )
 
-    if parts and parts[0] == "git" and len(parts) >= 4 and parts[1] == "diff" and "--" in parts:
-        dash_index = parts.index("--")
-        targets = [part for part in parts[dash_index + 1 :] if part.strip()]
+    if git_parts and len(git_parts) >= 4 and git_parts[0] == "git" and git_parts[1] == "diff" and "--" in git_parts:
+        dash_index = git_parts.index("--")
+        targets = [part for part in git_parts[dash_index + 1 :] if part.strip()]
         return bool(targets) and all(
             any(bounded_read_path_matches(pattern_text, target) for pattern_text in paths) for target in targets
         )
@@ -4914,10 +4915,27 @@ def command_read_targets(command: str) -> list[str]:
                     if not part.startswith("-") and rg_target_looks_like_path(part):
                         targets.append(part)
                     target_index += 1
-        elif name == "git" and len(parts) >= 4 and parts[1] in {"diff", "show"} and "--" in parts:
-            dash_index = parts.index("--")
-            targets.extend(part for part in parts[dash_index + 1 :] if part.strip())
+        elif name == "git":
+            git_parts = normalize_git_command_parts(parts)
+            if len(git_parts) >= 4 and git_parts[1] in {"diff", "show"} and "--" in git_parts:
+                dash_index = git_parts.index("--")
+                targets.extend(part for part in git_parts[dash_index + 1 :] if part.strip())
     return targets
+
+
+def normalize_git_command_parts(parts: list[str]) -> list[str]:
+    if not parts or parts[0] != "git":
+        return parts
+    normalized = [parts[0]]
+    index = 1
+    while index < len(parts):
+        part = parts[index]
+        if part == "-C" and index + 1 < len(parts):
+            index += 2
+            continue
+        normalized.extend(parts[index:])
+        break
+    return normalized
 
 
 def command_is_read_only_of_paths(command: str, paths: list[str]) -> bool:
