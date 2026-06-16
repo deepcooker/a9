@@ -2809,6 +2809,51 @@ Do the work.
         self.assertEqual(worker["budget_stop_kind"], "outside_bounded_read_scope")
         self.assertEqual(worker["budget_observations"][0]["action"], "stop")
 
+    def test_run_worker_observes_compound_reads_on_allowed_paths_without_stopping(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp) / "run"
+            worktree = Path(tmp) / "worktree"
+            run_dir.mkdir()
+            worktree.mkdir()
+            task = mod.Task(
+                path=run_dir / "task.md",
+                task_id="compound-allowed-read-observe",
+                phase="execution_next",
+                prompt=(
+                    "live_read_budget_policy: stop\n"
+                    "bounded read: scripts/a9_supervisor.py\n"
+                    "bounded read: tests/test_supervisor.py\n"
+                ),
+                allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+            )
+            fake_context_packet = {
+                "prompt": "Bounded prompt.",
+                "approx_tokens": 1,
+                "budget_tokens": 10,
+                "section_budgets": {},
+                "previous_context_path": "",
+                "previous_context_compression": {},
+                "repo_map": {},
+                "context_router": {},
+            }
+            command = "/bin/bash -lc \"sed -n '5708,5770p;6060,6128p' scripts/a9_supervisor.py && sed -n '4900,4925p;5128,5245p' tests/test_supervisor.py\""
+            cmd = [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    f"print(json.dumps({{'type':'item.completed','item':{{'type':'command_execution','command':{command!r},'status':'completed','exit_code':0}}}}), flush=True)"
+                ),
+            ]
+            with mock.patch.object(mod, "build_context_packet", return_value=fake_context_packet), mock.patch.object(
+                mod, "validate_worker_reference_gate", return_value={"status": "pass", "missing_paths": [], "output_path": ""}
+            ), mock.patch.object(mod, "build_worker_cmd", return_value=cmd):
+                worker = mod.run_worker(task, worktree, run_dir)
+
+        self.assertEqual(worker["return_code"], 0)
+        self.assertFalse(worker["budget_stopped"])
+
     def test_run_worker_closes_stdout_pipe(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -3111,6 +3111,8 @@ def live_worker_command_violation(task: Task, command: str, *, rationale: str = 
         return {}
     compound_read_findings = compound_wide_read_command_findings(task, normalized)
     if compound_read_findings:
+        if command_is_read_only_of_paths(normalized, list(task.allowed_paths) + bounded_paths):
+            return {}
         finding = compound_read_findings[0]
         return {
             "kind": finding["kind"],
