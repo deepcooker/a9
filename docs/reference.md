@@ -11,6 +11,75 @@ tests and evidence.
 4. Prefer mechanism copy before source copy.
 5. Do not copy non-open-source product references.
 
+## Use-Through Rule
+
+Reference projects are not architecture decisions by themselves. A9 must not
+adopt a mechanism just because its README, demo or public reputation looks
+strong.
+
+Correct order:
+
+```text
+download locally
+-> run or inspect enough to understand the real behavior
+-> use it against an A9-shaped task
+-> identify duplicate/overlapping mechanisms
+-> write the failure modes and tradeoffs
+-> build a small local spike/eval
+-> decide whether to join A9, stay as reference, or be rejected
+```
+
+This is intentionally slower up front. Architecture quality matters more than
+early feature velocity. A mechanism that has not been locally tried, compared
+and evaluated is only a candidate, not part of the A9 architecture.
+One day spent using the right reference deeply can save hundreds or thousands
+of later correction loops.
+
+Selection standards:
+
+- Keep the best mechanism per layer; do not merge duplicate ideas just because
+  multiple projects implement them.
+- Prefer projects that have runnable behavior, tests, clear boundaries and
+  recoverable failure modes.
+- If a copied mechanism only works after A9-specific patches, the patch and the
+  reason must be recorded.
+- A reference can be downgraded or removed after local trial.
+- Passing a small spike does not make it production; it only allows bounded
+  integration behind tests/evidence.
+
+## Rust And Gateway Baseline
+
+A9 is not a Python-only automation script. Python remains useful for model,
+business and personalization logic, but the stable control/runtime skeleton
+must be selected and tested around Rust-first gateway and interaction behavior.
+
+Required use-through baselines:
+
+- Codex is the primary interaction/runtime reference. A9 must deeply test its
+  CLI loop, tool protocol, context/compact/resume behavior, apply discipline,
+  sandbox/approval model and long-running goal/session handling before claiming
+  equivalent interaction quality.
+- Barter-rs is the trading-grade gateway reference. A9 must deeply test its
+  reconnect/backoff/error-action/stream handling patterns before designing
+  private-node, worker-transport or market-facing gateway behavior.
+- OpenClaw/Lobster remains the managed-flow/tool-envelope reference, but it
+  does not replace Codex for interaction quality or Barter-rs for low-latency
+  gateway reliability.
+
+The intended architecture is layered, not either/or:
+
+```text
+Rust gateway/control hot path
+-> Redis/MySQL state and evidence plane
+-> Codex-like interaction/runtime
+-> Python model/business logic where it has leverage
+-> mobile/control and higher product surfaces
+```
+
+Any communication/runtime choice must be evaluated for latency, reconnect,
+idempotency, observability, recoverability and bounded context behavior. UI
+convenience is not allowed to define the runtime architecture.
+
 ## Priority References
 
 - MemPalace: verbatim-first raw storage, per-message drawer, palace hierarchy,
@@ -70,3 +139,22 @@ Decision:
 - The next code cut is not another gate. It is task-contract shaping:
   backlog-generation output must be narrow enough that the worker does not need
   broad discovery commands.
+
+## Trial Queue
+
+This queue is deliberately small and should be updated only when a reference
+has been used locally, not when it is merely mentioned.
+
+| Reference | Local state | Trial target | Current decision |
+| --- | --- | --- | --- |
+| MemPalace | Downloaded, native/fallback recall tested against real operator session, recall-quality eval added. | Commercial-grade memory: recall quality, causal compiler, role packets, wrongbook loop. | Adopted for memory layer, still not truth authority. Next: role packet eval and contradiction repair. |
+| Codex | Downloaded, selected Rust service/apply-patch paths inspected. | Interaction loop, tool boundary, sandbox/approval, session resume, compact and long-running goal behavior. | Core interaction/runtime reference; needs deeper use-through before A9 claims Codex-like quality. |
+| OpenClaw/Lobster | Downloaded, selected flow/context/tool envelope paths inspected. | Runtime managed flow, approval/resume, tool/plugin envelope, context overflow authority. | Candidate runtime/gateway reference; not fully adopted until local flow spike passes. |
+| Barter-rs | Downloaded, README/license present, not yet gateway use-through tested in A9. | Rust gateway reconnect, backoff, stream error action, audit state and low-latency transport discipline. | Primary gateway reliability candidate; must run local communication/gateway spike before inclusion. |
+| Aider | Downloaded, repo map and architect/editor prompts inspected. | Repo map, bounded edit discipline, architect/editor split. | Partially adopted; next proof is reducing worker broad reads through exact read commands. |
+| planning-with-files | Downloaded, templates and hook flow inspected. | File-backed task memory and resume. | Mechanism reference only; A9 will not import its role model or add extra doc sprawl. |
+| Hermes | Downloaded, not yet use-through tested. | Sidecar self-improvement, routines, wrongbook/eval feedback loop. | Candidate; must run a local spike before inclusion. |
+| ECC | Downloaded, not yet use-through tested. | Multi-agent/tool ecosystem shape and cross-IDE agent conventions. | Candidate; must be compared against A9 role model before inclusion. |
+| Superpowers | Not confirmed in local `reference-projects`. | Spec-first workflow, design confirmation, subagent execution discipline. | Must be downloaded and used-through before A9 copies any mechanism. |
+| gstack | `gbrain` is local; `gstack` itself is not confirmed in local `reference-projects`. | Skillized roles, plan reviews, QA/benchmark/retro discipline. | Must be downloaded and used-through; only role-review mechanisms may be copied. |
+| headroom / mirofish | Not confirmed in local `reference-projects`. | Unknown until source is confirmed. | Do not cite as architecture input until repo/source is provided and locally tested. |
