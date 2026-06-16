@@ -80,6 +80,43 @@ Any communication/runtime choice must be evaluated for latency, reconnect,
 idempotency, observability, recoverability and bounded context behavior. UI
 convenience is not allowed to define the runtime architecture.
 
+Barter-rs use-through correction:
+
+- Barter-rs is materially more relevant to A9's first layer than Headroom.
+  Headroom helps the selected context enter a model safely; Barter-rs addresses
+  the earlier question: can the gateway keep receiving high-volume streams,
+  survive disconnects and expose a controllable audit plane?
+- Local source paths inspected:
+  `barter-data/src/streams/reconnect/*`,
+  `barter-integration/src/socket/on_connect_err.rs`,
+  `barter-integration/src/socket/on_stream_err.rs`,
+  `barter-integration/src/socket/backoff.rs`,
+  `barter-integration/src/stream/ext/*`,
+  `barter-integration/src/stream/util/merge.rs`,
+  `barter/src/engine/audit/state_replica.rs`,
+  `barter/src/system/mod.rs`, and `barter/src/engine/command.rs`.
+- Local tests with isolated Rust `1.95.0`:
+  `barter-integration on_stream_err` passed `6/6`,
+  `on_connect_err` passed `3/3`, `backoff` passed `6/6`,
+  `forward_by` passed `3/3`, `forward_clone_by` passed `3/3`,
+  `merge` passed `1/1`, `barter trading` passed `2/2`, and
+  `test_engine_process_engine_event_with_audit` passed `1/1`.
+- Mechanisms A9 should copy: explicit reconnect events, capped exponential
+  backoff, connect-error action (`Reconnect` vs `Terminate`), stream-error
+  action (`Continue` vs `Reconnect`), event stream split/forward/merge,
+  external command envelope, trading/processing enabled-state toggle,
+  audit stream and state-replica manager with sequence validation.
+- Mechanisms A9 must not copy as-is: Barter's common channel abstraction is
+  `UnboundedTx`/`UnboundedRx`; that is reasonable in selected trading examples
+  but unsafe as A9's large-context/session ingress. A9 needs bounded queues,
+  backpressure, spill-to-disk/Redis Streams, byte/token accounting and explicit
+  overload actions.
+- Current decision: Barter-rs is not a memory or context-pack solution. It is
+  the strongest current candidate for A9's Rust gateway/control hot path. Its
+  system-level gain can be `>10` if A9 copies it into the large-context intake
+  and worker-transport layer, but only after replacing unbounded channels with
+  A9-grade backpressure and evidence persistence.
+
 ## Priority References
 
 - MemPalace: verbatim-first raw storage, per-message drawer, palace hierarchy,
@@ -226,7 +263,7 @@ has been used locally, not when it is merely mentioned.
 | MemPalace | Downloaded, native/fallback recall tested against real operator session, recall-quality eval added. | Commercial-grade memory: recall quality, causal compiler, role packets, wrongbook loop. | Adopted for memory layer, still not truth authority. Next: role packet eval and contradiction repair. |
 | Codex | Downloaded, selected Rust service/apply-patch paths inspected. | Interaction loop, tool boundary, sandbox/approval, session resume, compact and long-running goal behavior. | Core interaction/runtime reference; needs deeper use-through before A9 claims Codex-like quality. |
 | OpenClaw/Lobster | Downloaded, selected flow/context/tool envelope paths inspected. | Runtime managed flow, approval/resume, tool/plugin envelope, context overflow authority. | Candidate runtime/gateway reference; not fully adopted until local flow spike passes. |
-| Barter-rs | Downloaded, README/license present, not yet gateway use-through tested in A9. | Rust gateway reconnect, backoff, stream error action, audit state and low-latency transport discipline. | Primary gateway reliability candidate; must run local communication/gateway spike before inclusion. |
+| Barter-rs | Downloaded, MIT licensed, source inspected and targeted tests passed under isolated Rust `1.95.0`: stream/connect error actions, backoff, stream forward/merge, trading state and engine audit integration. | Rust gateway reconnect, backoff, stream error action, audit state and low-latency transport discipline. | Primary A9 Rust gateway/control hot-path candidate. Copy the stream/reconnect/audit/control mechanisms, not the unbounded channel design. Next: build an A9-shaped large-context ingress spike with bounded backpressure and Redis/MySQL evidence persistence. |
 | Aider | Downloaded, repo map and architect/editor prompts inspected. | Repo map, bounded edit discipline, architect/editor split. | Partially adopted; next proof is reducing worker broad reads through exact read commands. |
 | planning-with-files | Downloaded, templates and hook flow inspected. | File-backed task memory and resume. | Mechanism reference only; A9 will not import its role model or add extra doc sprawl. |
 | Hermes | Downloaded, not yet use-through tested. | Sidecar self-improvement, routines, wrongbook/eval feedback loop. | Candidate; must run a local spike before inclusion. |
