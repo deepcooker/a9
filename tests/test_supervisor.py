@@ -3217,7 +3217,7 @@ Do the work.
             task = mod.Task(
                 path=run_dir / "task.md",
                 task_id="declared-check-live-observation",
-                prompt="Run one bounded command.",
+                prompt="live_read_budget_policy: stop\nRun one bounded command.",
                 checks=[
                     "python3 -m unittest "
                     "tests.test_supervisor.SupervisorTests."

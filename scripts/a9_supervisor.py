@@ -3297,9 +3297,9 @@ def run_worker(task: Task, worktree: Path, run_dir: Path, *, lease_path: Path | 
                             rationale=last_agent_rationale,
                         )
                         if violation:
-                            stop_live_violation = (
-                                prompt_requires_live_read_budget_stop(task.prompt)
-                                or violation.get("kind") == "direct_workspace_write"
+                            violation_level = str(violation.get("level") or "").strip().lower()
+                            stop_live_violation = violation.get("kind") == "direct_workspace_write" or (
+                                prompt_requires_live_read_budget_stop(task.prompt) and violation_level != "warn"
                             )
                             budget_observations.append(
                                 {
