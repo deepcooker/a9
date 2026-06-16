@@ -13158,6 +13158,30 @@ def backlog_generation_needs_retry_after_code_update(summary: dict[str, Any]) ->
     return bool(current_head and current_head != summary_head)
 
 
+def backlog_generation_has_monitor_closure_after_summary(plan: dict[str, Any], summary: dict[str, Any]) -> bool:
+    status = str(summary.get("status") or "")
+    if status != "needs-followup":
+        return False
+    plan_dir = PLANS_DIR / str(plan.get("plan_id") or "")
+    progress_path = plan_dir / "progress.md"
+    change_request_path = plan_dir / "change_request.md"
+    summary_path = Path(str(summary.get("run_dir") or "")) / "summary.json"
+    try:
+        summary_mtime = summary_path.stat().st_mtime
+    except OSError:
+        summary_mtime = 0.0
+    for path in (progress_path, change_request_path):
+        try:
+            if path.stat().st_mtime <= summary_mtime:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")[-4000:]
+        except OSError:
+            continue
+        if "monitor_closure" in text and "approved next backlog-generation" in text:
+            return True
+    return False
+
+
 def backlog_generation_retryable_budget_count(plan_ref: str) -> int:
     prefix = f"exec-backlog-generation-{plan_ref}-"
     count = 0
@@ -13197,7 +13221,7 @@ def backlog_generation_consecutive_retryable_interrupted_count(plan_ref: str) ->
     return count
 
 
-def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str]) -> bool:
+def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str], *, plan: dict[str, Any] | None = None) -> bool:
     prefix = f"exec-backlog-generation-{plan_ref}-"
     if not any(prefix in str(task_id) for task_id in generated_task_ids):
         return True
@@ -13211,6 +13235,8 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str])
     if backlog_generation_retryable_interrupted_summary(summary):
         return backlog_generation_consecutive_retryable_interrupted_count(plan_ref) < 3
     if backlog_generation_needs_retry_after_code_update(summary):
+        return True
+    if plan is not None and backlog_generation_has_monitor_closure_after_summary(plan, summary):
         return True
     if str(summary.get("status") or "") != "pass":
         return False
@@ -13233,12 +13259,13 @@ def plan_backlog_generation_continuation_item(
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
     bounded_read_paths = plan_bounded_read_paths(str(plan.get("plan_id") or ""), allowed_paths)
     bounded_read_lines = [f"bounded read: {path}" for path in bounded_read_paths[:10]]
-    if not backlog_generation_can_continue(plan_ref, generated_task_ids):
+    if not backlog_generation_can_continue(plan_ref, generated_task_ids, plan=plan):
         return None
     latest_generation = latest_backlog_generation_summary(plan_ref)
     retry_budget = backlog_generation_retryable_budget_summary(latest_generation)
     retry_interrupted = backlog_generation_retryable_interrupted_summary(latest_generation)
     retry_after_code_update = backlog_generation_needs_retry_after_code_update(latest_generation)
+    retry_after_monitor_closure = backlog_generation_has_monitor_closure_after_summary(plan, latest_generation)
     retry_lines: list[str] = []
     if retry_budget:
         worker_failure = latest_generation.get("worker_failure") if isinstance(latest_generation.get("worker_failure"), dict) else {}
@@ -13269,6 +13296,13 @@ def plan_backlog_generation_continuation_item(
             f"previous_backlog_generation_status: {latest_generation.get('status', '')}",
             f"previous_repo_head: {latest_generation.get('repo_head', '')}",
             "retry_policy: previous backlog-generation result came from an older supervisor revision; rerun with current bounded plan evidence before accepting its change_request.",
+            "retry_scope: use docs/project.md, docs/method.md, docs/session.md, and active plan files only.",
+        ]
+    elif retry_after_monitor_closure:
+        retry_lines = [
+            f"previous_backlog_generation_status: {latest_generation.get('status', '')}",
+            "previous_followup_resolution: monitor_closure",
+            "retry_policy: monitor applied review closure after previous needs-followup; generate the next compact backlog from current bounded plan evidence.",
             "retry_scope: use docs/project.md, docs/method.md, docs/session.md, and active plan files only.",
         ]
     prefix = f"exec-backlog-generation-{plan_ref}-"

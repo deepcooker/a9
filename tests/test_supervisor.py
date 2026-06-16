@@ -5094,6 +5094,79 @@ Do the work.
         self.assertIn("previous_repo_head: old-head", items[0]["prompt"])
         self.assertTrue(any(path.endswith("/plans/plan-stale-followup/plan.json") for path in items[0]["allowed_paths"]))
 
+    def test_plan_backlog_generation_retries_after_monitor_closure(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            old_plans = mod.PLANS_DIR
+            old_git_head = mod.git_head
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.RUNS_DIR.mkdir(parents=True)
+            mod.PLANS_DIR.mkdir(parents=True)
+            mod.git_head = lambda: "same-head"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-monitor-closure",
+                    goal_id="goal-monitor-closure",
+                    contract={
+                        "problem": "Monitor closure should unblock next backlog generation.",
+                        "why_now": "Business closure can happen in plan evidence without code changes.",
+                        "must": "Continue after explicit monitor closure.",
+                        "system_requirement": "monitor_closure is a valid continuation signal for stale needs-followup.",
+                        "data_shape": "summary status plus plan progress closure marker.",
+                        "normal_flow": "needs-followup -> monitor closure -> next backlog-generation.",
+                        "exception_flow": "needs-followup without closure still waits.",
+                        "acceptance": "retry prompt includes previous status and no code-head change is required.",
+                        "out_of_scope": "blindly accepting worker change_request.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 monitor-approved review closure.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-monitor-closure",
+                        "exec-002-mechanism_extract-plan-monitor-closure",
+                        "exec-003-vendor_import-plan-monitor-closure",
+                        "exec-004-implement-plan-monitor-closure",
+                        "exec-005-test-plan-monitor-closure",
+                        "exec-006-record-plan-monitor-closure",
+                        "exec-backlog-generation-plan-monitor-closure-001",
+                    ]
+                )
+                plan_dir = mod.write_plan_files(plan)
+                run_dir = mod.RUNS_DIR / "monitor-closure-run"
+                run_dir.mkdir()
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "exec-backlog-generation-plan-monitor-closure-001",
+                        "status": "needs-followup",
+                        "repo_head": "same-head",
+                        "run_dir": str(run_dir),
+                    },
+                )
+                progress = plan_dir / "progress.md"
+                progress.write_text(
+                    progress.read_text(encoding="utf-8")
+                    + "- 2026-06-16T00:00:01+00:00 monitor_closure approved next backlog-generation after worker requested closure\n",
+                    encoding="utf-8",
+                )
+                summary_mtime = (run_dir / "summary.json").stat().st_mtime
+                os.utime(progress, (summary_mtime + 1, summary_mtime + 1))
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+                mod.PLANS_DIR = old_plans
+                mod.git_head = old_git_head
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-monitor-closure-002")
+        self.assertIn("previous_backlog_generation_status: needs-followup", items[0]["prompt"])
+
     def test_plan_backlog_add_persists_item_and_next_marks_queued(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
