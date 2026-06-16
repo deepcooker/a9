@@ -532,6 +532,53 @@ def task_quality_blockers(warnings: list[str]) -> list[str]:
     return blockers
 
 
+def record_active_plan_task_quality_block(task: Task, block_record: dict[str, Any]) -> dict[str, Any]:
+    plan = active_plan()
+    if not plan:
+        return {"status": "skipped", "reason": "no_active_plan"}
+    backlog = execution_backlog_state(plan)
+    items = backlog.get("items")
+    if not isinstance(items, list):
+        return {"status": "skipped", "reason": "no_execution_backlog_items"}
+    task_id = str(task.task_id or "").strip()
+    matched: dict[str, Any] | None = None
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if task_id in {
+            str(item.get("queued_task_id") or "").strip(),
+            str(item.get("task_id") or "").strip(),
+        }:
+            matched = item
+            break
+    if matched is None:
+        return {"status": "skipped", "reason": "task_not_in_execution_backlog", "task_id": task_id}
+    now = utc_now()
+    matched["status"] = "monitor-blocked"
+    matched["blocked_at"] = now
+    matched["blocked_reason"] = "task_quality_block"
+    matched["quality_blockers"] = list(block_record.get("blockers") or [])
+    matched["quality_block_path"] = str(block_record.get("blocked_path") or "")
+    matched["quality_block_record_path"] = str(block_record.get("audit_path") or "")
+    matched["last_updated_at"] = now
+    plan["updated_at"] = now
+    plan_dir = write_plan_files(plan, activate=True)
+    append_plan_progress(
+        plan_dir,
+        (
+            f"- {now} task_quality_block: task={task_id} "
+            f"item={matched.get('id') or matched.get('backlog_id') or ''} "
+            f"blockers={'; '.join(str(item) for item in block_record.get('blockers', []))}"
+        ),
+    )
+    return {
+        "status": "updated",
+        "task_id": task_id,
+        "item_id": str(matched.get("id") or matched.get("backlog_id") or ""),
+        "item_status": "monitor-blocked",
+    }
+
+
 def queued_task_quality_summary(limit: int = 10) -> dict[str, Any]:
     ensure_dirs()
     queued_paths = sorted(QUEUE_DIR.glob("*.md"))
@@ -1187,6 +1234,7 @@ def claim_next_task() -> Task | None:
                     "reason": "task_contract_invalid_before_worker_claim",
                 }
                 audit_path = BLOCKED_DIR / f"{path.stem}.quality-block.json"
+                block_record["audit_path"] = str(audit_path)
                 write_json(audit_path, block_record)
                 try:
                     os.replace(path, blocked_path)
@@ -1194,6 +1242,7 @@ def claim_next_task() -> Task | None:
                     continue
                 except OSError:
                     continue
+                record_active_plan_task_quality_block(candidate, block_record)
                 continue
         claimed = RUNNING_DIR / path.name
         try:

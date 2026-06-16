@@ -12675,12 +12675,32 @@ role_signoff: product, business, architecture, test approved.
             old_queue = mod.QUEUE_DIR
             old_running = mod.RUNNING_DIR
             old_blocked = mod.BLOCKED_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
             try:
                 mod.QUEUE_DIR = root / "queue"
                 mod.RUNNING_DIR = root / "running"
                 mod.BLOCKED_DIR = root / "blocked"
-                for directory in (mod.QUEUE_DIR, mod.RUNNING_DIR, mod.BLOCKED_DIR):
+                mod.PLANS_DIR = root / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                for directory in (mod.QUEUE_DIR, mod.RUNNING_DIR, mod.BLOCKED_DIR, mod.PLANS_DIR):
                     directory.mkdir(parents=True)
+                plan = mod.create_plan_payload(
+                    plan_id="quality-block-plan",
+                    goal_id="quality-block-goal",
+                    contract={"problem": "Quality-blocked queued tasks must not stay queued in active plan."},
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "backlog-001-quality-block",
+                        "title": "Quality blocked task",
+                        "phase": "implement",
+                        "status": "queued",
+                        "queued_task_id": "bad-declared-check",
+                    }
+                )
+                plan_dir = mod.write_plan_files(plan)
                 mod.enqueue_task_file(
                     "bad-declared-check",
                     "Do implementation work.",
@@ -12694,10 +12714,13 @@ role_signoff: product, business, architecture, test approved.
                 blocked_tasks = sorted(mod.BLOCKED_DIR.glob("*.md"))
                 block_records = sorted(mod.BLOCKED_DIR.glob("*.quality-block.json"))
                 record = json.loads(block_records[0].read_text(encoding="utf-8"))
+                stored = json.loads((plan_dir / "plan.json").read_text(encoding="utf-8"))
             finally:
                 mod.QUEUE_DIR = old_queue
                 mod.RUNNING_DIR = old_running
                 mod.BLOCKED_DIR = old_blocked
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
 
         self.assertIsNone(claimed)
         self.assertEqual(len(blocked_tasks), 1)
@@ -12711,6 +12734,10 @@ role_signoff: product, business, architecture, test approved.
             "tests.test_control_api.ControlApiTests.test_missing_stale_declared_check_name",
             record["blockers"],
         )
+        item = stored["execution_backlog"]["items"][0]
+        self.assertEqual(item["status"], "monitor-blocked")
+        self.assertEqual(item["blocked_reason"], "task_quality_block")
+        self.assertIn("quality_block_path", item)
 
     def test_enqueue_task_file_allows_future_unittest_target_in_allowed_test_file(self):
         mod = load_supervisor()
