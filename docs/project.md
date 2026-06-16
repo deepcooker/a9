@@ -123,6 +123,14 @@ P7 NZX technical MVP
   `no_live_worker_process` interruptions now produce a narrower retry prompt
   with the previous failure reason and bounded read scope, while non-retryable
   generation failures still wait for monitor review.
+- 2026-06-16 live 24h observation: backlog generation can now resume after
+  supervisor fixes, append decided execution items, and auto-run them. The
+  remaining quality bottleneck is not memory recall itself; it is task-contract
+  precision. Workers repeatedly used broad aliases such as `scripts` or `tests`
+  despite file-level `allowed_paths`, which caused retryable worker-budget
+  stops. Task-quality blocks are now written back into the active plan instead
+  of leaving false `queued` state. Next cut: backlog-generation must emit exact
+  read commands or anchors, validated checks, and no broad root aliases.
 - Backlog-generation debate tasks now include exact active-plan evidence files
   (`plan.json`, `progress.md`, `change_request.md`, `findings.md`,
   `mistakes.md`) in bounded read scope. Without these files, workers can

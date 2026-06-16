@@ -24,6 +24,12 @@ Raw external Codex/operator session:
 9. Noise cleanup is part of requirements analysis.
 10. Old one-off closure docs are stale. Current closure state lives in the
     five-doc packet plus active plan evidence.
+11. 2026-06-16 clarification: earlier debate quality came from long context,
+    human correction, repeated requirements shaping and causal memory together.
+    It was not a sufficient production mechanism by itself. A9 must preserve
+    that quality through reference-backed plan contracts, evidence refs,
+    role-scoped packets and task-quality feedback, not by trusting current
+    chat context.
 
 ## Current Mainline
 
@@ -86,6 +92,11 @@ Raw external Codex/operator session:
   If a backlog-generation result is `needs-followup` or `needs-repair` from an
   older supervisor `repo_head`, current runtime may retry it after code repair
   instead of treating the stale result as permanent closure.
+- 2026-06-16 live observation: backlog generation now resumes and appends
+  decided items, but execution workers still fail when task packets allow broad
+  discovery habits (`scripts`, `tests`) instead of exact file/command anchors.
+  This confirms the next mechanism to copy is command-level task contract
+  shaping from Codex/Aider/planning-with-files/OpenClaw, not another hard gate.
 - When this file grows, fold the durable fact into this causal state and delete
   process noise.
 - MemPalace recall protocol is wired into control API and supervisor context packets.
