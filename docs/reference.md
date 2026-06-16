@@ -80,6 +80,48 @@ Any communication/runtime choice must be evaluated for latency, reconnect,
 idempotency, observability, recoverability and bounded context behavior. UI
 convenience is not allowed to define the runtime architecture.
 
+Codex use-through correction:
+
+- Codex is materially more relevant to A9's agent runtime than to the network
+  gateway. Barter-rs answers "how to keep receiving and reconnecting"; Codex
+  answers "how to keep an agent thread, tool call, patch, history and goal
+  recoverable."
+- Local source paths inspected:
+  `codex-rs/code-mode/src/service.rs`,
+  `codex-rs/apply-patch/src/parser.rs`,
+  `codex-rs/thread-store/src/live_thread.rs`,
+  `codex-rs/thread-store/src/local/live_writer.rs`,
+  `codex-rs/message-history/src/lib.rs`,
+  `codex-rs/state/src/runtime/recovery.rs`,
+  `codex-rs/state/src/runtime/goals.rs`, and
+  `codex-rs/state/src/runtime/agent_jobs.rs`.
+- Local tests with isolated Rust `1.95.0`:
+  `codex-message-history` passed `5/5`,
+  `codex-state runtime::recovery` passed `5/5`,
+  `codex-state runtime::goals` passed `21/21`,
+  `codex-state runtime::agent_jobs` passed `2/2`, and
+  `codex-apply-patch` passed `66/68`. The two apply-patch failures were
+  permission-fixture tests that expect writes to fail under chmod-protected
+  directories; A9 runs as root, so root could still write. This is an
+  environment warning, not a parser failure.
+- Mechanisms A9 should copy: cell/session registry, execute-to-pending,
+  wait-to-pending, cancellation token, graceful shutdown, pending tool-call
+  tracking, JSONL rollout as live fact source, SQLite/state DB as index,
+  init guard with discard-on-failure, flush-before-metadata ordering,
+  append-only message history with file locking and soft-cap trimming,
+  corruption detection with per-runtime-DB backup/rebuild, goal id/version
+  protection, in-flight usage accounting, atomic job item result reporting and
+  stale report rejection by assigned thread id.
+- Mechanisms A9 must not copy as-is: Codex's full Rust workspace is large and
+  dependency-heavy, and some runtime channels are unbounded. A9 should copy the
+  protocol/state/persistence patterns first, while keeping Barter-style bounded
+  ingress and Redis/MySQL evidence persistence for high-volume context.
+- Current decision: Codex is the primary reference for A9's 24h agent runtime
+  and operator session governance. Its system-level gain can be `>10` for
+  pending/resume, durable history, deterministic apply and stale-result
+  prevention. It does not replace MemPalace for recall, Headroom for context
+  shaping, or Barter-rs for gateway transport.
+
 Barter-rs use-through correction:
 
 - Barter-rs is materially more relevant to A9's first layer than Headroom.
@@ -163,7 +205,7 @@ reference-first copying.
 
 | Reference | Local evidence | Mechanism to copy | A9 status | Current gap / next cut |
 | --- | --- | --- | --- | --- |
-| Codex | `reference-projects/codex/codex-rs/code-mode/src/service.rs`, `reference-projects/codex/codex-rs/apply-patch/src/parser.rs` | Session registry, resume-to-pending, sandbox/approval config, deterministic patch grammar and context matching. | A9 has supervisor queue, worktrees, strict envelope, deterministic apply and patch/scope/git governance. | Worker prompts still allow broad command habits. Next cut: task packets must include exact read-command discipline, not just allowed_paths. |
+| Codex | `reference-projects/codex/codex-rs/code-mode/src/service.rs`, `reference-projects/codex/codex-rs/apply-patch/src/parser.rs`, `reference-projects/codex/codex-rs/thread-store/src/live_thread.rs`, `reference-projects/codex/codex-rs/thread-store/src/local/live_writer.rs`, `reference-projects/codex/codex-rs/message-history/src/lib.rs`, `reference-projects/codex/codex-rs/state/src/runtime/{recovery,goals,agent_jobs}.rs`; targeted tests: message-history `5/5`, state recovery `5/5`, goals `21/21`, agent_jobs `2/2`, apply-patch `66/68` with root-only permission fixture failures. | Cell/thread registry, pending/resume, cancellation/shutdown, JSONL-first live persistence, history lock/soft-cap lookup, local DB corruption backup, goal version/usage accounting, atomic job-item reporting, deterministic patch grammar and context matching. | A9 has supervisor queue, worktrees, strict envelope, deterministic apply, Redis managed flow, policy attestation and patch/scope/git governance. | A9 still lacks a Codex-grade unified runtime state model: operator session tail, 24h worker task item, goal accounting and stale-result rejection are split across scripts. Next cut: port the Codex state model shape into A9 task/run/session records without importing the whole workspace. |
 | MemPalace | `reference-projects/mempalace/README.md`, `reference-projects/mempalace/CHANGELOG.md`, `reference-projects/mempalace/examples/cursor/README.md` | Verbatim drawers, source metadata, hybrid retrieval, wakeup packs, preCompact/sessionStart hooks, temporal KG and idempotent resumable mining. | A9 uses MemPalace-first drawer/evidence/index, native recall where available, fallback drawer JSONL, causal candidate compiler and review-only eval candidates. | Recall is still not final truth. Next cut: compile drawer evidence into time-valid facts, stale invalidations and role packets with explicit evidence refs before worker execution. |
 | planning-with-files | `reference-projects/planning-with-files/templates/task_plan.md`, `reference-projects/planning-with-files/templates/loop.md`, `reference-projects/planning-with-files/README.md`, `reference-projects/planning-with-files/MIGRATION.md` | Filesystem working memory, progress/findings/task plan loop, hooks re-read before work, attestation and parallel plan isolation. | A9 has active plan, progress/findings/mistakes/change_request and managed backlog. | A9 must not add more planning docs. Next cut: make plan/backlog items stricter as contracts: exact files, exact commands, validated checks, and no broad aliases. |
 | OpenClaw/Lobster | `reference-projects/openclaw/src/node-host/invoke.ts`, `reference-projects/openclaw/src/node-host/invoke-system-run-plan.ts`, `reference-projects/openclaw/src/context-engine/types.ts`, `reference-projects/openclaw/packages/sdk/src/types.ts` | Approval hash/reload safety, flow IDs, plugin command envelope, context engine overflow authority and approval events. | A9 has Redis managed-flow revision checks, approval/wait/resume, policy attestation and runtime monitor contract. | Quality-blocked tasks must update plan state and monitor/mobile must see them. This is now implemented for task-quality blocks; next cut is command-level task generation. |
@@ -261,7 +303,7 @@ has been used locally, not when it is merely mentioned.
 | Reference | Local state | Trial target | Current decision |
 | --- | --- | --- | --- |
 | MemPalace | Downloaded, native/fallback recall tested against real operator session, recall-quality eval added. | Commercial-grade memory: recall quality, causal compiler, role packets, wrongbook loop. | Adopted for memory layer, still not truth authority. Next: role packet eval and contradiction repair. |
-| Codex | Downloaded, selected Rust service/apply-patch paths inspected. | Interaction loop, tool boundary, sandbox/approval, session resume, compact and long-running goal behavior. | Core interaction/runtime reference; needs deeper use-through before A9 claims Codex-like quality. |
+| Codex | Downloaded, Apache-2.0, source inspected and targeted tests run under isolated Rust `1.95.0`: message-history `5/5`, state recovery `5/5`, goals `21/21`, agent_jobs `2/2`, apply-patch `66/68` with the two failures caused by root bypassing permission-denied fixtures. | Interaction loop, cell/thread registry, pending/resume, deterministic apply, JSONL-first live session persistence, history lookup, goal accounting and stale job-result rejection. | Primary A9 agent-runtime reference. Copy the state/protocol/persistence mechanisms, not the whole dependency-heavy workspace. Next: map Codex thread/job/goal/history concepts onto A9 operator session + 24h worker records. |
 | OpenClaw/Lobster | Downloaded, selected flow/context/tool envelope paths inspected. | Runtime managed flow, approval/resume, tool/plugin envelope, context overflow authority. | Candidate runtime/gateway reference; not fully adopted until local flow spike passes. |
 | Barter-rs | Downloaded, MIT licensed, source inspected and targeted tests passed under isolated Rust `1.95.0`: stream/connect error actions, backoff, stream forward/merge, trading state and engine audit integration. | Rust gateway reconnect, backoff, stream error action, audit state and low-latency transport discipline. | Primary A9 Rust gateway/control hot-path candidate. Copy the stream/reconnect/audit/control mechanisms, not the unbounded channel design. Next: build an A9-shaped large-context ingress spike with bounded backpressure and Redis/MySQL evidence persistence. |
 | Aider | Downloaded, repo map and architect/editor prompts inspected. | Repo map, bounded edit discipline, architect/editor split. | Partially adopted; next proof is reducing worker broad reads through exact read commands. |
