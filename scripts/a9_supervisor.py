@@ -11307,6 +11307,24 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
             plan_update.get("execution_backlog_update", {}) if isinstance(plan_update.get("execution_backlog_update"), dict) else {}
         )
         plan_id = str(plan_update.get("plan_id") or parse_key_value_prompt(task.prompt).get("plan_id") or "").strip()
+        plan = load_plan(plan_id) if plan_id else active_plan()
+        if not plan:
+            plan = active_plan()
+        debate_state = requirements_debate_progress(plan) if isinstance(plan, dict) else {}
+        plan_ready_for_execution_backlog = str(debate_state.get("status") or "") == "ready_for_execution_backlog"
+
+        if summary["status"] in {"needs-followup", "needs-repair"} and plan_ready_for_execution_backlog:
+            summary["auto_next_block"] = {
+                "reason": "review_closure_wait",
+                "status": summary["status"],
+                "plan_id": plan.get("plan_id") if isinstance(plan, dict) else "",
+                "plan_ready_for_execution_backlog": True,
+                "decision_status": explicit_decision.get("decision_status", "missing"),
+                "missing_fields": explicit_decision.get("missing_fields", []),
+                "recommendation": explicit_decision.get("recommendation", ""),
+                "task_id": task.task_id,
+            }
+            return None
         if backlog_update.get("status") == "appended" and plan_id:
             next_path = schedule_execution_backlog_from_plan(plan_id)
             if next_path is not None:
