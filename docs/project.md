@@ -79,7 +79,10 @@ P7 NZX technical MVP
   fallback for external Codex/operator sessions.
 - `scripts/a9_codex_session_adapter.py` converts Codex raw JSONL into
   MemPalace-compatible per-message drawer records without treating recall as
-  truth.
+  truth. Large operator sessions must use the incremental path: initialize the
+  cursor from the existing drawer once with `init-cursor`, then run
+  `incremental` to append only new JSONL rows. Do not run full `convert --out`
+  over the 100MB+ operator session unless intentionally rebuilding the drawer.
 - `scripts/a9_mempalace_provider.py` exposes the runtime-facing MemPalace
   facade: status, source-preserving search, wakeup and official-style recall
   packets. Native MemPalace is the primary recall path; drawer JSONL remains
