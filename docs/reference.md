@@ -159,6 +159,48 @@ Barter-rs use-through correction:
   and worker-transport layer, but only after replacing unbounded channels with
   A9-grade backpressure and evidence persistence.
 
+OpenClaw/Lobster use-through correction:
+
+- OpenClaw is materially more relevant to A9's multi-channel control plane than
+  to the low-level transport or memory layer. Codex answers how an agent thread
+  persists; Barter-rs answers how streams reconnect; OpenClaw answers how an
+  active agent run is controlled from external channels and plugins.
+- Local source paths inspected:
+  `packages/agent-core/src/agent-loop.ts`,
+  `packages/agent-core/src/agent-loop.test.ts`,
+  `src/talk/agent-run-control.ts`,
+  `src/talk/agent-run-control-shared.ts`,
+  `src/talk/agent-run-control.test.ts`,
+  `src/agents/embedded-agent-runner/runs.ts`,
+  `src/plugin-state/plugin-state-store.ts`,
+  `src/plugin-state/plugin-state-store.test.ts`,
+  `packages/media-core/src/read-byte-stream-with-limit.ts`,
+  `packages/media-core/src/read-byte-stream-with-limit.test.ts`, and
+  `packages/tool-call-repair/src/{payload,promote,stream-normalizer}.ts`.
+- Local test attempt: direct `pnpm` is unavailable, `corepack pnpm` fails under
+  current Node `20.11.1`, and `npm ci --ignore-scripts` is rejected because
+  OpenClaw requires Node `>=22.19.0` and the npm shrinkwrap is not in sync with
+  `package.json`. No OpenClaw tests are counted as passed in this environment.
+- Mechanisms A9 should copy: terminal failure messages for stream errors,
+  steering/follow-up injection into active runs, explicit active-run
+  `status/cancel/steer/followup` modes, conservative intent classification
+  where ambiguous text defaults to read-only status, queue outcomes with
+  machine-readable reasons (`no_active_run`, `not_streaming`, `compacting`,
+  `runtime_rejected`), run lookup by session key and session file,
+  abandonment tracking, plugin-state namespaces with stable limits, JSON-only
+  values, TTL, consume/register-if-absent semantics, per-plugin isolation,
+  byte-stream hard caps that destroy/cancel upstream producers, and bounded
+  plain-text tool-call repair for model/provider leakage.
+- Mechanisms A9 must not copy as-is: the full JS/Node workspace is too heavy
+  and currently requires a newer Node toolchain than this A9 box. A9 should
+  copy protocol shapes and tests first, then reimplement the hot control path
+  in the Rust/Redis/MySQL control plane.
+- Current decision: OpenClaw is the primary reference for external control of
+  active runs. Its system-level gain is high for A9 mobile/operator takeover:
+  monitor commands should become typed `status`, `cancel`, `steer` and
+  `followup` actions instead of a generic text submit. This complements Codex
+  pending/resume and Barter-rs transport; it does not replace either.
+
 ## Priority References
 
 - MemPalace: verbatim-first raw storage, per-message drawer, palace hierarchy,
@@ -208,7 +250,7 @@ reference-first copying.
 | Codex | `reference-projects/codex/codex-rs/code-mode/src/service.rs`, `reference-projects/codex/codex-rs/apply-patch/src/parser.rs`, `reference-projects/codex/codex-rs/thread-store/src/live_thread.rs`, `reference-projects/codex/codex-rs/thread-store/src/local/live_writer.rs`, `reference-projects/codex/codex-rs/message-history/src/lib.rs`, `reference-projects/codex/codex-rs/state/src/runtime/{recovery,goals,agent_jobs}.rs`; targeted tests: message-history `5/5`, state recovery `5/5`, goals `21/21`, agent_jobs `2/2`, apply-patch `66/68` with root-only permission fixture failures. | Cell/thread registry, pending/resume, cancellation/shutdown, JSONL-first live persistence, history lock/soft-cap lookup, local DB corruption backup, goal version/usage accounting, atomic job-item reporting, deterministic patch grammar and context matching. | A9 has supervisor queue, worktrees, strict envelope, deterministic apply, Redis managed flow, policy attestation and patch/scope/git governance. | A9 still lacks a Codex-grade unified runtime state model: operator session tail, 24h worker task item, goal accounting and stale-result rejection are split across scripts. Next cut: port the Codex state model shape into A9 task/run/session records without importing the whole workspace. |
 | MemPalace | `reference-projects/mempalace/README.md`, `reference-projects/mempalace/CHANGELOG.md`, `reference-projects/mempalace/examples/cursor/README.md` | Verbatim drawers, source metadata, hybrid retrieval, wakeup packs, preCompact/sessionStart hooks, temporal KG and idempotent resumable mining. | A9 uses MemPalace-first drawer/evidence/index, native recall where available, fallback drawer JSONL, causal candidate compiler and review-only eval candidates. | Recall is still not final truth. Next cut: compile drawer evidence into time-valid facts, stale invalidations and role packets with explicit evidence refs before worker execution. |
 | planning-with-files | `reference-projects/planning-with-files/templates/task_plan.md`, `reference-projects/planning-with-files/templates/loop.md`, `reference-projects/planning-with-files/README.md`, `reference-projects/planning-with-files/MIGRATION.md` | Filesystem working memory, progress/findings/task plan loop, hooks re-read before work, attestation and parallel plan isolation. | A9 has active plan, progress/findings/mistakes/change_request and managed backlog. | A9 must not add more planning docs. Next cut: make plan/backlog items stricter as contracts: exact files, exact commands, validated checks, and no broad aliases. |
-| OpenClaw/Lobster | `reference-projects/openclaw/src/node-host/invoke.ts`, `reference-projects/openclaw/src/node-host/invoke-system-run-plan.ts`, `reference-projects/openclaw/src/context-engine/types.ts`, `reference-projects/openclaw/packages/sdk/src/types.ts` | Approval hash/reload safety, flow IDs, plugin command envelope, context engine overflow authority and approval events. | A9 has Redis managed-flow revision checks, approval/wait/resume, policy attestation and runtime monitor contract. | Quality-blocked tasks must update plan state and monitor/mobile must see them. This is now implemented for task-quality blocks; next cut is command-level task generation. |
+| OpenClaw/Lobster | `reference-projects/openclaw/packages/agent-core/src/agent-loop.ts`, `reference-projects/openclaw/src/talk/agent-run-control{,-shared}.ts`, `reference-projects/openclaw/src/agents/embedded-agent-runner/runs.ts`, `reference-projects/openclaw/src/plugin-state/plugin-state-store.ts`, `reference-projects/openclaw/packages/media-core/src/read-byte-stream-with-limit.ts`, `reference-projects/openclaw/packages/tool-call-repair/src/*`. Test attempt blocked by Node `20.11.1` vs required `>=22.19.0` and npm shrinkwrap drift. | Active-run control modes, steering/follow-up queueing, conservative control intent classifier, machine-readable queue rejection reasons, plugin-state contract, byte-stream overflow destroy/cancel, bounded tool-call repair and terminal stream failure messages. | A9 has Redis managed-flow revision checks, approval/wait/resume, policy attestation and runtime monitor contract, but mobile/operator control is still too generic. | Next cut: model A9 monitor actions as typed `status/cancel/steer/followup` commands with queue outcome reasons and active-run/session-file lookup. Do not import the OpenClaw Node workspace into A9 hot path. |
 | Aider | `reference-projects/aider/aider/repomap.py`, `reference-projects/aider/aider/coders/architect_prompts.py`, `reference-projects/aider/aider/coders/udiff_prompts.py` | Repo map instead of full repo reads, architect/editor split, explicit edit format and git-friendly diff discipline. | A9 has repo map, bounded context, deterministic apply and git governance. | Worker still broad-searches (`scripts`, `tests`) after task generation. Next cut: generated backlog must include exact rg/sed commands or anchors, not just a file list. |
 | Headroom | `reference-projects/headroom/README.md`, `reference-projects/headroom/docs/content/docs/ccr.mdx`, `reference-projects/headroom/headroom/ccr/*`, `reference-projects/headroom/headroom/transforms/content_router.py`, `reference-projects/headroom/crates/headroom-core/src/ccr/mod.rs`, `reference-projects/headroom/crates/headroom-core/src/transforms/live_zone.rs`, `reference-projects/headroom/headroom/providers/codex/*`, `reference-projects/headroom/headroom/providers/openclaw/*` | Compress-Cache-Retrieve with source hash, retrieval tool injection, workspace-scoped context tracker, content-type router, live-zone byte-range surgery, cache volatility observation, proxy health/stats/metrics, Codex/OpenClaw wrapper config hygiene. | Source build passed in A9-isolated venv/toolchain; Python CCR/router/proxy/wrapper tests mostly pass; proxy smoke passed. Extra A9-shaped tests now cover cache stability, byte-faithful forwarding, system-prompt immutability, Codex WS lifecycle/timing, memory project isolation, learn analyzer/writer, compression failure action and streaming resilience. Real A9 replay showed good savings on a run prompt and summary, but zero savings and high latency on a 594 KB node-worker JSONL tail. This is still a use-through candidate, not a final architecture decision. | Primary strength appears to be context-gateway accident prevention and observability, not only token compression. It is not yet proven as a universal big-log reducer. Continue using it against real A9 worker/session logs before deciding what to copy. Do not put ML/ONNX Rust deps on A9 hot path yet. |
 
@@ -304,7 +346,7 @@ has been used locally, not when it is merely mentioned.
 | --- | --- | --- | --- |
 | MemPalace | Downloaded, native/fallback recall tested against real operator session, recall-quality eval added. | Commercial-grade memory: recall quality, causal compiler, role packets, wrongbook loop. | Adopted for memory layer, still not truth authority. Next: role packet eval and contradiction repair. |
 | Codex | Downloaded, Apache-2.0, source inspected and targeted tests run under isolated Rust `1.95.0`: message-history `5/5`, state recovery `5/5`, goals `21/21`, agent_jobs `2/2`, apply-patch `66/68` with the two failures caused by root bypassing permission-denied fixtures. | Interaction loop, cell/thread registry, pending/resume, deterministic apply, JSONL-first live session persistence, history lookup, goal accounting and stale job-result rejection. | Primary A9 agent-runtime reference. Copy the state/protocol/persistence mechanisms, not the whole dependency-heavy workspace. Next: map Codex thread/job/goal/history concepts onto A9 operator session + 24h worker records. |
-| OpenClaw/Lobster | Downloaded, selected flow/context/tool envelope paths inspected. | Runtime managed flow, approval/resume, tool/plugin envelope, context overflow authority. | Candidate runtime/gateway reference; not fully adopted until local flow spike passes. |
+| OpenClaw/Lobster | Downloaded, MIT licensed, key active-run control, plugin-state, byte-limit and tool-call-repair paths inspected. Test execution blocked by local Node `20.11.1`; project requires Node `>=22.19.0`, `corepack pnpm` fails, and `npm ci` rejects shrinkwrap drift. | Active-run external control, channel/operator steering, plugin-state contracts, bounded byte ingestion and tool-call repair. | Primary A9 reference for mobile/operator takeover of active runs. Copy typed control and queue-outcome mechanisms; run full tests later in a Node 22+ reference sandbox. |
 | Barter-rs | Downloaded, MIT licensed, source inspected and targeted tests passed under isolated Rust `1.95.0`: stream/connect error actions, backoff, stream forward/merge, trading state and engine audit integration. | Rust gateway reconnect, backoff, stream error action, audit state and low-latency transport discipline. | Primary A9 Rust gateway/control hot-path candidate. Copy the stream/reconnect/audit/control mechanisms, not the unbounded channel design. Next: build an A9-shaped large-context ingress spike with bounded backpressure and Redis/MySQL evidence persistence. |
 | Aider | Downloaded, repo map and architect/editor prompts inspected. | Repo map, bounded edit discipline, architect/editor split. | Partially adopted; next proof is reducing worker broad reads through exact read commands. |
 | planning-with-files | Downloaded, templates and hook flow inspected. | File-backed task memory and resume. | Mechanism reference only; A9 will not import its role model or add extra doc sprawl. |
