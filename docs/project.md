@@ -96,6 +96,11 @@ P7 NZX technical MVP
   `thread_history` and runtime threads. This is intentionally projection-only;
   it does not replace supervisor, managed flow, MemPalace or future gateway
   work.
+- Mobile/control gateway remains required. The current Codex thread-view work
+  only means Barter-rs is not placed as a direct lower layer under Codex.
+  Barter-rs stays as the event/service gateway reference for trading or
+  high-volume streams; mobile/control gateway, Codex execution runtime and
+  Barter-style event gateway are separate A9 layers.
 - MemPalace recall is not yet the full memory governance system. A9 now has a
   first deterministic `recall -> causal memory` compiler that turns recalled
   drawers into candidate time-valid facts, stale-branch invalidation candidates,

@@ -59,21 +59,26 @@ Required use-through baselines:
   CLI loop, tool protocol, context/compact/resume behavior, apply discipline,
   sandbox/approval model and long-running goal/session handling before claiming
   equivalent interaction quality.
-- Barter-rs is the trading-grade gateway reference. A9 must deeply test its
-  reconnect/backoff/error-action/stream handling patterns before designing
-  private-node, worker-transport or market-facing gateway behavior.
+- Barter-rs is the trading-grade event/service gateway reference. A9 must
+  deeply test its reconnect/backoff/error-action/stream handling patterns
+  before designing market-facing or high-volume service-event gateways. It is
+  not the layer directly "below" Codex.
 - OpenClaw/Lobster remains the managed-flow/tool-envelope reference, but it
   does not replace Codex for interaction quality or Barter-rs for low-latency
   gateway reliability.
 
-The intended architecture is layered, not either/or:
+The intended architecture is layered and partly parallel, not `Codex ->
+Barter-rs`:
 
 ```text
-Rust gateway/control hot path
+mobile/control gateway
++ SSH/Tailscale/tmux/private node connectivity
++ Codex-like agent execution runtime
++ OpenClaw-like active-run control plane
++ Barter-rs-like event/service gateway for trading or high-volume streams
++ MemPalace/Headroom context and memory gateways
 -> Redis/MySQL state and evidence plane
--> Codex-like interaction/runtime
 -> Python model/business logic where it has leverage
--> mobile/control and higher product surfaces
 ```
 
 Any communication/runtime choice must be evaluated for latency, reconnect,
@@ -183,11 +188,13 @@ Barter-rs use-through correction:
   but unsafe as A9's large-context/session ingress. A9 needs bounded queues,
   backpressure, spill-to-disk/Redis Streams, byte/token accounting and explicit
   overload actions.
-- Current decision: Barter-rs is not a memory or context-pack solution. It is
-  the strongest current candidate for A9's Rust gateway/control hot path. Its
-  system-level gain can be `>10` if A9 copies it into the large-context intake
-  and worker-transport layer, but only after replacing unbounded channels with
-  A9-grade backpressure and evidence persistence.
+- Current decision: Barter-rs is not a memory or context-pack solution, and it
+  should not be modeled as Codex's lower layer. It is the strongest current
+  candidate for A9's Rust event/service gateway when the problem is
+  high-volume stream intake, market connectivity, reconnect/backoff, command
+  envelopes and audit state. Mobile/control gateway and Codex execution runtime
+  remain separate A9 layers that can share Redis/MySQL evidence and transport
+  primitives.
 
 OpenClaw/Lobster use-through correction:
 
