@@ -15,6 +15,7 @@ import shlex
 import json
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -531,6 +532,8 @@ PHONE_CONTROL_GROUPS = {
         "active_run.delivery.cleanup",
         "active_run.delivery.consume",
         "active_run.relay.start",
+        "active_run.relay.stop",
+        "active_run.relay.cleanup",
         "services.start",
         "services.restart",
         "worker.transport.check",
@@ -3546,6 +3549,8 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_active_run_delivery_results": "/api/runtime/active-run-delivery-results",
             "runtime_active_run_relays": "/api/runtime/active-run-relays",
             "runtime_active_run_relay_start": "/api/runtime/active-run-relay/start",
+            "runtime_active_run_relay_stop": "/api/runtime/active-run-relay/stop",
+            "runtime_active_run_relay_cleanup": "/api/runtime/active-run-relay/cleanup",
             "runtime_active_run_transport_config": "/api/runtime/active-run-transport-config",
             "runtime_active_run_transport_probe": "/api/runtime/active-run-transport-probe",
             "mempalace_status": "/api/memory/mempalace/status",
@@ -8101,6 +8106,29 @@ def active_run_relay_state_path(relay_id: str, *, root: Path = ROOT) -> Path:
     return root / ACTIVE_RUN_RELAYS_REL_DIR / f"{safe}.json"
 
 
+def process_is_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def write_relay_state_update(path: Path, updates: dict[str, Any]) -> dict[str, Any]:
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        payload = {}
+    payload.update(updates)
+    payload["updated_at"] = utc_now()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return payload
+
+
 def active_run_relay_start(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("active_run.relay.start", root=root)
@@ -8223,6 +8251,166 @@ def active_run_relay_start(payload: dict[str, Any], *, root: Path = ROOT) -> dic
         "endpoint_configured": bool(endpoint),
         "token_file_configured": bool(token_file),
         "observed_state": observed_state,
+    }
+
+
+def active_run_relay_stop(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("active_run.relay.stop", root=root)
+    command_name = "active_run.relay.stop"
+    if not gate.get("allowed"):
+        return {"schema": "a9.active_run_relay_stop.v1", "status": "blocked", "command": command_name, "gate": gate}
+    relay_id = str(payload.get("relay_id") or "").strip()
+    if not relay_id:
+        return {
+            "schema": "a9.active_run_relay_stop.v1",
+            "status": "invalid_request",
+            "command": command_name,
+            "gate": gate,
+            "reason": "relay_id_required",
+        }
+    path = active_run_relay_state_path(relay_id, root=root)
+    state = read_json(path)
+    if not state:
+        return {
+            "schema": "a9.active_run_relay_stop.v1",
+            "status": "not_found",
+            "command": command_name,
+            "gate": gate,
+            "relay_id": relay_id,
+            "state_path": str(path),
+        }
+    pid = int(state.get("pid") or 0)
+    signal_name = str(payload.get("signal") or "TERM").upper()
+    sig = signal.SIGKILL if signal_name in {"KILL", "SIGKILL"} else signal.SIGTERM
+    was_alive = process_is_alive(pid)
+    if was_alive:
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            was_alive = False
+        except PermissionError as exc:
+            return {
+                "schema": "a9.active_run_relay_stop.v1",
+                "status": "failed",
+                "command": command_name,
+                "gate": gate,
+                "relay_id": relay_id,
+                "pid": pid,
+                "reason": "permission_denied",
+                "error": str(exc),
+            }
+    wait_seconds = float(payload.get("wait_seconds") or 2.0)
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    while was_alive and time.monotonic() < deadline:
+        if not process_is_alive(pid):
+            break
+        time.sleep(0.1)
+    alive_after = process_is_alive(pid)
+    final_status = "stop_requested" if alive_after else "stopped"
+    updated = write_relay_state_update(
+        path,
+        {
+            "status": final_status,
+            "last_event": "operator_stop_requested" if alive_after else "operator_stopped",
+            "stop_requested_at": utc_now(),
+            "stop_signal": sig.name,
+        },
+    )
+    return {
+        "schema": "a9.active_run_relay_stop.v1",
+        "status": final_status,
+        "command": command_name,
+        "gate": gate,
+        "relay_id": relay_id,
+        "pid": pid,
+        "was_alive": was_alive,
+        "alive_after": alive_after,
+        "state_path": str(path),
+        "state": updated,
+    }
+
+
+def parse_optional_datetime(value: Any) -> datetime | None:
+    raw = str(value or "")
+    if not raw:
+        return None
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+
+
+def active_run_relay_cleanup(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("active_run.relay.cleanup", root=root)
+    command_name = "active_run.relay.cleanup"
+    if not gate.get("allowed"):
+        return {"schema": "a9.active_run_relay_cleanup.v1", "status": "blocked", "command": command_name, "gate": gate}
+    relays_dir = root / ACTIVE_RUN_RELAYS_REL_DIR
+    logs_dir = root / ACTIVE_RUN_RELAY_LOGS_REL_DIR
+    older_than_seconds = int(payload.get("older_than_seconds") or 3600)
+    include_logs = bool(payload.get("include_logs", True))
+    include_prompts = bool(payload.get("include_prompts", True))
+    commit = bool(payload.get("commit"))
+    now = utc_now_dt()
+    candidates: list[dict[str, Any]] = []
+    if relays_dir.exists():
+        for path in sorted(relays_dir.glob("*.json")):
+            state = read_json(path)
+            if not state:
+                continue
+            status = str(state.get("status") or "")
+            pid = int(state.get("pid") or 0)
+            alive = process_is_alive(pid)
+            updated_at = parse_optional_datetime(state.get("updated_at")) or parse_optional_datetime(state.get("started_at"))
+            age_seconds = int((now - updated_at).total_seconds()) if updated_at else None
+            eligible = status in {"stopped", "blocked", "failed"} and not alive and (
+                age_seconds is None or age_seconds >= older_than_seconds
+            )
+            relay_id = str(state.get("relay_id") or path.stem)
+            related_paths = [path]
+            prompt_path = relays_dir / f"{relay_id}.prompt.txt"
+            log_path = logs_dir / f"{relay_id}.log"
+            if include_prompts and prompt_path.exists():
+                related_paths.append(prompt_path)
+            if include_logs and log_path.exists():
+                related_paths.append(log_path)
+            candidates.append(
+                {
+                    "relay_id": relay_id,
+                    "status": status,
+                    "pid": pid,
+                    "alive": alive,
+                    "age_seconds": age_seconds,
+                    "eligible": eligible,
+                    "paths": [str(item) for item in related_paths],
+                }
+            )
+    removed: list[str] = []
+    if commit:
+        for candidate in candidates:
+            if not candidate.get("eligible"):
+                continue
+            for raw_path in candidate.get("paths", []):
+                path = Path(str(raw_path))
+                try:
+                    path.unlink(missing_ok=True)
+                    removed.append(str(path))
+                except OSError:
+                    continue
+    return {
+        "schema": "a9.active_run_relay_cleanup.v1",
+        "status": "ok" if commit else "dry_run",
+        "command": command_name,
+        "gate": gate,
+        "relays_dir": str(relays_dir),
+        "older_than_seconds": older_than_seconds,
+        "candidate_count": len(candidates),
+        "eligible_count": sum(1 for item in candidates if item.get("eligible")),
+        "removed_count": len(removed),
+        "removed": removed,
+        "candidates": candidates,
     }
 
 
@@ -11081,6 +11269,10 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, active_run_operator_command(payload))
             elif self.path == "/api/runtime/active-run-relay/start":
                 self.write_json(200, active_run_relay_start(payload))
+            elif self.path == "/api/runtime/active-run-relay/stop":
+                self.write_json(200, active_run_relay_stop(payload))
+            elif self.path == "/api/runtime/active-run-relay/cleanup":
+                self.write_json(200, active_run_relay_cleanup(payload))
             elif self.path == "/api/runtime/active-run-delivery-cleanup":
                 self.write_json(200, active_run_delivery_cleanup(payload))
             elif self.path == "/api/runtime/active-run-delivery-consume":

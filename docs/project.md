@@ -148,8 +148,12 @@ P7 NZX technical MVP
   prompts are written to a private prompt file instead of leaking through
   process argv. A second controlled API smoke proved
   phone-control arm -> relay start -> active-run-command steer -> relay consume
-  -> Codex `turn/steer`. The next gap is relay stop/cleanup and binding
-  production worker turns to relay-owned `thread_id/current_turn_id`.
+  -> Codex `turn/steer`. Relay stop and cleanup are now exposed through
+  `/api/runtime/active-run-relay/stop` and
+  `/api/runtime/active-run-relay/cleanup`: stop records operator stop evidence
+  in relay state, and cleanup removes stopped/old state, prompt and log files
+  only when `commit=true`. The next gap is binding production worker turns to
+  relay-owned `thread_id/current_turn_id`.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

@@ -675,8 +675,14 @@ Implementation guardrail:
   by path, so `ps` does not expose operator instructions. A controlled API
   smoke proved the end-to-end operator path: phone-control arm, relay start,
   active-run steer command, delivery queue consumption by the relay, and real
-  Codex `turn/steer`. Next concrete cut: relay stop/cleanup and production
-  worker binding.
+  Codex `turn/steer`.
+- Eleventh concrete code cut completed: relay lifecycle governance now has
+  control API stop and cleanup endpoints. `/api/runtime/active-run-relay/stop`
+  sends SIGTERM/SIGKILL to the relay pid and writes stop evidence back to the
+  relay state file. `/api/runtime/active-run-relay/cleanup` is dry-run by
+  default and removes only stopped/old relay state, prompt and log files when
+  `commit=true`. Next concrete cut: production worker binding to relay-owned
+  runs.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

@@ -1110,6 +1110,72 @@ demo
         self.assertEqual(prompt_text, "secret relay prompt")
         self.assertEqual(calls[0][1]["cwd"], root)
 
+    def test_active_run_relay_stop_updates_state_when_process_already_gone(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / ".a9" / "runtime" / "active_run_relays" / "relay-stop.json"
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text(
+                json.dumps({"relay_id": "relay-stop", "status": "running", "pid": 999999}),
+                encoding="utf-8",
+            )
+
+            blocked = mod.active_run_relay_stop({"operator_scopes": ["operator.admin"], "relay_id": "relay-stop"}, root=root)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            stopped = mod.active_run_relay_stop({"operator_scopes": ["operator.admin"], "relay_id": "relay-stop"}, root=root)
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(stopped["schema"], "a9.active_run_relay_stop.v1")
+        self.assertEqual(stopped["status"], "stopped")
+        self.assertFalse(stopped["was_alive"])
+        self.assertFalse(stopped["alive_after"])
+        self.assertEqual(stopped["state"]["last_event"], "operator_stopped")
+
+    def test_active_run_relay_cleanup_removes_stopped_relay_artifacts_on_commit(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relays = root / ".a9" / "runtime" / "active_run_relays"
+            logs = root / ".a9" / "runtime" / "active_run_relay_logs"
+            relays.mkdir(parents=True)
+            logs.mkdir(parents=True)
+            state = relays / "relay-old.json"
+            prompt = relays / "relay-old.prompt.txt"
+            log = logs / "relay-old.log"
+            state.write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-old",
+                        "status": "stopped",
+                        "pid": 999999,
+                        "updated_at": "2000-01-01T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            prompt.write_text("secret\n", encoding="utf-8")
+            log.write_text("log\n", encoding="utf-8")
+
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            dry = mod.active_run_relay_cleanup(
+                {"operator_scopes": ["operator.admin"], "older_than_seconds": 1},
+                root=root,
+            )
+            exists_after_dry = (state.exists(), prompt.exists(), log.exists())
+            committed = mod.active_run_relay_cleanup(
+                {"operator_scopes": ["operator.admin"], "older_than_seconds": 1, "commit": True},
+                root=root,
+            )
+            exists_after_commit = (state.exists(), prompt.exists(), log.exists())
+
+        self.assertEqual(dry["status"], "dry_run")
+        self.assertEqual(dry["eligible_count"], 1)
+        self.assertEqual(exists_after_dry, (True, True, True))
+        self.assertEqual(exists_after_commit, (False, False, False))
+        self.assertEqual(committed["status"], "ok")
+        self.assertEqual(committed["removed_count"], 3)
+
     def test_active_run_transport_probe_reports_disabled_and_dry_run(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -12059,6 +12125,9 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertEqual(discovery["endpoints"]["runtime_run_one_with_transport"], "/api/runtime/run-one-with-transport")
         self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_next"], "/api/runtime/plan-backlog-next")
+        self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_start"], "/api/runtime/active-run-relay/start")
+        self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_stop"], "/api/runtime/active-run-relay/stop")
+        self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_cleanup"], "/api/runtime/active-run-relay/cleanup")
         self.assertEqual(discovery["endpoints"]["mempalace_status"], "/api/memory/mempalace/status")
         self.assertEqual(discovery["endpoints"]["mempalace_search"], "/api/memory/mempalace/search")
         self.assertEqual(discovery["endpoints"]["mempalace_wakeup"], "/api/memory/mempalace/wakeup")
