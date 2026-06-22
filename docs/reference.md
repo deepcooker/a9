@@ -661,9 +661,15 @@ Implementation guardrail:
   `turn/start`, delivered `turn/steer` through `active_run_transport_deliver`,
   and the mock provider recorded the follow-up user input. This copies the
   OpenClaw/Codex steering mechanism more accurately than short per-request
-  sockets. Next concrete cut: turn the session helper into an active-run relay
-  that binds projection `active_run` rows to a live app-server connection and
-  writes transcript-level delivery confirmation.
+  sockets.
+- Ninth concrete code cut completed: `scripts/a9_active_run_relay.py` turns the
+  session helper into a minimal active-run owner. It writes relay state files,
+  keeps the active Codex WebSocket connection, consumes A9 delivery queue rows
+  matching the relay run/thread/task, writes delivery results, and is indexed by
+  runtime projection plus `/api/runtime/active-run-relays`. A controlled
+  mock-provider relay smoke proved queue delivery into real Codex
+  `turn/steer`. Next concrete cut: service-manage relay start/stop and bind
+  production worker turns to relay-owned runs.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

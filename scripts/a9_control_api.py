@@ -59,6 +59,7 @@ OPERATOR_COMMANDS_REL_PATH = Path(".a9") / "runtime" / "operator_commands.jsonl"
 ACTIVE_RUN_DELIVERY_QUEUE_REL_PATH = Path(".a9") / "runtime" / "active_run_delivery_queue.jsonl"
 ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH = Path(".a9") / "runtime" / "active_run_delivery_results.jsonl"
 ACTIVE_RUN_TRANSPORT_CONFIG_REL_PATH = Path(".a9") / "runtime" / "active_run_transport.json"
+ACTIVE_RUN_RELAYS_REL_DIR = Path(".a9") / "runtime" / "active_run_relays"
 LLM_WORKER_CONFIG_REL_PATH = Path(".a9") / "runtime" / "llm_worker_config.json"
 BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH = Path(".a9") / "nodes" / "bootstrap-takeover-admissions.jsonl"
 MONITOR_INTERVENTION_ALLOWED_ACTIONS = {
@@ -3539,6 +3540,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_active_run_delivery_cleanup": "/api/runtime/active-run-delivery-cleanup",
             "runtime_active_run_delivery_consume": "/api/runtime/active-run-delivery-consume",
             "runtime_active_run_delivery_results": "/api/runtime/active-run-delivery-results",
+            "runtime_active_run_relays": "/api/runtime/active-run-relays",
             "runtime_active_run_transport_config": "/api/runtime/active-run-transport-config",
             "runtime_active_run_transport_probe": "/api/runtime/active-run-transport-probe",
             "mempalace_status": "/api/memory/mempalace/status",
@@ -3588,6 +3590,7 @@ def controller_discovery() -> dict[str, Any]:
             "operator_command_ledger": str(OPERATOR_COMMANDS_REL_PATH),
             "active_run_delivery_queue": str(ACTIVE_RUN_DELIVERY_QUEUE_REL_PATH),
             "active_run_delivery_results": str(ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH),
+            "active_run_relays": str(ACTIVE_RUN_RELAYS_REL_DIR),
             "worker_transport_policy_update": True,
             "worker_transport_presets": True,
             "worker_transport_check": True,
@@ -8055,6 +8058,38 @@ def active_run_delivery_results_tail(limit: int = 50, *, root: Path = ROOT) -> d
     }
 
 
+def active_run_relays_status(*, root: Path = ROOT) -> dict[str, Any]:
+    relays_dir = root / ACTIVE_RUN_RELAYS_REL_DIR
+    relays: list[dict[str, Any]] = []
+    invalid_count = 0
+    if relays_dir.exists():
+        for path in sorted(relays_dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                invalid_count += 1
+                relays.append(
+                    {
+                        "status": "degraded",
+                        "reason": "invalid_relay_state_json",
+                        "state_path": str(path),
+                    }
+                )
+                continue
+            if isinstance(payload, dict):
+                relays.append({**payload, "state_path": str(path)})
+    active = [row for row in relays if str(row.get("status") or "") in {"running", "in_progress"}]
+    return {
+        "schema": "a9.active_run_relays_status.v1",
+        "status": "ok" if invalid_count == 0 else "degraded",
+        "relays_dir": str(relays_dir),
+        "relay_count": len(relays),
+        "active_count": len(active),
+        "invalid_count": invalid_count,
+        "relays": relays,
+    }
+
+
 def write_active_run_delivery_queue(rows: list[dict[str, Any]], *, root: Path = ROOT) -> None:
     path = active_run_delivery_queue_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -10770,6 +10805,8 @@ class ControlHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/runtime/active-run-delivery-results":
                 limit = int(query.get("limit", ["50"])[0])
                 self.write_json(200, active_run_delivery_results_tail(limit=limit))
+            elif parsed.path == "/api/runtime/active-run-relays":
+                self.write_json(200, active_run_relays_status())
             elif parsed.path == "/api/runtime/active-run-transport-config":
                 self.write_json(200, active_run_transport_config())
             elif parsed.path == "/api/runtime/active-run-transport-probe":

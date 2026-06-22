@@ -1017,6 +1017,33 @@ demo
         self.assertEqual(session.calls[0]["params"]["expectedTurnId"], "turn-1")
         self.assertEqual(session.calls[0]["params"]["input"][0]["text"], "same connection steer")
 
+    def test_active_run_relays_status_reads_relay_state_files(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relays = root / ".a9" / "runtime" / "active_run_relays"
+            relays.mkdir(parents=True)
+            (relays / "relay-1.json").write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-1",
+                        "status": "running",
+                        "thread_id": "thread-1",
+                        "current_turn_id": "turn-1",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = mod.active_run_relays_status(root=root)
+
+        self.assertEqual(result["schema"], "a9.active_run_relays_status.v1")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["relay_count"], 1)
+        self.assertEqual(result["active_count"], 1)
+        self.assertEqual(result["relays"][0]["relay_id"], "relay-1")
+        self.assertTrue(result["relays"][0]["state_path"].endswith("relay-1.json"))
+
     def test_active_run_transport_probe_reports_disabled_and_dry_run(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

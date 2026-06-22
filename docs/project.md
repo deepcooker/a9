@@ -135,6 +135,16 @@ P7 NZX technical MVP
   Current projection has no real active run from the operator window yet, so
   production `turn/steer` is still gated on exposing a live
   `thread_id/current_turn_id` and adding the relay.
+- `scripts/a9_active_run_relay.py` is the first active-run relay/owner. It can
+  start or attach to one Codex active turn, keep the same app-server WebSocket
+  connection open, write relay state under
+  `.a9/runtime/active_run_relays/*.json`, consume matching active-run delivery
+  queue rows, and deliver `turn/steer` through the owned connection. A controlled
+  mock-provider smoke proved queue -> relay -> Codex `turn/steer` without
+  model quota burn. Control API exposes relay state at
+  `/api/runtime/active-run-relays`, and runtime projection indexes relay states
+  as `active_runs`. The next gap is service-managed relay start/stop and
+  binding production worker turns to relay-owned `thread_id/current_turn_id`.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

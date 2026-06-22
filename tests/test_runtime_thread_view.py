@@ -196,6 +196,43 @@ class RuntimeThreadViewTests(unittest.TestCase):
             self.assertEqual(projected["counts"]["active_run_delivery_results"], 1)
             self.assertEqual(projected["active_run_delivery_results"][0]["reason"], "active_run_transport_unavailable")
 
+    def test_build_projection_indexes_active_run_relay_state(self):
+        mod = load_module()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            summary = self.make_summary_fixture(tmp)
+            relays = root / ".a9" / "runtime" / "active_run_relays"
+            relays.mkdir(parents=True)
+            (relays / "relay-1.json").write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-1",
+                        "run_id": "relay-run-1",
+                        "task_id": "relay-task-1",
+                        "status": "running",
+                        "thread_id": "codex-thread-1",
+                        "current_turn_id": "codex-turn-1",
+                        "transport": "codex_app_server_jsonrpc",
+                        "endpoint": "ws://127.0.0.1:8791",
+                        "pid": 123,
+                        "started_at": "2026-06-22T00:10:00+00:00",
+                        "updated_at": "2026-06-22T00:11:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            projected = mod.build_projection([summary], root=root)
+            active = [row for row in projected["active_runs"] if row.get("is_active")]
+
+            self.assertEqual(projected["counts"]["active_runs"], 2)
+            self.assertEqual(len(active), 1)
+            self.assertEqual(active[0]["run_id"], "relay-run-1")
+            self.assertEqual(active[0]["thread_id"], "codex-thread-1")
+            self.assertEqual(active[0]["current_turn_id"], "codex-turn-1")
+            self.assertEqual(active[0]["relay"]["relay_id"], "relay-1")
+            self.assertEqual(active[0]["evidence"]["relay_state_path"], str(relays / "relay-1.json"))
+
     def test_failed_event_overrides_summary_status(self):
         mod = load_module()
         with tempfile.TemporaryDirectory() as tmp:

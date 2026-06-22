@@ -22,6 +22,7 @@ DEFAULT_OUT = ROOT / ".a9" / "runtime" / "runtime_projection.json"
 OPERATOR_COMMANDS_REL_PATH = Path(".a9") / "runtime" / "operator_commands.jsonl"
 ACTIVE_RUN_DELIVERY_QUEUE_REL_PATH = Path(".a9") / "runtime" / "active_run_delivery_queue.jsonl"
 ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH = Path(".a9") / "runtime" / "active_run_delivery_results.jsonl"
+ACTIVE_RUN_RELAYS_REL_DIR = Path(".a9") / "runtime" / "active_run_relays"
 
 
 def utc_now() -> str:
@@ -381,6 +382,47 @@ def active_run_delivery_results(root: Path, *, limit: int = 100) -> list[dict[st
     ]
 
 
+def active_run_relays(root: Path) -> list[dict[str, Any]]:
+    relays_dir = root / ACTIVE_RUN_RELAYS_REL_DIR
+    if not relays_dir.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(relays_dir.glob("*.json")):
+        payload = read_json(path)
+        if not payload:
+            continue
+        status = str(payload.get("status") or "")
+        thread_id = str(payload.get("thread_id") or "")
+        turn_id = str(payload.get("current_turn_id") or payload.get("turn_id") or "")
+        relay_id = str(payload.get("relay_id") or path.stem)
+        run_id = str(payload.get("run_id") or relay_id)
+        rows.append(
+            {
+                "active_run_id": str(payload.get("active_run_id") or stable_id("active_run", "relay", relay_id)),
+                "run_id": run_id,
+                "thread_id": thread_id,
+                "task_id": str(payload.get("task_id") or ""),
+                "phase": str(payload.get("phase") or "active_run_relay"),
+                "status": status or "unknown",
+                "is_active": status in {"running", "in_progress", "needs-approval", "needs_approval"},
+                "current_turn_id": turn_id,
+                "recency_at": str(payload.get("updated_at") or payload.get("started_at") or ""),
+                "relay": {
+                    "relay_id": relay_id,
+                    "transport": str(payload.get("transport") or ""),
+                    "endpoint": str(payload.get("endpoint") or ""),
+                    "pid": payload.get("pid"),
+                    "last_event": str(payload.get("last_event") or ""),
+                },
+                "evidence": {
+                    "relay_state_path": str(path),
+                    **(payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}),
+                },
+            }
+        )
+    return rows
+
+
 def build_projection(paths: list[Path], *, root: Path = ROOT) -> dict[str, Any]:
     thread_view = build_view(paths)
     threads = [thread for thread in thread_view["threads"] if isinstance(thread, dict)]
@@ -393,8 +435,11 @@ def build_projection(paths: list[Path], *, root: Path = ROOT) -> dict[str, Any]:
     command_rows = operator_commands(root)
     delivery_rows = active_run_deliveries(root)
     delivery_result_rows = active_run_delivery_results(root)
+    relay_active_runs = active_run_relays(root)
     packet_rows = memory_packets(root)
     host_rows = remote_hosts(root)
+    projected_active_runs = [active_run_from_thread(thread) for thread in threads]
+    active_runs = projected_active_runs + relay_active_runs
     return {
         "schema": "a9.runtime_projection.v1",
         "generated_at": thread_view["generated_at"],
@@ -402,7 +447,7 @@ def build_projection(paths: list[Path], *, root: Path = ROOT) -> dict[str, Any]:
         "threads": threads,
         "turns": turns,
         "items": items,
-        "active_runs": [active_run_from_thread(thread) for thread in threads],
+        "active_runs": active_runs,
         "operator_commands": command_rows,
         "active_run_deliveries": delivery_rows,
         "active_run_delivery_results": delivery_result_rows,
@@ -416,7 +461,7 @@ def build_projection(paths: list[Path], *, root: Path = ROOT) -> dict[str, Any]:
             "threads": len(threads),
             "turns": len(turns),
             "items": len(items),
-            "active_runs": len(threads),
+            "active_runs": len(active_runs),
             "operator_commands": len(command_rows),
             "active_run_deliveries": len(delivery_rows),
             "active_run_delivery_results": len(delivery_result_rows),
