@@ -63,6 +63,7 @@ ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH = Path(".a9") / "runtime" / "active_run_del
 ACTIVE_RUN_TRANSPORT_CONFIG_REL_PATH = Path(".a9") / "runtime" / "active_run_transport.json"
 ACTIVE_RUN_RELAYS_REL_DIR = Path(".a9") / "runtime" / "active_run_relays"
 ACTIVE_RUN_RELAY_LOGS_REL_DIR = Path(".a9") / "runtime" / "active_run_relay_logs"
+ACTIVE_RUN_RELAY_BINDINGS_REL_DIR = Path(".a9") / "runtime" / "active_run_relay_bindings"
 ACTIVE_RUN_RELAY_SCRIPT_PATH = ROOT / "scripts" / "a9_active_run_relay.py"
 LLM_WORKER_CONFIG_REL_PATH = Path(".a9") / "runtime" / "llm_worker_config.json"
 BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH = Path(".a9") / "nodes" / "bootstrap-takeover-admissions.jsonl"
@@ -534,6 +535,7 @@ PHONE_CONTROL_GROUPS = {
         "active_run.relay.start",
         "active_run.relay.stop",
         "active_run.relay.cleanup",
+        "active_run.relay_worker.start",
         "services.start",
         "services.restart",
         "worker.transport.check",
@@ -3549,6 +3551,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_active_run_delivery_results": "/api/runtime/active-run-delivery-results",
             "runtime_active_run_relays": "/api/runtime/active-run-relays",
             "runtime_active_run_relay_start": "/api/runtime/active-run-relay/start",
+            "runtime_active_run_relay_worker_start": "/api/runtime/active-run-relay-worker/start",
             "runtime_active_run_relay_stop": "/api/runtime/active-run-relay/stop",
             "runtime_active_run_relay_cleanup": "/api/runtime/active-run-relay/cleanup",
             "runtime_active_run_transport_config": "/api/runtime/active-run-transport-config",
@@ -3602,6 +3605,7 @@ def controller_discovery() -> dict[str, Any]:
             "active_run_delivery_results": str(ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH),
             "active_run_relays": str(ACTIVE_RUN_RELAYS_REL_DIR),
             "active_run_relay_logs": str(ACTIVE_RUN_RELAY_LOGS_REL_DIR),
+            "active_run_relay_bindings": str(ACTIVE_RUN_RELAY_BINDINGS_REL_DIR),
             "worker_transport_policy_update": True,
             "worker_transport_presets": True,
             "worker_transport_check": True,
@@ -8254,6 +8258,120 @@ def active_run_relay_start(payload: dict[str, Any], *, root: Path = ROOT) -> dic
     }
 
 
+def resolve_relay_worker_task(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    task_id = str(payload.get("task_id") or "").strip()
+    task_path_value = str(payload.get("task_path") or "").strip()
+    prompt = str(payload.get("prompt") or payload.get("message") or payload.get("instruction") or "").strip()
+    task_path = Path(task_path_value) if task_path_value else None
+    if task_path is not None:
+        resolved = task_path if task_path.is_absolute() else root / task_path
+        allowed_root = (root / ".a9" / "tasks").resolve()
+        if allowed_root not in resolved.resolve().parents and resolved.resolve() != allowed_root:
+            raise ValueError("task_path must be under .a9/tasks")
+        task_text = resolved.read_text(encoding="utf-8")
+        return {"task_id": task_id or resolved.stem, "task_path": str(resolved), "task_text": task_text}
+    if task_id:
+        for lane in ["queue", "running", "blocked", "interrupted", "paused"]:
+            for suffix in [".md", ".json"]:
+                candidate = root / ".a9" / "tasks" / lane / f"{task_id}{suffix}"
+                if candidate.exists():
+                    return {
+                        "task_id": task_id,
+                        "task_path": str(candidate),
+                        "task_text": candidate.read_text(encoding="utf-8"),
+                    }
+    if prompt:
+        return {"task_id": task_id or "", "task_path": "", "task_text": prompt}
+    raise ValueError("task_id, task_path or prompt is required")
+
+
+def build_relay_worker_prompt(task: dict[str, Any], payload: dict[str, Any]) -> str:
+    task_text = str(task.get("task_text") or "").strip()
+    doctrine = (
+        "A9 relay-owned worker turn.\n"
+        "Follow AGENTS.md and current task contract. This is execution_next only if the task says it is decided.\n"
+        "Do not invent business scope. If requirements are unclear, return a change request.\n"
+        "Leave evidence: changed files, copied mechanisms, tests/checks, pass/fail, next step.\n"
+    )
+    if payload.get("strict_worker_envelope", True):
+        doctrine += (
+            "Final answer must be a strict JSON envelope when the task asks for one; otherwise keep output concise and evidence-backed.\n"
+        )
+    refs = payload.get("evidence_refs")
+    refs_text = ""
+    if isinstance(refs, list) and refs:
+        refs_text = "\nEvidence refs:\n" + "\n".join(f"- {str(item)}" for item in refs[:20]) + "\n"
+    return (
+        doctrine
+        + refs_text
+        + "\nTask contract follows:\n"
+        + "```text\n"
+        + task_text
+        + "\n```\n"
+    )
+
+
+def active_run_relay_binding_path(relay_id: str, *, root: Path = ROOT) -> Path:
+    safe = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", relay_id).strip("-")[:128] or "relay"
+    return root / ACTIVE_RUN_RELAY_BINDINGS_REL_DIR / f"{safe}.json"
+
+
+def active_run_relay_worker_start(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("active_run.relay_worker.start", root=root)
+    command_name = "active_run.relay_worker.start"
+    if not gate.get("allowed"):
+        return {"schema": "a9.active_run_relay_worker_start.v1", "status": "blocked", "command": command_name, "gate": gate}
+    try:
+        task = resolve_relay_worker_task(payload, root=root)
+    except (OSError, ValueError) as exc:
+        return {
+            "schema": "a9.active_run_relay_worker_start.v1",
+            "status": "invalid_request",
+            "command": command_name,
+            "gate": gate,
+            "reason": compact_text(str(exc), 500),
+        }
+    task_id = str(task.get("task_id") or payload.get("task_id") or "relay-worker").strip() or "relay-worker"
+    run_id = str(payload.get("run_id") or f"relay-worker-{task_id}-{utc_now().replace(':', '')}").strip()
+    relay_id = str(payload.get("relay_id") or run_id).strip()
+    start_payload = {
+        **payload,
+        "relay_id": relay_id,
+        "run_id": run_id,
+        "task_id": task_id,
+        "prompt": build_relay_worker_prompt(task, payload),
+        "operator_scopes": payload.get("operator_scopes") or [],
+        "wait_seconds": payload.get("wait_seconds", 2),
+    }
+    start_result = active_run_relay_start(start_payload, root=root)
+    binding = {
+        "schema": "a9.active_run_relay_binding.v1",
+        "created_at": utc_now(),
+        "relay_id": start_result.get("relay_id") or relay_id,
+        "run_id": run_id,
+        "task_id": task_id,
+        "task_path": task.get("task_path") or "",
+        "state_path": start_result.get("state_path"),
+        "log_path": start_result.get("log_path"),
+        "prompt_path": start_result.get("prompt_path"),
+        "status": start_result.get("status"),
+        "source": "active_run_relay_worker_start",
+    }
+    binding_path = active_run_relay_binding_path(str(binding["relay_id"]), root=root)
+    binding_path.parent.mkdir(parents=True, exist_ok=True)
+    binding_path.write_text(json.dumps(binding, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "schema": "a9.active_run_relay_worker_start.v1",
+        "status": start_result.get("status"),
+        "command": command_name,
+        "gate": gate,
+        "relay_start": start_result,
+        "binding": binding,
+        "binding_path": str(binding_path),
+    }
+
+
 def active_run_relay_stop(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("active_run.relay.stop", root=root)
@@ -8349,12 +8467,14 @@ def active_run_relay_cleanup(payload: dict[str, Any], *, root: Path = ROOT) -> d
         return {"schema": "a9.active_run_relay_cleanup.v1", "status": "blocked", "command": command_name, "gate": gate}
     relays_dir = root / ACTIVE_RUN_RELAYS_REL_DIR
     logs_dir = root / ACTIVE_RUN_RELAY_LOGS_REL_DIR
+    bindings_dir = root / ACTIVE_RUN_RELAY_BINDINGS_REL_DIR
     older_than_seconds = int(payload.get("older_than_seconds") or 3600)
     include_logs = bool(payload.get("include_logs", True))
     include_prompts = bool(payload.get("include_prompts", True))
     commit = bool(payload.get("commit"))
     now = utc_now_dt()
     candidates: list[dict[str, Any]] = []
+    seen_relay_ids: set[str] = set()
     if relays_dir.exists():
         for path in sorted(relays_dir.glob("*.json")):
             state = read_json(path)
@@ -8369,13 +8489,17 @@ def active_run_relay_cleanup(payload: dict[str, Any], *, root: Path = ROOT) -> d
                 age_seconds is None or age_seconds >= older_than_seconds
             )
             relay_id = str(state.get("relay_id") or path.stem)
+            seen_relay_ids.add(relay_id)
             related_paths = [path]
             prompt_path = relays_dir / f"{relay_id}.prompt.txt"
             log_path = logs_dir / f"{relay_id}.log"
+            binding_path = bindings_dir / f"{relay_id}.json"
             if include_prompts and prompt_path.exists():
                 related_paths.append(prompt_path)
             if include_logs and log_path.exists():
                 related_paths.append(log_path)
+            if binding_path.exists():
+                related_paths.append(binding_path)
             candidates.append(
                 {
                     "relay_id": relay_id,
@@ -8385,6 +8509,22 @@ def active_run_relay_cleanup(payload: dict[str, Any], *, root: Path = ROOT) -> d
                     "age_seconds": age_seconds,
                     "eligible": eligible,
                     "paths": [str(item) for item in related_paths],
+                }
+            )
+    if bindings_dir.exists():
+        for binding_path in sorted(bindings_dir.glob("*.json")):
+            relay_id = binding_path.stem
+            if relay_id in seen_relay_ids:
+                continue
+            candidates.append(
+                {
+                    "relay_id": relay_id,
+                    "status": "orphan_binding",
+                    "pid": 0,
+                    "alive": False,
+                    "age_seconds": None,
+                    "eligible": True,
+                    "paths": [str(binding_path)],
                 }
             )
     removed: list[str] = []
@@ -11269,6 +11409,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, active_run_operator_command(payload))
             elif self.path == "/api/runtime/active-run-relay/start":
                 self.write_json(200, active_run_relay_start(payload))
+            elif self.path == "/api/runtime/active-run-relay-worker/start":
+                self.write_json(200, active_run_relay_worker_start(payload))
             elif self.path == "/api/runtime/active-run-relay/stop":
                 self.write_json(200, active_run_relay_stop(payload))
             elif self.path == "/api/runtime/active-run-relay/cleanup":

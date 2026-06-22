@@ -1110,6 +1110,72 @@ demo
         self.assertEqual(prompt_text, "secret relay prompt")
         self.assertEqual(calls[0][1]["cwd"], root)
 
+    def test_active_run_relay_worker_start_wraps_task_and_writes_binding(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            task_dir = root / ".a9" / "tasks" / "queue"
+            task_dir.mkdir(parents=True)
+            task_path = task_dir / "task-relay.md"
+            task_path.write_text("phase: execution_next\nDo bounded relay worker task.\n", encoding="utf-8")
+            captured = {}
+            original_start = mod.active_run_relay_start
+            try:
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+
+                def fake_start(payload, *, root):
+                    captured["payload"] = payload
+                    prompt_path = root / ".a9" / "runtime" / "active_run_relays" / "relay-task.prompt.txt"
+                    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+                    prompt_path.write_text(payload["prompt"], encoding="utf-8")
+                    return {
+                        "status": "running",
+                        "relay_id": payload["relay_id"],
+                        "state_path": str(prompt_path.with_suffix(".json")),
+                        "log_path": str(prompt_path.with_suffix(".log")),
+                        "prompt_path": str(prompt_path),
+                    }
+
+                mod.active_run_relay_start = fake_start
+                result = mod.active_run_relay_worker_start(
+                    {
+                        "operator_scopes": ["operator.admin"],
+                        "task_id": "task-relay",
+                        "relay_id": "relay-task",
+                        "endpoint": "ws://127.0.0.1:8791",
+                    },
+                    root=root,
+                )
+            finally:
+                mod.active_run_relay_start = original_start
+
+            binding_path = Path(result["binding_path"])
+            binding = json.loads(binding_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(result["schema"], "a9.active_run_relay_worker_start.v1")
+        self.assertEqual(result["status"], "running")
+        self.assertEqual(result["binding"]["task_id"], "task-relay")
+        self.assertEqual(binding["relay_id"], "relay-task")
+        self.assertIn("A9 relay-owned worker turn", captured["payload"]["prompt"])
+        self.assertIn("Do bounded relay worker task.", captured["payload"]["prompt"])
+
+    def test_active_run_relay_worker_start_requires_runtime_gate(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = mod.active_run_relay_worker_start(
+                {
+                    "operator_scopes": ["operator.admin"],
+                    "prompt": "Do work",
+                    "endpoint": "ws://127.0.0.1:8791",
+                },
+                root=root,
+            )
+
+        self.assertEqual(result["schema"], "a9.active_run_relay_worker_start.v1")
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["gate"]["reason"], "phone_control_disarmed")
+
     def test_active_run_relay_stop_updates_state_when_process_already_gone(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1138,11 +1204,14 @@ demo
             root = Path(tmp)
             relays = root / ".a9" / "runtime" / "active_run_relays"
             logs = root / ".a9" / "runtime" / "active_run_relay_logs"
+            bindings = root / ".a9" / "runtime" / "active_run_relay_bindings"
             relays.mkdir(parents=True)
             logs.mkdir(parents=True)
+            bindings.mkdir(parents=True)
             state = relays / "relay-old.json"
             prompt = relays / "relay-old.prompt.txt"
             log = logs / "relay-old.log"
+            binding = bindings / "relay-old.json"
             state.write_text(
                 json.dumps(
                     {
@@ -1156,25 +1225,47 @@ demo
             )
             prompt.write_text("secret\n", encoding="utf-8")
             log.write_text("log\n", encoding="utf-8")
+            binding.write_text("{}\n", encoding="utf-8")
 
             mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
             dry = mod.active_run_relay_cleanup(
                 {"operator_scopes": ["operator.admin"], "older_than_seconds": 1},
                 root=root,
             )
-            exists_after_dry = (state.exists(), prompt.exists(), log.exists())
+            exists_after_dry = (state.exists(), prompt.exists(), log.exists(), binding.exists())
             committed = mod.active_run_relay_cleanup(
                 {"operator_scopes": ["operator.admin"], "older_than_seconds": 1, "commit": True},
                 root=root,
             )
-            exists_after_commit = (state.exists(), prompt.exists(), log.exists())
+            exists_after_commit = (state.exists(), prompt.exists(), log.exists(), binding.exists())
 
         self.assertEqual(dry["status"], "dry_run")
         self.assertEqual(dry["eligible_count"], 1)
-        self.assertEqual(exists_after_dry, (True, True, True))
-        self.assertEqual(exists_after_commit, (False, False, False))
+        self.assertEqual(exists_after_dry, (True, True, True, True))
+        self.assertEqual(exists_after_commit, (False, False, False, False))
         self.assertEqual(committed["status"], "ok")
-        self.assertEqual(committed["removed_count"], 3)
+        self.assertEqual(committed["removed_count"], 4)
+
+    def test_active_run_relay_cleanup_removes_orphan_binding(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bindings = root / ".a9" / "runtime" / "active_run_relay_bindings"
+            bindings.mkdir(parents=True)
+            binding = bindings / "relay-orphan.json"
+            binding.write_text("{}\n", encoding="utf-8")
+
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            result = mod.active_run_relay_cleanup(
+                {"operator_scopes": ["operator.admin"], "commit": True},
+                root=root,
+            )
+            exists_after_commit = binding.exists()
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["eligible_count"], 1)
+        self.assertEqual(result["removed_count"], 1)
+        self.assertFalse(exists_after_commit)
 
     def test_active_run_transport_probe_reports_disabled_and_dry_run(self):
         mod = load_control_api()
@@ -12126,6 +12217,10 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["runtime_run_one_with_transport"], "/api/runtime/run-one-with-transport")
         self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_next"], "/api/runtime/plan-backlog-next")
         self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_start"], "/api/runtime/active-run-relay/start")
+        self.assertEqual(
+            discovery["endpoints"]["runtime_active_run_relay_worker_start"],
+            "/api/runtime/active-run-relay-worker/start",
+        )
         self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_stop"], "/api/runtime/active-run-relay/stop")
         self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_cleanup"], "/api/runtime/active-run-relay/cleanup")
         self.assertEqual(discovery["endpoints"]["mempalace_status"], "/api/memory/mempalace/status")

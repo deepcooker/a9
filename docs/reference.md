@@ -681,8 +681,16 @@ Implementation guardrail:
   sends SIGTERM/SIGKILL to the relay pid and writes stop evidence back to the
   relay state file. `/api/runtime/active-run-relay/cleanup` is dry-run by
   default and removes only stopped/old relay state, prompt and log files when
-  `commit=true`. Next concrete cut: production worker binding to relay-owned
-  runs.
+  `commit=true`.
+- Twelfth concrete code cut completed: production worker binding now starts
+  relay-owned Codex runs through `/api/runtime/active-run-relay-worker/start`.
+  The endpoint is protected by the runtime phone-control gate, resolves a
+  bounded `.a9/tasks` task or explicit prompt, wraps it with A9 execution
+  doctrine, starts the active-run relay, and writes binding evidence under
+  `.a9/runtime/active_run_relay_bindings/*.json`. Cleanup removes matching
+  bindings with stopped relays and orphan binding files. A controlled
+  mock-provider smoke proved relay-worker prompt start plus follow-up
+  `active-run-command` delivery into Codex `turn/steer`.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

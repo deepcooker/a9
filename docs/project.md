@@ -152,8 +152,15 @@ P7 NZX technical MVP
   `/api/runtime/active-run-relay/stop` and
   `/api/runtime/active-run-relay/cleanup`: stop records operator stop evidence
   in relay state, and cleanup removes stopped/old state, prompt and log files
-  only when `commit=true`. The next gap is binding production worker turns to
-  relay-owned `thread_id/current_turn_id`.
+  only when `commit=true`. Production worker turns can now start through
+  `/api/runtime/active-run-relay-worker/start`: the endpoint resolves a bounded
+  `.a9/tasks` task or explicit prompt, wraps it with A9 execution doctrine,
+  starts a relay-owned Codex turn, and writes binding evidence under
+  `.a9/runtime/active_run_relay_bindings/*.json`. Cleanup also removes matching
+  or orphan binding files. A controlled mock-provider smoke proved task prompt
+  -> relay-owned `turn/start` -> active-run-command steer -> relay-delivered
+  `turn/steer` without model quota burn. The next gap is supervisor/backlog
+  dispatch into this relay-worker path and completion/evidence ingestion.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or
