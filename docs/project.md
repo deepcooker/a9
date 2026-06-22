@@ -90,6 +90,12 @@ P7 NZX technical MVP
 - `scripts/a9_supervisor.py` injects bounded MemPalace recall protocol evidence
   into worker context: search hits, hydrated drawer snippets and fallback raw
   evidence refs stay separated. Recall is a recovery hint, not task authority.
+- `scripts/a9_runtime_thread_view.py` is the first Codex-latest projection
+  layer. It reads existing A9 `summary.json` + `event_summaries.jsonl` evidence
+  and emits a compact thread/turn/item view inspired by Codex
+  `thread_history` and runtime threads. This is intentionally projection-only;
+  it does not replace supervisor, managed flow, MemPalace or future gateway
+  work.
 - MemPalace recall is not yet the full memory governance system. A9 now has a
   first deterministic `recall -> causal memory` compiler that turns recalled
   drawers into candidate time-valid facts, stale-branch invalidation candidates,
