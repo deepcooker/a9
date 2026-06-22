@@ -13103,6 +13103,129 @@ Do risky work.
         self.assertTrue(result["audit_async"])
         self.assertEqual(audit_calls[0][0]["status"], "enqueued")
 
+    def test_runtime_plan_backlog_next_can_dispatch_first_item_to_relay_worker(self):
+        mod = load_control_api()
+        calls = {"relay": []}
+
+        class FakeSupervisor:
+            @staticmethod
+            def runtime_state_from_summary(*args, **kwargs):
+                return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+            @staticmethod
+            def active_plan_id():
+                return "active-plan"
+
+            @staticmethod
+            def load_plan(plan_id):
+                return {"plan_id": plan_id, "execution_backlog": {}}
+
+            @staticmethod
+            def plan_execution_backlog_items(plan, *, count=0):
+                return [{"task_id": "exec-001", "phase": "implement", "prompt": "do next"}]
+
+            @staticmethod
+            def enqueue_execution_backlog_items(plan, items, *, prefix="", timeout_seconds=3600, idle_timeout_seconds=300, auto_next=True):
+                path = root / ".a9" / "tasks" / "queue" / "exec-001.md"
+                path.parent.mkdir(parents=True)
+                path.write_text("phase: implement\ndo next\n", encoding="utf-8")
+                return [path]
+
+        def fake_relay_worker_start(payload, *, root):
+            calls["relay"].append(payload)
+            return {"schema": "a9.active_run_relay_worker_start.v1", "status": "running", "binding_path": str(root / "binding.json")}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_audit = mod.enqueue_service_control_audit
+            original_relay_worker_start = mod.active_run_relay_worker_start
+            audit_calls = []
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                mod.active_run_relay_worker_start = fake_relay_worker_start
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_next(
+                    {"operator_scopes": ["operator.admin"], "count": 1, "dispatch": "relay_worker"},
+                    root=root,
+                )
+                queue_path = root / ".a9" / "tasks" / "queue" / "exec-001.md"
+                running_path = root / ".a9" / "tasks" / "running" / "exec-001.md"
+                queue_exists = queue_path.exists()
+                running_exists = running_path.exists()
+            finally:
+                mod.supervisor = original_supervisor
+                mod.enqueue_service_control_audit = original_audit
+                mod.active_run_relay_worker_start = original_relay_worker_start
+
+        self.assertEqual(result["status"], "dispatched")
+        self.assertFalse(queue_exists)
+        self.assertTrue(running_exists)
+        self.assertEqual(calls["relay"][0]["task_path"], str(running_path))
+        self.assertEqual(result["dispatch"]["mode"], "relay_worker")
+        self.assertEqual(result["dispatch"]["relay_worker_start"]["status"], "running")
+        self.assertEqual(audit_calls[0][0]["status"], "dispatched")
+
+    def test_runtime_plan_backlog_next_requeues_task_when_relay_worker_start_fails(self):
+        mod = load_control_api()
+
+        class FakeSupervisor:
+            @staticmethod
+            def runtime_state_from_summary(*args, **kwargs):
+                return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+            @staticmethod
+            def active_plan_id():
+                return "active-plan"
+
+            @staticmethod
+            def load_plan(plan_id):
+                return {"plan_id": plan_id, "execution_backlog": {}}
+
+            @staticmethod
+            def plan_execution_backlog_items(plan, *, count=0):
+                return [{"task_id": "exec-001", "phase": "implement", "prompt": "do next"}]
+
+            @staticmethod
+            def enqueue_execution_backlog_items(plan, items, *, prefix="", timeout_seconds=3600, idle_timeout_seconds=300, auto_next=True):
+                path = root / ".a9" / "tasks" / "queue" / "exec-001.md"
+                path.parent.mkdir(parents=True)
+                path.write_text("phase: implement\ndo next\n", encoding="utf-8")
+                return [path]
+
+        def fake_relay_worker_start(payload, *, root):
+            return {"schema": "a9.active_run_relay_worker_start.v1", "status": "blocked"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_audit = mod.enqueue_service_control_audit
+            original_relay_worker_start = mod.active_run_relay_worker_start
+            audit_calls = []
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.enqueue_service_control_audit = lambda event, *, root: audit_calls.append((event, root))
+                mod.active_run_relay_worker_start = fake_relay_worker_start
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_next(
+                    {"operator_scopes": ["operator.admin"], "count": 1, "dispatch": "relay_worker"},
+                    root=root,
+                )
+                queue_exists = (root / ".a9" / "tasks" / "queue" / "exec-001.md").exists()
+                running_exists = (root / ".a9" / "tasks" / "running" / "exec-001.md").exists()
+            finally:
+                mod.supervisor = original_supervisor
+                mod.enqueue_service_control_audit = original_audit
+                mod.active_run_relay_worker_start = original_relay_worker_start
+
+        self.assertEqual(result["status"], "enqueued")
+        self.assertTrue(queue_exists)
+        self.assertFalse(running_exists)
+        self.assertEqual(result["dispatch"]["relay_worker_start"]["status"], "blocked")
+        self.assertTrue(result["dispatch"]["requeued_task_path"].endswith("exec-001.md"))
+        self.assertEqual(audit_calls[0][0]["status"], "enqueued")
+
     def test_runtime_plan_backlog_next_no_items_returns_review_closure_diagnostics(self):
         mod = load_control_api()
 

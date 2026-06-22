@@ -691,6 +691,13 @@ Implementation guardrail:
   bindings with stopped relays and orphan binding files. A controlled
   mock-provider smoke proved relay-worker prompt start plus follow-up
   `active-run-command` delivery into Codex `turn/steer`.
+- Thirteenth concrete code cut completed: decided execution backlog can now
+  dispatch its first item into the relay-worker path by passing
+  `dispatch=relay_worker` to `/api/runtime/plan-backlog-next`. The normal
+  plan/backlog governance still generates and marks the task first; then A9
+  atomically moves that task from queue to running before starting the
+  relay-owned worker, preventing the legacy supervisor queue from double
+  claiming it. If relay start fails, the task is requeued.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

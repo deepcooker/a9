@@ -159,8 +159,13 @@ P7 NZX technical MVP
   `.a9/runtime/active_run_relay_bindings/*.json`. Cleanup also removes matching
   or orphan binding files. A controlled mock-provider smoke proved task prompt
   -> relay-owned `turn/start` -> active-run-command steer -> relay-delivered
-  `turn/steer` without model quota burn. The next gap is supervisor/backlog
-  dispatch into this relay-worker path and completion/evidence ingestion.
+  `turn/steer` without model quota burn. `plan.backlog.next` can now take
+  `dispatch=relay_worker`: it still uses the decided plan/backlog path, then
+  atomically moves the first queued task into the relay-owned lane before
+  starting the relay worker, so the old supervisor queue cannot double-claim
+  it. If relay start fails, the task is moved back to queue. The next gap is
+  completion/evidence ingestion from relay-owned runs back into plan/backlog
+  state.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

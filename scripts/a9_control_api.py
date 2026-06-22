@@ -8316,6 +8316,22 @@ def active_run_relay_binding_path(relay_id: str, *, root: Path = ROOT) -> Path:
     return root / ACTIVE_RUN_RELAY_BINDINGS_REL_DIR / f"{safe}.json"
 
 
+def claim_queued_task_for_relay(task_path: Path, *, root: Path = ROOT) -> Path:
+    resolved = task_path if task_path.is_absolute() else root / task_path
+    queue_dir = (root / ".a9" / "tasks" / "queue").resolve()
+    running_dir = root / ".a9" / "tasks" / "running"
+    if queue_dir not in resolved.resolve().parents:
+        raise ValueError("relay dispatch can only claim queued .a9/tasks/queue task files")
+    running_dir.mkdir(parents=True, exist_ok=True)
+    target = running_dir / resolved.name
+    suffix = 1
+    while target.exists():
+        suffix += 1
+        target = running_dir / f"{resolved.stem}-{suffix}{resolved.suffix}"
+    os.replace(resolved, target)
+    return target
+
+
 def active_run_relay_worker_start(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("active_run.relay_worker.start", root=root)
@@ -10647,16 +10663,59 @@ def runtime_plan_backlog_next(payload: dict[str, Any], *, root: Path = ROOT) -> 
         auto_next=auto_next,
     )
     queued_paths = [str(path) for path in created]
+    dispatch_mode = str(payload.get("dispatch") or payload.get("run_mode") or "").strip()
+    dispatch_result: dict[str, Any] = {}
+    if dispatch_mode in {"relay_worker", "active_run_relay_worker"} and created:
+        claimed_path: Path | None = None
+        original_queue_path = created[0]
+        try:
+            claimed_path = claim_queued_task_for_relay(original_queue_path, root=root)
+            relay_payload = {
+                **payload,
+                "task_path": str(claimed_path),
+                "task_id": claimed_path.stem,
+                "relay_id": str(payload.get("relay_id") or f"relay-worker-{claimed_path.stem}-{utc_now().replace(':', '')}"),
+                "run_id": str(payload.get("run_id") or f"relay-worker-{claimed_path.stem}-{utc_now().replace(':', '')}"),
+                "operator_scopes": payload.get("operator_scopes") or [],
+            }
+            relay_worker_start = active_run_relay_worker_start(relay_payload, root=root)
+            requeued_task_path = ""
+            if relay_worker_start.get("status") != "running":
+                original_queue_path.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(claimed_path, original_queue_path)
+                requeued_task_path = str(original_queue_path)
+            dispatch_result = {
+                "mode": "relay_worker",
+                "claimed_task_path": str(claimed_path),
+                "relay_worker_start": relay_worker_start,
+                "requeued_task_path": requeued_task_path,
+            }
+        except (OSError, ValueError) as exc:
+            requeued_task_path = ""
+            if claimed_path is not None and claimed_path.exists():
+                try:
+                    original_queue_path.parent.mkdir(parents=True, exist_ok=True)
+                    os.replace(claimed_path, original_queue_path)
+                    requeued_task_path = str(original_queue_path)
+                except OSError:
+                    requeued_task_path = ""
+            dispatch_result = {
+                "mode": "relay_worker",
+                "status": "dispatch_failed",
+                "reason": compact_text(str(exc), 500),
+                "requeued_task_path": requeued_task_path,
+            }
     return audit_plan_backlog_next(
         {
             **base,
-            "status": "enqueued",
+            "status": "dispatched" if dispatch_result.get("relay_worker_start", {}).get("status") == "running" else "enqueued",
             "plan_id": plan_id,
             "gate": gate,
             "requested_count": count,
             "queued_count": len(queued_paths),
             "queued_task_paths": queued_paths,
             "auto_next": auto_next,
+            "dispatch": dispatch_result,
         },
         root=root,
     )
