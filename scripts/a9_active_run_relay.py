@@ -193,7 +193,10 @@ def start_relay(args: argparse.Namespace) -> int:
             thread_id = args.attach_thread_id
             turn_id = args.attach_turn_id
         else:
-            if not args.prompt:
+            prompt = args.prompt
+            if args.prompt_file:
+                prompt = Path(args.prompt_file).read_text(encoding="utf-8")
+            if not prompt:
                 update_state(path, status="blocked", last_event="prompt_required_for_new_turn")
                 raise SystemExit("prompt is required unless --attach-thread-id and --attach-turn-id are provided")
             thread = session.request("thread/start", {"cwd": args.cwd, "ephemeral": bool(args.ephemeral)})
@@ -202,7 +205,7 @@ def start_relay(args: argparse.Namespace) -> int:
                 "turn/start",
                 {
                     "threadId": thread_id,
-                    "input": [{"type": "text", "text": args.prompt, "text_elements": []}],
+                    "input": [{"type": "text", "text": prompt, "text_elements": []}],
                 },
             )
             turn_id = str(turn.get("result", {}).get("turn", {}).get("id") or "")
@@ -254,6 +257,7 @@ def main() -> int:
     start.add_argument("--timeout-seconds", type=float, default=5.0)
     start.add_argument("--cwd", default=str(ROOT))
     start.add_argument("--prompt", default="")
+    start.add_argument("--prompt-file", default="")
     start.add_argument("--attach-thread-id", default="")
     start.add_argument("--attach-turn-id", default="")
     start.add_argument("--ephemeral", action="store_true")

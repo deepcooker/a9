@@ -1044,6 +1044,72 @@ demo
         self.assertEqual(result["relays"][0]["relay_id"], "relay-1")
         self.assertTrue(result["relays"][0]["state_path"].endswith("relay-1.json"))
 
+    def test_active_run_relay_start_requires_runtime_gate(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            blocked = mod.active_run_relay_start(
+                {
+                    "operator_scopes": ["operator.admin"],
+                    "prompt": "start relay",
+                    "endpoint": "ws://127.0.0.1:8791",
+                },
+                root=root,
+            )
+
+        self.assertEqual(blocked["schema"], "a9.active_run_relay_start.v1")
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["command"], "active_run.relay.start")
+        self.assertEqual(blocked["gate"]["reason"], "phone_control_disarmed")
+
+    def test_active_run_relay_start_spawns_with_prompt_file_not_argv(self):
+        mod = load_control_api()
+
+        class FakeProc:
+            pid = 12345
+
+            def poll(self):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            calls = []
+            original_popen = mod.subprocess.Popen
+            try:
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+
+                def fake_popen(cmd, **kwargs):
+                    calls.append((cmd, kwargs))
+                    return FakeProc()
+
+                mod.subprocess.Popen = fake_popen
+                result = mod.active_run_relay_start(
+                    {
+                        "operator_scopes": ["operator.admin"],
+                        "relay_id": "relay-test",
+                        "prompt": "secret relay prompt",
+                        "endpoint": "ws://127.0.0.1:8791",
+                        "token_file": "/tmp/token",
+                        "max_seconds": 30,
+                        "wait_seconds": 0,
+                    },
+                    root=root,
+                )
+                prompt_path = Path(result["prompt_path"])
+                prompt_exists = prompt_path.exists()
+                prompt_text = prompt_path.read_text(encoding="utf-8").strip()
+            finally:
+                mod.subprocess.Popen = original_popen
+
+        self.assertEqual(result["status"], "started")
+        self.assertEqual(result["relay_id"], "relay-test")
+        cmd = calls[0][0]
+        self.assertIn("--prompt-file", cmd)
+        self.assertNotIn("secret relay prompt", cmd)
+        self.assertTrue(prompt_exists)
+        self.assertEqual(prompt_text, "secret relay prompt")
+        self.assertEqual(calls[0][1]["cwd"], root)
+
     def test_active_run_transport_probe_reports_disabled_and_dry_run(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

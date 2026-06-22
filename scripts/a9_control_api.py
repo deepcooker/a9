@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -60,6 +61,8 @@ ACTIVE_RUN_DELIVERY_QUEUE_REL_PATH = Path(".a9") / "runtime" / "active_run_deliv
 ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH = Path(".a9") / "runtime" / "active_run_delivery_results.jsonl"
 ACTIVE_RUN_TRANSPORT_CONFIG_REL_PATH = Path(".a9") / "runtime" / "active_run_transport.json"
 ACTIVE_RUN_RELAYS_REL_DIR = Path(".a9") / "runtime" / "active_run_relays"
+ACTIVE_RUN_RELAY_LOGS_REL_DIR = Path(".a9") / "runtime" / "active_run_relay_logs"
+ACTIVE_RUN_RELAY_SCRIPT_PATH = ROOT / "scripts" / "a9_active_run_relay.py"
 LLM_WORKER_CONFIG_REL_PATH = Path(".a9") / "runtime" / "llm_worker_config.json"
 BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH = Path(".a9") / "nodes" / "bootstrap-takeover-admissions.jsonl"
 MONITOR_INTERVENTION_ALLOWED_ACTIONS = {
@@ -527,6 +530,7 @@ PHONE_CONTROL_GROUPS = {
         "active_run.steer",
         "active_run.delivery.cleanup",
         "active_run.delivery.consume",
+        "active_run.relay.start",
         "services.start",
         "services.restart",
         "worker.transport.check",
@@ -3541,6 +3545,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_active_run_delivery_consume": "/api/runtime/active-run-delivery-consume",
             "runtime_active_run_delivery_results": "/api/runtime/active-run-delivery-results",
             "runtime_active_run_relays": "/api/runtime/active-run-relays",
+            "runtime_active_run_relay_start": "/api/runtime/active-run-relay/start",
             "runtime_active_run_transport_config": "/api/runtime/active-run-transport-config",
             "runtime_active_run_transport_probe": "/api/runtime/active-run-transport-probe",
             "mempalace_status": "/api/memory/mempalace/status",
@@ -3591,6 +3596,7 @@ def controller_discovery() -> dict[str, Any]:
             "active_run_delivery_queue": str(ACTIVE_RUN_DELIVERY_QUEUE_REL_PATH),
             "active_run_delivery_results": str(ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH),
             "active_run_relays": str(ACTIVE_RUN_RELAYS_REL_DIR),
+            "active_run_relay_logs": str(ACTIVE_RUN_RELAY_LOGS_REL_DIR),
             "worker_transport_policy_update": True,
             "worker_transport_presets": True,
             "worker_transport_check": True,
@@ -8090,6 +8096,136 @@ def active_run_relays_status(*, root: Path = ROOT) -> dict[str, Any]:
     }
 
 
+def active_run_relay_state_path(relay_id: str, *, root: Path = ROOT) -> Path:
+    safe = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", relay_id).strip("-")[:128] or "relay"
+    return root / ACTIVE_RUN_RELAYS_REL_DIR / f"{safe}.json"
+
+
+def active_run_relay_start(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("active_run.relay.start", root=root)
+    command_name = "active_run.relay.start"
+    if not gate.get("allowed"):
+        return {"schema": "a9.active_run_relay_start.v1", "status": "blocked", "command": command_name, "gate": gate}
+
+    prompt = str(payload.get("prompt") or payload.get("message") or payload.get("instruction") or "").strip()
+    attach_thread_id = str(payload.get("attach_thread_id") or payload.get("thread_id") or "").strip()
+    attach_turn_id = str(payload.get("attach_turn_id") or payload.get("turn_id") or payload.get("current_turn_id") or "").strip()
+    if not prompt and not (attach_thread_id and attach_turn_id):
+        return {
+            "schema": "a9.active_run_relay_start.v1",
+            "status": "invalid_request",
+            "command": command_name,
+            "gate": gate,
+            "reason": "prompt_or_attach_thread_turn_required",
+        }
+
+    config = active_run_transport_config(root)
+    endpoint = str(payload.get("endpoint") or config.get("endpoint") or config.get("url") or "").strip()
+    token_file = str(payload.get("token_file") or config.get("token_file") or "").strip()
+    if not endpoint:
+        return {
+            "schema": "a9.active_run_relay_start.v1",
+            "status": "invalid_request",
+            "command": command_name,
+            "gate": gate,
+            "reason": "active_run_transport_endpoint_missing",
+            "transport_config_path": str(active_run_transport_config_path(root)),
+        }
+
+    now = utc_now()
+    seed = str(payload.get("relay_id") or payload.get("run_id") or payload.get("task_id") or now)
+    relay_id = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", seed).strip("-")[:96] or now.replace(":", "")
+    if not relay_id.startswith("relay-"):
+        relay_id = "relay-" + relay_id
+    state_path = active_run_relay_state_path(relay_id, root=root)
+    log_path = root / ACTIVE_RUN_RELAY_LOGS_REL_DIR / f"{relay_id}.log"
+    prompt_path = root / ACTIVE_RUN_RELAYS_REL_DIR / f"{relay_id}.prompt.txt"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    if prompt:
+        prompt_path.write_text(prompt + "\n", encoding="utf-8")
+        try:
+            prompt_path.chmod(0o600)
+        except OSError:
+            pass
+
+    max_seconds = int(payload.get("max_seconds") or 3600)
+    poll_seconds = float(payload.get("poll_seconds") or 1.0)
+    timeout_seconds = float(payload.get("timeout_seconds") or config.get("timeout_seconds") or 5)
+    cmd = [
+        "python3",
+        str(ACTIVE_RUN_RELAY_SCRIPT_PATH),
+        "start",
+        "--relay-id",
+        relay_id,
+        "--run-id",
+        str(payload.get("run_id") or relay_id),
+        "--task-id",
+        str(payload.get("task_id") or ""),
+        "--endpoint",
+        endpoint,
+        "--timeout-seconds",
+        str(timeout_seconds),
+        "--cwd",
+        str(payload.get("cwd") or root),
+        "--max-seconds",
+        str(max_seconds),
+        "--poll-seconds",
+        str(poll_seconds),
+    ]
+    if token_file:
+        cmd.extend(["--token-file", token_file])
+    if prompt:
+        cmd.extend(["--prompt-file", str(prompt_path)])
+    if attach_thread_id and attach_turn_id:
+        cmd.extend(["--attach-thread-id", attach_thread_id, "--attach-turn-id", attach_turn_id])
+    if bool(payload.get("ephemeral", True)):
+        cmd.append("--ephemeral")
+
+    with log_path.open("a", encoding="utf-8") as log_handle:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=root,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    observed_state: dict[str, Any] = {}
+    wait_seconds = float(payload.get("wait_seconds") or 2.0)
+    deadline = time.monotonic() + max(0.0, wait_seconds)
+    while time.monotonic() < deadline:
+        if state_path.exists():
+            observed_state = read_json(state_path)
+            if observed_state.get("status") in {"running", "blocked", "stopped"}:
+                break
+        if proc.poll() is not None:
+            break
+        time.sleep(0.1)
+
+    status = "started" if proc.poll() is None else "exited"
+    if observed_state.get("status") == "running":
+        status = "running"
+    elif observed_state.get("status") == "blocked":
+        status = "blocked"
+    return {
+        "schema": "a9.active_run_relay_start.v1",
+        "status": status,
+        "command": command_name,
+        "gate": gate,
+        "relay_id": relay_id,
+        "pid": proc.pid,
+        "return_code": proc.poll(),
+        "state_path": str(state_path),
+        "log_path": str(log_path),
+        "prompt_path": str(prompt_path) if prompt else "",
+        "endpoint_configured": bool(endpoint),
+        "token_file_configured": bool(token_file),
+        "observed_state": observed_state,
+    }
+
+
 def write_active_run_delivery_queue(rows: list[dict[str, Any]], *, root: Path = ROOT) -> None:
     path = active_run_delivery_queue_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -10943,6 +11079,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_session_lane_latest(payload))
             elif self.path == "/api/runtime/active-run-command":
                 self.write_json(200, active_run_operator_command(payload))
+            elif self.path == "/api/runtime/active-run-relay/start":
+                self.write_json(200, active_run_relay_start(payload))
             elif self.path == "/api/runtime/active-run-delivery-cleanup":
                 self.write_json(200, active_run_delivery_cleanup(payload))
             elif self.path == "/api/runtime/active-run-delivery-consume":

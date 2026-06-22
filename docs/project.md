@@ -143,8 +143,13 @@ P7 NZX technical MVP
   mock-provider smoke proved queue -> relay -> Codex `turn/steer` without
   model quota burn. Control API exposes relay state at
   `/api/runtime/active-run-relays`, and runtime projection indexes relay states
-  as `active_runs`. The next gap is service-managed relay start/stop and
-  binding production worker turns to relay-owned `thread_id/current_turn_id`.
+  as `active_runs`. Control API can now start a relay through
+  `/api/runtime/active-run-relay/start` under the runtime phone-control gate;
+  prompts are written to a private prompt file instead of leaking through
+  process argv. A second controlled API smoke proved
+  phone-control arm -> relay start -> active-run-command steer -> relay consume
+  -> Codex `turn/steer`. The next gap is relay stop/cleanup and binding
+  production worker turns to relay-owned `thread_id/current_turn_id`.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

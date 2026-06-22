@@ -668,8 +668,15 @@ Implementation guardrail:
   matching the relay run/thread/task, writes delivery results, and is indexed by
   runtime projection plus `/api/runtime/active-run-relays`. A controlled
   mock-provider relay smoke proved queue delivery into real Codex
-  `turn/steer`. Next concrete cut: service-manage relay start/stop and bind
-  production worker turns to relay-owned runs.
+  `turn/steer`.
+- Tenth concrete code cut completed: control API can start a relay-owned Codex
+  turn with `/api/runtime/active-run-relay/start`, protected by the runtime
+  phone-control gate. The prompt is stored in a private prompt file and passed
+  by path, so `ps` does not expose operator instructions. A controlled API
+  smoke proved the end-to-end operator path: phone-control arm, relay start,
+  active-run steer command, delivery queue consumption by the relay, and real
+  Codex `turn/steer`. Next concrete cut: relay stop/cleanup and production
+  worker binding.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.
