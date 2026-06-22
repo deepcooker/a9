@@ -128,6 +128,21 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("a9_control_api.py serve", " ".join(payload["started"][0]["command"]))
         self.assertIn("a9_recovery_loop.py", " ".join(payload["started"][1]["command"]))
         self.assertIn("start_contract", payload)
+
+    def test_service_start_dry_run_supports_codex_app_server(self):
+        result = subprocess.run(
+            [str(SERVICE_PATH), "start", "--dry-run", "--only", "codex-app-server"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["requested"], ["codex-app-server"])
+        command_text = " ".join(payload["started"][0]["command"])
+        self.assertIn("codex app-server --listen ws://127.0.0.1:8791", command_text)
+        self.assertIn("--ws-auth capability-token", command_text)
         self.assertEqual(
             payload["start_contract"]["failure_taxonomy"],
             ["timeout", "auth", "network", "protocol", "rate_limit"],

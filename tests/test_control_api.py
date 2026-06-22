@@ -595,18 +595,481 @@ demo
         self.assertEqual(status["latest_run"]["task_id"], "task")
         self.assertEqual(status["progress"]["progress_percent"], 1)
         self.assertEqual(status["worker_transport_health"]["status"], "cooldown")
+        self.assertEqual(status["runtime_projection"]["schema"], "a9.runtime_projection_compact.v1")
+        self.assertEqual(status["runtime_projection"]["counts"]["threads"], 1)
         self.assertEqual(status["nodes"]["count"], 0)
         self.assertEqual(status["gateway"]["status"], "missing")
         service_observation = status["service_observation"]
         self.assertEqual(service_observation["status"], "ok")
-        self.assertEqual(service_observation["observed"]["missing_count"], 3)
+        self.assertEqual(service_observation["observed"]["missing_count"], 4)
         self.assertIn("supervisor", service_observation["observed"]["missing_services"])
+        self.assertIn("codex-app-server", service_observation["observed"]["missing_services"])
         self.assertEqual(service_observation["observed"]["next_action"], "start_missing_services")
         self.assertEqual(service_observation["intent"]["services"][0]["service"], "control-api")
         control_api = next(item for item in service_observation["observed"]["services"] if item["service"] == "control-api")
         self.assertTrue(control_api["observed_running"])
         self.assertEqual(control_api["observation_status"], "running")
         self.assertEqual(control_api["next_action"], "observe")
+
+    def test_runtime_projection_status_refreshes_and_compacts_existing_runs(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / ".a9" / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            events = run_dir / "event_summaries.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_type": "thread.started", "thread_id": "thread-1"}),
+                        json.dumps({"event_type": "turn.started"}),
+                        json.dumps({"event_type": "item.completed", "item_id": "item-1", "item_type": "agent_message"}),
+                        json.dumps({"event_type": "turn.completed"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "task-1",
+                        "status": "ok",
+                        "phase": "execution_next",
+                        "started_at": "2026-06-22T00:00:00+00:00",
+                        "finished_at": "2026-06-22T00:01:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            compact = mod.runtime_projection_status(root=root, refresh=True, compact=True)
+            full = mod.runtime_projection_status(root=root, refresh=False, compact=False)
+
+        self.assertEqual(compact["schema"], "a9.runtime_projection_compact.v1")
+        self.assertEqual(compact["counts"]["threads"], 1)
+        self.assertEqual(compact["counts"]["items"], 1)
+        self.assertEqual(full["schema"], "a9.runtime_projection.v1")
+        self.assertEqual(full["threads"][0]["thread_id"], "thread-1")
+
+    def test_api_runtime_projection_endpoint_supports_refresh_and_compact(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+
+        class DummyRuntimeProjectionGetHandler:
+            path = "/api/runtime/projection?refresh=1&compact=1&limit=2"
+            headers = {}
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+            def write_sse(self, status, payload):
+                raise AssertionError("write_sse should not be used for /api/runtime/projection")
+
+        original_runtime_projection = mod.runtime_projection_status
+        try:
+            mod.runtime_projection_status = lambda **kwargs: {
+                "schema": "a9.runtime_projection_compact.v1",
+                "status": "ok",
+                "counts": {"threads": 2},
+                "kwargs": kwargs,
+            }
+            mod.ControlHandler.do_GET(DummyRuntimeProjectionGetHandler())
+        finally:
+            mod.runtime_projection_status = original_runtime_projection
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["schema"], "a9.runtime_projection_compact.v1")
+        self.assertTrue(captured["payload"]["kwargs"]["refresh"])
+        self.assertTrue(captured["payload"]["kwargs"]["compact"])
+        self.assertEqual(captured["payload"]["kwargs"]["limit"], 2)
+
+    def test_active_run_operator_command_status_observes_projection_target(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / ".a9" / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "event_summaries.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_type": "thread.started", "thread_id": "thread-1"}),
+                        json.dumps({"event_type": "turn.started", "turn_id": "turn-1"}),
+                        json.dumps({"event_type": "item.started", "item_id": "item-1", "item_type": "agent_message"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "task-1",
+                        "status": "running",
+                        "phase": "execution_next",
+                        "started_at": "2026-06-22T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = mod.active_run_operator_command(
+                {
+                    "action": "status",
+                    "run_id": "run-1",
+                    "reason": "operator wants current active run status",
+                    "operator_scopes": ["operator.admin"],
+                },
+                root=root,
+            )
+            ledger = mod.operator_command_tail(root=root)
+
+        self.assertEqual(result["status"], "recorded")
+        self.assertEqual(result["command"], "active_run.status")
+        self.assertEqual(result["target"]["run_id"], "run-1")
+        self.assertEqual(result["queue_outcome"]["status"], "observed")
+        self.assertEqual(result["delivery_evidence"]["status"], "observed")
+        self.assertEqual(result["delivery_evidence"]["target_status"], "running")
+        self.assertEqual(ledger["event_count"], 1)
+        self.assertEqual(ledger["events"][0]["command"], "active_run.status")
+
+    def test_active_run_operator_command_steer_requires_arm_and_queues_delivery(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / ".a9" / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "event_summaries.jsonl").write_text(
+                json.dumps({"event_type": "thread.started", "thread_id": "thread-1"}) + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "summary.json").write_text(
+                json.dumps({"task_id": "task-1", "status": "running", "phase": "execution_next"}),
+                encoding="utf-8",
+            )
+
+            blocked = mod.active_run_operator_command(
+                {
+                    "action": "steer",
+                    "run_id": "run-1",
+                    "message": "stay on the active-run control slice",
+                    "operator_scopes": ["operator.admin"],
+                },
+                root=root,
+            )
+            mod.phone_control_arm(
+                {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            recorded = mod.active_run_operator_command(
+                {
+                    "action": "steer",
+                    "run_id": "run-1",
+                    "message": "stay on the active-run control slice",
+                    "operator_scopes": ["operator.admin"],
+                },
+                root=root,
+            )
+            ledger = mod.operator_command_tail(root=root)
+            delivery_queue = mod.active_run_delivery_queue_tail(root=root)
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["queue_outcome"]["reason"], "phone_control_disarmed")
+        self.assertEqual(recorded["status"], "recorded")
+        self.assertEqual(recorded["queue_outcome"]["status"], "queued")
+        self.assertEqual(recorded["delivery_evidence"]["status"], "queued_for_transport")
+        self.assertEqual(recorded["delivery_evidence"]["kind"], "active_run_delivery_queue")
+        self.assertEqual(delivery_queue["event_count"], 1)
+        self.assertEqual(delivery_queue["events"][0]["action"], "steer")
+        self.assertEqual(delivery_queue["events"][0]["operator_command_id"], recorded["operator_command"]["operator_command_id"])
+        self.assertEqual(ledger["event_count"], 2)
+        self.assertEqual(ledger["events"][0]["status"], "blocked")
+        self.assertEqual(ledger["events"][1]["status"], "recorded")
+
+    def test_active_run_delivery_cleanup_archives_stale_queued_items(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.append_active_run_delivery(
+                {
+                    "delivery_id": "delivery-old",
+                    "created_at": "2026-06-22T00:00:00+00:00",
+                    "expires_at": "2026-06-22T00:00:01+00:00",
+                    "status": "queued",
+                    "action": "steer",
+                    "target": {"run_id": "run-old"},
+                },
+                root=root,
+            )
+            mod.append_active_run_delivery(
+                {
+                    "delivery_id": "delivery-new",
+                    "created_at": "2099-01-01T00:00:00+00:00",
+                    "expires_at": "2099-01-01T00:10:00+00:00",
+                    "status": "queued",
+                    "action": "followup",
+                    "target": {"run_id": "run-new"},
+                },
+                root=root,
+            )
+            blocked = mod.active_run_delivery_cleanup({"operator_scopes": ["operator.admin"], "commit": True}, root=root)
+            mod.phone_control_arm(
+                {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            result = mod.active_run_delivery_cleanup({"operator_scopes": ["operator.admin"], "commit": True}, root=root)
+            tail = mod.active_run_delivery_queue_tail(root=root)
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["stale_count"], 1)
+        self.assertEqual(tail["event_count"], 1)
+        self.assertEqual(tail["events"][0]["delivery_id"], "delivery-new")
+
+    def test_active_run_delivery_consume_rejects_when_live_transport_disabled(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / ".a9" / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "event_summaries.jsonl").write_text(
+                json.dumps({"event_type": "thread.started", "thread_id": "thread-1"}) + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "summary.json").write_text(
+                json.dumps({"task_id": "task-1", "status": "running", "phase": "execution_next"}),
+                encoding="utf-8",
+            )
+            mod.append_active_run_delivery(
+                {
+                    "delivery_id": "delivery-1",
+                    "created_at": "2026-06-22T00:00:00+00:00",
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                    "status": "queued",
+                    "command": "active_run.steer",
+                    "action": "steer",
+                    "operator_command_id": "operator-1",
+                    "target": {"run_id": "run-1", "thread_id": "thread-1", "task_id": "task-1"},
+                },
+                root=root,
+            )
+            blocked = mod.active_run_delivery_consume({"operator_scopes": ["operator.admin"], "commit": True}, root=root)
+            mod.phone_control_arm(
+                {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                root=root,
+            )
+            result = mod.active_run_delivery_consume({"operator_scopes": ["operator.admin"], "commit": True}, root=root)
+            queue_tail = mod.active_run_delivery_queue_tail(root=root)
+            results_tail = mod.active_run_delivery_results_tail(root=root)
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["processed_count"], 1)
+        self.assertEqual(result["processed"][0]["status"], "rejected")
+        self.assertEqual(result["processed"][0]["reason"], "active_run_transport_disabled")
+        self.assertEqual(queue_tail["events"][0]["status"], "rejected")
+        self.assertEqual(results_tail["event_count"], 1)
+        self.assertEqual(results_tail["events"][0]["delivery_id"], "delivery-1")
+        self.assertEqual(results_tail["events"][0]["reason"], "active_run_transport_disabled")
+
+    def test_active_run_delivery_consume_can_deliver_to_codex_jsonrpc_adapter(self):
+        mod = load_control_api()
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / ".a9" / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "event_summaries.jsonl").write_text(
+                "\n".join(
+                    [
+                        json.dumps({"event_type": "thread.started", "thread_id": "thread-1"}),
+                        json.dumps({"event_type": "turn.started", "turn_id": "turn-1"}),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (run_dir / "summary.json").write_text(
+                json.dumps({"task_id": "task-1", "status": "running", "phase": "execution_next"}),
+                encoding="utf-8",
+            )
+            mod.append_active_run_delivery(
+                {
+                    "delivery_id": "delivery-1",
+                    "created_at": "2026-06-22T00:00:00+00:00",
+                    "expires_at": "2099-01-01T00:00:00+00:00",
+                    "status": "queued",
+                    "command": "active_run.steer",
+                    "action": "steer",
+                    "operator_command_id": "operator-1",
+                    "target": {"run_id": "run-1", "thread_id": "thread-1", "task_id": "task-1"},
+                    "intent": {"message": "focus on delivery adapter"},
+                },
+                root=root,
+            )
+            original = mod.jsonrpc_request
+            try:
+                def fake_jsonrpc(endpoint, method, params, *, timeout_seconds=5.0):
+                    calls.append(
+                        {
+                            "endpoint": endpoint,
+                            "method": method,
+                            "params": params,
+                            "timeout_seconds": timeout_seconds,
+                        }
+                    )
+                    return {"result": {"turnId": "turn-1"}}
+
+                mod.jsonrpc_request = fake_jsonrpc
+                mod.phone_control_arm(
+                    {"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]},
+                    root=root,
+                )
+                result = mod.active_run_delivery_consume(
+                    {
+                        "operator_scopes": ["operator.admin"],
+                        "commit": True,
+                        "transport": "codex_app_server_jsonrpc",
+                        "endpoint": "http://127.0.0.1:9999/jsonrpc",
+                    },
+                    root=root,
+                )
+                queue_tail = mod.active_run_delivery_queue_tail(root=root)
+                results_tail = mod.active_run_delivery_results_tail(root=root)
+            finally:
+                mod.jsonrpc_request = original
+
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["processed"][0]["status"], "delivered")
+        self.assertEqual(result["processed"][0]["reason"], "codex_turn_steer_accepted")
+        self.assertEqual(calls[0]["method"], "turn/steer")
+        self.assertEqual(calls[0]["params"]["threadId"], "thread-1")
+        self.assertEqual(calls[0]["params"]["expectedTurnId"], "turn-1")
+        self.assertEqual(calls[0]["params"]["input"][0]["text"], "focus on delivery adapter")
+        self.assertEqual(queue_tail["events"][0]["status"], "delivered")
+        self.assertEqual(results_tail["events"][0]["status"], "delivered")
+
+    def test_active_run_jsonrpc_request_uses_websocket_for_ws_endpoint(self):
+        mod = load_control_api()
+        calls = []
+        original_ws = mod.websocket_jsonrpc_request
+        try:
+            def fake_ws(endpoint, method, params, *, timeout_seconds=5.0, auth_token=""):
+                calls.append(
+                    {
+                        "endpoint": endpoint,
+                        "method": method,
+                        "params": params,
+                        "timeout_seconds": timeout_seconds,
+                        "auth_token": auth_token,
+                    }
+                )
+                return {"result": {"ok": True}}
+
+            mod.websocket_jsonrpc_request = fake_ws
+            result = mod.active_run_jsonrpc_request(
+                "ws://127.0.0.1:12345",
+                "model/list",
+                {"includeHidden": False},
+                timeout_seconds=1,
+                auth_token="token-1",
+            )
+        finally:
+            mod.websocket_jsonrpc_request = original_ws
+
+        self.assertEqual(result["result"]["ok"], True)
+        self.assertEqual(calls[0]["endpoint"], "ws://127.0.0.1:12345")
+        self.assertEqual(calls[0]["method"], "model/list")
+        self.assertEqual(calls[0]["auth_token"], "token-1")
+
+    def test_active_run_transport_deliver_can_reuse_codex_websocket_session(self):
+        mod = load_control_api()
+
+        class FakeCodexSession:
+            def __init__(self):
+                self.calls = []
+
+            def request(self, method, params):
+                self.calls.append({"method": method, "params": params})
+                return {"result": {"turnId": params["expectedTurnId"]}}
+
+        session = FakeCodexSession()
+        result = mod.active_run_transport_deliver(
+            {
+                "action": "steer",
+                "message": "same connection steer",
+                "delivery_id": "delivery-1",
+            },
+            target_run={"thread_id": "thread-1", "current_turn_id": "turn-1"},
+            config={
+                "enabled": True,
+                "transport": "codex_app_server_jsonrpc",
+                "endpoint": "ws://127.0.0.1:9999",
+            },
+            jsonrpc_session=session,
+        )
+
+        self.assertEqual(result["status"], "delivered")
+        self.assertEqual(result["reason"], "codex_turn_steer_accepted")
+        self.assertEqual(session.calls[0]["method"], "turn/steer")
+        self.assertEqual(session.calls[0]["params"]["threadId"], "thread-1")
+        self.assertEqual(session.calls[0]["params"]["expectedTurnId"], "turn-1")
+        self.assertEqual(session.calls[0]["params"]["input"][0]["text"], "same connection steer")
+
+    def test_active_run_transport_probe_reports_disabled_and_dry_run(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            disabled = mod.active_run_transport_probe(root=root)
+            dry_run = mod.active_run_transport_probe(
+                {
+                    "transport": "codex_app_server_jsonrpc",
+                    "endpoint": "ws://127.0.0.1:9999",
+                    "live": False,
+                },
+                root=root,
+            )
+
+        self.assertEqual(disabled["status"], "disabled")
+        self.assertEqual(disabled["reason"], "active_run_transport_disabled")
+        self.assertEqual(dry_run["status"], "dry_run")
+        self.assertEqual(dry_run["reason"], "live_probe_not_requested")
+
+    def test_api_active_run_operator_command_endpoint_returns_payload(self):
+        mod = load_control_api()
+        captured = {"status": None, "payload": None}
+        body = json.dumps(
+            {
+                "action": "status",
+                "run_id": "run-1",
+                "operator_scopes": ["operator.admin"],
+            }
+        ).encode("utf-8")
+        original = mod.active_run_operator_command
+
+        class DummyActiveRunCommandPostHandler:
+            path = "/api/runtime/active-run-command"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["payload"] = payload
+
+        try:
+            mod.active_run_operator_command = lambda payload: {
+                "schema": "a9.active_run_operator_command.v1",
+                "status": "recorded",
+                "payload": payload,
+            }
+            mod.ControlHandler.do_POST(DummyActiveRunCommandPostHandler())
+        finally:
+            mod.active_run_operator_command = original
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["payload"]["schema"], "a9.active_run_operator_command.v1")
+        self.assertEqual(captured["payload"]["payload"]["run_id"], "run-1")
 
     def test_supervisor_status_exposes_latest_run_lanes_for_mobile_monitor(self):
         mod = load_control_api()
@@ -3091,6 +3554,7 @@ demo
                     "returncode": 0,
                     "stdout": (
                         "101 1 00:10 python3 scripts/a9_control_api.py serve --host 0.0.0.0 --port 8787\n"
+                        "151 1 00:09 node /usr/local/bin/codex app-server --listen ws://127.0.0.1:8791\n"
                         "201 1 00:09 python3 scripts/a9_node.py command-work-loop --block-ms 5000\n"
                         "301 1 00:08 python3 scripts/a9_recovery_loop.py --controller-url http://127.0.0.1:8787\n"
                         "401 1 00:07 python3 scripts/a9_supervisor.py run-loop --auto-next --sleep-seconds 10\n"
@@ -4089,6 +4553,7 @@ Do risky work.
                     },
                     root=root,
                 )
+                ledger = mod.operator_command_tail(root=root)
             finally:
                 mod.monitor_status = original_monitor_status
                 mod.enqueue_monitor_intervention_audit = original_audit
@@ -4111,6 +4576,11 @@ Do risky work.
         self.assertEqual(audit_calls[1][0]["execution_effect"]["mode"], "queue_task")
         self.assertEqual(audit_calls[1][0]["redis_mirror"]["stream_id"], "1-0")
         self.assertEqual(result["redis_mirror"]["status"], "ok")
+        self.assertEqual(result["operator_command"]["command"], "monitor.intervention")
+        self.assertEqual(result["operator_command"]["status"], "recorded")
+        self.assertEqual(ledger["event_count"], 2)
+        self.assertEqual(ledger["events"][0]["status"], "blocked")
+        self.assertEqual(ledger["events"][1]["status"], "recorded")
 
     def test_publish_monitor_intervention_redis_xadds_compact_event(self):
         mod = load_control_api()

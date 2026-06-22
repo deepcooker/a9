@@ -24,6 +24,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
+from urllib import error as url_error
+from urllib import request as url_request
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +34,7 @@ SUPERVISOR_PATH = ROOT / "scripts" / "a9_supervisor.py"
 SESSION_REFRESH_PATH = ROOT / "scripts" / "a9_session_refresh.py"
 MEMPALACE_PROVIDER_PATH = ROOT / "scripts" / "a9_mempalace_provider.py"
 MEMPALACE_EVAL_PATH = ROOT / "scripts" / "a9_mempalace_eval.py"
+RUNTIME_THREAD_VIEW_PATH = ROOT / "scripts" / "a9_runtime_thread_view.py"
 REMOTE_PATH = ROOT / "scripts" / "a9_remote.py"
 NODE_HELPER_PATH = ROOT / "scripts" / "a9_node.py"
 NODES_DIR = ROOT / ".a9" / "nodes"
@@ -51,6 +54,11 @@ COMMUNICATION_REPAIR_SUGGESTION_AUDIT_REL_PATH = Path(".a9") / "services" / "com
 SERVICE_CONTROL_AUDIT_REL_PATH = Path(".a9") / "services" / "service-control-audit.jsonl"
 MONITOR_INTERVENTION_AUDIT_REL_PATH = Path(".a9") / "monitor" / "interventions.jsonl"
 RUNTIME_CONTROL_STATE_REL_PATH = Path(".a9") / "runtime" / "control_state.json"
+RUNTIME_PROJECTION_REL_PATH = Path(".a9") / "runtime" / "runtime_projection.json"
+OPERATOR_COMMANDS_REL_PATH = Path(".a9") / "runtime" / "operator_commands.jsonl"
+ACTIVE_RUN_DELIVERY_QUEUE_REL_PATH = Path(".a9") / "runtime" / "active_run_delivery_queue.jsonl"
+ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH = Path(".a9") / "runtime" / "active_run_delivery_results.jsonl"
+ACTIVE_RUN_TRANSPORT_CONFIG_REL_PATH = Path(".a9") / "runtime" / "active_run_transport.json"
 LLM_WORKER_CONFIG_REL_PATH = Path(".a9") / "runtime" / "llm_worker_config.json"
 BOOTSTRAP_TAKEOVER_ADMISSION_AUDIT_REL_PATH = Path(".a9") / "nodes" / "bootstrap-takeover-admissions.jsonl"
 MONITOR_INTERVENTION_ALLOWED_ACTIONS = {
@@ -63,6 +71,7 @@ MONITOR_INTERVENTION_ALLOWED_ACTIONS = {
     "rollback_request",
     "route_to_debate",
 }
+ACTIVE_RUN_OPERATOR_ACTIONS = {"cancel", "followup", "status", "steer"}
 COMMUNICATION_DATA_CONTRACT_VERSION = "v1_draft"
 COMMUNICATION_DATA_CONTRACT_OBJECTS = [
     "operator_session",
@@ -511,6 +520,12 @@ PHONE_CONTROL_GROUPS = {
         "approval.reject",
         "eval.override",
         "monitor.intervention",
+        "active_run.cancel",
+        "active_run.followup",
+        "active_run.status",
+        "active_run.steer",
+        "active_run.delivery.cleanup",
+        "active_run.delivery.consume",
         "services.start",
         "services.restart",
         "worker.transport.check",
@@ -539,6 +554,7 @@ TASKS_STREAM_TOP_CONSUMERS_LIMIT = 3
 GATEWAY_CONTRACT_EVENT_STALE_SECONDS = 300
 SERVICE_PROCESS_MARKERS = {
     "control-api": "a9_control_api.py serve",
+    "codex-app-server": "codex app-server --listen ws://127.0.0.1:8791",
     "node-worker": "a9_node.py command-work-loop",
     "recovery-loop": "a9_recovery_loop.py",
     "supervisor": "a9_supervisor.py run-loop",
@@ -549,6 +565,11 @@ SERVICE_INTENT_CONTRACT = [
         "service": "control-api",
         "unit_path": str(ROOT / "infra" / "systemd" / "a9-control-api.service"),
         "start_intent": "python3 scripts/a9_control_api.py serve --host 0.0.0.0 --port 8787",
+    },
+    {
+        "service": "codex-app-server",
+        "unit_path": "",
+        "start_intent": "codex app-server --listen ws://127.0.0.1:8791 --ws-auth capability-token",
     },
     {
         "service": "node-worker",
@@ -594,6 +615,10 @@ def mempalace_eval() -> Any:
     return load_module("a9_mempalace_eval_control_api", MEMPALACE_EVAL_PATH)
 
 
+def runtime_projection_mod() -> Any:
+    return load_module("a9_runtime_thread_view_control_api", RUNTIME_THREAD_VIEW_PATH)
+
+
 def remote() -> Any:
     return load_module("a9_remote_control_api", REMOTE_PATH)
 
@@ -604,6 +629,29 @@ def a9_node() -> Any:
 
 def read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_jsonl(path: Path, *, limit: int | None = None) -> tuple[list[dict[str, Any]], int]:
+    if not path.exists():
+        return [], 0
+    rows: list[dict[str, Any]] = []
+    skipped = 0
+    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            skipped += 1
+            continue
+        if isinstance(payload, dict):
+            rows.append(payload)
+        else:
+            skipped += 1
+    if limit is not None and limit > 0:
+        rows = rows[-limit:]
+    return rows, skipped
 
 
 def utc_now() -> str:
@@ -1329,6 +1377,7 @@ def supervisor_status(root: Path = ROOT) -> dict[str, Any]:
         "progress": read_json(progress_path) if progress_path.exists() else {},
         "daemon_heartbeat": read_json(heartbeat_path) if heartbeat_path.exists() else {},
         "worker_transport_health": read_json(worker_transport_health_path) if worker_transport_health_path.exists() else {},
+        "runtime_projection": runtime_projection_status(root=root, refresh=False, compact=True),
         "service_observation": service_observation_status(root),
         "nodes": node_status(root),
         "gateway": gateway_transport_contract(root),
@@ -2715,6 +2764,41 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
     redis_mirror = publish_monitor_intervention_redis(event)
     event["redis_mirror"] = redis_mirror
     enqueue_monitor_intervention_audit(event, root=root)
+    operator_command = append_operator_command(
+        {
+            "operator_command_id": command["intervention_id"],
+            "at": event["at"],
+            "actor": command.get("actor"),
+            "command": command["command"],
+            "action": command["action"],
+            "status": event["status"],
+            "reason": event["reason"],
+            "thread_id": command.get("thread_id", ""),
+            "run_id": command.get("run_id"),
+            "task_id": command.get("task_id"),
+            "target": {
+                "run_id": command.get("run_id"),
+                "task_id": command.get("task_id"),
+                "flow_id": command.get("flow_id"),
+            },
+            "intent": {
+                "action": command["action"],
+                "reason": command["reason"],
+                "evidence_refs": command.get("evidence_refs", []),
+            },
+            "result": {
+                "gate_allowed": bool(gate.get("allowed")),
+                "gate_reason": gate.get("reason") or gate.get("status"),
+                "execution_effect": effect,
+                "redis_mirror": redis_mirror,
+            },
+            "evidence": {
+                "monitor_audit_path": str(monitor_intervention_audit_path(root)),
+                "ledger_path": str(operator_commands_path(root)),
+            },
+        },
+        root=root,
+    )
     if not gate.get("allowed"):
         return {
             "status": "blocked",
@@ -2727,6 +2811,7 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
             "audit_async": True,
             "redis_mirror": redis_mirror,
             "execution_effect": effect,
+            "operator_command": operator_command,
         }
     return {
         "status": "recorded",
@@ -2741,6 +2826,7 @@ def monitor_intervention(payload: dict[str, Any], *, root: Path = ROOT) -> dict[
         "audit_path": str(monitor_intervention_audit_path(root)),
         "redis_mirror": redis_mirror,
         "execution_effect": effect,
+        "operator_command": operator_command,
     }
 
 
@@ -3446,6 +3532,15 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_run_one_with_transport": "/api/runtime/run-one-with-transport",
             "runtime_session_refresh_trial": "/api/runtime/session-refresh-trial",
             "runtime_session_lane_latest": "/api/runtime/session-lane-latest",
+            "runtime_projection": "/api/runtime/projection",
+            "runtime_operator_commands": "/api/runtime/operator-commands",
+            "runtime_active_run_command": "/api/runtime/active-run-command",
+            "runtime_active_run_delivery_queue": "/api/runtime/active-run-delivery-queue",
+            "runtime_active_run_delivery_cleanup": "/api/runtime/active-run-delivery-cleanup",
+            "runtime_active_run_delivery_consume": "/api/runtime/active-run-delivery-consume",
+            "runtime_active_run_delivery_results": "/api/runtime/active-run-delivery-results",
+            "runtime_active_run_transport_config": "/api/runtime/active-run-transport-config",
+            "runtime_active_run_transport_probe": "/api/runtime/active-run-transport-probe",
             "mempalace_status": "/api/memory/mempalace/status",
             "mempalace_search": "/api/memory/mempalace/search",
             "mempalace_wakeup": "/api/memory/mempalace/wakeup",
@@ -3489,6 +3584,10 @@ def controller_discovery() -> dict[str, Any]:
             "monitor_intervention_contract": True,
             "monitor_intervention_examples": True,
             "monitor_intervention_redis_stream": MONITOR_INTERVENTIONS_STREAM_KEY,
+            "runtime_projection": True,
+            "operator_command_ledger": str(OPERATOR_COMMANDS_REL_PATH),
+            "active_run_delivery_queue": str(ACTIVE_RUN_DELIVERY_QUEUE_REL_PATH),
+            "active_run_delivery_results": str(ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH),
             "worker_transport_policy_update": True,
             "worker_transport_presets": True,
             "worker_transport_check": True,
@@ -7454,6 +7553,1041 @@ def operator_tail(session_jsonl: str | None = None, *, limit: int = 10, preview_
     }
 
 
+def operator_commands_path(root: Path = ROOT) -> Path:
+    return root / OPERATOR_COMMANDS_REL_PATH
+
+
+def append_operator_command(command: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    path = operator_commands_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(command)
+    payload.setdefault("schema", "a9.operator_command.v1")
+    payload.setdefault("at", utc_now())
+    payload.setdefault(
+        "operator_command_id",
+        "operator-command-" + payload["at"].replace(":", "").replace("+", "Z"),
+    )
+    payload.setdefault("evidence", {"ledger_path": str(path)})
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return payload
+
+
+def operator_command_tail(limit: int = 20, *, root: Path = ROOT) -> dict[str, Any]:
+    safe_limit = max(1, min(200, int(limit)))
+    path = operator_commands_path(root)
+    rows, skipped = read_jsonl(path, limit=safe_limit)
+    return {
+        "schema": "a9.operator_command_tail.v1",
+        "status": "missing" if not path.exists() else ("degraded" if skipped else "ok"),
+        "path": str(path),
+        "events": rows,
+        "event_count": len(rows),
+        "skipped_bad_lines": skipped,
+    }
+
+
+def active_run_delivery_queue_path(root: Path = ROOT) -> Path:
+    return root / ACTIVE_RUN_DELIVERY_QUEUE_REL_PATH
+
+
+def active_run_delivery_results_path(root: Path = ROOT) -> Path:
+    return root / ACTIVE_RUN_DELIVERY_RESULTS_REL_PATH
+
+
+def active_run_transport_config_path(root: Path = ROOT) -> Path:
+    return root / ACTIVE_RUN_TRANSPORT_CONFIG_REL_PATH
+
+
+def active_run_transport_config(root: Path = ROOT) -> dict[str, Any]:
+    path = active_run_transport_config_path(root)
+    if not path.exists():
+        return {
+            "schema": "a9.active_run_transport_config.v1",
+            "status": "missing",
+            "enabled": False,
+            "path": str(path),
+            "transport": "",
+        }
+    try:
+        payload = read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return {
+            "schema": "a9.active_run_transport_config.v1",
+            "status": "invalid",
+            "enabled": False,
+            "path": str(path),
+            "transport": "",
+        }
+    payload.setdefault("schema", "a9.active_run_transport_config.v1")
+    payload.setdefault("path", str(path))
+    payload.setdefault("enabled", False)
+    payload.setdefault("transport", "")
+    payload.setdefault("timeout_seconds", 5)
+    payload["status"] = "ok" if payload.get("enabled") else "disabled"
+    return payload
+
+
+def jsonrpc_request(endpoint: str, method: str, params: dict[str, Any], *, timeout_seconds: float = 5.0) -> dict[str, Any]:
+    body = json.dumps(
+        {"jsonrpc": "2.0", "id": "a9-" + utc_now().replace(":", ""), "method": method, "params": params},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    req = url_request.Request(
+        endpoint,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with url_request.urlopen(req, timeout=timeout_seconds) as response:
+            text = response.read().decode("utf-8", errors="replace")
+    except url_error.URLError as exc:
+        raise RuntimeError(f"jsonrpc request failed: {exc}") from exc
+    try:
+        payload = json.loads(text) if text else {}
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("jsonrpc response was not json") from exc
+    if isinstance(payload, dict) and payload.get("error"):
+        raise RuntimeError("jsonrpc error: " + compact_text(json.dumps(payload.get("error"), ensure_ascii=False), 500))
+    return payload if isinstance(payload, dict) else {"result": payload}
+
+
+def websocket_jsonrpc_request(
+    endpoint: str,
+    method: str,
+    params: dict[str, Any],
+    *,
+    timeout_seconds: float = 5.0,
+    auth_token: str = "",
+) -> dict[str, Any]:
+    with CodexWebsocketJsonRpcSession(
+        endpoint,
+        timeout_seconds=timeout_seconds,
+        auth_token=auth_token,
+        client_name="a9-control-api",
+    ) as session:
+        return session.request(method, params)
+
+
+class CodexWebsocketJsonRpcSession:
+    """Connection-aware Codex app-server JSON-RPC client.
+
+    Codex active turn control is connection-sensitive in practice: a turn can
+    stream while the client keeps its app-server connection subscribed, and
+    steering that active turn is reliable on the same initialized connection.
+    One-shot requests still use this class for probe-like calls.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        timeout_seconds: float = 5.0,
+        auth_token: str = "",
+        client_name: str = "a9-control-api",
+    ) -> None:
+        self.endpoint = endpoint
+        self.timeout_seconds = timeout_seconds
+        self.auth_token = auth_token
+        self.client_name = client_name
+        self._websocket_module: Any | None = None
+        self._ws: Any | None = None
+        self._request_counter = 0
+
+    def __enter__(self) -> "CodexWebsocketJsonRpcSession":
+        self.open()
+        return self
+
+    def __exit__(self, _exc_type: object, _exc: object, _tb: object) -> None:
+        self.close()
+
+    def open(self) -> None:
+        try:
+            import websocket  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise RuntimeError("websocket-client package is required for ws active-run transport") from exc
+
+        headers = []
+        if self.auth_token:
+            headers.append(f"Authorization: Bearer {self.auth_token}")
+        self._websocket_module = websocket
+        self._ws = websocket.create_connection(
+            self.endpoint,
+            timeout=self.timeout_seconds,
+            header=headers,
+            suppress_origin=True,
+        )
+        initialize_id = self._next_request_id("initialize")
+        self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": initialize_id,
+                "method": "initialize",
+                "params": {
+                    "clientInfo": {"name": self.client_name, "title": "A9 Control API", "version": "0.1"},
+                    "capabilities": {
+                        "experimentalApi": True,
+                        "requestAttestation": False,
+                        "mcpServerOpenaiFormElicitation": False,
+                    },
+                },
+            }
+        )
+        self._recv_response(initialize_id, error_prefix="jsonrpc initialize error")
+        self._send({"jsonrpc": "2.0", "method": "initialized"})
+
+    def close(self) -> None:
+        if self._ws is None:
+            return
+        try:
+            self._ws.close()
+        finally:
+            self._ws = None
+
+    def request(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        request_id = self._next_request_id("a9")
+        self._send(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params or {},
+            }
+        )
+        return self._recv_response(request_id, error_prefix="jsonrpc error")
+
+    def _next_request_id(self, prefix: str) -> str:
+        self._request_counter += 1
+        return f"{prefix}-{utc_now().replace(':', '')}-{self._request_counter}"
+
+    def _send(self, payload: dict[str, Any]) -> None:
+        if self._ws is None:
+            raise RuntimeError("websocket session is not open")
+        self._ws.send(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+    def _recv_response(self, request_id: str, *, error_prefix: str) -> dict[str, Any]:
+        if self._ws is None:
+            raise RuntimeError("websocket session is not open")
+        while True:
+            payload = json.loads(self._ws.recv())
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("id") != request_id:
+                continue
+            if payload.get("error"):
+                raise RuntimeError(
+                    error_prefix + ": " + compact_text(json.dumps(payload.get("error"), ensure_ascii=False), 500)
+                )
+            return payload
+
+
+def codex_ws_session_jsonrpc_request(
+    session: CodexWebsocketJsonRpcSession,
+    method: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    return session.request(method, params)
+
+
+def websocket_jsonrpc_request_legacy(
+    endpoint: str,
+    method: str,
+    params: dict[str, Any],
+    *,
+    timeout_seconds: float = 5.0,
+    auth_token: str = "",
+) -> dict[str, Any]:
+    try:
+        import websocket  # type: ignore[import-not-found]
+    except ImportError as exc:
+        raise RuntimeError("websocket-client package is required for ws active-run transport") from exc
+
+    headers = []
+    if auth_token:
+        headers.append(f"Authorization: Bearer {auth_token}")
+    ws = websocket.create_connection(endpoint, timeout=timeout_seconds, header=headers, suppress_origin=True)
+    try:
+        initialize_id = "initialize"
+        ws.send(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": initialize_id,
+                    "method": "initialize",
+                    "params": {
+                        "clientInfo": {"name": "a9-control-api", "title": "A9 Control API", "version": "0.1"},
+                        "capabilities": {
+                            "experimentalApi": True,
+                            "requestAttestation": False,
+                            "mcpServerOpenaiFormElicitation": False,
+                        },
+                    },
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        while True:
+            payload = json.loads(ws.recv())
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("id") == initialize_id:
+                if payload.get("error"):
+                    raise RuntimeError(
+                        "jsonrpc initialize error: "
+                        + compact_text(json.dumps(payload.get("error"), ensure_ascii=False), 500)
+                    )
+                break
+        ws.send(json.dumps({"jsonrpc": "2.0", "method": "initialized"}, separators=(",", ":")))
+        request_id = "a9-" + utc_now().replace(":", "")
+        ws.send(
+            json.dumps(
+                {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        while True:
+            payload = json.loads(ws.recv())
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("id") != request_id:
+                continue
+            if payload.get("error"):
+                raise RuntimeError(
+                    "jsonrpc error: " + compact_text(json.dumps(payload.get("error"), ensure_ascii=False), 500)
+                )
+            return payload
+    finally:
+        ws.close()
+
+
+def active_run_jsonrpc_request(
+    endpoint: str,
+    method: str,
+    params: dict[str, Any],
+    *,
+    timeout_seconds: float = 5.0,
+    auth_token: str = "",
+) -> dict[str, Any]:
+    if endpoint.startswith(("ws://", "wss://")):
+        return websocket_jsonrpc_request(
+            endpoint,
+            method,
+            params,
+            timeout_seconds=timeout_seconds,
+            auth_token=auth_token,
+        )
+    return jsonrpc_request(endpoint, method, params, timeout_seconds=timeout_seconds)
+
+
+def active_run_transport_deliver(
+    row: dict[str, Any],
+    *,
+    target_run: dict[str, Any],
+    config: dict[str, Any],
+    jsonrpc_session: CodexWebsocketJsonRpcSession | None = None,
+) -> dict[str, Any]:
+    transport = str(config.get("transport") or "").strip()
+    endpoint = str(config.get("endpoint") or config.get("url") or "").strip()
+    timeout_seconds = float(config.get("timeout_seconds") or 5)
+    auth_token = str(config.get("auth_token") or "").strip()
+    token_file = str(config.get("token_file") or "").strip()
+    if not auth_token and token_file:
+        try:
+            auth_token = Path(token_file).read_text(encoding="utf-8").strip()
+        except OSError:
+            auth_token = ""
+    intent = row.get("intent") if isinstance(row.get("intent"), dict) else {}
+    action = str(row.get("action") or "").strip()
+    message = str(intent.get("message") or row.get("message") or row.get("text") or "").strip()
+    target = row.get("target") if isinstance(row.get("target"), dict) else {}
+    if not config.get("enabled"):
+        return {"status": "rejected", "reason": "active_run_transport_disabled"}
+    if not endpoint:
+        return {"status": "rejected", "reason": "active_run_transport_endpoint_missing"}
+    if transport == "codex_app_server_jsonrpc":
+        thread_id = str(target.get("thread_id") or target_run.get("thread_id") or "").strip()
+        turn_id = str(target.get("turn_id") or target_run.get("current_turn_id") or "").strip()
+        if action in {"steer", "followup"}:
+            if not thread_id or not turn_id:
+                return {"status": "rejected", "reason": "codex_thread_or_turn_missing"}
+            params = {
+                "threadId": thread_id,
+                "expectedTurnId": turn_id,
+                "input": [{"type": "text", "text": message, "text_elements": []}],
+            }
+            payload = (
+                codex_ws_session_jsonrpc_request(jsonrpc_session, "turn/steer", params)
+                if jsonrpc_session is not None
+                else active_run_jsonrpc_request(
+                    endpoint,
+                    "turn/steer",
+                    params,
+                    timeout_seconds=timeout_seconds,
+                    auth_token=auth_token,
+                )
+            )
+            return {
+                "status": "delivered",
+                "reason": "codex_turn_steer_accepted",
+                "method": "turn/steer",
+                "response": payload,
+            }
+        if action == "cancel":
+            if not thread_id or not turn_id:
+                return {"status": "rejected", "reason": "codex_thread_or_turn_missing"}
+            params = {"threadId": thread_id, "turnId": turn_id, "abortReason": "interrupted"}
+            payload = (
+                codex_ws_session_jsonrpc_request(jsonrpc_session, "turn/interrupt", params)
+                if jsonrpc_session is not None
+                else active_run_jsonrpc_request(
+                    endpoint,
+                    "turn/interrupt",
+                    params,
+                    timeout_seconds=timeout_seconds,
+                    auth_token=auth_token,
+                )
+            )
+            return {
+                "status": "delivered",
+                "reason": "codex_turn_interrupt_accepted",
+                "method": "turn/interrupt",
+                "response": payload,
+            }
+        return {"status": "rejected", "reason": "unsupported_codex_active_run_action"}
+    if transport == "hermes_session_jsonrpc":
+        session_id = str(target.get("session_id") or config.get("session_id") or target.get("thread_id") or "").strip()
+        if action not in {"steer", "followup"}:
+            return {"status": "rejected", "reason": "unsupported_hermes_active_run_action"}
+        if not session_id:
+            return {"status": "rejected", "reason": "hermes_session_id_missing"}
+        payload = active_run_jsonrpc_request(
+            endpoint,
+            "session.steer",
+            {"session_id": session_id, "text": message},
+            timeout_seconds=timeout_seconds,
+            auth_token=auth_token,
+        )
+        status = "delivered" if payload.get("result", {}).get("status") in {"queued", "ok", "accepted"} or "result" in payload else "rejected"
+        return {
+            "status": status,
+            "reason": "hermes_session_steer_response",
+            "method": "session.steer",
+            "response": payload,
+        }
+    return {"status": "rejected", "reason": "unknown_active_run_transport"}
+
+
+def append_active_run_delivery(delivery: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    path = active_run_delivery_queue_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(delivery)
+    payload.setdefault("schema", "a9.active_run_delivery.v1")
+    payload.setdefault("created_at", utc_now())
+    payload.setdefault(
+        "delivery_id",
+        "active-run-delivery-" + payload["created_at"].replace(":", "").replace("+", "Z"),
+    )
+    payload.setdefault("status", "queued")
+    payload.setdefault("evidence", {"delivery_queue_path": str(path)})
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return payload
+
+
+def append_active_run_delivery_result(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    path = active_run_delivery_results_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = dict(result)
+    payload.setdefault("schema", "a9.active_run_delivery_result.v1")
+    payload.setdefault("recorded_at", utc_now())
+    payload.setdefault("evidence", {"delivery_results_path": str(path)})
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return payload
+
+
+def active_run_delivery_queue_tail(limit: int = 50, *, root: Path = ROOT) -> dict[str, Any]:
+    safe_limit = max(1, min(500, int(limit)))
+    path = active_run_delivery_queue_path(root)
+    rows, skipped = read_jsonl(path, limit=safe_limit)
+    now = utc_now_dt()
+    events: list[dict[str, Any]] = []
+    stale_count = 0
+    for row in rows:
+        event = dict(row)
+        expires_raw = str(event.get("expires_at") or "")
+        is_stale = False
+        if expires_raw:
+            try:
+                is_stale = datetime.fromisoformat(expires_raw) <= now
+            except ValueError:
+                is_stale = False
+        event["is_stale"] = is_stale
+        if is_stale and str(event.get("status") or "") in {"queued", "pending"}:
+            stale_count += 1
+        events.append(event)
+    return {
+        "schema": "a9.active_run_delivery_queue_tail.v1",
+        "status": "missing" if not path.exists() else ("degraded" if skipped else "ok"),
+        "path": str(path),
+        "events": events,
+        "event_count": len(events),
+        "stale_queued_count": stale_count,
+        "skipped_bad_lines": skipped,
+    }
+
+
+def active_run_delivery_results_tail(limit: int = 50, *, root: Path = ROOT) -> dict[str, Any]:
+    safe_limit = max(1, min(500, int(limit)))
+    path = active_run_delivery_results_path(root)
+    rows, skipped = read_jsonl(path, limit=safe_limit)
+    return {
+        "schema": "a9.active_run_delivery_results_tail.v1",
+        "status": "missing" if not path.exists() else ("degraded" if skipped else "ok"),
+        "path": str(path),
+        "events": rows,
+        "event_count": len(rows),
+        "skipped_bad_lines": skipped,
+    }
+
+
+def write_active_run_delivery_queue(rows: list[dict[str, Any]], *, root: Path = ROOT) -> None:
+    path = active_run_delivery_queue_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def active_run_delivery_transport_result(
+    row: dict[str, Any],
+    *,
+    projection: dict[str, Any],
+    config: dict[str, Any],
+    root: Path,
+) -> dict[str, Any]:
+    transport = str(config.get("transport") or "").strip()
+    target = row.get("target") if isinstance(row.get("target"), dict) else {}
+    target_run = find_runtime_projection_run(
+        projection,
+        run_id=str(target.get("run_id") or ""),
+        thread_id=str(target.get("thread_id") or ""),
+        task_id=str(target.get("task_id") or ""),
+    )
+    now = utc_now_dt()
+    expires_raw = str(row.get("expires_at") or "")
+    expired = False
+    if expires_raw:
+        try:
+            expired = datetime.fromisoformat(expires_raw) <= now
+        except ValueError:
+            expired = False
+    base = {
+        "delivery_id": row.get("delivery_id"),
+        "operator_command_id": row.get("operator_command_id"),
+        "command": row.get("command"),
+        "action": row.get("action"),
+        "transport": transport or "unconfigured",
+        "target": target,
+        "projection_path": str(runtime_projection_path(root)),
+        "transport_config_path": str(active_run_transport_config_path(root)),
+    }
+    if expired:
+        return {**base, "status": "stale", "reason": "delivery_expired_before_transport_consumed"}
+    if target_run is None:
+        return {**base, "status": "rejected", "reason": "active_run_not_found"}
+    if not bool(target_run.get("is_active")):
+        return {
+            **base,
+            "status": "rejected",
+            "reason": "target_not_active",
+            "target_status": target_run.get("status"),
+        }
+    try:
+        delivered = active_run_transport_deliver(row, target_run=target_run, config=config)
+    except Exception as exc:
+        delivered = {
+            "status": "rejected",
+            "reason": "active_run_transport_error",
+            "error": compact_text(str(exc), 1000),
+        }
+    return {
+        **base,
+        **delivered,
+        "target_status": target_run.get("status"),
+        "transport_contract": {
+            "current_state": "configured_adapter" if config.get("enabled") else "adapter_not_enabled",
+            "supported_transports": ["codex_app_server_jsonrpc", "hermes_session_jsonrpc"],
+        },
+    }
+
+
+def active_run_delivery_consume(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("active_run.delivery.consume", root=root)
+    path = active_run_delivery_queue_path(root)
+    rows, skipped = read_jsonl(path)
+    safe_limit = max(1, min(100, int(payload.get("limit") or 10)))
+    delivery_id = str(payload.get("delivery_id") or "").strip()
+    config = active_run_transport_config(root)
+    if payload.get("transport"):
+        config = {**config, "transport": str(payload.get("transport") or "").strip()}
+    if payload.get("endpoint"):
+        config = {**config, "endpoint": str(payload.get("endpoint") or "").strip(), "enabled": True, "status": "ok"}
+    if payload.get("timeout_seconds"):
+        config = {**config, "timeout_seconds": payload.get("timeout_seconds")}
+    if payload.get("auth_token"):
+        config = {**config, "auth_token": str(payload.get("auth_token") or "").strip()}
+    if payload.get("token_file"):
+        config = {**config, "token_file": str(payload.get("token_file") or "").strip()}
+    if payload.get("auth_token"):
+        config = {**config, "auth_token": str(payload.get("auth_token") or "").strip()}
+    if payload.get("token_file"):
+        config = {**config, "token_file": str(payload.get("token_file") or "").strip()}
+    if payload.get("auth_token"):
+        config = {**config, "auth_token": str(payload.get("auth_token") or "").strip()}
+    if payload.get("token_file"):
+        config = {**config, "token_file": str(payload.get("token_file") or "").strip()}
+    commit = bool(payload.get("commit"))
+    projection = runtime_projection_status(root=root, limit=50, refresh=True, compact=False)
+    processed: list[dict[str, Any]] = []
+    updated_rows: list[dict[str, Any]] = []
+    remaining_budget = safe_limit
+    for row in rows:
+        status = str(row.get("status") or "")
+        matches = not delivery_id or str(row.get("delivery_id") or "") == delivery_id
+        if matches and status in {"queued", "pending"} and remaining_budget > 0:
+            result = active_run_delivery_transport_result(row, projection=projection, config=config, root=root)
+            updated = {
+                **row,
+                "status": result["status"],
+                "consumed_at": utc_now(),
+                "delivery_result": result,
+            }
+            processed.append(result)
+            updated_rows.append(updated)
+            remaining_budget -= 1
+        else:
+            updated_rows.append(row)
+    result_payload = {
+        "schema": "a9.active_run_delivery_consume.v1",
+        "status": "blocked" if not gate.get("allowed") else ("ok" if commit else "dry_run"),
+        "command": "active_run.delivery.consume",
+        "gate": gate,
+        "path": str(path),
+        "results_path": str(active_run_delivery_results_path(root)),
+        "transport": str(config.get("transport") or ""),
+        "transport_config": {
+            "status": config.get("status"),
+            "enabled": bool(config.get("enabled")),
+            "transport": config.get("transport"),
+            "endpoint_configured": bool(config.get("endpoint") or config.get("url")),
+            "path": str(active_run_transport_config_path(root)),
+        },
+        "processed_count": len(processed),
+        "processed": processed,
+        "skipped_bad_lines": skipped,
+    }
+    if not gate.get("allowed"):
+        return result_payload
+    if commit:
+        write_active_run_delivery_queue(updated_rows, root=root)
+        for item in processed:
+            append_active_run_delivery_result(item, root=root)
+    return result_payload
+
+
+def active_run_transport_probe(payload: dict[str, Any] | None = None, *, root: Path = ROOT) -> dict[str, Any]:
+    payload = payload or {}
+    config = active_run_transport_config(root)
+    if payload.get("transport"):
+        config = {**config, "transport": str(payload.get("transport") or "").strip()}
+    if payload.get("endpoint"):
+        config = {**config, "endpoint": str(payload.get("endpoint") or "").strip(), "enabled": True, "status": "ok"}
+    if payload.get("timeout_seconds"):
+        config = {**config, "timeout_seconds": payload.get("timeout_seconds")}
+    if payload.get("auth_token"):
+        config = {**config, "auth_token": str(payload.get("auth_token") or "").strip()}
+    if payload.get("token_file"):
+        config = {**config, "token_file": str(payload.get("token_file") or "").strip()}
+    transport = str(config.get("transport") or "").strip()
+    endpoint = str(config.get("endpoint") or config.get("url") or "").strip()
+    result = {
+        "schema": "a9.active_run_transport_probe.v1",
+        "status": "missing" if not config.get("enabled") else "ok",
+        "transport": transport,
+        "endpoint_configured": bool(endpoint),
+        "path": str(active_run_transport_config_path(root)),
+        "supported_transports": ["codex_app_server_jsonrpc", "hermes_session_jsonrpc"],
+    }
+    if not config.get("enabled"):
+        return {**result, "status": "disabled", "reason": "active_run_transport_disabled"}
+    if not endpoint:
+        return {**result, "status": "invalid", "reason": "active_run_transport_endpoint_missing"}
+    if transport not in {"codex_app_server_jsonrpc", "hermes_session_jsonrpc"}:
+        return {**result, "status": "invalid", "reason": "unknown_active_run_transport"}
+    if not bool(payload.get("live")):
+        return {**result, "status": "dry_run", "reason": "live_probe_not_requested"}
+    try:
+        if transport == "codex_app_server_jsonrpc":
+            probe = active_run_jsonrpc_request(
+                endpoint,
+                "model/list",
+                {"includeHidden": False},
+                timeout_seconds=float(config.get("timeout_seconds") or 5),
+                auth_token=str(config.get("auth_token") or "").strip()
+                or (
+                    Path(str(config.get("token_file"))).read_text(encoding="utf-8").strip()
+                    if config.get("token_file")
+                    else ""
+                ),
+            )
+            return {**result, "status": "ok", "reason": "codex_app_server_jsonrpc_probe_ok", "response": probe}
+        return {**result, "status": "dry_run", "reason": "hermes_probe_has_no_side_effect_free_method"}
+    except Exception as exc:
+        return {
+            **result,
+            "status": "failed",
+            "reason": "active_run_transport_probe_failed",
+            "error": compact_text(str(exc), 1000),
+        }
+
+
+def active_run_delivery_cleanup(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("active_run.delivery.cleanup", root=root)
+    path = active_run_delivery_queue_path(root)
+    rows, skipped = read_jsonl(path)
+    now = utc_now_dt()
+    stale: list[dict[str, Any]] = []
+    active: list[dict[str, Any]] = []
+    for row in rows:
+        expires_raw = str(row.get("expires_at") or "")
+        is_stale = False
+        if expires_raw:
+            try:
+                is_stale = datetime.fromisoformat(expires_raw) <= now
+            except ValueError:
+                is_stale = False
+        if is_stale and str(row.get("status") or "") in {"queued", "pending"}:
+            stale.append(row)
+        else:
+            active.append(row)
+    result = {
+        "schema": "a9.active_run_delivery_cleanup.v1",
+        "status": "blocked" if not gate.get("allowed") else "ok",
+        "command": "active_run.delivery.cleanup",
+        "gate": gate,
+        "path": str(path),
+        "active_count": len(active),
+        "stale_count": len(stale),
+        "skipped_bad_lines": skipped,
+    }
+    if not gate.get("allowed"):
+        return result
+    if not bool(payload.get("commit")):
+        return {**result, "status": "dry_run"}
+    if not path.exists():
+        return result
+    archived_path = path.with_suffix(".stale.jsonl")
+    if stale:
+        archived_path.parent.mkdir(parents=True, exist_ok=True)
+        with archived_path.open("a", encoding="utf-8") as handle:
+            for row in stale:
+                archived = {
+                    **row,
+                    "status": "stale",
+                    "stale_recorded_at": utc_now(),
+                    "stale_reason": "delivery_expired_before_transport_consumed",
+                }
+                handle.write(json.dumps(archived, ensure_ascii=False, separators=(",", ":")) + "\n")
+    with path.open("w", encoding="utf-8") as handle:
+        for row in active:
+            handle.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    return {**result, "archived_path": str(archived_path), "status": "ok"}
+
+
+def runtime_projection_path(root: Path = ROOT) -> Path:
+    return root / RUNTIME_PROJECTION_REL_PATH
+
+
+def build_runtime_projection(*, root: Path = ROOT, limit: int = 50, write: bool = True) -> dict[str, Any]:
+    mod = runtime_projection_mod()
+    paths = mod.summary_paths(root / ".a9" / "runs", limit=max(1, min(200, int(limit))))
+    projection = mod.build_projection(paths, root=root)
+    if write:
+        path = runtime_projection_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(projection, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return projection
+
+
+def compact_runtime_projection(projection: dict[str, Any]) -> dict[str, Any]:
+    counts = projection.get("counts") if isinstance(projection.get("counts"), dict) else {}
+    active_runs = [
+        run
+        for run in projection.get("active_runs", [])
+        if isinstance(run, dict) and bool(run.get("is_active"))
+    ]
+    latest_runs = [
+        run
+        for run in projection.get("active_runs", [])
+        if isinstance(run, dict)
+    ][-5:]
+    return {
+        "schema": "a9.runtime_projection_compact.v1",
+        "status": "ok",
+        "projection_schema": projection.get("schema", ""),
+        "generated_at": projection.get("generated_at", ""),
+        "counts": counts,
+        "active_run_count": len(active_runs),
+        "active_runs": active_runs[-5:],
+        "latest_runs": latest_runs,
+        "latest_operator_commands": [
+            row for row in projection.get("operator_commands", []) if isinstance(row, dict)
+        ][-10:],
+        "active_run_deliveries": [
+            row for row in projection.get("active_run_deliveries", []) if isinstance(row, dict)
+        ][-10:],
+        "active_run_delivery_results": [
+            row for row in projection.get("active_run_delivery_results", []) if isinstance(row, dict)
+        ][-10:],
+        "memory_packets": [
+            row for row in projection.get("memory_packets", []) if isinstance(row, dict)
+        ][-5:],
+        "remote_hosts": [
+            row for row in projection.get("remote_hosts", []) if isinstance(row, dict)
+        ],
+    }
+
+
+def runtime_projection_status(
+    *,
+    root: Path = ROOT,
+    limit: int = 50,
+    refresh: bool = False,
+    compact: bool = True,
+) -> dict[str, Any]:
+    path = runtime_projection_path(root)
+    if refresh or not path.exists():
+        projection = build_runtime_projection(root=root, limit=limit, write=True)
+    else:
+        projection = read_json(path)
+    result = compact_runtime_projection(projection) if compact else projection
+    if isinstance(result, dict):
+        result.setdefault("path", str(path))
+    return result
+
+
+def runtime_projection_active_runs(projection: dict[str, Any]) -> list[dict[str, Any]]:
+    runs = projection.get("active_runs", [])
+    if not isinstance(runs, list):
+        return []
+    return [run for run in runs if isinstance(run, dict)]
+
+
+def find_runtime_projection_run(
+    projection: dict[str, Any],
+    *,
+    run_id: str = "",
+    thread_id: str = "",
+    task_id: str = "",
+) -> dict[str, Any] | None:
+    candidates = runtime_projection_active_runs(projection)
+    for key, value in (("run_id", run_id), ("thread_id", thread_id), ("task_id", task_id)):
+        needle = str(value or "").strip()
+        if not needle:
+            continue
+        for run in candidates:
+            if str(run.get(key) or "").strip() == needle:
+                return run
+    return None
+
+
+def active_run_operator_command(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    action = str(payload.get("action") or "").strip().lower()
+    if action not in ACTIVE_RUN_OPERATOR_ACTIONS:
+        raise ValueError("action must be one of: " + ", ".join(sorted(ACTIVE_RUN_OPERATOR_ACTIONS)))
+
+    actor = str(payload.get("actor") or "mobile-operator").strip()
+    reason = str(payload.get("reason") or payload.get("message") or f"operator {action}").strip()
+    run_id = str(payload.get("run_id") or "").strip()
+    thread_id = str(payload.get("thread_id") or "").strip()
+    task_id = str(payload.get("task_id") or "").strip()
+    message = str(payload.get("message") or payload.get("text") or payload.get("instruction") or "").strip()
+    projection = runtime_projection_status(
+        root=root,
+        limit=int(payload.get("limit") or 50),
+        refresh=bool(payload.get("refresh_projection", True)),
+        compact=False,
+    )
+    target_run = find_runtime_projection_run(
+        projection,
+        run_id=run_id,
+        thread_id=thread_id,
+        task_id=task_id,
+    )
+    command_name = f"active_run.{action}"
+    target = {
+        "run_id": run_id or (target_run or {}).get("run_id") or None,
+        "thread_id": thread_id or (target_run or {}).get("thread_id") or None,
+        "task_id": task_id or (target_run or {}).get("task_id") or None,
+        "active_run_id": (target_run or {}).get("active_run_id"),
+    }
+    target = {key: value for key, value in target.items() if value not in (None, "")}
+    target_active = bool((target_run or {}).get("is_active"))
+    gate: dict[str, Any] = {"status": "not_required", "allowed": True, "command": command_name}
+    if action != "status":
+        gate = command_gate(command_name, root=root)
+    now = utc_now()
+    seed = f"{command_name}:{target.get('run_id', run_id)}:{target.get('thread_id', thread_id)}:{now}"
+    slug = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", seed).strip("-")[:112]
+    operator_command_id = f"operator-{slug}"
+
+    queue_outcome: dict[str, Any]
+    delivery_evidence: dict[str, Any]
+    delivery_record: dict[str, Any] | None = None
+    if target_run is None:
+        queue_outcome = {
+            "status": "rejected",
+            "reason": "active_run_not_found",
+            "lookup_keys": {"run_id": run_id, "thread_id": thread_id, "task_id": task_id},
+        }
+        delivery_evidence = {"status": "not_delivered", "reason": "active_run_not_found"}
+        status = "rejected"
+    elif action != "status" and not gate.get("allowed"):
+        queue_outcome = {
+            "status": "blocked",
+            "reason": gate.get("reason") or gate.get("status"),
+            "gate": gate,
+        }
+        delivery_evidence = {"status": "blocked", "reason": gate.get("reason") or gate.get("status")}
+        status = "blocked"
+    elif action in {"steer", "followup"} and not message:
+        queue_outcome = {"status": "rejected", "reason": "message_required"}
+        delivery_evidence = {"status": "not_delivered", "reason": "message_required"}
+        status = "rejected"
+    elif action != "status" and not target_active:
+        queue_outcome = {
+            "status": "rejected",
+            "reason": "target_not_active",
+            "target_status": target_run.get("status"),
+        }
+        delivery_evidence = {"status": "not_delivered", "reason": "target_not_active"}
+        status = "rejected"
+    elif action == "status":
+        queue_outcome = {"status": "observed", "reason": "projection_lookup"}
+        delivery_evidence = {
+            "status": "observed",
+            "kind": "projection_lookup",
+            "target_status": target_run.get("status"),
+            "target_is_active": target_active,
+            "projection_path": str(runtime_projection_path(root)),
+            "source_evidence": target_run.get("evidence") if isinstance(target_run.get("evidence"), dict) else {},
+        }
+        status = "recorded"
+    else:
+        delivery_ttl_seconds = parse_duration_seconds(payload.get("delivery_ttl"), default_seconds=1800)
+        expires_at = (utc_now_dt() + timedelta(seconds=delivery_ttl_seconds)).isoformat(timespec="seconds")
+        delivery_record = append_active_run_delivery(
+            {
+                "delivery_id": f"delivery-{slug}",
+                "created_at": now,
+                "expires_at": expires_at,
+                "status": "queued",
+                "command": command_name,
+                "action": action,
+                "operator_command_id": operator_command_id,
+                "actor": actor,
+                "target": target,
+                "intent": {
+                    "action": action,
+                    "reason": reason,
+                    "message": message,
+                },
+                "delivery_contract": {
+                    "transport": "active_run_transport",
+                    "current_state": "outbox_only",
+                    "consumer_required": True,
+                    "ttl_seconds": delivery_ttl_seconds,
+                },
+                "source_evidence": target_run.get("evidence") if isinstance(target_run.get("evidence"), dict) else {},
+                "evidence": {
+                    "delivery_queue_path": str(active_run_delivery_queue_path(root)),
+                    "runtime_projection_path": str(runtime_projection_path(root)),
+                },
+            },
+            root=root,
+        )
+        queue_outcome = {
+            "status": "queued",
+            "reason": "queued_for_transport",
+            "gate": gate,
+            "delivery_id": delivery_record.get("delivery_id"),
+            "expires_at": delivery_record.get("expires_at"),
+        }
+        delivery_evidence = {
+            "status": "queued_for_transport",
+            "kind": "active_run_delivery_queue",
+            "reason": "active_run_transport_outbox_created",
+            "delivery_id": delivery_record.get("delivery_id"),
+            "delivery_queue_path": str(active_run_delivery_queue_path(root)),
+            "projection_path": str(runtime_projection_path(root)),
+            "source_evidence": target_run.get("evidence") if isinstance(target_run.get("evidence"), dict) else {},
+        }
+        status = "recorded"
+
+    operator_command = append_operator_command(
+        {
+            "schema": "a9.operator_command.v1",
+            "operator_command_id": operator_command_id,
+            "at": now,
+            "actor": actor,
+            "command": command_name,
+            "action": action,
+            "status": status,
+            "reason": reason if status == "recorded" else queue_outcome.get("reason"),
+            "thread_id": target.get("thread_id", ""),
+            "run_id": target.get("run_id"),
+            "task_id": target.get("task_id"),
+            "target": target,
+            "intent": {
+                "action": action,
+                "reason": reason,
+                "message": message,
+            },
+            "result": {
+                "queue_outcome": queue_outcome,
+                "delivery_evidence": delivery_evidence,
+                "delivery_record": delivery_record or {},
+            },
+            "evidence": {
+                "ledger_path": str(operator_commands_path(root)),
+                "runtime_projection_path": str(runtime_projection_path(root)),
+                "delivery_queue_path": str(active_run_delivery_queue_path(root)) if delivery_record else "",
+            },
+        },
+        root=root,
+    )
+    return {
+        "schema": "a9.active_run_operator_command.v1",
+        "kind": "active_run_operator_command",
+        "status": status,
+        "command": command_name,
+        "action": action,
+        "target": target,
+        "queue_outcome": queue_outcome,
+        "delivery_evidence": delivery_evidence,
+        "delivery_record": delivery_record,
+        "operator_command": operator_command,
+    }
+
+
 def run_summary(run_id: str | None = None, *, root: Path = ROOT, compact: bool = False) -> dict[str, Any] | None:
     if run_id in (None, "", "latest"):
         summary = latest_run_summary(root)
@@ -9622,6 +10756,35 @@ class ControlHandler(BaseHTTPRequestHandler):
                 limit = int(query.get("limit", ["10"])[0])
                 source = query.get("source_session_path", [None])[0]
                 self.write_json(200, operator_tail(source, limit=limit))
+            elif parsed.path == "/api/runtime/projection":
+                limit = int(query.get("limit", ["50"])[0])
+                refresh = str(query.get("refresh", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
+                compact = str(query.get("compact", ["1"])[0]).lower() not in {"0", "false", "no", "off"}
+                self.write_json(200, runtime_projection_status(limit=limit, refresh=refresh, compact=compact))
+            elif parsed.path == "/api/runtime/operator-commands":
+                limit = int(query.get("limit", ["20"])[0])
+                self.write_json(200, operator_command_tail(limit=limit))
+            elif parsed.path == "/api/runtime/active-run-delivery-queue":
+                limit = int(query.get("limit", ["50"])[0])
+                self.write_json(200, active_run_delivery_queue_tail(limit=limit))
+            elif parsed.path == "/api/runtime/active-run-delivery-results":
+                limit = int(query.get("limit", ["50"])[0])
+                self.write_json(200, active_run_delivery_results_tail(limit=limit))
+            elif parsed.path == "/api/runtime/active-run-transport-config":
+                self.write_json(200, active_run_transport_config())
+            elif parsed.path == "/api/runtime/active-run-transport-probe":
+                live = str(query.get("live", ["0"])[0]).lower() in {"1", "true", "yes", "on"}
+                self.write_json(
+                    200,
+                    active_run_transport_probe(
+                        {
+                            "live": live,
+                            "transport": query.get("transport", [""])[0],
+                            "endpoint": query.get("endpoint", [""])[0],
+                            "timeout_seconds": query.get("timeout_seconds", [""])[0],
+                        }
+                    ),
+                )
             elif parsed.path == "/api/memory/mempalace/status":
                 self.write_json(200, mempalace_status())
             elif parsed.path == "/api/memory/mempalace/causal-eval/latest-candidates":
@@ -9741,6 +10904,14 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_session_refresh_trial(payload))
             elif self.path == "/api/runtime/session-lane-latest":
                 self.write_json(200, runtime_session_lane_latest(payload))
+            elif self.path == "/api/runtime/active-run-command":
+                self.write_json(200, active_run_operator_command(payload))
+            elif self.path == "/api/runtime/active-run-delivery-cleanup":
+                self.write_json(200, active_run_delivery_cleanup(payload))
+            elif self.path == "/api/runtime/active-run-delivery-consume":
+                self.write_json(200, active_run_delivery_consume(payload))
+            elif self.path == "/api/runtime/active-run-transport-probe":
+                self.write_json(200, active_run_transport_probe(payload))
             elif self.path == "/api/memory/mempalace/search":
                 self.write_json(200, mempalace_search(payload))
             elif self.path == "/api/memory/mempalace/wakeup":

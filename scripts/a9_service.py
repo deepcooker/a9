@@ -33,6 +33,7 @@ RECOVERY_LOOP_UNIT_PATH = ROOT / "infra" / "systemd" / "a9-recovery-loop.service
 PROCESS_MARKERS = {
     "supervisor": "a9_supervisor.py run-loop",
     "control-api": "a9_control_api.py serve",
+    "codex-app-server": "codex app-server --listen ws://127.0.0.1:8791",
     "node-worker": "a9_node.py command-work-loop",
     "recovery-loop": "a9_recovery_loop.py",
     "worker": "codex exec --json",
@@ -48,6 +49,11 @@ SERVICE_COMMANDS = {
         "-lc",
         "cd /root/a9 && exec python3 scripts/a9_control_api.py serve --host 0.0.0.0 --port 8787 >> .a9/control-api.log 2>&1",
     ],
+    "codex-app-server": [
+        "bash",
+        "-lc",
+        "cd /root/a9 && mkdir -p .a9/runtime && test -s .a9/runtime/codex-app-server.ws-token || (umask 077 && printf 'a9-local-codex-app-server-token\\n' > .a9/runtime/codex-app-server.ws-token) && exec codex app-server --listen ws://127.0.0.1:8791 --ws-auth capability-token --ws-token-file /root/a9/.a9/runtime/codex-app-server.ws-token >> .a9/codex-app-server.log 2>&1",
+    ],
     "node-worker": [
         "bash",
         "-lc",
@@ -59,7 +65,7 @@ SERVICE_COMMANDS = {
         "cd /root/a9 && exec python3 scripts/a9_recovery_loop.py --controller-url http://127.0.0.1:8787 --interval-seconds 60 --timeout 10 --max-actions 3 >> .a9/recovery-loop.log 2>&1",
     ],
 }
-SERVICE_START_ORDER = ["control-api", "node-worker", "recovery-loop", "supervisor"]
+SERVICE_START_ORDER = ["control-api", "codex-app-server", "node-worker", "recovery-loop", "supervisor"]
 SERVICE_RESTART_DEFAULT = ["control-api", "node-worker", "recovery-loop"]
 START_VERIFY_ATTEMPTS = 5
 START_VERIFY_SLEEP_SECONDS = 0.2

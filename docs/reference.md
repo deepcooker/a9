@@ -531,6 +531,143 @@ Decision:
   backlog-generation output must be narrow enough that the worker does not need
   broad discovery commands.
 
+## Runtime Selection Review Round 1
+
+This is not a final architecture decision. It records the first external and
+local evidence pass for `Codex CLI + 24h coding` versus adding OpenClaw/Hermes
+as product layers.
+
+External OpenAI Codex evidence:
+
+- Codex's official app-server surface already exposes the primitives A9 needs
+  for a product client/runtime: JSON-RPC transport, thread start/resume/fork,
+  turn start/steer/interrupt, streamed item events, approvals and conversation
+  history. This makes Codex the strongest primary execution-runtime reference,
+  not just a CLI to shell out to.
+- Codex official remote connections validate A9's mobile-control direction:
+  remote devices can start/continue threads, steer active work, approve
+  actions, review diffs/tests/terminal output, switch hosts and connect SSH
+  projects. A9 should not reinvent this as a page-monitor hack; it should copy
+  the host/thread/control model and use Tailscale/SSH/tmux as our private
+  network fallback.
+- Codex official automations and subagents also validate the two-lane idea:
+  long-running/background work should be isolated in worktrees or dedicated
+  runs, while noisy parallel exploration should return summaries to the main
+  thread. This matches A9's monitor + worker split.
+
+OpenClaw/Lobster evidence:
+
+- OpenClaw is local-first personal agent infrastructure. Its own security
+  policy says Gateway callers are trusted operators, Gateway is control plane,
+  Node is an execution extension, and remote access should prefer loopback plus
+  SSH tunnel or Tailscale. This is extremely close to A9's current private
+  network and mobile/operator-control need.
+- OpenClaw should not replace Codex as A9's execution brain. Its strongest
+  copied layer is active-run governance: typed status/cancel/steer/followup,
+  session binding, delivery proof, queue outcome reasons, plugin state,
+  compaction/session locks and channel/gateway routing.
+- OpenClaw's own vision rejects heavy default manager-of-managers frameworks
+  and keeps core lean with plugin expansion. A9 should copy this restraint.
+
+Hermes evidence:
+
+- Hermes is a runnable product shell: CLI/TUI, messaging gateway, profiles,
+  cron, tools, skills, memory, session search, trajectory compression and
+  Codex runtime integration. Its README and local tests show a real
+  self-improvement/product layer, not just a paper idea.
+- Hermes is stronger than OpenClaw for profile isolation, prompt-size
+  diagnostics, skills/memory lifecycle, curator/background review and durable
+  board/lane work. It is weaker as A9's hot runtime because it is Python-heavy
+  and provider/product-surface-heavy.
+- Hermes explicitly supports migrating from OpenClaw and wrapping Codex
+  runtime, which is evidence that the ecosystem is converging toward a layered
+  architecture instead of one monolith.
+
+Current first-round judgment:
+
+- MVP path: `Codex primary runtime + A9 24h supervisor/control API +
+  MemPalace memory` is enough to keep moving if the goal is simply reliable
+  24-hour coding.
+- Product path: use two layers, not one giant framework:
+  `Codex-like execution runtime` as the inner loop, and
+  `OpenClaw/Hermes-like operator control, profiles, memory, skills, board lanes
+  and async review` as sidecars around it.
+- Do not put Barter-rs directly under Codex. Barter-rs belongs to the
+  trading/high-volume Rust event gateway layer and can share Redis/MySQL
+  evidence with the agent control plane.
+- Next review round should map exact A9 records to these concepts:
+  `thread`, `turn`, `item`, `active_run`, `operator_command`,
+  `worker_task`, `profile/role lane`, `memory packet`, `approval`, `handoff`
+  and `remote host`. Only after that mapping is stable should implementation
+  continue.
+
+Round-2 mapping target:
+
+| Concept | Primary reference | A9 current surface | Decision / next cut |
+| --- | --- | --- | --- |
+| `thread` | Codex app-server/thread-store | `scripts/a9_runtime_thread_view.py` projects `.a9/runs/*/summary.json` into `thread_id`, `turns` and `items`. Operator chat still lives in raw Codex JSONL and MemPalace drawers. | Keep Codex semantics: thread is a durable conversation/run lane, not a UI tab. Next cut: one index that links operator session thread, worker run thread and worktree/git state. |
+| `turn` | Codex turn lifecycle | A9 run summaries and event summaries approximate one worker turn; operator raw JSONL has actual Codex turn records. | Preserve Codex ordering: turn starts, emits items/tool events, then completes/fails/interrupted. Next cut: normalize A9 worker events into `turn.started/item.started/item.completed/turn.completed` envelopes. |
+| `item` | Codex streamed item/event model | `event_summaries.jsonl`, summary files, MemPalace drawer rows and control API outputs are split. | Do not invent a new event vocabulary. Next cut: project worker output, commands, patches, approvals and memory writes into item records with source refs. |
+| `active_run` | OpenClaw active-run control | `scripts/a9_control_api.py` has run summary, monitor intervention, latest status and service loops, but control is still too generic. | Copy OpenClaw typed actions: `status`, `cancel`, `steer`, `followup`. Add queue outcome reasons and delivery evidence. |
+| `operator_command` | OpenClaw Gateway operator model + Codex remote control | Mobile/control API can submit commands and read operator tail, but it is not yet a first-class command ledger. | Every mobile/operator action should become an append-only command envelope with actor, target thread/run, intent, result and evidence path. |
+| `worker_task` | A9 supervisor + Hermes Kanban lanes | `.a9/tasks/*`, `.a9/runs/*`, managed flow and backlog already exist. | Keep A9 task files for now, but move toward durable board/lane records: task row, comments, heartbeat, blocked/completed/crashed/reclaimed states. |
+| `profile/role lane` | Hermes profiles and Kanban profile lanes | A9 roles exist mostly in prompts/docs; MemPalace recall is not automatically role-scoped. | Define role packets for product, architecture, test, monitor and execution. Hot worker prompt gets only its role packet plus task contract. |
+| `memory packet` | MemPalace drawer + Hermes MemoryProvider lifecycle | `.a9/mempalace/operator-session-drawers.jsonl`, native collection, causal eval candidates. | Memory is evidence-backed context, not truth. Next cut: packet schema with source ids, valid time, stale invalidation and role audience. |
+| `approval` | Codex approvals + OpenClaw approval/wait/resume | Redis managed flow has approval/wait/resume and policy attestation. | Keep current mechanism. Next cut: link approvals to `active_run` and `operator_command`, not only task/flow ids. |
+| `handoff` | Codex remote handoff + Hermes session handoff | A9 has handoff docs and session refresh, but host/thread handoff is not unified. | Treat handoff as moving thread/run/git/session state between local, SSH and mobile-control contexts. Do not model it as a plain text summary. |
+| `remote host` | Codex remote connections + OpenClaw Node + A9 SSH/Tailscale/tmux | A9 has service process, control API, Tailscale/SSH/tmux direction and node worker loop. | One trust boundary per host/user. Prefer loopback service plus SSH/Tailscale exposure. Remote host is execution environment, not just display endpoint. |
+
+Implementation guardrail:
+
+- The next implementation should not import OpenClaw or Hermes wholesale.
+- First concrete code cut completed: `scripts/a9_runtime_thread_view.py` now
+  emits `a9.runtime_projection.v1` with stable top-level arrays for the mapped
+  concepts. It is projection-only and keeps raw evidence authoritative.
+- Second concrete code cut completed: control API now exposes compact/full
+  runtime projection and an append-only `operator_command` ledger. Monitor
+  interventions append to that ledger, so mobile/operator actions can be joined
+  with worker runs in the same projection.
+- Third concrete code cut completed: `operator_command` now has
+  OpenClaw-style active-run actions (`status`, `cancel`, `steer`, `followup`)
+  through `/api/runtime/active-run-command`. The first cut records target,
+  queue outcome, phone-control gate result and delivery evidence. `status` is
+  delivered by projection lookup; mutating commands now write a transport
+  outbox row in `.a9/runtime/active_run_delivery_queue.jsonl`, exposed in
+  runtime projection as `active_run_deliveries`.
+- Fourth concrete code cut completed: active-run delivery outbox has tail and
+  stale cleanup endpoints. This copies OpenClaw's queue outcome / stale
+  delivery governance shape without claiming live transport delivery.
+- Fifth concrete code cut completed: active-run delivery consumer framework
+  reads the outbox, revalidates target active-runs, updates queued rows, and
+  writes immutable delivery results. Until the live transport adapter is
+  enabled, mutating commands are consumed as explicit
+  `active_run_transport_disabled` rejections instead of fake success.
+- Sixth concrete code cut completed: live transport is now a configurable
+  adapter contract, not a hardcoded claim. A9 supports
+  `codex_app_server_jsonrpc` (`turn/steer`, `turn/interrupt`) copied from
+  Codex/OpenClaw active-run steering, and `hermes_session_jsonrpc`
+  (`session.steer`) copied from Hermes gateway semantics. The adapter is
+  enabled only through `.a9/runtime/active_run_transport.json`; missing/disabled
+  config produces explicit rejection proof.
+- Seventh concrete code cut completed: A9 now supports the real Codex
+  WebSocket transport handshake. The helper suppresses browser `Origin`, sends
+  optional bearer capability tokens, performs `initialize -> initialized`, and
+  can probe `model/list`. A local authenticated Codex app-server on
+  `ws://127.0.0.1:8791` passed live probe and is visible as
+  `codex-app-server` in A9 service observation.
+- Eighth concrete code cut completed: Codex active-turn control was tested
+  against an isolated app-server pointed at Codex's mock Responses provider.
+  A9 reused a connection-aware WebSocket JSON-RPC session, started a real
+  `turn/start`, delivered `turn/steer` through `active_run_transport_deliver`,
+  and the mock provider recorded the follow-up user input. This copies the
+  OpenClaw/Codex steering mechanism more accurately than short per-request
+  sockets. Next concrete cut: turn the session helper into an active-run relay
+  that binds projection `active_run` rows to a live app-server connection and
+  writes transcript-level delivery confirmation.
+- Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
+  deeper `Headroom`) continue as旁路评审. They can improve role debate,
+  planning or context shaping, but they should not block the MVP spine.
+
 ## Trial Queue
 
 This queue is deliberately small and should be updated only when a reference

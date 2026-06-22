@@ -90,12 +90,51 @@ P7 NZX technical MVP
 - `scripts/a9_supervisor.py` injects bounded MemPalace recall protocol evidence
   into worker context: search hits, hydrated drawer snippets and fallback raw
   evidence refs stay separated. Recall is a recovery hint, not task authority.
-- `scripts/a9_runtime_thread_view.py` is the first Codex-latest projection
+- `scripts/a9_runtime_thread_view.py` is now the first A9 runtime projection
   layer. It reads existing A9 `summary.json` + `event_summaries.jsonl` evidence
-  and emits a compact thread/turn/item view inspired by Codex
-  `thread_history` and runtime threads. This is intentionally projection-only;
-  it does not replace supervisor, managed flow, MemPalace or future gateway
-  work.
+  plus sidecar indexes such as MemPalace cursor and service pid files, then
+  emits `a9.runtime_projection.v1`: `threads`, `turns`, `items`,
+  `active_runs`, `operator_commands`, `worker_tasks`, `profile_role_lanes`,
+  `memory_packets`, `approvals`, `handoffs` and `remote_hosts`. Empty arrays
+  are intentional placeholders until their evidence sources are wired. This is
+  projection-only; it does not replace supervisor, managed flow, MemPalace or
+  future gateway work.
+- Control API now exposes this projection to mobile/monitor surfaces:
+  `/api/status` includes a compact `runtime_projection` summary without forcing
+  a rebuild, `/api/runtime/projection` can return compact or full projection
+  and optionally refresh it, and `/api/runtime/operator-commands` tails the
+  append-only operator command ledger. Monitor interventions now also append to
+  `.a9/runtime/operator_commands.jsonl`, so human/mobile control actions can
+  join the same projection as worker runs.
+- OpenClaw-style active-run operator actions have a first control API cut:
+  `/api/runtime/active-run-command` accepts `status`, `cancel`, `steer` and
+  `followup`. `status` is a projection-backed observation. Mutating actions are
+  phone-control gated and now create an append-only active-run delivery outbox
+  entry in `.a9/runtime/active_run_delivery_queue.jsonl`, with queue outcome,
+  expiry and delivery evidence. `/api/runtime/active-run-delivery-queue` tails
+  this outbox and `/api/runtime/active-run-delivery-cleanup` archives stale
+  queued commands. `/api/runtime/active-run-delivery-consume` consumes queued
+  rows and writes immutable results to
+  `.a9/runtime/active_run_delivery_results.jsonl`. Current mutating commands
+  use a configurable active-run transport contract at
+  `.a9/runtime/active_run_transport.json`. Supported first adapters are
+  `codex_app_server_jsonrpc` (`turn/steer`, `turn/interrupt`) and
+  `hermes_session_jsonrpc` (`session.steer`). If no adapter is enabled, consume
+  writes explicit `active_run_transport_disabled` proof instead of fake
+  delivery.
+- A local Codex app-server validation instance now runs on
+  `ws://127.0.0.1:8791` with capability-token auth and is managed by
+  `scripts/a9_service.py` as `codex-app-server`. A9's transport probe performs
+  the real Codex WebSocket `initialize -> initialized -> model/list` handshake
+  and currently passes. A controlled Codex mock-provider trial also proved real
+  `turn/start -> turn/steer` delivery through A9's transport helper without
+  consuming model quota. Important finding: Codex active turn steering is
+  connection/subscription sensitive. Short WebSocket calls are fine for probe
+  and stateless reads, but reliable active-turn steering needs a connection-aware
+  client or relay that keeps the app-server connection for the active run.
+  Current projection has no real active run from the operator window yet, so
+  production `turn/steer` is still gated on exposing a live
+  `thread_id/current_turn_id` and adding the relay.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or
