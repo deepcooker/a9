@@ -286,6 +286,58 @@ OpenClaw/Lobster use-through correction:
   checkpoint lineage so MemPalace/causal memory can reconstruct why a branch
   changed after `/compact` or overflow compaction.
 
+Hermes use-through correction:
+
+- Hermes is materially more relevant to A9 than a generic "self-improvement"
+  reference. It is a runnable agent product with CLI/TUI, gateway, sessions,
+  memory providers, skills/plugins, Codex app-server adapter, context
+  compression, trajectory compression and session handoff tests.
+- Latest local reference commit tested: `e448b21` in
+  `reference-projects/hermes-agent-latest`. The previous
+  `reference-projects/hermes-agent` remote had a forced update/unrelated
+  history, so A9 kept the old checkout intact and cloned the latest tree into
+  a sibling directory rather than resetting it destructively.
+- Local environment: uv `0.11.23` installed under `/root/.local/bin`; isolated
+  Python `3.11.15` venv at
+  `reference-projects/hermes-agent-latest/.venv`; installed
+  `hermes-agent==0.17.0` editable with `[dev]` dependencies. CLI smoke passed:
+  `hermes --help` exposed chat/model/gateway/cron/hooks/skills/plugins/memory/
+  sessions/insights/claw/acp/dashboard surfaces; `hermes-agent --help`
+  correctly failed closed because no LLM provider is configured.
+- Local tests passed:
+  context/memory/trajectory/gateway-session slice `410/410`;
+  skills/plugin slice `189/189`;
+  gateway session boundary/race/max-concurrent/handoff slice `55/55`;
+  Codex app-server/session hygiene slice passed `90/90` before
+  `tests/test_lazy_session_regressions.py` hit the runner's 140s per-file
+  timeout. Rerunning that file directly passed `17/17` in `58.01s`, so this is
+  a test-runner timeout observation, not a functional failure.
+- Mechanisms A9 should copy: explicit `MemoryProvider` lifecycle
+  (`initialize`, prompt block, background prefetch, async turn sync, tool
+  schemas, session-end extraction, session-switch hook, pre-compress hook and
+  delegation observation); external-memory one-provider policy to avoid tool
+  bloat; session_id switch hooks for resume/branch/reset/compression; context
+  compressor wording that makes compacted summaries reference-only and keeps
+  the latest user message authoritative; historical/stale heading names that
+  prevent old work from being treated as active; tail/head protection plus
+  middle compression; trajectory compression with metrics and protected first
+  and last turns; gateway foreground/background/service split; session store
+  list/export/delete/prune/repair/stats/rename/browse; skills/plugins with
+  reload and improvement tests; Codex app-server adapter that projects Codex
+  events back into Hermes messages while recording usage and approval events.
+- Mechanisms A9 must not copy as-is: Hermes is Python-heavy and provider/app
+  surface-heavy; many optional extras are lazy-installed or platform-specific.
+  A9 should not import the whole workspace or make Hermes the A9 hot runtime.
+  Copy the protocols, tests and lifecycle boundaries into A9's Rust/Redis/MySQL
+  control plane and Python business/model sidecars.
+- Current decision: Hermes is a strong reference for A9's sidecar intelligence
+  and quality loop: skills, memory-provider lifecycle, compression hygiene,
+  session handoff, gateway session behavior and self-improvement/wrongbook
+  direction. It complements Codex/OpenClaw/MemPalace: Codex remains the primary
+  thread/runtime reference, OpenClaw remains active-run external-control
+  reference, MemPalace remains evidence/recall reference, and Hermes adds the
+  clearest tested product layer for memory hooks, skills and session quality.
+
 ## Priority References
 
 - MemPalace: verbatim-first raw storage, per-message drawer, palace hierarchy,
@@ -294,6 +346,9 @@ OpenClaw/Lobster use-through correction:
 - Codex: loop, tools, sandbox, approval, context and compaction.
 - OpenClaw/Lobster: managed flow, approval/wait/resume, policy attestation,
   plugin/extension shape, memory governance and tool envelope.
+- Hermes: self-improving agent product layer, skills/plugins, explicit memory
+  provider lifecycle, compression/session hygiene, gateway sessions, session
+  handoff and Codex app-server projection.
 - Barter-rs: reconnect, backoff, error action and trading-grade gateway
   reliability.
 - Aider: repo map, token budgeting, diff/edit discipline and architect/editor
@@ -336,6 +391,7 @@ reference-first copying.
 | MemPalace | `reference-projects/mempalace/README.md`, `reference-projects/mempalace/CHANGELOG.md`, `reference-projects/mempalace/examples/cursor/README.md` | Verbatim drawers, source metadata, hybrid retrieval, wakeup packs, preCompact/sessionStart hooks, temporal KG and idempotent resumable mining. | A9 uses MemPalace-first drawer/evidence/index, native recall where available, fallback drawer JSONL, causal candidate compiler and review-only eval candidates. | Recall is still not final truth. Next cut: compile drawer evidence into time-valid facts, stale invalidations and role packets with explicit evidence refs before worker execution. |
 | planning-with-files | `reference-projects/planning-with-files/templates/task_plan.md`, `reference-projects/planning-with-files/templates/loop.md`, `reference-projects/planning-with-files/README.md`, `reference-projects/planning-with-files/MIGRATION.md` | Filesystem working memory, progress/findings/task plan loop, hooks re-read before work, attestation and parallel plan isolation. | A9 has active plan, progress/findings/mistakes/change_request and managed backlog. | A9 must not add more planning docs. Next cut: make plan/backlog items stricter as contracts: exact files, exact commands, validated checks, and no broad aliases. |
 | OpenClaw/Lobster | Latest local commit `0842cb71eb`; inspected active-run control, Codex app-server adapter, embedded runner, context-engine maintenance, compaction, session lock, gateway config, plugin-state, byte-limit and tool-call-repair paths. Isolated Node `v24.16.0` + pnpm `11.2.2`; install passed for `155` workspace projects / `1177` packages; targeted tests passed `1519/1519` across `60` files. | Active-run control modes, steering/follow-up queueing with transcript delivery proof, stale queued-message cleanup, conservative control intent classifier, machine-readable queue rejection reasons, session-file lock/fingerprint/fence/drain, context projection with redaction/reserve budget, overflow compaction and successor transcript rotation, deferred context-engine maintenance, plugin-state contract, byte-stream overflow destroy/cancel, bounded tool-call repair and terminal stream failure messages. | A9 has Redis managed-flow revision checks, approval/wait/resume, policy attestation and runtime monitor contract, but mobile/operator control is still too generic and steering lacks delivery proof. | Next cut: model A9 monitor actions as typed `status/cancel/steer/followup` active-run commands with queue outcome reasons, delivery evidence, stale steering cleanup and active-run/session-file lookup. Do not import the OpenClaw Node workspace into A9 hot path. |
+| Hermes | Latest local commit `e448b21`; isolated uv/Python `3.11.15` venv; editable `[dev]` install passed. CLI smoke passed for `hermes --help`; runner failed closed without provider as expected. Targeted tests passed: context/memory/trajectory/gateway-session `410/410`, skills/plugin `189/189`, session boundary/race/concurrency/handoff `55/55`, Codex/session hygiene `90/90` plus lazy-session regression direct rerun `17/17` after runner timeout. | MemoryProvider lifecycle, background prefetch and async sync, session-switch/pre-compress/delegation hooks, one-external-provider policy, reference-only compaction prompts, stale-task headings, head/tail protected middle compression, trajectory compression metrics, session store management, gateway foreground/background split, skills/plugins reload/improvement tests, Codex app-server event projection and usage accounting. | A9 has MemPalace evidence and its own supervisor/control plane, but lacks a clean role-scoped memory-provider lifecycle and tested compression/session-handoff contract. | Copy Hermes protocols/tests into A9 sidecar quality layer. Do not import the whole Python-heavy workspace into the A9 hot runtime. Next cut: design A9 role-scoped MemoryProvider/skill/session hooks that feed MemPalace/causal compiler and 24h worker prompts. |
 | Aider | `reference-projects/aider/aider/repomap.py`, `reference-projects/aider/aider/coders/architect_prompts.py`, `reference-projects/aider/aider/coders/udiff_prompts.py` | Repo map instead of full repo reads, architect/editor split, explicit edit format and git-friendly diff discipline. | A9 has repo map, bounded context, deterministic apply and git governance. | Worker still broad-searches (`scripts`, `tests`) after task generation. Next cut: generated backlog must include exact rg/sed commands or anchors, not just a file list. |
 | Headroom | `reference-projects/headroom/README.md`, `reference-projects/headroom/docs/content/docs/ccr.mdx`, `reference-projects/headroom/headroom/ccr/*`, `reference-projects/headroom/headroom/transforms/content_router.py`, `reference-projects/headroom/crates/headroom-core/src/ccr/mod.rs`, `reference-projects/headroom/crates/headroom-core/src/transforms/live_zone.rs`, `reference-projects/headroom/headroom/providers/codex/*`, `reference-projects/headroom/headroom/providers/openclaw/*` | Compress-Cache-Retrieve with source hash, retrieval tool injection, workspace-scoped context tracker, content-type router, live-zone byte-range surgery, cache volatility observation, proxy health/stats/metrics, Codex/OpenClaw wrapper config hygiene. | Source build passed in A9-isolated venv/toolchain; Python CCR/router/proxy/wrapper tests mostly pass; proxy smoke passed. Extra A9-shaped tests now cover cache stability, byte-faithful forwarding, system-prompt immutability, Codex WS lifecycle/timing, memory project isolation, learn analyzer/writer, compression failure action and streaming resilience. Real A9 replay showed good savings on a run prompt and summary, but zero savings and high latency on a 594 KB node-worker JSONL tail. This is still a use-through candidate, not a final architecture decision. | Primary strength appears to be context-gateway accident prevention and observability, not only token compression. It is not yet proven as a universal big-log reducer. Continue using it against real A9 worker/session logs before deciding what to copy. Do not put ML/ONNX Rust deps on A9 hot path yet. |
 
@@ -435,7 +491,7 @@ has been used locally, not when it is merely mentioned.
 | Barter-rs | Downloaded, MIT licensed, source inspected and targeted tests passed under isolated Rust `1.95.0`: stream/connect error actions, backoff, stream forward/merge, trading state and engine audit integration. | Rust gateway reconnect, backoff, stream error action, audit state and low-latency transport discipline. | Primary A9 Rust gateway/control hot-path candidate. Copy the stream/reconnect/audit/control mechanisms, not the unbounded channel design. Next: build an A9-shaped large-context ingress spike with bounded backpressure and Redis/MySQL evidence persistence. |
 | Aider | Downloaded, repo map and architect/editor prompts inspected. | Repo map, bounded edit discipline, architect/editor split. | Partially adopted; next proof is reducing worker broad reads through exact read commands. |
 | planning-with-files | Downloaded, templates and hook flow inspected. | File-backed task memory and resume. | Mechanism reference only; A9 will not import its role model or add extra doc sprawl. |
-| Hermes | Downloaded, not yet use-through tested. | Sidecar self-improvement, routines, wrongbook/eval feedback loop. | Candidate; must run a local spike before inclusion. |
+| Hermes | Latest clone in `reference-projects/hermes-agent-latest` at `e448b21`; uv/Python `3.11.15` venv created; editable `[dev]` install passed; CLI smoke passed; targeted tests passed `761` total assertions across context/memory/trajectory/gateway-session, skills/plugin, handoff/concurrency, Codex/session hygiene and lazy-session regression. | Sidecar self-improvement, MemoryProvider lifecycle, role-scoped recall hooks, compression/session hygiene, skills/plugins, gateway sessions, handoff, trajectory compression and wrongbook/eval feedback loop. | Promoted from untested candidate to strong mechanism reference. Next: extract the smallest A9-compatible MemoryProvider/session-hook/skill-quality contract and wire it to MemPalace/causal memory without putting Hermes itself in the hot path. |
 | ECC | Downloaded, not yet use-through tested. | Multi-agent/tool ecosystem shape and cross-IDE agent conventions. | Candidate; must be compared against A9 role model before inclusion. |
 | Headroom | Downloaded and source-run in A9 isolated environment. `headroom._core` build/import passed with Rust 1.95.0 under `.a9/rustup`; CCR tests passed `88/88`; content-router/decision/policy/cache-aligner/Codex/OpenClaw wrapper subset passed `225/227` with the two failures caused by Python 3.10 missing stdlib `tomllib`; proxy smoke passed `/livez`, `/readyz`, `/stats`, `/metrics`; proxy/cache/Codex-WS/memory/learn A9-shaped subset passed `226/226`; byte-faithful/system-prompt/failure-action/streaming/scalability/safety subset passed `134/134`; broader matrix passed `2629` and failed `14` mostly from optional/heavy deps, OTEL/Langfuse extras, Python 3.10 compatibility and A9 port `8787` collision; real A9 replay: run prompt `5688 -> 1649` tokens, run summary `1044 -> 491`, node-worker log tail `171653 -> 171653`; ONNX LocalBackend memory bridge smoke passed with `4` stored memories and `0.05s` scoped search; Rust `headroom-core` full test hit Ubuntu 22.04 glibc vs ONNX Runtime `__isoc23_*` link incompatibility. | Compression, token savings, Codex/Claude/OpenAI proxy behavior, model-aware context reduction, local memory bridge, scoped semantic retrieval and observability. | Not decided yet, but stronger than a plain compression library. Current hypothesis: Headroom's strongest value is context-gateway governance: keep unmutated bytes byte-faithful, protect system/cache hot zones, compress only safe live zones, preserve original evidence behind retrieval hashes, scope memory by workspace/session, surface metrics, and learn repeat failure patterns. Weakness seen so far: raw repetitive A9 JSONL logs need pre-aggregation/event folding before Headroom-style compression. Next use-through must replay real A9 worker/session payloads through proxy-shaped boundaries and ONNX memory before A9 copies or replaces any existing context path. |
 | MiroFish | Downloaded, not yet use-through tested. | Multi-agent prediction/simulation ideas and parallel-world evaluation flow. | Candidate; must prove it improves A9 debate/review quality before inclusion. |
