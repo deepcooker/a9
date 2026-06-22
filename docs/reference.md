@@ -85,42 +85,72 @@ Codex use-through correction:
 - Codex is materially more relevant to A9's agent runtime than to the network
   gateway. Barter-rs answers "how to keep receiving and reconnecting"; Codex
   answers "how to keep an agent thread, tool call, patch, history and goal
-  recoverable."
+  recoverable." Latest Codex also has a serious exec-server/environment layer,
+  so it can be called an agent execution gateway, but its center of gravity is
+  still agent tool execution and session recovery rather than market/event
+  stream ingestion.
 - Local source paths inspected:
+  Latest local commit `eb8c1ee85` (`code-mode: preserve initial yield at
+  completion (#29289)`) after fast-forwarding from `1b24ba912`.
   `codex-rs/code-mode/src/service.rs`,
+  `codex-rs/code-mode/src/cell_actor/{mod,types,callbacks,conversions}.rs`,
+  `codex-rs/code-mode/src/session_runtime/{mod,types}.rs`,
   `codex-rs/apply-patch/src/parser.rs`,
+  `codex-rs/apply-patch/src/invocation.rs`,
+  `codex-rs/app-server-protocol/src/protocol/thread_history.rs`,
+  `codex-rs/app-server/src/request_processors/thread_processor.rs`,
   `codex-rs/thread-store/src/live_thread.rs`,
   `codex-rs/thread-store/src/local/live_writer.rs`,
+  `codex-rs/thread-store/src/local/search_threads.rs`,
   `codex-rs/message-history/src/lib.rs`,
   `codex-rs/state/src/runtime/recovery.rs`,
   `codex-rs/state/src/runtime/goals.rs`, and
-  `codex-rs/state/src/runtime/agent_jobs.rs`.
+  `codex-rs/state/src/runtime/agent_jobs.rs`,
+  `codex-rs/state/src/runtime/threads.rs`,
+  `codex-rs/exec-server/src/client_recovery.rs`,
+  `codex-rs/exec-server/src/environment_registry.rs`,
+  `codex-rs/exec-server/src/file_read.rs`,
+  `codex-rs/exec-server/src/remote_file_stream.rs`,
+  `codex-rs/core/src/session/rollout_budget.rs`, and
+  `codex-rs/protocol/src/compacted_item.rs`.
 - Local tests with isolated Rust `1.95.0`:
-  `codex-message-history` passed `5/5`,
-  `codex-state runtime::recovery` passed `5/5`,
-  `codex-state runtime::goals` passed `21/21`,
-  `codex-state runtime::agent_jobs` passed `2/2`, and
-  `codex-apply-patch` passed `66/68`. The two apply-patch failures were
-  permission-fixture tests that expect writes to fail under chmod-protected
-  directories; A9 runs as root, so root could still write. This is an
-  environment warning, not a parser failure.
+  `codex-code-mode --lib` passed `47/47`;
+  `codex-app-server-protocol thread_history` passed `40/40`;
+  `codex-state runtime::threads` passed `22/22`;
+  `codex-message-history` passed `5/5`;
+  `codex-exec-server --lib` passed `146/147` on the full run, with
+  `client::tests::initial_connection_is_shared_by_all_waiters` passing when
+  rerun alone `1/1`, so this is recorded as a timing/cleanup flake;
+  `codex-apply-patch` passed `67/69`. The two apply-patch failures were
+  permission-fixture tests that expect writes/removes to fail under
+  chmod-protected directories; A9 runs as root, so root could still write. This
+  is an environment warning, not a parser failure.
 - Mechanisms A9 should copy: cell/session registry, execute-to-pending,
-  wait-to-pending, cancellation token, graceful shutdown, pending tool-call
-  tracking, JSONL rollout as live fact source, SQLite/state DB as index,
-  init guard with discard-on-failure, flush-before-metadata ordering,
-  append-only message history with file locking and soft-cap trimming,
-  corruption detection with per-runtime-DB backup/rebuild, goal id/version
-  protection, in-flight usage accounting, atomic job item result reporting and
-  stale report rejection by assigned thread id.
+  wait-to-pending, pending frontier, yield/resume, cancellation token,
+  callback cleanup before completion response, graceful shutdown, pending
+  tool-call tracking, session-scoped stored values, V8/code-mode sandbox
+  boundaries, JSONL rollout as live fact source, rollout-to-turn history
+  projection, incremental change sets, rollback removal, late completion
+  assignment to the original turn, compaction-only turn preservation, dynamic
+  tool reconstruction, SQLite/state DB as index, thread recency monotonicity,
+  parent/child spawn edges, metadata atomic preservation, append-only message
+  history with file locking and soft-cap trimming, corruption detection with
+  per-runtime-DB backup/rebuild, goal id/version protection, in-flight usage
+  accounting, atomic job item result reporting, stale report rejection by
+  assigned thread id, exec-server environment registry, ordered event recovery,
+  reconnect retry/backoff, retained-byte replay bounds, remote file streaming,
+  Noise relay handshake validation and bounded reordering.
 - Mechanisms A9 must not copy as-is: Codex's full Rust workspace is large and
-  dependency-heavy, and some runtime channels are unbounded. A9 should copy the
-  protocol/state/persistence patterns first, while keeping Barter-style bounded
-  ingress and Redis/MySQL evidence persistence for high-volume context.
+  dependency-heavy; latest targeted tests pulled V8, app-server protocol,
+  exec-server, SQLite/sqlx, network proxy and telemetry stacks. A9 should copy
+  the protocol/state/persistence patterns first, while keeping Barter-style
+  bounded ingress and Redis/MySQL evidence persistence for high-volume context.
 - Current decision: Codex is the primary reference for A9's 24h agent runtime
   and operator session governance. Its system-level gain can be `>10` for
-  pending/resume, durable history, deterministic apply and stale-result
-  prevention. It does not replace MemPalace for recall, Headroom for context
-  shaping, or Barter-rs for gateway transport.
+  pending/resume, durable history, deterministic apply, remote execution
+  recovery and stale-result prevention. It does not replace MemPalace for
+  recall, Headroom for context shaping, or Barter-rs for trading/event-stream
+  gateway transport.
 
 Barter-rs use-through correction:
 
@@ -295,7 +325,7 @@ reference-first copying.
 
 | Reference | Local evidence | Mechanism to copy | A9 status | Current gap / next cut |
 | --- | --- | --- | --- | --- |
-| Codex | `reference-projects/codex/codex-rs/code-mode/src/service.rs`, `reference-projects/codex/codex-rs/apply-patch/src/parser.rs`, `reference-projects/codex/codex-rs/thread-store/src/live_thread.rs`, `reference-projects/codex/codex-rs/thread-store/src/local/live_writer.rs`, `reference-projects/codex/codex-rs/message-history/src/lib.rs`, `reference-projects/codex/codex-rs/state/src/runtime/{recovery,goals,agent_jobs}.rs`; targeted tests: message-history `5/5`, state recovery `5/5`, goals `21/21`, agent_jobs `2/2`, apply-patch `66/68` with root-only permission fixture failures. | Cell/thread registry, pending/resume, cancellation/shutdown, JSONL-first live persistence, history lock/soft-cap lookup, local DB corruption backup, goal version/usage accounting, atomic job-item reporting, deterministic patch grammar and context matching. | A9 has supervisor queue, worktrees, strict envelope, deterministic apply, Redis managed flow, policy attestation and patch/scope/git governance. | A9 still lacks a Codex-grade unified runtime state model: operator session tail, 24h worker task item, goal accounting and stale-result rejection are split across scripts. Next cut: port the Codex state model shape into A9 task/run/session records without importing the whole workspace. |
+| Codex | Latest local commit `eb8c1ee85`; inspected latest `code-mode` cell actor/session runtime, app-server-protocol `thread_history`, app-server thread processors, thread-store local search/list/write, message-history, state runtime threads/goals/jobs/recovery, exec-server recovery/environment/file streaming, rollout budget and compacted item paths. Targeted tests: code-mode `47/47`, thread_history `40/40`, state runtime threads `22/22`, message-history `5/5`, exec-server full lib `146/147` with the only failure passing alone `1/1` as a timing/cleanup flake, apply-patch `67/69` with root-only permission fixture failures. | Cell/session runtime, pending frontier, yield/resume, callback cleanup, shutdown/termination race discipline, session-scoped stored values, rollout-to-turn projection, rollback/late-completion/dynamic-tool reconstruction, thread recency and spawn edges, JSONL-first live persistence, history lock/soft-cap lookup, deterministic patch grammar, exec-server environment registry, ordered recovery, retained-byte replay bounds, remote file streaming and Noise relay validation. | A9 has supervisor queue, worktrees, strict envelope, deterministic apply, Redis managed flow, policy attestation, patch/scope/git governance and MemPalace session evidence. | A9 still lacks a Codex-grade unified runtime state model: operator session tail, 24h worker task item, active run control, thread graph, rollout projection, remote execution recovery and stale-result rejection are split across scripts. Next cut: port the Codex state model shape into A9 task/run/session records without importing the whole workspace. |
 | MemPalace | `reference-projects/mempalace/README.md`, `reference-projects/mempalace/CHANGELOG.md`, `reference-projects/mempalace/examples/cursor/README.md` | Verbatim drawers, source metadata, hybrid retrieval, wakeup packs, preCompact/sessionStart hooks, temporal KG and idempotent resumable mining. | A9 uses MemPalace-first drawer/evidence/index, native recall where available, fallback drawer JSONL, causal candidate compiler and review-only eval candidates. | Recall is still not final truth. Next cut: compile drawer evidence into time-valid facts, stale invalidations and role packets with explicit evidence refs before worker execution. |
 | planning-with-files | `reference-projects/planning-with-files/templates/task_plan.md`, `reference-projects/planning-with-files/templates/loop.md`, `reference-projects/planning-with-files/README.md`, `reference-projects/planning-with-files/MIGRATION.md` | Filesystem working memory, progress/findings/task plan loop, hooks re-read before work, attestation and parallel plan isolation. | A9 has active plan, progress/findings/mistakes/change_request and managed backlog. | A9 must not add more planning docs. Next cut: make plan/backlog items stricter as contracts: exact files, exact commands, validated checks, and no broad aliases. |
 | OpenClaw/Lobster | Latest local commit `0842cb71eb`; inspected active-run control, Codex app-server adapter, embedded runner, context-engine maintenance, compaction, session lock, gateway config, plugin-state, byte-limit and tool-call-repair paths. Isolated Node `v24.16.0` + pnpm `11.2.2`; install passed for `155` workspace projects / `1177` packages; targeted tests passed `1519/1519` across `60` files. | Active-run control modes, steering/follow-up queueing with transcript delivery proof, stale queued-message cleanup, conservative control intent classifier, machine-readable queue rejection reasons, session-file lock/fingerprint/fence/drain, context projection with redaction/reserve budget, overflow compaction and successor transcript rotation, deferred context-engine maintenance, plugin-state contract, byte-stream overflow destroy/cancel, bounded tool-call repair and terminal stream failure messages. | A9 has Redis managed-flow revision checks, approval/wait/resume, policy attestation and runtime monitor contract, but mobile/operator control is still too generic and steering lacks delivery proof. | Next cut: model A9 monitor actions as typed `status/cancel/steer/followup` active-run commands with queue outcome reasons, delivery evidence, stale steering cleanup and active-run/session-file lookup. Do not import the OpenClaw Node workspace into A9 hot path. |
@@ -393,7 +423,7 @@ has been used locally, not when it is merely mentioned.
 | Reference | Local state | Trial target | Current decision |
 | --- | --- | --- | --- |
 | MemPalace | Downloaded, native/fallback recall tested against real operator session, recall-quality eval added. | Commercial-grade memory: recall quality, causal compiler, role packets, wrongbook loop. | Adopted for memory layer, still not truth authority. Next: role packet eval and contradiction repair. |
-| Codex | Downloaded, Apache-2.0, source inspected and targeted tests run under isolated Rust `1.95.0`: message-history `5/5`, state recovery `5/5`, goals `21/21`, agent_jobs `2/2`, apply-patch `66/68` with the two failures caused by root bypassing permission-denied fixtures. | Interaction loop, cell/thread registry, pending/resume, deterministic apply, JSONL-first live session persistence, history lookup, goal accounting and stale job-result rejection. | Primary A9 agent-runtime reference. Copy the state/protocol/persistence mechanisms, not the whole dependency-heavy workspace. Next: map Codex thread/job/goal/history concepts onto A9 operator session + 24h worker records. |
+| Codex | Updated to `eb8c1ee85`, Apache-2.0, source inspected and targeted tests run under isolated Rust `1.95.0`: code-mode `47/47`, thread_history `40/40`, state runtime threads `22/22`, message-history `5/5`, exec-server full lib `146/147` plus failed item rerun `1/1`, apply-patch `67/69` with the two failures caused by root bypassing permission-denied fixtures. | Agent execution runtime, cell/session registry, pending/resume/yield, deterministic apply, JSONL rollout projection, thread graph/recency, history lookup, goal/job accounting, stale job-result rejection, exec-server recovery/environment/file-streaming and remote execution gateway mechanics. | Primary A9 agent-runtime reference. Copy the state/protocol/persistence and execution-gateway mechanisms, not the whole dependency-heavy workspace. Next: map Codex thread/job/goal/history/exec-server concepts onto A9 operator session + 24h worker records. |
 | OpenClaw/Lobster | Updated to `0842cb71eb`, MIT licensed, key active-run control, Codex app-server adapter, embedded-runner compaction/session-lock/context-maintenance, gateway config, plugin-state, byte-limit and tool-call-repair paths inspected. A9 now has an isolated Node `v24.16.0`; `pnpm install --frozen-lockfile --ignore-scripts` passed and targeted tests passed `1519/1519` across `60` files. | Active-run external control, channel/operator steering with transcript delivery proof, session-file ownership/locking, compaction checkpoint/rotation, deferred context maintenance, plugin-state contracts, bounded byte ingestion and tool-call repair. | Primary A9 reference for mobile/operator takeover and active-run governance. Copy typed control, queue-outcome, delivery-proof and session-lock mechanisms; do not import the whole Node workspace into the hot path. |
 | Barter-rs | Downloaded, MIT licensed, source inspected and targeted tests passed under isolated Rust `1.95.0`: stream/connect error actions, backoff, stream forward/merge, trading state and engine audit integration. | Rust gateway reconnect, backoff, stream error action, audit state and low-latency transport discipline. | Primary A9 Rust gateway/control hot-path candidate. Copy the stream/reconnect/audit/control mechanisms, not the unbounded channel design. Next: build an A9-shaped large-context ingress spike with bounded backpressure and Redis/MySQL evidence persistence. |
 | Aider | Downloaded, repo map and architect/editor prompts inspected. | Repo map, bounded edit discipline, architect/editor split. | Partially adopted; next proof is reducing worker broad reads through exact read commands. |
