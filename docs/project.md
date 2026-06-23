@@ -202,6 +202,10 @@ P7 NZX technical MVP
   24h loop wrapper around that atom: it runs at most `max_iterations`, stops on
   no items, non-terminal relay, ingest failure, or summary statuses outside
   `pass` / `needs-followup`, and returns a compact run list for monitor review.
+  It also supports `dry_run=true`, which previews the executable backlog slice
+  without dispatching relay workers. `plan-status` now separates historical
+  queued-looking items with run evidence as `execution_backlog_stale_queued_count`
+  so monitor UI does not confuse stale bookkeeping with runnable backlog.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

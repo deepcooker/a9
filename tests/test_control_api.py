@@ -13987,6 +13987,72 @@ Do risky work.
         self.assertEqual(result["stop_reason"], "max_iterations_zero")
         self.assertEqual(result["iterations_completed"], 0)
 
+    def test_runtime_plan_backlog_run_loop_dry_run_previews_without_dispatch(self):
+        mod = load_control_api()
+        calls = {"run_once": 0}
+
+        class FakeSupervisor:
+            @staticmethod
+            def runtime_state_from_summary(*args, **kwargs):
+                return "waiting_for_review_closure", "closed_next_execution_task_missing"
+
+            @staticmethod
+            def active_plan_id():
+                return "active-plan"
+
+            @staticmethod
+            def load_plan(plan_id):
+                return {"plan_id": plan_id, "execution_backlog": {}}
+
+            @staticmethod
+            def plan_execution_backlog_items(plan, *, count=0):
+                return [
+                    {
+                        "task_id": "exec-001",
+                        "backlog_id": "backlog-001",
+                        "phase": "implement",
+                        "status": "ready",
+                        "source": "plan",
+                        "allowed_paths": ["scripts/a9_control_api.py"],
+                        "checks": ["python3 -m py_compile scripts/a9_control_api.py"],
+                    },
+                    {
+                        "task_id": "exec-002",
+                        "backlog_id": "backlog-002",
+                        "phase": "test",
+                        "status": "ready",
+                        "source": "plan",
+                        "allowed_paths": ["tests/test_control_api.py"],
+                        "checks": [],
+                    },
+                ][:count]
+
+        def fake_run_once(payload, *, root):
+            calls["run_once"] += 1
+            return {"status": "completed", "summary_status": "pass"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_supervisor = mod.supervisor
+            original_run_once = mod.runtime_plan_backlog_run_once
+            try:
+                mod.supervisor = lambda: FakeSupervisor
+                mod.runtime_plan_backlog_run_once = fake_run_once
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_run_loop(
+                    {"operator_scopes": ["operator.admin"], "dry_run": True, "max_iterations": 2},
+                    root=root,
+                )
+            finally:
+                mod.supervisor = original_supervisor
+                mod.runtime_plan_backlog_run_once = original_run_once
+
+        self.assertEqual(result["status"], "dry-run")
+        self.assertEqual(result["stop_reason"], "dry_run")
+        self.assertEqual(result["would_run_count"], 2)
+        self.assertEqual(result["would_run"][0]["task_id"], "exec-001")
+        self.assertEqual(calls["run_once"], 0)
+
     def test_runtime_plan_backlog_next_no_items_returns_review_closure_diagnostics(self):
         mod = load_control_api()
 

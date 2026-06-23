@@ -754,7 +754,10 @@ Implementation guardrail:
   run-once up to `max_iterations`, stops on idle/no-items, non-terminal relay,
   ingest failure, or repair-class summary status, and records a compact run list
   instead of spinning indefinitely. This keeps the loop useful for unattended
-  execution without hiding failure classification from the monitor.
+  execution without hiding failure classification from the monitor. A dry-run
+  preview path now returns the exact executable backlog candidates without
+  dispatching workers, and plan-status separates stale queued bookkeeping from
+  runnable queued backlog.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

@@ -12866,6 +12866,7 @@ def plan_status(args: argparse.Namespace) -> int:
         backlog_items = []
     ready_count = 0
     queued_count = 0
+    stale_queued_count = 0
     latest_queued_task_id = ""
     for item in backlog_items:
         if not isinstance(item, dict):
@@ -12874,6 +12875,9 @@ def plan_status(args: argparse.Namespace) -> int:
         if item_status in {"", "ready", "pending"}:
             ready_count += 1
         if item_status == "queued":
+            if str(item.get("last_run_id") or item.get("last_summary_path") or "").strip():
+                stale_queued_count += 1
+                continue
             queued_count += 1
             queued_task_id = str(item.get("queued_task_id") or "").strip()
             if queued_task_id:
@@ -12884,6 +12888,7 @@ def plan_status(args: argparse.Namespace) -> int:
     print(f"execution_backlog_item_count: {len(backlog_items)}")
     print(f"execution_backlog_ready_count: {ready_count}")
     print(f"execution_backlog_queued_count: {queued_count}")
+    print(f"execution_backlog_stale_queued_count: {stale_queued_count}")
     print(f"execution_backlog_generated_task_ids_count: {len(generated_task_ids)}")
     if latest_queued_task_id:
         print(f"execution_backlog_latest_queued_task_id: {latest_queued_task_id}")

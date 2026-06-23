@@ -4451,8 +4451,54 @@ Do the work.
         self.assertIn("execution_backlog_item_count: 4", text)
         self.assertIn("execution_backlog_ready_count: 2", text)
         self.assertIn("execution_backlog_queued_count: 2", text)
+        self.assertIn("execution_backlog_stale_queued_count: 0", text)
         self.assertIn("execution_backlog_generated_task_ids_count: 2", text)
         self.assertIn("execution_backlog_latest_queued_task_id: queued-newest", text)
+
+    def test_plan_status_separates_stale_queued_backlog_with_run_evidence(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_goals = mod.GOALS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.GOALS_DIR = tmp_path / "goals"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-stale-queued-summary",
+                    goal_id="goal-stale-queued-summary",
+                    contract={"problem": "Stale queued items should not look runnable."},
+                )
+                plan["execution_backlog"] = {
+                    "schema": "a9.execution_backlog.v1",
+                    "items": [
+                        {"status": "queued", "queued_task_id": "queued-real"},
+                        {
+                            "status": "queued",
+                            "queued_task_id": "queued-stale",
+                            "last_run_id": "queued-stale-run",
+                            "last_summary_path": str(tmp_path / "runs" / "queued-stale-run" / "summary.json"),
+                        },
+                    ],
+                    "generated_task_ids": ["queued-real", "queued-stale"],
+                }
+                mod.write_plan_files(plan)
+                args = type("Args", (), {"plan_id": "plan-stale-queued-summary"})()
+                buffer = io.StringIO()
+                with redirect_stdout(buffer):
+                    code = mod.plan_status(args)
+                text = buffer.getvalue()
+            finally:
+                mod.GOALS_DIR = old_goals
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(code, 0)
+        self.assertIn("execution_backlog_queued_count: 1", text)
+        self.assertIn("execution_backlog_stale_queued_count: 1", text)
+        self.assertIn("execution_backlog_latest_queued_task_id: queued-real", text)
 
     def test_plan_debate_next_enqueues_bounded_debate_task_without_auto_next(self):
         mod = load_supervisor()

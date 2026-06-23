@@ -11366,6 +11366,49 @@ def runtime_plan_backlog_run_loop(payload: dict[str, Any], *, root: Path = ROOT)
         sleep_seconds = max(0.0, float(payload.get("sleep_seconds", 0) or 0))
     except (TypeError, ValueError):
         return audit_plan_backlog_run_loop({**base, "status": "invalid_request", "gate": gate, "reason": "numeric_fields_must_be_number"}, root=root)
+    plan_id = str(payload.get("plan_id") or "").strip()
+    if bool(payload.get("dry_run")):
+        mod = supervisor()
+        status = supervisor_status(root)
+        runtime_state, runtime_state_reason = mod.runtime_state_from_summary(
+            int(status.get("queued") or 0),
+            int(status.get("running") or 0),
+            latest_run_summary(root),
+        )
+        plan_id = plan_id or str(mod.active_plan_id() or "").strip()
+        plan = mod.load_plan(plan_id) if plan_id else {}
+        items = mod.plan_execution_backlog_items(plan, count=max_iterations) if isinstance(plan, dict) and plan else []
+        preview_items = [
+            {
+                "index": index + 1,
+                "task_id": str(item.get("task_id") or ""),
+                "backlog_id": str(item.get("backlog_id") or item.get("id") or ""),
+                "phase": str(item.get("phase") or ""),
+                "status": str(item.get("status") or ""),
+                "source": str(item.get("source") or ""),
+                "allowed_paths": item.get("allowed_paths") if isinstance(item.get("allowed_paths"), list) else [],
+                "checks": item.get("checks") if isinstance(item.get("checks"), list) else [],
+            }
+            for index, item in enumerate(items)
+            if isinstance(item, dict)
+        ]
+        return audit_plan_backlog_run_loop(
+            {
+                **base,
+                "status": "dry-run",
+                "gate": gate,
+                "plan_id": plan_id,
+                "runtime_state": runtime_state,
+                "runtime_state_reason": runtime_state_reason,
+                "iterations_requested": max_iterations,
+                "iterations_completed": 0,
+                "stop_reason": "dry_run",
+                "would_run_count": len(preview_items),
+                "would_run": preview_items,
+                "runs": [],
+            },
+            root=root,
+        )
     if max_iterations <= 0:
         return audit_plan_backlog_run_loop(
             {
@@ -11381,7 +11424,6 @@ def runtime_plan_backlog_run_loop(payload: dict[str, Any], *, root: Path = ROOT)
         )
     runs: list[dict[str, Any]] = []
     stop_reason = "max_iterations_reached"
-    plan_id = str(payload.get("plan_id") or "").strip()
     for index in range(max_iterations):
         once_payload = {
             **payload,
