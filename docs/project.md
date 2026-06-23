@@ -291,6 +291,13 @@ P7 NZX technical MVP
   recommendation to wait for quota reset or explicitly switch approved worker
   model/fallback before retrying. This prevents blind reruns when the issue is
   budget/quota, not task logic.
+- A real change-request review run proved the repaired lane can wake up again:
+  supervisor queued and ran `idle-backlog-exec-change-request-review-*` after
+  the open quota-policy change request. The run ended `needs-followup`, not
+  closure: it recommended making quota exhaustion a first-class resume gate,
+  then requeueing backlog-040/041 only after explicit model/fallback approval.
+  It also consumed a large context (`869431` input tokens, mostly cached), so
+  the next cut must keep this lane bounded and avoid broad plan/session reads.
 - `crates/a9-gateway`, `crates/a9-worker` and `crates/a9-client` are Rust-side
   control/runtime pieces.
 - `.a9/` contains runtime evidence and archives, not source truth.

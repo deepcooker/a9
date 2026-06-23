@@ -4766,6 +4766,68 @@ Do the work.
         self.assertIn("Latest change_request:", items[0]["prompt"])
         self.assertIn("Add deterministic verification after gateway hint filtering.", items[0]["prompt"])
 
+    def test_plan_execution_backlog_items_open_change_request_preempts_failed_old_items(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            try:
+                mod.PLANS_DIR = tmp_path / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                plan = mod.create_plan_payload(
+                    plan_id="plan-change-request-after-failure",
+                    goal_id="goal-change-request-after-failure",
+                    contract={
+                        "problem": "Latest failure needs a repair decision before execution.",
+                        "why_now": "A stale failed backlog item must not block the repair lane.",
+                        "must": "Route open change_request into debate_next.",
+                        "system_requirement": "failed historical backlog items cannot starve change_request review.",
+                        "data_shape": "plan.change_request plus execution_backlog failed item evidence.",
+                        "normal_flow": "failed old item + open change_request -> change_request_review task.",
+                        "exception_flow": "closed change_request -> failed item remains blocking.",
+                        "acceptance": "returned item source is plan.change_request.",
+                        "out_of_scope": "no direct worker rerun.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 monitor repair packet.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "backlog-old-failed",
+                        "title": "Old failed task",
+                        "phase": "execution_next",
+                        "prompt": "Already failed.",
+                        "status": "retryable-worker-failed",
+                        "last_summary_path": str(tmp_path / "runs" / "old" / "summary.json"),
+                    }
+                )
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-change-request-after-failure",
+                        "exec-002-mechanism_extract-plan-change-request-after-failure",
+                    ]
+                )
+                plan_dir = mod.write_plan_files(plan)
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n"
+                    "## cr-1\n\n"
+                    "- status: proposed\n"
+                    "- proposal: Treat model usage limit as wait-or-switch-model before retry.\n",
+                    encoding="utf-8",
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["source"], "plan.change_request")
+        self.assertEqual(items[0]["backlog_id"], "change_request_review")
+        self.assertIn("wait-or-switch-model", items[0]["prompt"])
+
     def test_plan_execution_backlog_items_ignore_closed_change_request_statuses(self):
         mod = load_supervisor()
         for status in ["applied", "approved", "satisfied"]:

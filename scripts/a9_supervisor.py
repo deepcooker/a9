@@ -9299,6 +9299,25 @@ def latest_plan_change_request(plan: dict[str, Any], *, max_chars: int = 500) ->
     return ""
 
 
+def latest_plan_change_request_status(plan: dict[str, Any]) -> str:
+    plan_id = str(plan.get("plan_id") or "").strip() if plan else ""
+    if not plan_id:
+        return ""
+    path = plan_path(plan_id) / "change_request.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    blocks = re.split(r"(?m)^##\s+", text)
+    for block in reversed(blocks):
+        lines = [str(line or "").strip() for line in block.splitlines()]
+        if not any(line.startswith("- proposal:") for line in lines):
+            continue
+        status_line = next((line for line in lines if line.startswith("- status:")), "")
+        return status_line.split(":", 1)[1].strip().lower() if ":" in status_line else "proposed"
+    return ""
+
+
 def tail_progress_lane_line(
     plan: dict[str, Any],
     *,
@@ -13499,6 +13518,12 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
     ]
     if ready_items:
         return ready_items[:count] if count > 0 else ready_items
+    change_request_item = plan_change_request_continuation_item(plan, generated_task_ids=generated_task_ids)
+    if change_request_item:
+        return [change_request_item]
+    latest_change_request_status = latest_plan_change_request_status(plan)
+    if latest_change_request_status in {"applied", "approved", "satisfied", "done", "closed", "cancelled", "rejected"}:
+        return []
     if raw_items:
         terminal_statuses = {
             "pass",
@@ -13569,10 +13594,6 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
         )
         if count > 0 and len(items) >= count:
             break
-    if not items:
-        change_request_item = plan_change_request_continuation_item(plan, generated_task_ids=generated_task_ids)
-        if change_request_item:
-            items.append(change_request_item)
     if not items:
         backlog_generation_item = plan_backlog_generation_continuation_item(
             plan,

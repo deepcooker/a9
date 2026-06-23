@@ -769,6 +769,12 @@ Implementation guardrail:
   monitor change request with a concrete repair recommendation, so quota/budget
   failures become explicit wait-or-switch-model decisions instead of blind
   reruns.
+- Twenty-third concrete code cut completed: open change requests now preempt
+  stale failed backlog rows when the active plan has no ready items. This fixes
+  a real deadlock where historical `needs-repair` / `retryable-worker-failed`
+  items blocked the change-request review lane, causing `/plan-backlog-next` to
+  return `no_items` despite an open quota-policy decision. Closed/applied
+  change requests still stay closed and do not silently generate new work.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.
