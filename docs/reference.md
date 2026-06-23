@@ -712,6 +712,12 @@ Implementation guardrail:
   extract final text from the events and parse strict worker envelopes. A valid
   worker envelope without outer A9 checks becomes `needs-followup` by default,
   not `pass`, preserving evidence-first completion semantics.
+- Sixteenth concrete code cut completed: relay ingest now runs only the task
+  frontmatter declared checks after parsing a valid worker envelope. `pass`
+  requires both worker envelope pass and declared checks pass. Missing checks
+  remain `needs-followup`; failed checks become `needs-repair`. This keeps
+  relay-owned Codex runs aligned with A9's outer-check authority instead of
+  trusting model self-report.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

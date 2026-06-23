@@ -8747,8 +8747,49 @@ def worker_envelope_from_final_text(final_text: str, *, run_dir: Path) -> dict[s
     return result
 
 
+def run_relay_declared_checks(task_path: Path, run_dir: Path, *, root: Path = ROOT) -> tuple[list[dict[str, Any]], list[str]]:
+    if not str(task_path) or not task_path.exists():
+        return [], []
+    mod = supervisor()
+    try:
+        task = mod.parse_task(task_path)
+    except Exception:
+        return [], []
+    checks = [str(item) for item in getattr(task, "checks", []) if str(item).strip()]
+    results: list[dict[str, Any]] = []
+    checks_dir = run_dir / "checks"
+    checks_dir.mkdir(parents=True, exist_ok=True)
+    for index, check_cmd in enumerate(checks, start=1):
+        started = time.monotonic()
+        proc = subprocess.run(
+            ["bash", "-lc", check_cmd],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        output_path = checks_dir / f"{index:02d}.log"
+        output_path.write_text(proc.stdout or "", encoding="utf-8", errors="backslashreplace")
+        results.append(
+            {
+                "command": check_cmd,
+                "return_code": proc.returncode,
+                "duration_seconds": round(time.monotonic() - started, 3),
+                "output_path": str(output_path),
+                "source": "declared",
+            }
+        )
+    return results, checks
+
+
 def relay_summary_status_from_envelope(base_status: str, base_reason: str, worker_envelope: dict[str, Any], payload: dict[str, Any]) -> tuple[str, str]:
     envelope_status = str(worker_envelope.get("status") or "")
+    checks = payload.get("_a9_declared_check_results") if isinstance(payload.get("_a9_declared_check_results"), list) else []
+    if envelope_status == "pass" and checks:
+        if any(isinstance(item, dict) and item.get("return_code") != 0 for item in checks):
+            return "needs-repair", "declared_checks_failed"
+        return "pass", "worker_envelope_and_declared_checks_pass"
     if envelope_status == "pass":
         if bool(payload.get("trust_envelope_pass")):
             return "pass", "worker_envelope_pass_operator_trusted"
@@ -8849,8 +8890,13 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
     final_path = run_dir / "final.md"
     final_path.write_text(final_text, encoding="utf-8")
     worker_envelope = worker_envelope_from_final_text(final_text, run_dir=run_dir)
+    check_results: list[dict[str, Any]] = []
+    declared_checks: list[str] = []
+    if bool(payload.get("run_checks", True)):
+        check_results, declared_checks = run_relay_declared_checks(task_path, run_dir, root=root)
     if not (str(payload.get("status") or payload.get("completion_status") or "").strip()):
-        status, status_reason = relay_summary_status_from_envelope(status, status_reason, worker_envelope, payload)
+        status_payload = {**payload, "_a9_declared_check_results": check_results}
+        status, status_reason = relay_summary_status_from_envelope(status, status_reason, worker_envelope, status_payload)
     summary = {
         "schema": "a9.relay_worker_run_summary.v1",
         "run_id": run_ref,
@@ -8876,7 +8922,8 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
             "final_path": str(final_path),
         },
         "worker_envelope": worker_envelope,
-        "checks": [],
+        "checks": check_results,
+        "declared_checks": declared_checks,
         "evidence_refs": {
             "summary_path": str(run_dir / "summary.json"),
             "relay_state_path": str(state_path),
