@@ -1617,6 +1617,90 @@ demo
         self.assertEqual(result["reason"], "worker_envelope_and_declared_checks_pass")
         self.assertEqual(summary["checks"][0]["return_code"], 0)
 
+    def test_active_run_relay_ingest_updates_active_plan_from_relay_summary(self):
+        mod = load_control_api()
+        calls = []
+
+        class FakeSupervisor:
+            @staticmethod
+            def active_plan():
+                return {
+                    "plan_id": "active-plan",
+                    "execution_backlog": {
+                        "items": [{"task_id": "task-relay", "queued_task_id": "task-relay"}],
+                    },
+                }
+
+            @staticmethod
+            def execution_backlog_state(plan):
+                return plan.get("execution_backlog", {})
+
+            @staticmethod
+            def parse_task(path):
+                return SimpleNamespace(path=path, task_id=path.stem, prompt=path.read_text(encoding="utf-8"), phase="implement", checks=[])
+
+            @staticmethod
+            def parse_active_plan_from_prompt(prompt):
+                return {}
+
+            @staticmethod
+            def update_active_plan_from_run(task, run_dir, summary):
+                calls.append((task, run_dir, summary))
+                return {"status": "updated", "plan_id": "active-plan", "task_id": task.task_id}
+
+            @staticmethod
+            def find_json_objects(text):
+                return mod.supervisor().find_json_objects(text)
+
+            @staticmethod
+            def is_worker_envelope_candidate(item):
+                return mod.supervisor().is_worker_envelope_candidate(item)
+
+            @staticmethod
+            def normalize_worker_envelope_protocol_version(value, ok):
+                return mod.supervisor().normalize_worker_envelope_protocol_version(value, ok)
+
+            @staticmethod
+            def normalize_worker_envelope_status(value, ok):
+                return mod.supervisor().normalize_worker_envelope_status(value, ok)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relays = root / ".a9" / "runtime" / "active_run_relays"
+            bindings = root / ".a9" / "runtime" / "active_run_relay_bindings"
+            running = root / ".a9" / "tasks" / "running"
+            relays.mkdir(parents=True)
+            bindings.mkdir(parents=True)
+            running.mkdir(parents=True)
+            task = running / "task-relay.md"
+            task.write_text("phase: implement\nDo relay work.\n", encoding="utf-8")
+            envelope = {"protocolVersion": 1, "ok": True, "status": "ok", "output": {"changed_files": [], "worker_commands_run": []}}
+            events = relays / "relay-done.events.jsonl"
+            events.write_text(json.dumps({"payload": {"method": "item/agentMessage/delta", "params": {"delta": json.dumps(envelope)}}}) + "\n", encoding="utf-8")
+            state = relays / "relay-done.json"
+            state.write_text(json.dumps({"relay_id": "relay-done", "run_id": "run-relay", "task_id": "task-relay", "status": "stopped", "events_path": str(events)}), encoding="utf-8")
+            (bindings / "relay-done.json").write_text(
+                json.dumps({"relay_id": "relay-done", "run_id": "run-relay", "task_id": "task-relay", "task_path": str(task), "state_path": str(state)}),
+                encoding="utf-8",
+            )
+            original_supervisor = mod.supervisor
+            try:
+                real_supervisor = original_supervisor()
+                FakeSupervisor.find_json_objects = staticmethod(real_supervisor.find_json_objects)
+                FakeSupervisor.is_worker_envelope_candidate = staticmethod(real_supervisor.is_worker_envelope_candidate)
+                FakeSupervisor.normalize_worker_envelope_protocol_version = staticmethod(real_supervisor.normalize_worker_envelope_protocol_version)
+                FakeSupervisor.normalize_worker_envelope_status = staticmethod(real_supervisor.normalize_worker_envelope_status)
+                mod.supervisor = lambda: FakeSupervisor
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.active_run_relay_ingest({"operator_scopes": ["operator.admin"], "relay_id": "relay-done"}, root=root)
+                summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
+            finally:
+                mod.supervisor = original_supervisor
+
+        self.assertEqual(result["plan_update"]["status"], "updated")
+        self.assertEqual(summary["plan_update"]["status"], "updated")
+        self.assertEqual(calls[0][0].task_id, "task-relay")
+
     def test_active_run_relay_ingest_needs_repair_when_declared_checks_fail(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:

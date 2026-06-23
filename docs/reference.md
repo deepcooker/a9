@@ -726,6 +726,14 @@ Implementation guardrail:
   output, and ignores `userMessage` text. A regression test covers the exact
   prompt-envelope false positive, and a second real smoke passed with final
   text sourced from assistant relay events plus declared check authority.
+- Eighteenth concrete code cut completed: relay ingest now reconnects
+  relay-owned worker completion to the existing supervisor plan/backlog
+  authority. After writing the run summary, ingest resolves the task from
+  running/done/queue lanes, confirms it belongs to the active plan backlog or
+  embedded plan contract, then calls the existing active-plan update path. This
+  fixes the real e2e gap where a passed relay task moved to done but the active
+  plan still showed its backlog item as queued. Non-matching relay tasks are
+  skipped so tests or ad hoc relays cannot pollute active plan evidence.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

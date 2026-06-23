@@ -185,6 +185,11 @@ P7 NZX technical MVP
   `assistantMessage`). The second real smoke
   `relay-worker-relay-e2e-smoke-002-2026-06-23T075121-0000` passed with final
   text sourced from relay events and declared check `test -f docs/project.md`.
+  Relay ingest now also attempts active-plan reconciliation after summary
+  creation: it resolves the task even if the running task has already moved to
+  `.a9/tasks/done`, checks that the task belongs to the active plan backlog or
+  embedded plan contract, then reuses supervisor plan update logic. Unmatched
+  relay tasks are recorded as skipped rather than polluting the active plan.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

@@ -8737,6 +8737,56 @@ def worker_envelope_from_final_text(final_text: str, *, run_dir: Path) -> dict[s
     return result
 
 
+def relay_plan_task_path(task_path: Path, task_id: str, *, root: Path = ROOT) -> Path:
+    candidates: list[Path] = []
+    if str(task_path):
+        candidates.append(task_path)
+        candidates.append(root / ".a9" / "tasks" / "done" / task_path.name)
+    if task_id:
+        for lane in ("running", "done", "queue"):
+            for suffix in (".md", ""):
+                candidates.append(root / ".a9" / "tasks" / lane / f"{task_id}{suffix}")
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return task_path
+
+
+def relay_task_plan_update_eligibility(task: Any, *, mod: Any) -> dict[str, Any]:
+    task_id = str(getattr(task, "task_id", "") or "").strip()
+    if not task_id:
+        return {"status": "skipped", "reason": "missing_task_id"}
+    try:
+        plan = mod.active_plan()
+    except Exception as exc:
+        return {"status": "skipped", "reason": f"active_plan_unavailable: {compact_text(str(exc), 200)}"}
+    if not isinstance(plan, dict) or not str(plan.get("plan_id") or "").strip():
+        return {"status": "skipped", "reason": "no_active_plan"}
+    try:
+        backlog = mod.execution_backlog_state(plan)
+    except Exception:
+        backlog = plan.get("execution_backlog") if isinstance(plan.get("execution_backlog"), dict) else {}
+    items = backlog.get("items") if isinstance(backlog, dict) else []
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if task_id in {
+                str(item.get("queued_task_id") or "").strip(),
+                str(item.get("task_id") or "").strip(),
+            }:
+                return {"status": "matched", "plan_id": str(plan.get("plan_id") or ""), "match_kind": "execution_backlog"}
+    prompt = str(getattr(task, "prompt", "") or "")
+    try:
+        recovered = mod.parse_active_plan_from_prompt(prompt)
+    except Exception:
+        recovered = {}
+    recovered_plan_id = str(recovered.get("plan_id") or "").strip() if isinstance(recovered, dict) else ""
+    if recovered_plan_id and recovered_plan_id == str(plan.get("plan_id") or "").strip():
+        return {"status": "matched", "plan_id": recovered_plan_id, "match_kind": "prompt_contract"}
+    return {"status": "skipped", "reason": "task_not_in_active_plan", "plan_id": str(plan.get("plan_id") or ""), "task_id": task_id}
+
+
 def run_relay_declared_checks(task_path: Path, run_dir: Path, *, root: Path = ROOT) -> tuple[list[dict[str, Any]], list[str]]:
     if not str(task_path) or not task_path.exists():
         return [], []
@@ -8862,8 +8912,9 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
     run_dir = root / ".a9" / "runs" / run_ref
     run_dir.mkdir(parents=True, exist_ok=True)
     task_text = ""
-    if task_path_text and task_path.exists():
-        task_text = task_path.read_text(encoding="utf-8")
+    resolved_task_path = relay_plan_task_path(task_path, task_id, root=root)
+    if str(resolved_task_path) and resolved_task_path.exists():
+        task_text = resolved_task_path.read_text(encoding="utf-8")
     final_text = str(payload.get("final_text") or "").strip()
     final_source = "payload.final_text" if final_text else ""
     final_path_text = str(payload.get("final_path") or "").strip()
@@ -8883,7 +8934,7 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
     check_results: list[dict[str, Any]] = []
     declared_checks: list[str] = []
     if bool(payload.get("run_checks", True)):
-        check_results, declared_checks = run_relay_declared_checks(task_path, run_dir, root=root)
+        check_results, declared_checks = run_relay_declared_checks(resolved_task_path, run_dir, root=root)
     if not (str(payload.get("status") or payload.get("completion_status") or "").strip()):
         status_payload = {**payload, "_a9_declared_check_results": check_results}
         status, status_reason = relay_summary_status_from_envelope(status, status_reason, worker_envelope, status_payload)
@@ -8893,6 +8944,7 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
         "run_dir": str(run_dir),
         "task_id": task_id,
         "task_path": str(task_path) if task_path_text else "",
+        "resolved_task_path": str(resolved_task_path) if str(resolved_task_path) else "",
         "phase": "active_run_relay_worker",
         "status": status,
         "status_reason": status_reason,
@@ -8914,6 +8966,7 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
         "worker_envelope": worker_envelope,
         "checks": check_results,
         "declared_checks": declared_checks,
+        "plan_update": {"status": "not_attempted"},
         "evidence_refs": {
             "summary_path": str(run_dir / "summary.json"),
             "relay_state_path": str(state_path),
@@ -8922,6 +8975,18 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
         },
     }
     (run_dir / "raw_task.md").write_text(task_text, encoding="utf-8")
+    if str(resolved_task_path) and resolved_task_path.exists():
+        try:
+            mod = supervisor()
+            task = mod.parse_task(resolved_task_path)
+            plan_update_eligibility = relay_task_plan_update_eligibility(task, mod=mod)
+            if plan_update_eligibility.get("status") == "matched":
+                summary["plan_update"] = mod.update_active_plan_from_run(task, run_dir, summary)
+                summary["plan_update"]["eligibility"] = plan_update_eligibility
+            else:
+                summary["plan_update"] = plan_update_eligibility
+        except Exception as exc:
+            summary["plan_update"] = {"status": "failed", "reason": compact_text(str(exc), 500)}
     (run_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -8950,6 +9015,7 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
         "summary_path": str(run_dir / "summary.json"),
         "done_path": done_path,
         "moved_task_path": moved_task_path,
+        "plan_update": summary.get("plan_update"),
         "delivery_result_count": len(delivery_results),
         "reason": status_reason,
     }
