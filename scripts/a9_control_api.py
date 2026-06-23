@@ -8644,31 +8644,6 @@ def relay_ingest_status(
     return "needs-repair", f"relay_status_{relay_status or 'unknown'}"
 
 
-def collect_text_values(value: Any, *, limit: int = 200) -> list[str]:
-    texts: list[str] = []
-    interesting = {"text", "content", "message", "final", "output", "summary"}
-
-    def walk(item: Any, key: str = "") -> None:
-        if len(texts) >= limit:
-            return
-        if isinstance(item, str):
-            if key in interesting or ("{" in item and "ok" in item):
-                stripped = item.strip()
-                if stripped:
-                    texts.append(stripped)
-            return
-        if isinstance(item, list):
-            for child in item:
-                walk(child, key)
-            return
-        if isinstance(item, dict):
-            for child_key, child in item.items():
-                walk(child, str(child_key))
-
-    walk(value)
-    return texts
-
-
 def relay_final_text_from_events(relay_state: dict[str, Any], *, root: Path = ROOT) -> tuple[str, str, int]:
     events_path_text = str(relay_state.get("events_path") or "").strip()
     if not events_path_text:
@@ -8677,11 +8652,26 @@ def relay_final_text_from_events(relay_state: dict[str, Any], *, root: Path = RO
     if not events_path.is_absolute():
         events_path = root / events_path
     rows, _skipped = read_jsonl(events_path, limit=500)
-    texts: list[str] = []
+    delta_parts: list[str] = []
+    completed_texts: list[str] = []
     for row in rows:
         payload = row.get("payload") if isinstance(row.get("payload"), dict) else row
-        texts.extend(collect_text_values(payload))
-    return "\n\n".join(texts[-20:]), str(events_path), len(rows)
+        method = str(payload.get("method") or "")
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        if method == "item/agentMessage/delta":
+            delta = str(params.get("delta") or "")
+            if delta:
+                delta_parts.append(delta)
+            continue
+        item = params.get("item") if isinstance(params.get("item"), dict) else {}
+        item_type = str(item.get("type") or "")
+        if method == "item/completed" and item_type in {"agentMessage", "assistantMessage"}:
+            text = str(item.get("text") or "").strip()
+            if text:
+                completed_texts.append(text)
+    if completed_texts:
+        return "\n\n".join(completed_texts[-5:]), str(events_path), len(rows)
+    return "".join(delta_parts).strip(), str(events_path), len(rows)
 
 
 def worker_envelope_from_final_text(final_text: str, *, run_dir: Path) -> dict[str, Any]:

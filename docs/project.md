@@ -178,7 +178,13 @@ P7 NZX technical MVP
   not `pass`, unless the operator explicitly trusts the envelope. Ingest now
   also runs the task frontmatter declared checks in the A9 root; `pass` requires
   both a valid worker envelope and passing declared checks. Failed checks become
-  `needs-repair`.
+  `needs-repair`. A real relay-owned Codex smoke exposed one critical false-pass
+  risk: the first event parser accepted worker-envelope JSON embedded in the
+  user prompt. Ingest now only extracts final text from Codex assistant output
+  events (`item/agentMessage/delta` or completed `agentMessage` /
+  `assistantMessage`). The second real smoke
+  `relay-worker-relay-e2e-smoke-002-2026-06-23T075121-0000` passed with final
+  text sourced from relay events and declared check `test -f docs/project.md`.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

@@ -1424,8 +1424,8 @@ demo
                     {
                         "schema": "a9.active_run_relay_event.v1",
                         "payload": {
-                            "method": "turn/event",
-                            "params": {"event": {"type": "item.completed", "text": json.dumps(envelope)}},
+                            "method": "item/agentMessage/delta",
+                            "params": {"delta": json.dumps(envelope)},
                         },
                     }
                 )
@@ -1472,6 +1472,92 @@ demo
         self.assertEqual(summary["final_source"], str(events))
         self.assertEqual(summary["relay_event_count"], 1)
 
+    def test_active_run_relay_ingest_ignores_user_prompt_envelope(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relays = root / ".a9" / "runtime" / "active_run_relays"
+            bindings = root / ".a9" / "runtime" / "active_run_relay_bindings"
+            running = root / ".a9" / "tasks" / "running"
+            relays.mkdir(parents=True)
+            bindings.mkdir(parents=True)
+            running.mkdir(parents=True)
+            task = running / "task-relay.md"
+            task.write_text("phase: implement\nDo relay work.\n", encoding="utf-8")
+            prompt_envelope = {
+                "protocolVersion": 1,
+                "ok": True,
+                "status": "ok",
+                "output": {"changed_files": ["prompt.md"], "worker_commands_run": [], "supervisor_declared_checks": []},
+            }
+            agent_envelope = {
+                "protocolVersion": 1,
+                "ok": True,
+                "status": "ok",
+                "output": {"changed_files": ["agent.md"], "worker_commands_run": [], "supervisor_declared_checks": []},
+            }
+            events = relays / "relay-done.events.jsonl"
+            events.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "payload": {
+                                    "method": "item/completed",
+                                    "params": {"item": {"type": "userMessage", "text": json.dumps(prompt_envelope)}},
+                                }
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "payload": {
+                                    "method": "item/completed",
+                                    "params": {"item": {"type": "agentMessage", "text": json.dumps(agent_envelope)}},
+                                }
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = relays / "relay-done.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-done",
+                        "run_id": "run-relay",
+                        "task_id": "task-relay",
+                        "status": "stopped",
+                        "events_path": str(events),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (bindings / "relay-done.json").write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-done",
+                        "run_id": "run-relay",
+                        "task_id": "task-relay",
+                        "task_path": str(task),
+                        "state_path": str(state),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            result = mod.active_run_relay_ingest(
+                {"operator_scopes": ["operator.admin"], "relay_id": "relay-done"},
+                root=root,
+            )
+            summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "ingested")
+        self.assertEqual(summary["worker_envelope"]["status"], "pass")
+        self.assertEqual(summary["worker_envelope"]["envelope"]["output"]["changed_files"], ["agent.md"])
+
     def test_active_run_relay_ingest_passes_when_envelope_and_declared_checks_pass(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1501,7 +1587,10 @@ demo
                 "output": {"changed_files": [], "worker_commands_run": [], "supervisor_declared_checks": ["test -f marker.txt"]},
             }
             events = relays / "relay-done.events.jsonl"
-            events.write_text(json.dumps({"payload": {"text": json.dumps(envelope)}}) + "\n", encoding="utf-8")
+            events.write_text(
+                json.dumps({"payload": {"method": "item/agentMessage/delta", "params": {"delta": json.dumps(envelope)}}}) + "\n",
+                encoding="utf-8",
+            )
             state = relays / "relay-done.json"
             state.write_text(
                 json.dumps(
@@ -1556,7 +1645,10 @@ demo
                 "output": {"changed_files": [], "worker_commands_run": [], "supervisor_declared_checks": ["test -f missing.txt"]},
             }
             events = relays / "relay-done.events.jsonl"
-            events.write_text(json.dumps({"payload": {"text": json.dumps(envelope)}}) + "\n", encoding="utf-8")
+            events.write_text(
+                json.dumps({"payload": {"method": "item/agentMessage/delta", "params": {"delta": json.dumps(envelope)}}}) + "\n",
+                encoding="utf-8",
+            )
             state = relays / "relay-done.json"
             state.write_text(
                 json.dumps(

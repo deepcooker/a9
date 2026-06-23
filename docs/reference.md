@@ -718,6 +718,14 @@ Implementation guardrail:
   remain `needs-followup`; failed checks become `needs-repair`. This keeps
   relay-owned Codex runs aligned with A9's outer-check authority instead of
   trusting model self-report.
+- Seventeenth concrete code cut completed: a real relay-owned Codex smoke found
+  that broad recursive event text extraction could parse a strict worker
+  envelope from the original user prompt and falsely mark a run `pass`. A9 now
+  copies the Codex app-server event boundary more strictly: ingest only trusts
+  `item/agentMessage/delta` or completed assistant/agent messages for final
+  output, and ignores `userMessage` text. A regression test covers the exact
+  prompt-envelope false positive, and a second real smoke passed with final
+  text sourced from assistant relay events plus declared check authority.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.
