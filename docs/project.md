@@ -298,6 +298,13 @@ P7 NZX technical MVP
   then requeueing backlog-040/041 only after explicit model/fallback approval.
   It also consumed a large context (`869431` input tokens, mostly cached), so
   the next cut must keep this lane bounded and avoid broad plan/session reads.
+- Quota-failure resume now has a monitor-controlled gate:
+  `/api/runtime/plan-quota-resume-approve` dry-runs candidate budget-failed
+  backlog rows and, on explicit `model_decision` plus `approval_reason`, marks
+  selected rows back to `ready`, records `failure_class=model_quota_exhausted`,
+  clears stale queue metadata, appends progress, and marks the latest open
+  change request applied. This keeps quota reset/fallback decisions outside
+  worker self-judgment.
 - `crates/a9-gateway`, `crates/a9-worker` and `crates/a9-client` are Rust-side
   control/runtime pieces.
 - `.a9/` contains runtime evidence and archives, not source truth.

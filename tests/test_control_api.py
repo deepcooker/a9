@@ -12712,6 +12712,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_run_loop"], "/api/runtime/plan-backlog-run-loop")
         self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_stale_dispose"], "/api/runtime/plan-backlog-stale-dispose")
         self.assertEqual(discovery["endpoints"]["runtime_plan_failure_repair_packet"], "/api/runtime/plan-failure-repair-packet")
+        self.assertEqual(discovery["endpoints"]["runtime_plan_quota_resume_approve"], "/api/runtime/plan-quota-resume-approve")
         self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_start"], "/api/runtime/active-run-relay/start")
         self.assertEqual(
             discovery["endpoints"]["runtime_active_run_relay_worker_start"],
@@ -13567,6 +13568,36 @@ Do risky work.
         self.assertEqual(captured["response"]["command"], "plan.failure.repair_packet")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
 
+    def test_api_runtime_plan_quota_resume_approve_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.runtime_plan_quota_resume_approve
+        captured = {}
+
+        def fake_runtime_plan_quota_resume_approve(payload):
+            captured["payload"] = payload
+            return {"schema": "a9.plan_quota_resume_approve.v1", "status": "dry-run", "command": "plan.quota_resume.approve"}
+
+        body = json.dumps({"operator_scopes": ["operator.admin"]}).encode("utf-8")
+
+        class DummyPlanQuotaResumeApprovePostHandler:
+            path = "/api/runtime/plan-quota-resume-approve"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.runtime_plan_quota_resume_approve = fake_runtime_plan_quota_resume_approve
+            mod.ControlHandler.do_POST(DummyPlanQuotaResumeApprovePostHandler())
+        finally:
+            mod.runtime_plan_quota_resume_approve = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "plan.quota_resume.approve")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
     def test_api_active_run_relay_ingest_post_route_calls_handler(self):
         mod = load_control_api()
         original_handler = mod.active_run_relay_ingest
@@ -14359,6 +14390,163 @@ Do risky work.
         self.assertIn("worker_transport_policy", change_request)
         self.assertIn("latest worker hit model quota", change_request)
         self.assertIn(str(summary_path), change_request)
+
+    def test_runtime_plan_quota_resume_approve_dry_run_lists_budget_candidates(self):
+        mod = load_control_api()
+        supervisor_mod = mod.supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_plans = supervisor_mod.PLANS_DIR
+            old_active = supervisor_mod.ACTIVE_PLAN_PATH
+            supervisor_mod.PLANS_DIR = root / ".a9" / "plans"
+            supervisor_mod.ACTIVE_PLAN_PATH = supervisor_mod.PLANS_DIR / ".active_plan"
+            original_supervisor = mod.supervisor
+            try:
+                mod.supervisor = lambda: supervisor_mod
+                run_dir = root / ".a9" / "runs" / "run-limit"
+                run_dir.mkdir(parents=True)
+                events_path = run_dir / "event_summaries.jsonl"
+                events_path.write_text(json.dumps({"message": "usage limit reached; try again at 12:47 PM"}) + "\n", encoding="utf-8")
+                summary_path = run_dir / "summary.json"
+                summary_path.write_text(
+                    json.dumps(
+                        {
+                            "status": "retryable-worker-failed",
+                            "worker": {
+                                "timed_out": False,
+                                "idle_timed_out": False,
+                                "budget_stopped": False,
+                                "return_code": 1,
+                                "event_summaries_path": str(events_path),
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                plan = supervisor_mod.create_plan_payload(
+                    plan_id="plan-quota",
+                    goal_id="goal-quota",
+                    contract={"problem": "Resume quota failure."},
+                )
+                plan["execution_backlog"] = {
+                    "schema": "a9.execution_backlog.v1",
+                    "items": [
+                        {
+                            "id": "backlog-040",
+                            "title": "Budget failed",
+                            "phase": "execution_next",
+                            "status": "retryable-worker-failed",
+                            "last_summary_path": str(summary_path),
+                        }
+                    ],
+                    "generated_task_ids": ["old-task"],
+                }
+                plan_dir = supervisor_mod.write_plan_files(plan, activate=True)
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n## cr-1\n\n- status: proposed\n- proposal: Wait or switch model before retry.\n",
+                    encoding="utf-8",
+                )
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_quota_resume_approve({"operator_scopes": ["operator.admin"]}, root=root)
+                stored = json.loads((supervisor_mod.plan_path("plan-quota") / "plan.json").read_text(encoding="utf-8"))
+                change_request = (supervisor_mod.plan_path("plan-quota") / "change_request.md").read_text(encoding="utf-8")
+            finally:
+                mod.supervisor = original_supervisor
+                supervisor_mod.PLANS_DIR = old_plans
+                supervisor_mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "dry-run")
+        self.assertEqual(result["candidate_count"], 1)
+        self.assertEqual(result["selected_items"][0]["id"], "backlog-040")
+        self.assertEqual(stored["execution_backlog"]["items"][0]["status"], "retryable-worker-failed")
+        self.assertIn("- status: proposed", change_request)
+
+    def test_runtime_plan_quota_resume_approve_commit_marks_ready_and_applies_change_request(self):
+        mod = load_control_api()
+        supervisor_mod = mod.supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            old_plans = supervisor_mod.PLANS_DIR
+            old_active = supervisor_mod.ACTIVE_PLAN_PATH
+            supervisor_mod.PLANS_DIR = root / ".a9" / "plans"
+            supervisor_mod.ACTIVE_PLAN_PATH = supervisor_mod.PLANS_DIR / ".active_plan"
+            original_supervisor = mod.supervisor
+            try:
+                mod.supervisor = lambda: supervisor_mod
+                run_dir = root / ".a9" / "runs" / "run-limit"
+                run_dir.mkdir(parents=True)
+                events_path = run_dir / "event_summaries.jsonl"
+                events_path.write_text(json.dumps({"message": "You've hit your usage limit; try again at 12:47 PM"}) + "\n", encoding="utf-8")
+                summary_path = run_dir / "summary.json"
+                summary_path.write_text(
+                    json.dumps(
+                        {
+                            "status": "retryable-worker-failed",
+                            "worker": {
+                                "timed_out": False,
+                                "idle_timed_out": False,
+                                "budget_stopped": False,
+                                "return_code": 1,
+                                "event_summaries_path": str(events_path),
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                plan = supervisor_mod.create_plan_payload(
+                    plan_id="plan-quota",
+                    goal_id="goal-quota",
+                    contract={"problem": "Resume quota failure."},
+                )
+                plan["execution_backlog"] = {
+                    "schema": "a9.execution_backlog.v1",
+                    "items": [
+                        {
+                            "id": "backlog-040",
+                            "title": "Budget failed",
+                            "phase": "execution_next",
+                            "status": "retryable-worker-failed",
+                            "queued_task_id": "old-task",
+                            "queued_task_path": "old-task.md",
+                            "last_summary_path": str(summary_path),
+                        }
+                    ],
+                    "generated_task_ids": ["old-task"],
+                }
+                plan_dir = supervisor_mod.write_plan_files(plan, activate=True)
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n## cr-1\n\n- status: proposed\n- proposal: Wait or switch model before retry.\n",
+                    encoding="utf-8",
+                )
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_quota_resume_approve(
+                    {
+                        "operator_scopes": ["operator.admin"],
+                        "commit": True,
+                        "model_decision": "quota_reset_confirmed",
+                        "approved_by": "monitor",
+                        "approval_reason": "quota reset confirmed by operator",
+                    },
+                    root=root,
+                )
+                stored = json.loads((supervisor_mod.plan_path("plan-quota") / "plan.json").read_text(encoding="utf-8"))
+                change_request = (supervisor_mod.plan_path("plan-quota") / "change_request.md").read_text(encoding="utf-8")
+                progress = (supervisor_mod.plan_path("plan-quota") / "progress.md").read_text(encoding="utf-8")
+            finally:
+                mod.supervisor = original_supervisor
+                supervisor_mod.PLANS_DIR = old_plans
+                supervisor_mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "approved")
+        self.assertEqual(result["approved_count"], 1)
+        item = stored["execution_backlog"]["items"][0]
+        self.assertEqual(item["status"], "ready")
+        self.assertEqual(item["previous_status"], "retryable-worker-failed")
+        self.assertEqual(item["failure_class"], "model_quota_exhausted")
+        self.assertEqual(item["resume_model_decision"], "quota_reset_confirmed")
+        self.assertNotIn("queued_task_id", item)
+        self.assertIn("- status: applied", change_request)
+        self.assertIn("quota_resume_approve", progress)
 
     def test_runtime_plan_backlog_next_no_items_returns_review_closure_diagnostics(self):
         mod = load_control_api()

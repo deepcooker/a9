@@ -775,6 +775,14 @@ Implementation guardrail:
   items blocked the change-request review lane, causing `/plan-backlog-next` to
   return `no_items` despite an open quota-policy decision. Closed/applied
   change requests still stay closed and do not silently generate new work.
+- Twenty-fourth concrete code cut completed: control API now exposes
+  `/api/runtime/plan-quota-resume-approve` as the explicit monitor gate for
+  model quota failures. It detects budget-failed backlog rows from their run
+  summaries, supports dry-run, requires `model_decision` and approval reason on
+  commit, marks selected rows ready, records `model_quota_exhausted`, clears
+  stale queue metadata, appends plan progress, and applies the latest open
+  change request. This is the first deterministic bridge from failure repair
+  packet -> monitor decision -> resumable backlog.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

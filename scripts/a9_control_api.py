@@ -526,6 +526,7 @@ PHONE_CONTROL_GROUPS = {
         "plan.backlog.run_loop",
         "plan.backlog.stale_dispose",
         "plan.failure.repair_packet",
+        "plan.quota_resume.approve",
         "approval.approve",
         "approval.reject",
         "eval.override",
@@ -3581,6 +3582,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_plan_backlog_run_loop": "/api/runtime/plan-backlog-run-loop",
             "runtime_plan_backlog_stale_dispose": "/api/runtime/plan-backlog-stale-dispose",
             "runtime_plan_failure_repair_packet": "/api/runtime/plan-failure-repair-packet",
+            "runtime_plan_quota_resume_approve": "/api/runtime/plan-quota-resume-approve",
             "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
             "gateway_transport_contract": "/api/gateway/transport-contract",
@@ -11779,6 +11781,217 @@ def runtime_plan_failure_repair_packet(payload: dict[str, Any], *, root: Path = 
     return audit_plan_failure_repair_packet(result, root=root)
 
 
+def quota_resume_item_candidates(plan: dict[str, Any], *, root: Path = ROOT) -> list[dict[str, Any]]:
+    mod = supervisor()
+    backlog = plan.get("execution_backlog") if isinstance(plan.get("execution_backlog"), dict) else {}
+    items = backlog.get("items") if isinstance(backlog.get("items"), list) else []
+    candidates: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "").strip()
+        if status not in {"retryable-worker-failed", "retryable-worker-budget"}:
+            continue
+        summary_path_text = str(item.get("last_summary_path") or "").strip()
+        summary_path = Path(summary_path_text) if summary_path_text else Path()
+        if summary_path_text and not summary_path.is_absolute():
+            summary_path = root / summary_path
+        summary = read_json(summary_path) if summary_path_text and summary_path.exists() else {}
+        worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+        worker_failure = summary.get("worker_failure", {}) if isinstance(summary.get("worker_failure"), dict) else {}
+        reclassified = mod.classify_worker_failure(worker) if worker else worker_failure
+        if str(reclassified.get("category") or "") != "budget":
+            continue
+        candidates.append(
+            {
+                "index": index,
+                "id": str(item.get("id") or ""),
+                "title": str(item.get("title") or ""),
+                "status": status,
+                "phase": str(item.get("phase") or ""),
+                "last_summary_path": summary_path_text,
+                "reclassified_failure": reclassified,
+            }
+        )
+    return candidates
+
+
+def mark_latest_change_request_applied(
+    *,
+    plan_id: str,
+    applied_by: str,
+    applied_evidence: str,
+) -> dict[str, str]:
+    mod = supervisor()
+    path = mod.plan_path(plan_id) / "change_request.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {"status": "missing", "path": str(path)}
+    matches = list(re.finditer(r"(?m)^##\s+", text))
+    if not matches:
+        return {"status": "no_blocks", "path": str(path)}
+    block_ranges: list[tuple[int, int]] = []
+    for index, match in enumerate(matches):
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+        block_ranges.append((start, end))
+    closed = {"applied", "approved", "satisfied", "done", "closed", "cancelled", "rejected"}
+    for start, end in reversed(block_ranges):
+        block = text[start:end]
+        if "- proposal:" not in block:
+            continue
+        status_match = re.search(r"(?m)^- status:\s*(.+?)\s*$", block)
+        status = status_match.group(1).strip().lower() if status_match else "proposed"
+        if status in closed:
+            continue
+        if status_match:
+            block = block[: status_match.start()] + "- status: applied" + block[status_match.end() :]
+        else:
+            block = block.rstrip() + "\n- status: applied\n"
+        if not block.endswith("\n"):
+            block += "\n"
+        block += f"- applied_at: {utc_now()}\n- applied_by: {applied_by}\n"
+        if applied_evidence:
+            block += f"- applied_evidence: {applied_evidence}\n"
+        path.write_text(text[:start] + block + text[end:], encoding="utf-8")
+        return {"status": "applied", "path": str(path)}
+    return {"status": "no_open_change_request", "path": str(path)}
+
+
+def audit_plan_quota_resume_approve(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    enqueue_service_control_audit(
+        {
+            "at": utc_now(),
+            "action": "plan_quota_resume_approve",
+            "command": result.get("command", "plan.quota_resume.approve"),
+            "status": result.get("status"),
+            "plan_id": result.get("plan_id"),
+            "commit": result.get("commit"),
+            "approved_count": result.get("approved_count"),
+            "candidate_count": result.get("candidate_count"),
+            "reason": result.get("reason") or result.get("blocked_reason"),
+        },
+        root=root,
+    )
+    result["audit_async"] = True
+    return result
+
+
+def runtime_plan_quota_resume_approve(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    command = "plan.quota_resume.approve"
+    base = {"schema": "a9.plan_quota_resume_approve.v1", "command": command}
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        return audit_plan_quota_resume_approve({**base, "status": "blocked", "blocked_reason": str(exc)}, root=root)
+    gate = command_gate(command, root=root)
+    if not gate.get("allowed"):
+        return audit_plan_quota_resume_approve({**base, "status": "blocked", "gate": gate}, root=root)
+    mod = supervisor()
+    plan_id = str(payload.get("plan_id") or "").strip() or str(mod.active_plan_id() or "").strip()
+    if not plan_id:
+        return audit_plan_quota_resume_approve({**base, "status": "missing_plan", "gate": gate, "reason": "active_plan_missing"}, root=root)
+    plan = mod.load_plan(plan_id)
+    if not isinstance(plan, dict) or not plan:
+        return audit_plan_quota_resume_approve({**base, "status": "missing_plan", "gate": gate, "plan_id": plan_id, "reason": "plan_not_found"}, root=root)
+    candidates = quota_resume_item_candidates(plan, root=root)
+    requested_ids = payload.get("item_ids", [])
+    if isinstance(requested_ids, str):
+        requested_ids = [requested_ids]
+    requested = {str(item).strip() for item in requested_ids if str(item).strip()} if isinstance(requested_ids, list) else set()
+    selected = [item for item in candidates if not requested or item["id"] in requested]
+    commit = bool(payload.get("commit"))
+    model_decision = str(payload.get("model_decision") or "").strip()
+    approval_reason = str(payload.get("approval_reason") or payload.get("reason") or "").strip()
+    actor = str(payload.get("approved_by") or payload.get("actor") or "monitor").strip() or "monitor"
+    dry_result = {
+        **base,
+        "status": "dry-run",
+        "gate": gate,
+        "plan_id": plan_id,
+        "commit": False,
+        "candidate_count": len(candidates),
+        "selected_count": len(selected),
+        "candidates": candidates,
+        "selected_items": selected,
+        "model_decision": model_decision,
+    }
+    if not commit:
+        return audit_plan_quota_resume_approve(dry_result, root=root)
+    if model_decision not in {"quota_reset_confirmed", "fallback_model_selected"}:
+        return audit_plan_quota_resume_approve(
+            {
+                **dry_result,
+                "status": "invalid_request",
+                "commit": True,
+                "reason": "model_decision_must_be_quota_reset_confirmed_or_fallback_model_selected",
+            },
+            root=root,
+        )
+    if not approval_reason:
+        return audit_plan_quota_resume_approve(
+            {**dry_result, "status": "invalid_request", "commit": True, "reason": "approval_reason_required"},
+            root=root,
+        )
+    backlog = plan.get("execution_backlog") if isinstance(plan.get("execution_backlog"), dict) else {}
+    items = backlog.get("items") if isinstance(backlog.get("items"), list) else []
+    selected_indexes = {int(item["index"]) for item in selected}
+    approved: list[dict[str, Any]] = []
+    now = utc_now()
+    for index in selected_indexes:
+        if index < 0 or index >= len(items) or not isinstance(items[index], dict):
+            continue
+        item = items[index]
+        previous_status = str(item.get("status") or "")
+        item["status"] = "ready"
+        item["previous_status"] = previous_status
+        item["failure_class"] = "model_quota_exhausted"
+        item["resume_approved_at"] = now
+        item["resume_approved_by"] = actor
+        item["resume_approval_reason"] = approval_reason
+        item["resume_model_decision"] = model_decision
+        item.pop("queued_task_id", None)
+        item.pop("queued_task_path", None)
+        item.pop("queued_at", None)
+        approved.append({"id": str(item.get("id") or ""), "previous_status": previous_status, "new_status": "ready"})
+    if not approved:
+        return audit_plan_quota_resume_approve(
+            {**dry_result, "status": "no_candidates", "commit": True, "reason": "no_selected_budget_candidates"},
+            root=root,
+        )
+    plan["updated_at"] = now
+    plan_dir = mod.write_plan_files(plan, activate=(plan_id == str(mod.active_plan_id() or "").strip()))
+    refs = [str(item.get("last_summary_path") or "") for item in selected if str(item.get("last_summary_path") or "").strip()]
+    applied = mark_latest_change_request_applied(
+        plan_id=plan_id,
+        applied_by=actor,
+        applied_evidence="; ".join(refs[:4]),
+    )
+    mod.append_plan_progress(
+        plan_dir,
+        (
+            f"quota_resume_approve: approved={len(approved)} actor={actor} model_decision={model_decision} "
+            f"reason={approval_reason}"
+        ),
+    )
+    return audit_plan_quota_resume_approve(
+        {
+            **base,
+            "status": "approved",
+            "gate": gate,
+            "plan_id": plan_id,
+            "commit": True,
+            "candidate_count": len(candidates),
+            "approved_count": len(approved),
+            "approved_items": approved,
+            "change_request_apply": applied,
+            "plan_dir": str(plan_dir),
+        },
+        root=root,
+    )
+
+
 def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     try:
         require_phone_admin(payload)
@@ -12574,6 +12787,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_plan_backlog_stale_dispose(payload))
             elif self.path == "/api/runtime/plan-failure-repair-packet":
                 self.write_json(200, runtime_plan_failure_repair_packet(payload))
+            elif self.path == "/api/runtime/plan-quota-resume-approve":
+                self.write_json(200, runtime_plan_quota_resume_approve(payload))
             elif self.path == "/api/monitor/intervention":
                 self.write_json(200, monitor_intervention(payload))
             elif self.path == "/api/worker/transport-policy":
