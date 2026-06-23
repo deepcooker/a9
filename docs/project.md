@@ -198,7 +198,10 @@ P7 NZX technical MVP
   through the relay-worker path, waits for the relay to reach terminal state,
   then calls ingest and plan update. If the relay is still running when the
   wait budget expires, it returns `relay_not_terminal` and does not ingest or
-  fake completion.
+  fake completion. `/api/runtime/plan-backlog-run-loop` is the first bounded
+  24h loop wrapper around that atom: it runs at most `max_iterations`, stops on
+  no items, non-terminal relay, ingest failure, or summary statuses outside
+  `pass` / `needs-followup`, and returns a compact run list for monitor review.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

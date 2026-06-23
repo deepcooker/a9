@@ -12709,6 +12709,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["runtime_run_one_with_transport"], "/api/runtime/run-one-with-transport")
         self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_next"], "/api/runtime/plan-backlog-next")
         self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_run_once"], "/api/runtime/plan-backlog-run-once")
+        self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_run_loop"], "/api/runtime/plan-backlog-run-loop")
         self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_start"], "/api/runtime/active-run-relay/start")
         self.assertEqual(
             discovery["endpoints"]["runtime_active_run_relay_worker_start"],
@@ -13474,6 +13475,36 @@ Do risky work.
         self.assertEqual(captured["response"]["command"], "plan.backlog.run_once")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
 
+    def test_api_runtime_plan_backlog_run_loop_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.runtime_plan_backlog_run_loop
+        captured = {}
+
+        def fake_runtime_plan_backlog_run_loop(payload):
+            captured["payload"] = payload
+            return {"schema": "a9.plan_backlog_run_loop.v1", "status": "completed", "command": "plan.backlog.run_loop"}
+
+        body = json.dumps({"operator_scopes": ["operator.admin"]}).encode("utf-8")
+
+        class DummyPlanBacklogRunLoopPostHandler:
+            path = "/api/runtime/plan-backlog-run-loop"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.runtime_plan_backlog_run_loop = fake_runtime_plan_backlog_run_loop
+            mod.ControlHandler.do_POST(DummyPlanBacklogRunLoopPostHandler())
+        finally:
+            mod.runtime_plan_backlog_run_loop = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "plan.backlog.run_loop")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
     def test_api_active_run_relay_ingest_post_route_calls_handler(self):
         mod = load_control_api()
         original_handler = mod.active_run_relay_ingest
@@ -13874,6 +13905,87 @@ Do risky work.
         self.assertEqual(result["status"], "relay_not_terminal")
         self.assertEqual(result["wait"]["status"], "timeout")
         self.assertEqual(calls["ingest"], [])
+
+    def test_runtime_plan_backlog_run_loop_runs_until_iteration_limit(self):
+        mod = load_control_api()
+        calls = []
+
+        def fake_run_once(payload, *, root):
+            calls.append(payload)
+            return {
+                "status": "completed",
+                "plan_id": "plan-1",
+                "relay_id": f"relay-{len(calls)}",
+                "summary_status": "pass",
+                "summary_path": str(root / f"summary-{len(calls)}.json"),
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_run_once = mod.runtime_plan_backlog_run_once
+            try:
+                mod.runtime_plan_backlog_run_once = fake_run_once
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_run_loop(
+                    {"operator_scopes": ["operator.admin"], "max_iterations": 2},
+                    root=root,
+                )
+            finally:
+                mod.runtime_plan_backlog_run_once = original_run_once
+
+        self.assertEqual(result["schema"], "a9.plan_backlog_run_loop.v1")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["iterations_completed"], 2)
+        self.assertEqual(result["stop_reason"], "max_iterations_reached")
+        self.assertEqual(len(result["runs"]), 2)
+        self.assertEqual(len(calls), 2)
+
+    def test_runtime_plan_backlog_run_loop_stops_on_repair_status(self):
+        mod = load_control_api()
+        calls = []
+
+        def fake_run_once(payload, *, root):
+            calls.append(payload)
+            status = "pass" if len(calls) == 1 else "needs-repair"
+            return {
+                "status": "completed",
+                "plan_id": "plan-1",
+                "relay_id": f"relay-{len(calls)}",
+                "summary_status": status,
+                "summary_path": str(root / f"summary-{len(calls)}.json"),
+            }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_run_once = mod.runtime_plan_backlog_run_once
+            try:
+                mod.runtime_plan_backlog_run_once = fake_run_once
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_run_loop(
+                    {"operator_scopes": ["operator.admin"], "max_iterations": 3},
+                    root=root,
+                )
+            finally:
+                mod.runtime_plan_backlog_run_once = original_run_once
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["iterations_completed"], 2)
+        self.assertEqual(result["stop_reason"], "summary_status_needs-repair")
+        self.assertEqual(len(calls), 2)
+
+    def test_runtime_plan_backlog_run_loop_zero_iterations_is_idle(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            result = mod.runtime_plan_backlog_run_loop(
+                {"operator_scopes": ["operator.admin"], "max_iterations": 0},
+                root=root,
+            )
+
+        self.assertEqual(result["status"], "idle")
+        self.assertEqual(result["stop_reason"], "max_iterations_zero")
+        self.assertEqual(result["iterations_completed"], 0)
 
     def test_runtime_plan_backlog_next_no_items_returns_review_closure_diagnostics(self):
         mod = load_control_api()

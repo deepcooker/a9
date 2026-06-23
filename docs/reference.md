@@ -749,6 +749,12 @@ Implementation guardrail:
   `active_run.relay.ingest`. The endpoint returns `relay_not_terminal` on wait
   timeout and deliberately avoids ingesting a still-running relay, preserving
   A9's evidence-first completion rule.
+- Twenty-first concrete code cut completed: control API now exposes
+  `/api/runtime/plan-backlog-run-loop` as a bounded 24h loop wrapper. It repeats
+  run-once up to `max_iterations`, stops on idle/no-items, non-terminal relay,
+  ingest failure, or repair-class summary status, and records a compact run list
+  instead of spinning indefinitely. This keeps the loop useful for unattended
+  execution without hiding failure classification from the monitor.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

@@ -523,6 +523,7 @@ PHONE_CONTROL_GROUPS = {
         "plan.debate.next",
         "plan.backlog.next",
         "plan.backlog.run_once",
+        "plan.backlog.run_loop",
         "approval.approve",
         "approval.reject",
         "eval.override",
@@ -3575,6 +3576,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
             "runtime_plan_backlog_run_once": "/api/runtime/plan-backlog-run-once",
+            "runtime_plan_backlog_run_loop": "/api/runtime/plan-backlog-run-loop",
             "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
             "gateway_transport_contract": "/api/gateway/transport-contract",
@@ -11329,6 +11331,108 @@ def runtime_plan_backlog_run_once(payload: dict[str, Any], *, root: Path = ROOT)
     )
 
 
+def audit_plan_backlog_run_loop(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    enqueue_service_control_audit(
+        {
+            "at": utc_now(),
+            "action": "plan_backlog_run_loop",
+            "command": result.get("command", "plan.backlog.run_loop"),
+            "status": result.get("status"),
+            "plan_id": result.get("plan_id"),
+            "iterations_requested": result.get("iterations_requested"),
+            "iterations_completed": result.get("iterations_completed"),
+            "stop_reason": result.get("stop_reason"),
+            "last_summary_status": result.get("last_summary_status"),
+        },
+        root=root,
+    )
+    result["audit_async"] = True
+    return result
+
+
+def runtime_plan_backlog_run_loop(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    command = "plan.backlog.run_loop"
+    base = {"schema": "a9.plan_backlog_run_loop.v1", "command": command}
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        return audit_plan_backlog_run_loop({**base, "status": "blocked", "blocked_reason": str(exc)}, root=root)
+    gate = command_gate(command, root=root)
+    if not gate.get("allowed"):
+        return audit_plan_backlog_run_loop({**base, "status": "blocked", "gate": gate}, root=root)
+    try:
+        max_iterations_raw = payload.get("max_iterations", payload.get("max_tasks", 1))
+        max_iterations = max(0, int(max_iterations_raw if max_iterations_raw is not None else 1))
+        sleep_seconds = max(0.0, float(payload.get("sleep_seconds", 0) or 0))
+    except (TypeError, ValueError):
+        return audit_plan_backlog_run_loop({**base, "status": "invalid_request", "gate": gate, "reason": "numeric_fields_must_be_number"}, root=root)
+    if max_iterations <= 0:
+        return audit_plan_backlog_run_loop(
+            {
+                **base,
+                "status": "idle",
+                "gate": gate,
+                "iterations_requested": max_iterations,
+                "iterations_completed": 0,
+                "stop_reason": "max_iterations_zero",
+                "runs": [],
+            },
+            root=root,
+        )
+    runs: list[dict[str, Any]] = []
+    stop_reason = "max_iterations_reached"
+    plan_id = str(payload.get("plan_id") or "").strip()
+    for index in range(max_iterations):
+        once_payload = {
+            **payload,
+            "operator_scopes": payload.get("operator_scopes") or [],
+            "auto_next": bool(payload.get("auto_next", False)),
+        }
+        once = runtime_plan_backlog_run_once(once_payload, root=root)
+        runs.append(
+            {
+                "index": index + 1,
+                "status": once.get("status"),
+                "reason": once.get("reason"),
+                "plan_id": once.get("plan_id"),
+                "relay_id": once.get("relay_id"),
+                "summary_status": once.get("summary_status"),
+                "summary_path": once.get("summary_path"),
+                "wait_status": (once.get("wait") or {}).get("status") if isinstance(once.get("wait"), dict) else "",
+            }
+        )
+        plan_id = str(once.get("plan_id") or plan_id)
+        if once.get("status") in {"no_items", "idle"}:
+            stop_reason = str(once.get("status"))
+            break
+        if once.get("status") != "completed":
+            stop_reason = str(once.get("status") or "run_once_not_completed")
+            break
+        summary_status = str(once.get("summary_status") or "")
+        if summary_status not in {"pass", "needs-followup"}:
+            stop_reason = f"summary_status_{summary_status or 'missing'}"
+            break
+        if index < max_iterations - 1 and sleep_seconds:
+            time.sleep(sleep_seconds)
+    last = runs[-1] if runs else {}
+    completed_count = sum(1 for item in runs if item.get("status") == "completed")
+    status = "idle" if not runs else ("completed" if stop_reason == "max_iterations_reached" else "stopped")
+    return audit_plan_backlog_run_loop(
+        {
+            **base,
+            "status": status,
+            "gate": gate,
+            "plan_id": plan_id,
+            "iterations_requested": max_iterations,
+            "iterations_completed": completed_count,
+            "stop_reason": stop_reason,
+            "last_summary_status": last.get("summary_status"),
+            "runs": runs,
+        },
+        root=root,
+    )
+
+
 def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     try:
         require_phone_admin(payload)
@@ -12118,6 +12222,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_plan_backlog_next(payload))
             elif self.path == "/api/runtime/plan-backlog-run-once":
                 self.write_json(200, runtime_plan_backlog_run_once(payload))
+            elif self.path == "/api/runtime/plan-backlog-run-loop":
+                self.write_json(200, runtime_plan_backlog_run_loop(payload))
             elif self.path == "/api/monitor/intervention":
                 self.write_json(200, monitor_intervention(payload))
             elif self.path == "/api/worker/transport-policy":
