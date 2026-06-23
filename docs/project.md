@@ -280,7 +280,7 @@ P7 NZX technical MVP
   If a `needs-followup` / `needs-repair` backlog-generation result came from
   an older supervisor `repo_head`, the current runtime may retry it after code
   repair rather than freezing on stale review output.
-- The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
+- A legacy one-off review-closure document path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.
 - Latest-failure governance now has a control-plane repair packet:
