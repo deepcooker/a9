@@ -9645,13 +9645,24 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
     run_id = Path(str(summary.get("run_dir") or run_dir)).name
     if str(task.task_id or "").startswith("selftest-") or is_selftest_run_id(run_id):
         return {"status": "skipped", "reason": "selftest_run_not_plan_memory", "run_id": run_id}
-    plan = active_plan()
-    if not plan:
-        recovered = parse_active_plan_from_prompt(task.prompt)
-        if not recovered:
-            return {"status": "skipped", "reason": "no_active_plan"}
-        write_plan_files(recovered, activate=True)
+    recovered = parse_active_plan_from_prompt(task.prompt)
+    recovered_plan_id = str(recovered.get("plan_id") or "").strip() if recovered else ""
+    active = active_plan()
+    active_plan_id_text = str(active.get("plan_id") or "").strip() if active else ""
+    activate_after_write = True
+    plan_source = "active_plan"
+    if recovered_plan_id and recovered_plan_id != active_plan_id_text:
+        loaded = load_plan(recovered_plan_id)
+        plan = loaded if loaded else recovered
+        activate_after_write = not bool(active_plan_id_text)
+        plan_source = "prompt_plan_contract"
+    elif active:
+        plan = active
+    elif recovered:
         plan = recovered
+        plan_source = "prompt_plan_contract"
+    else:
+        return {"status": "skipped", "reason": "no_active_plan"}
     plan_id = str(plan.get("plan_id") or "")
     if not plan_id:
         return {"status": "skipped", "reason": "active_plan_missing_plan_id"}
@@ -9667,7 +9678,7 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
     contract_change_requests = extract_contract_change_requests_from_summary(summary)
     backlog_item_update = update_execution_backlog_item_from_run(plan, task, run_dir, summary)
     backlog_update = append_execution_backlog_items_from_debate_run(plan, task, run_dir, summary)
-    plan_dir = write_plan_files(plan, activate=True)
+    plan_dir = write_plan_files(plan, activate=activate_after_write)
     appended_change_requests: list[dict[str, str]] = []
     for request in contract_change_requests:
         appended = append_plan_change_request(
@@ -9702,6 +9713,8 @@ def update_active_plan_from_run(task: Task, run_dir: Path, summary: dict[str, An
         "status": "updated",
         "plan_id": plan_id,
         "plan_dir": str(plan_dir),
+        "plan_source": plan_source,
+        "activated_plan": activate_after_write,
         "run_id": run_id,
         "evidence_refs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
         "execution_backlog_item_update": backlog_item_update,

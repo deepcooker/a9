@@ -734,6 +734,14 @@ Implementation guardrail:
   fixes the real e2e gap where a passed relay task moved to done but the active
   plan still showed its backlog item as queued. Non-matching relay tasks are
   skipped so tests or ad hoc relays cannot pollute active plan evidence.
+- Nineteenth concrete code cut completed: a live smoke-plan worker exposed a
+  parallel-plan race. If the monitor switches `.active_plan` while a worker is
+  still running, completion evidence must follow the plan contract embedded in
+  that worker prompt, not the current active plan. Supervisor plan update now
+  prefers prompt `plan_id` and only falls back to current active plan when no
+  prompt contract exists. This copies Codex-style thread/session ownership:
+  completion belongs to the originating task context, not to whichever plan is
+  visible at collection time.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

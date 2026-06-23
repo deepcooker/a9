@@ -6461,6 +6461,70 @@ Findings are ready.
         self.assertIn("run=run-iso-1", progress)
         self.assertIn("status=needs-followup", progress)
 
+    def test_update_active_plan_from_run_prefers_prompt_plan_over_current_active(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            try:
+                main_plan = mod.create_plan_payload(
+                    plan_id="main-plan",
+                    goal_id="goal-main",
+                    contract={"problem": "Main active plan should not receive prompt-plan worker evidence."},
+                )
+                mod.write_plan_files(main_plan, activate=True)
+                prompt_plan = mod.create_plan_payload(
+                    plan_id="prompt-plan",
+                    goal_id="goal-prompt",
+                    contract={"problem": "Prompt-owned plan should receive its worker evidence."},
+                )
+                prompt_backlog = mod.execution_backlog_state(prompt_plan)
+                prompt_backlog["items"].append(
+                    {
+                        "id": "prompt-task",
+                        "title": "Prompt task",
+                        "phase": "record",
+                        "status": "queued",
+                        "task_id": "prompt-task",
+                    }
+                )
+                prompt_dir = mod.write_plan_files(prompt_plan, activate=False)
+                run_dir = tmp_path / "runs" / "prompt-task-run"
+                run_dir.mkdir(parents=True)
+                summary = {"status": "pass", "phase": "record", "run_dir": str(run_dir)}
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="prompt-task",
+                    phase="record",
+                    prompt=(
+                        "Active plan contract:\n"
+                        "- plan_id: prompt-plan\n"
+                        "- goal_id: goal-prompt\n"
+                        "- problem: Prompt-owned plan should receive its worker evidence.\n"
+                        "- must: update prompt plan\n"
+                        "- acceptance: prompt plan receives run refs\n"
+                    ),
+                )
+
+                result = mod.update_active_plan_from_run(task, run_dir, summary)
+                stored_prompt = json.loads((prompt_dir / "plan.json").read_text(encoding="utf-8"))
+                stored_main = json.loads((mod.plan_path("main-plan") / "plan.json").read_text(encoding="utf-8"))
+                active_after = mod.active_plan_id()
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(result["status"], "updated")
+        self.assertEqual(result["plan_id"], "prompt-plan")
+        self.assertEqual(result["plan_source"], "prompt_plan_contract")
+        self.assertFalse(result["activated_plan"])
+        self.assertEqual(active_after, "main-plan")
+        self.assertIn("prompt-task-run", stored_prompt["run_ids"])
+        self.assertEqual(stored_main.get("run_ids", []), [])
+
     def test_update_active_plan_from_run_normalizes_invalid_expected_flow_revision_from_prompt_and_preserves_progress_append(self):
         mod = load_supervisor()
         expected_lines = [

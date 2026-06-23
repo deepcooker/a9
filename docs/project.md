@@ -190,6 +190,10 @@ P7 NZX technical MVP
   `.a9/tasks/done`, checks that the task belongs to the active plan backlog or
   embedded plan contract, then reuses supervisor plan update logic. Unmatched
   relay tasks are recorded as skipped rather than polluting the active plan.
+  The broader supervisor plan update path now also prefers a task prompt's
+  embedded `plan_id` over the current `.active_plan`, so long-running workers
+  cannot write completion evidence into the wrong plan after a monitor switches
+  active plans.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or
