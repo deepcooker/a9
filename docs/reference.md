@@ -698,6 +698,13 @@ Implementation guardrail:
   atomically moves that task from queue to running before starting the
   relay-owned worker, preventing the legacy supervisor queue from double
   claiming it. If relay start fails, the task is requeued.
+- Fourteenth concrete code cut completed: relay-owned worker evidence can now
+  be ingested through `/api/runtime/active-run-relay/ingest`. The ingest reads
+  relay state, relay binding and active-run delivery results, writes a
+  supervisor-visible summary under `.a9/runs/<run>/summary.json`, and can move
+  the running task into `.a9/tasks/done`. This is intentionally conservative:
+  until Codex active-run final output is parsed into a strict worker envelope
+  and checks, a stopped relay becomes `needs-repair`, not `pass`.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

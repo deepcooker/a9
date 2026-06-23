@@ -164,8 +164,13 @@ P7 NZX technical MVP
   atomically moves the first queued task into the relay-owned lane before
   starting the relay worker, so the old supervisor queue cannot double-claim
   it. If relay start fails, the task is moved back to queue. The next gap is
-  completion/evidence ingestion from relay-owned runs back into plan/backlog
-  state.
+  automatic completion parsing from relay-owned Codex output. The first
+  deterministic ingest path now exists at
+  `/api/runtime/active-run-relay/ingest`: it reads relay state, binding and
+  delivery results, writes `.a9/runs/<run>/summary.json`, and can move the
+  running task into `.a9/tasks/done`. Because Codex active-run final output is
+  not yet parsed into a strict worker envelope, stopped relays default to
+  `needs-repair` instead of fake `pass`.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

@@ -1267,6 +1267,115 @@ demo
         self.assertEqual(result["removed_count"], 1)
         self.assertFalse(exists_after_commit)
 
+    def test_active_run_relay_ingest_requires_runtime_gate(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = mod.active_run_relay_ingest(
+                {"operator_scopes": ["operator.admin"], "relay_id": "relay-1"},
+                root=root,
+            )
+
+        self.assertEqual(result["schema"], "a9.active_run_relay_ingest.v1")
+        self.assertEqual(result["status"], "blocked")
+        self.assertEqual(result["gate"]["reason"], "phone_control_disarmed")
+
+    def test_active_run_relay_ingest_running_relay_is_not_ready(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relays = root / ".a9" / "runtime" / "active_run_relays"
+            bindings = root / ".a9" / "runtime" / "active_run_relay_bindings"
+            relays.mkdir(parents=True)
+            bindings.mkdir(parents=True)
+            state = relays / "relay-live.json"
+            state.write_text(json.dumps({"relay_id": "relay-live", "status": "running"}), encoding="utf-8")
+            (bindings / "relay-live.json").write_text(
+                json.dumps({"relay_id": "relay-live", "state_path": str(state), "task_id": "task-live"}),
+                encoding="utf-8",
+            )
+
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            result = mod.active_run_relay_ingest(
+                {"operator_scopes": ["operator.admin"], "relay_id": "relay-live"},
+                root=root,
+            )
+
+        self.assertEqual(result["schema"], "a9.active_run_relay_ingest.v1")
+        self.assertEqual(result["status"], "not_ready")
+        self.assertEqual(result["reason"], "relay_not_terminal")
+
+    def test_active_run_relay_ingest_writes_summary_and_moves_task_to_done(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relays = root / ".a9" / "runtime" / "active_run_relays"
+            bindings = root / ".a9" / "runtime" / "active_run_relay_bindings"
+            running = root / ".a9" / "tasks" / "running"
+            relays.mkdir(parents=True)
+            bindings.mkdir(parents=True)
+            running.mkdir(parents=True)
+            task = running / "task-relay.md"
+            task.write_text("phase: implement\nDo relay work.\n", encoding="utf-8")
+            state = relays / "relay-done.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-done",
+                        "run_id": "run-relay",
+                        "task_id": "task-relay",
+                        "status": "stopped",
+                        "delivered_count": 1,
+                        "started_at": "2026-06-23T00:00:00+00:00",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (bindings / "relay-done.json").write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-done",
+                        "run_id": "run-relay",
+                        "task_id": "task-relay",
+                        "task_path": str(task),
+                        "state_path": str(state),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            results = root / ".a9" / "runtime" / "active_run_delivery_results.jsonl"
+            results.parent.mkdir(parents=True, exist_ok=True)
+            results.write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-done",
+                        "status": "delivered",
+                        "target": {"run_id": "run-relay", "task_id": "task-relay"},
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            result = mod.active_run_relay_ingest(
+                {"operator_scopes": ["operator.admin"], "relay_id": "relay-done"},
+                root=root,
+            )
+            summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
+            done_task_exists = (root / ".a9" / "tasks" / "done" / "task-relay.md").exists()
+            running_task_exists = task.exists()
+
+        self.assertEqual(result["schema"], "a9.active_run_relay_ingest.v1")
+        self.assertEqual(result["status"], "ingested")
+        self.assertEqual(result["summary_status"], "needs-repair")
+        self.assertEqual(result["reason"], "relay_stopped_without_worker_envelope_or_checks")
+        self.assertEqual(summary["schema"], "a9.relay_worker_run_summary.v1")
+        self.assertEqual(summary["delivery_result_count"], 1)
+        self.assertEqual(summary["worker_envelope"]["status"], "missing")
+        self.assertTrue(done_task_exists)
+        self.assertFalse(running_task_exists)
+
     def test_active_run_transport_probe_reports_disabled_and_dry_run(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -12223,6 +12332,7 @@ Do risky work.
         )
         self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_stop"], "/api/runtime/active-run-relay/stop")
         self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_cleanup"], "/api/runtime/active-run-relay/cleanup")
+        self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_ingest"], "/api/runtime/active-run-relay/ingest")
         self.assertEqual(discovery["endpoints"]["mempalace_status"], "/api/memory/mempalace/status")
         self.assertEqual(discovery["endpoints"]["mempalace_search"], "/api/memory/mempalace/search")
         self.assertEqual(discovery["endpoints"]["mempalace_wakeup"], "/api/memory/mempalace/wakeup")
@@ -12949,6 +13059,36 @@ Do risky work.
         self.assertEqual(captured["status"], 200)
         self.assertEqual(captured["response"]["command"], "plan.backlog.next")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
+    def test_api_active_run_relay_ingest_post_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.active_run_relay_ingest
+        captured = {}
+
+        def fake_active_run_relay_ingest(payload):
+            captured["payload"] = payload
+            return {"schema": "a9.active_run_relay_ingest.v1", "status": "ingested"}
+
+        body = json.dumps({"operator_scopes": ["operator.admin"], "relay_id": "relay-1"}).encode("utf-8")
+
+        class DummyActiveRunRelayIngestPostHandler:
+            path = "/api/runtime/active-run-relay/ingest"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.active_run_relay_ingest = fake_active_run_relay_ingest
+            mod.ControlHandler.do_POST(DummyActiveRunRelayIngestPostHandler())
+        finally:
+            mod.active_run_relay_ingest = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["schema"], "a9.active_run_relay_ingest.v1")
+        self.assertEqual(captured["payload"]["relay_id"], "relay-1")
 
     def test_api_runtime_plan_debate_next_route_calls_handler(self):
         mod = load_control_api()

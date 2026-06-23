@@ -536,6 +536,7 @@ PHONE_CONTROL_GROUPS = {
         "active_run.relay.stop",
         "active_run.relay.cleanup",
         "active_run.relay_worker.start",
+        "active_run.relay.ingest",
         "services.start",
         "services.restart",
         "worker.transport.check",
@@ -3554,6 +3555,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_active_run_relay_worker_start": "/api/runtime/active-run-relay-worker/start",
             "runtime_active_run_relay_stop": "/api/runtime/active-run-relay/stop",
             "runtime_active_run_relay_cleanup": "/api/runtime/active-run-relay/cleanup",
+            "runtime_active_run_relay_ingest": "/api/runtime/active-run-relay/ingest",
             "runtime_active_run_transport_config": "/api/runtime/active-run-transport-config",
             "runtime_active_run_transport_probe": "/api/runtime/active-run-transport-probe",
             "mempalace_status": "/api/memory/mempalace/status",
@@ -8570,6 +8572,186 @@ def active_run_relay_cleanup(payload: dict[str, Any], *, root: Path = ROOT) -> d
     }
 
 
+def relay_delivery_results(relay_id: str, task_id: str = "", run_id: str = "", *, root: Path = ROOT) -> list[dict[str, Any]]:
+    rows, _skipped = read_jsonl(active_run_delivery_results_path(root))
+    matches: list[dict[str, Any]] = []
+    for row in rows:
+        target = row.get("target") if isinstance(row.get("target"), dict) else {}
+        if relay_id and str(row.get("relay_id") or "") == relay_id:
+            matches.append(row)
+            continue
+        if task_id and str(target.get("task_id") or "") == task_id:
+            matches.append(row)
+            continue
+        if run_id and str(target.get("run_id") or "") == run_id:
+            matches.append(row)
+            continue
+    return matches
+
+
+def relay_ingest_status(
+    relay_state: dict[str, Any],
+    delivery_results: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> tuple[str, str]:
+    override = str(payload.get("status") or payload.get("completion_status") or "").strip()
+    allowed = {"pass", "needs-followup", "needs-repair", "monitor-blocked", "worker-failed", "failed", "timeout"}
+    if override:
+        if override not in allowed:
+            raise ValueError("completion_status must be one of: " + ", ".join(sorted(allowed)))
+        return override, "operator_completion_status_override"
+    relay_status = str(relay_state.get("status") or "").strip()
+    if relay_status in {"running", "starting"}:
+        return "running", "relay_not_terminal"
+    if relay_status in {"blocked", "failed"}:
+        return "worker-failed", f"relay_{relay_status}"
+    if any(str(item.get("status") or "") == "rejected" for item in delivery_results):
+        return "needs-repair", "delivery_rejected"
+    if relay_status == "stopped":
+        return "needs-repair", "relay_stopped_without_worker_envelope_or_checks"
+    return "needs-repair", f"relay_status_{relay_status or 'unknown'}"
+
+
+def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    require_phone_admin(payload)
+    gate = command_gate("active_run.relay.ingest", root=root)
+    command_name = "active_run.relay.ingest"
+    if not gate.get("allowed"):
+        return {"schema": "a9.active_run_relay_ingest.v1", "status": "blocked", "command": command_name, "gate": gate}
+
+    relay_id = str(payload.get("relay_id") or "").strip()
+    binding_path_value = str(payload.get("binding_path") or "").strip()
+    if binding_path_value:
+        binding_path = Path(binding_path_value)
+        binding_path = binding_path if binding_path.is_absolute() else root / binding_path
+    elif relay_id:
+        binding_path = active_run_relay_binding_path(relay_id, root=root)
+    else:
+        return {
+            "schema": "a9.active_run_relay_ingest.v1",
+            "status": "invalid_request",
+            "command": command_name,
+            "gate": gate,
+            "reason": "relay_id_or_binding_path_required",
+        }
+    binding = read_json(binding_path) if binding_path.exists() else {}
+    relay_id = relay_id or str(binding.get("relay_id") or binding_path.stem)
+    state_path = Path(str(binding.get("state_path") or active_run_relay_state_path(relay_id, root=root)))
+    if not state_path.is_absolute():
+        state_path = root / state_path
+    relay_state = read_json(state_path) if state_path.exists() else {}
+    if not relay_state:
+        return {
+            "schema": "a9.active_run_relay_ingest.v1",
+            "status": "missing_relay_state",
+            "command": command_name,
+            "gate": gate,
+            "relay_id": relay_id,
+            "binding_path": str(binding_path),
+            "state_path": str(state_path),
+        }
+
+    task_path_text = str(binding.get("task_path") or payload.get("task_path") or "")
+    task_path = Path(task_path_text) if task_path_text else Path()
+    if task_path_text:
+        task_path = task_path if task_path.is_absolute() else root / task_path
+    task_id = str(binding.get("task_id") or payload.get("task_id") or relay_state.get("task_id") or task_path.stem).strip()
+    run_id = str(binding.get("run_id") or relay_state.get("run_id") or relay_id).strip()
+    delivery_results = relay_delivery_results(relay_id, task_id=task_id, run_id=run_id, root=root)
+    try:
+        status, status_reason = relay_ingest_status(relay_state, delivery_results, payload)
+    except ValueError as exc:
+        return {
+            "schema": "a9.active_run_relay_ingest.v1",
+            "status": "invalid_request",
+            "command": command_name,
+            "gate": gate,
+            "reason": compact_text(str(exc), 500),
+        }
+    if status == "running" and not bool(payload.get("allow_running")):
+        return {
+            "schema": "a9.active_run_relay_ingest.v1",
+            "status": "not_ready",
+            "command": command_name,
+            "gate": gate,
+            "relay_id": relay_id,
+            "reason": status_reason,
+            "relay_state": relay_state,
+        }
+
+    run_ref = re.sub(r"[^a-zA-Z0-9_.:-]+", "-", run_id).strip("-")[:160] or relay_id
+    run_dir = root / ".a9" / "runs" / run_ref
+    run_dir.mkdir(parents=True, exist_ok=True)
+    task_text = ""
+    if task_path_text and task_path.exists():
+        task_text = task_path.read_text(encoding="utf-8")
+    summary = {
+        "schema": "a9.relay_worker_run_summary.v1",
+        "run_id": run_ref,
+        "run_dir": str(run_dir),
+        "task_id": task_id,
+        "task_path": str(task_path) if task_path_text else "",
+        "phase": "active_run_relay_worker",
+        "status": status,
+        "status_reason": status_reason,
+        "started_at": relay_state.get("started_at") or binding.get("created_at") or "",
+        "finished_at": utc_now(),
+        "relay": relay_state,
+        "binding": binding,
+        "delivery_results": delivery_results,
+        "delivery_result_count": len(delivery_results),
+        "worker": {
+            "worker_transport_backend": "codex_active_run_relay",
+            "worker_model": "codex_app_server_active_run",
+            "raw_task_path": str(task_path) if task_path_text else "",
+        },
+        "worker_envelope": {
+            "status": "missing",
+            "required": True,
+            "reason": "active_run_relay_ingest_does_not_yet_parse_codex_final_output",
+        },
+        "checks": [],
+        "evidence_refs": {
+            "summary_path": str(run_dir / "summary.json"),
+            "relay_state_path": str(state_path),
+            "binding_path": str(binding_path),
+            "delivery_results_path": str(active_run_delivery_results_path(root)),
+        },
+    }
+    (run_dir / "raw_task.md").write_text(task_text, encoding="utf-8")
+    (run_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    done_path = ""
+    moved_task_path = ""
+    if bool(payload.get("finalize_task", True)) and task_id:
+        done_dir = root / ".a9" / "tasks" / "done"
+        done_dir.mkdir(parents=True, exist_ok=True)
+        done_json = done_dir / f"{task_id}.json"
+        done_json.write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        done_path = str(done_json)
+        if task_path_text and task_path.exists():
+            target_task_path = done_dir / task_path.name
+            os.replace(task_path, target_task_path)
+            moved_task_path = str(target_task_path)
+    return {
+        "schema": "a9.active_run_relay_ingest.v1",
+        "status": "ingested",
+        "command": command_name,
+        "gate": gate,
+        "relay_id": relay_id,
+        "run_id": run_ref,
+        "summary_status": status,
+        "summary_path": str(run_dir / "summary.json"),
+        "done_path": done_path,
+        "moved_task_path": moved_task_path,
+        "delivery_result_count": len(delivery_results),
+        "reason": status_reason,
+    }
+
+
 def write_active_run_delivery_queue(rows: list[dict[str, Any]], *, root: Path = ROOT) -> None:
     path = active_run_delivery_queue_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -11474,6 +11656,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, active_run_relay_stop(payload))
             elif self.path == "/api/runtime/active-run-relay/cleanup":
                 self.write_json(200, active_run_relay_cleanup(payload))
+            elif self.path == "/api/runtime/active-run-relay/ingest":
+                self.write_json(200, active_run_relay_ingest(payload))
             elif self.path == "/api/runtime/active-run-delivery-cleanup":
                 self.write_json(200, active_run_delivery_cleanup(payload))
             elif self.path == "/api/runtime/active-run-delivery-consume":
