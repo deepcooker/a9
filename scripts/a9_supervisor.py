@@ -299,6 +299,12 @@ WORKER_BROKEN_PIPE_PATTERNS = [
     re.compile(r"\bBroken pipe\b", re.I),
     re.compile(r"\bEPIPE\b", re.I),
 ]
+WORKER_MODEL_LIMIT_PATTERNS = [
+    re.compile(r"\b(hit|reached)\b.*\busage limit\b", re.I),
+    re.compile(r"\busage limit\b.*\btry again\b", re.I),
+    re.compile(r"\brate limit\b", re.I),
+    re.compile(r"\btry again at\b", re.I),
+]
 WORKER_TRANSPORT_OBSERVATION_PATTERNS = [
     re.compile(r"\bTransport channel closed\b", re.I),
     re.compile(r"\bhttp/request failed\b", re.I),
@@ -8153,6 +8159,15 @@ def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
         return {"status": "", "category": "", "reason": "", "matched_pattern": ""}
 
     text = worker_failure_text(worker)
+    for pattern in WORKER_MODEL_LIMIT_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return {
+                "status": "retryable-worker-budget",
+                "category": "budget",
+                "reason": match.group(0),
+                "matched_pattern": pattern.pattern,
+            }
     patterns = [
         ("retryable-worker-network", WORKER_NETWORK_ERROR_PATTERNS),
         ("retryable-worker-startup", WORKER_STARTUP_ERROR_PATTERNS),

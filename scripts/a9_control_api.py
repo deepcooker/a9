@@ -525,6 +525,7 @@ PHONE_CONTROL_GROUPS = {
         "plan.backlog.run_once",
         "plan.backlog.run_loop",
         "plan.backlog.stale_dispose",
+        "plan.failure.repair_packet",
         "approval.approve",
         "approval.reject",
         "eval.override",
@@ -3579,6 +3580,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_plan_backlog_run_once": "/api/runtime/plan-backlog-run-once",
             "runtime_plan_backlog_run_loop": "/api/runtime/plan-backlog-run-loop",
             "runtime_plan_backlog_stale_dispose": "/api/runtime/plan-backlog-stale-dispose",
+            "runtime_plan_failure_repair_packet": "/api/runtime/plan-failure-repair-packet",
             "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
             "gateway_transport_contract": "/api/gateway/transport-contract",
@@ -11633,6 +11635,150 @@ def runtime_plan_backlog_stale_dispose(payload: dict[str, Any], *, root: Path = 
     )
 
 
+def plan_failure_repair_recommendation(
+    summary: dict[str, Any],
+    reclassified_failure: dict[str, Any],
+) -> dict[str, Any]:
+    status = str(reclassified_failure.get("status") or summary.get("status") or "")
+    category = str(reclassified_failure.get("category") or "")
+    reason = str(reclassified_failure.get("reason") or "")
+    if status == "retryable-worker-budget" or category == "budget":
+        return {
+            "action": "wait_or_switch_model",
+            "field": "worker_transport_policy",
+            "proposal": (
+                "Latest worker failure is a model usage/quota limit. Wait for the quota reset "
+                "or explicitly switch to an approved worker model/fallback before retrying; do not blind-rerun."
+            ),
+            "reason": reason or "worker model usage limit detected",
+        }
+    if status in {"retryable-worker-network", "retryable-worker-transport"} or category in {"network", "transport"}:
+        return {
+            "action": "retry_after_transport_check",
+            "field": "worker_transport_policy",
+            "proposal": "Run transport health checks, confirm cooldown/reconnect state, then retry the bounded task slice.",
+            "reason": reason or "retryable worker transport/network failure detected",
+        }
+    if status == "retryable-timeout" or category == "timeout":
+        return {
+            "action": "retry_with_timeout_or_smaller_slice",
+            "field": "execution_slice",
+            "proposal": "Retry with a smaller bounded slice or adjusted timeout after preserving the current failure evidence.",
+            "reason": reason or "worker timeout detected",
+        }
+    return {
+        "action": "manual_review",
+        "field": "latest_worker_failure",
+        "proposal": "Review latest summary, event summaries, final output and declared checks before generating new execution backlog.",
+        "reason": reason or status or "latest worker failure needs review",
+    }
+
+
+def audit_plan_failure_repair_packet(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    enqueue_service_control_audit(
+        {
+            "at": utc_now(),
+            "action": "plan_failure_repair_packet",
+            "command": result.get("command", "plan.failure.repair_packet"),
+            "status": result.get("status"),
+            "plan_id": result.get("plan_id"),
+            "commit": result.get("commit"),
+            "latest_summary_status": result.get("latest_summary_status"),
+            "reclassified_status": (
+                result.get("reclassified_failure", {}).get("status")
+                if isinstance(result.get("reclassified_failure"), dict)
+                else ""
+            ),
+            "recommendation_action": (
+                result.get("recommendation", {}).get("action")
+                if isinstance(result.get("recommendation"), dict)
+                else ""
+            ),
+            "reason": result.get("reason") or result.get("blocked_reason"),
+        },
+        root=root,
+    )
+    result["audit_async"] = True
+    return result
+
+
+def runtime_plan_failure_repair_packet(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    command = "plan.failure.repair_packet"
+    base = {"schema": "a9.plan_failure_repair_packet.v1", "command": command}
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        return audit_plan_failure_repair_packet({**base, "status": "blocked", "blocked_reason": str(exc)}, root=root)
+    gate = command_gate(command, root=root)
+    if not gate.get("allowed"):
+        return audit_plan_failure_repair_packet({**base, "status": "blocked", "gate": gate}, root=root)
+    mod = supervisor()
+    plan_id = str(payload.get("plan_id") or "").strip() or str(mod.active_plan_id() or "").strip()
+    if not plan_id:
+        return audit_plan_failure_repair_packet({**base, "status": "missing_plan", "gate": gate, "reason": "active_plan_missing"}, root=root)
+    plan = mod.load_plan(plan_id)
+    if not isinstance(plan, dict) or not plan:
+        return audit_plan_failure_repair_packet({**base, "status": "missing_plan", "gate": gate, "plan_id": plan_id, "reason": "plan_not_found"}, root=root)
+    latest = mod.plan_latest_run_snapshot(plan)
+    summary_path_text = str(latest.get("summary_path") or "").strip()
+    if not summary_path_text:
+        return audit_plan_failure_repair_packet(
+            {**base, "status": "missing_summary", "gate": gate, "plan_id": plan_id, "reason": "latest_summary_missing"},
+            root=root,
+        )
+    summary_path = Path(summary_path_text)
+    if not summary_path.is_absolute():
+        summary_path = root / summary_path
+    summary = read_json(summary_path) if summary_path.exists() else {}
+    if not isinstance(summary, dict) or not summary:
+        return audit_plan_failure_repair_packet(
+            {
+                **base,
+                "status": "missing_summary",
+                "gate": gate,
+                "plan_id": plan_id,
+                "summary_path": str(summary_path),
+                "reason": "summary_file_unreadable",
+            },
+            root=root,
+        )
+    worker = summary.get("worker", {}) if isinstance(summary.get("worker"), dict) else {}
+    existing_failure = summary.get("worker_failure", {}) if isinstance(summary.get("worker_failure"), dict) else {}
+    reclassified = mod.classify_worker_failure(worker) if worker else existing_failure
+    recommendation = plan_failure_repair_recommendation(summary, reclassified)
+    commit = bool(payload.get("commit"))
+    result = {
+        **base,
+        "status": "dry-run",
+        "gate": gate,
+        "plan_id": plan_id,
+        "commit": False,
+        "summary_path": str(summary_path),
+        "latest_summary_status": str(summary.get("status") or latest.get("status") or ""),
+        "existing_worker_failure": existing_failure,
+        "reclassified_failure": reclassified,
+        "recommendation": recommendation,
+    }
+    if not commit:
+        return audit_plan_failure_repair_packet(result, root=root)
+    change_request = mod.append_plan_change_request(
+        plan_id=plan_id,
+        field=str(recommendation.get("field") or "latest_worker_failure"),
+        proposal=str(recommendation.get("proposal") or ""),
+        reason=str(payload.get("reason") or recommendation.get("reason") or "latest worker failure repair packet"),
+        actor=str(payload.get("actor") or "monitor"),
+        evidence_refs=[str(summary_path)],
+    )
+    result.update(
+        {
+            "status": "committed" if change_request.get("status") == "appended" else "change_request_failed",
+            "commit": True,
+            "change_request": change_request,
+        }
+    )
+    return audit_plan_failure_repair_packet(result, root=root)
+
+
 def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     try:
         require_phone_admin(payload)
@@ -12426,6 +12572,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_plan_backlog_run_loop(payload))
             elif self.path == "/api/runtime/plan-backlog-stale-dispose":
                 self.write_json(200, runtime_plan_backlog_stale_dispose(payload))
+            elif self.path == "/api/runtime/plan-failure-repair-packet":
+                self.write_json(200, runtime_plan_failure_repair_packet(payload))
             elif self.path == "/api/monitor/intervention":
                 self.write_json(200, monitor_intervention(payload))
             elif self.path == "/api/worker/transport-policy":

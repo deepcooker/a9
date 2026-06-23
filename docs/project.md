@@ -283,6 +283,14 @@ P7 NZX technical MVP
 - The old `docs/a9-24h-two-lane-review-closure.md` acceptance path is stale.
   Current two-lane closure must stay inside this five-doc packet and active
   plan evidence.
+- Latest-failure governance now has a control-plane repair packet:
+  `/api/runtime/plan-failure-repair-packet` reads the active plan's latest
+  summary, re-runs the current supervisor failure taxonomy against worker
+  evidence, and can append a monitor-owned change request. Spark/Codex model
+  usage-limit text is classified as `retryable-worker-budget`, with the default
+  recommendation to wait for quota reset or explicitly switch approved worker
+  model/fallback before retrying. This prevents blind reruns when the issue is
+  budget/quota, not task logic.
 - `crates/a9-gateway`, `crates/a9-worker` and `crates/a9-client` are Rust-side
   control/runtime pieces.
 - `.a9/` contains runtime evidence and archives, not source truth.

@@ -761,6 +761,14 @@ Implementation guardrail:
   the monitor a dry-run/commit path to dispose historical queued-looking items
   that already have run evidence, marking them from the authoritative last run
   summary instead of re-running blindly.
+- Twenty-second concrete code cut completed: the latest failed 24h run exposed
+  a Spark/Codex model usage-limit message that had been flattened into generic
+  `retryable-worker-failed`. Supervisor now classifies usage-limit/rate-limit
+  worker evidence as `retryable-worker-budget`, and control API exposes
+  `/api/runtime/plan-failure-repair-packet`. The endpoint dry-runs or appends a
+  monitor change request with a concrete repair recommendation, so quota/budget
+  failures become explicit wait-or-switch-model decisions instead of blind
+  reruns.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

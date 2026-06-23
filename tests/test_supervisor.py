@@ -12378,6 +12378,33 @@ Continue A9 24-hour automation.
 
         self.assertEqual(failure["status"], "retryable-worker-startup")
 
+    def test_worker_model_usage_limit_is_budget_retryable(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            events = Path(tmp) / "events.jsonl"
+            events.write_text(
+                json.dumps(
+                    {
+                        "event_type": "error",
+                        "message": "You've hit your usage limit for GPT-5.3-Codex-Spark. Switch to another model now, or try again at 12:47 PM.",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "timed_out": False,
+                "idle_timed_out": False,
+                "budget_stopped": False,
+                "return_code": 1,
+                "event_summaries_path": str(events),
+            }
+
+            failure = mod.classify_worker_failure(worker)
+
+        self.assertEqual(failure["status"], "retryable-worker-budget")
+        self.assertEqual(failure["category"], "budget")
+
     def test_worker_broken_pipe_is_classified_separately(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
