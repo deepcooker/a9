@@ -524,6 +524,7 @@ PHONE_CONTROL_GROUPS = {
         "plan.backlog.next",
         "plan.backlog.run_once",
         "plan.backlog.run_loop",
+        "plan.backlog.stale_dispose",
         "approval.approve",
         "approval.reject",
         "eval.override",
@@ -3577,6 +3578,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
             "runtime_plan_backlog_run_once": "/api/runtime/plan-backlog-run-once",
             "runtime_plan_backlog_run_loop": "/api/runtime/plan-backlog-run-loop",
+            "runtime_plan_backlog_stale_dispose": "/api/runtime/plan-backlog-stale-dispose",
             "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
             "gateway_transport_contract": "/api/gateway/transport-contract",
@@ -11475,6 +11477,162 @@ def runtime_plan_backlog_run_loop(payload: dict[str, Any], *, root: Path = ROOT)
     )
 
 
+def stale_queued_backlog_items(plan: dict[str, Any], *, root: Path = ROOT) -> list[dict[str, Any]]:
+    backlog = plan.get("execution_backlog") if isinstance(plan.get("execution_backlog"), dict) else {}
+    items = backlog.get("items") if isinstance(backlog.get("items"), list) else []
+    stale: list[dict[str, Any]] = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("status") or "").strip().lower() != "queued":
+            continue
+        if not str(item.get("last_run_id") or item.get("last_summary_path") or "").strip():
+            continue
+        summary_path_text = str(item.get("last_summary_path") or "").strip()
+        summary_status = ""
+        summary_phase = ""
+        if summary_path_text:
+            summary_path = Path(summary_path_text)
+            summary_path = summary_path if summary_path.is_absolute() else root / summary_path
+            if summary_path.exists():
+                try:
+                    summary = read_json(summary_path)
+                    summary_status = str(summary.get("status") or "")
+                    summary_phase = str(summary.get("phase") or "")
+                except (OSError, json.JSONDecodeError):
+                    summary_status = ""
+        stale.append(
+            {
+                "index": index,
+                "id": str(item.get("id") or ""),
+                "title": str(item.get("title") or ""),
+                "phase": str(item.get("phase") or ""),
+                "queued_task_id": str(item.get("queued_task_id") or ""),
+                "last_run_id": str(item.get("last_run_id") or ""),
+                "last_summary_path": summary_path_text,
+                "summary_status": summary_status,
+                "summary_phase": summary_phase,
+            }
+        )
+    return stale
+
+
+def audit_plan_backlog_stale_dispose(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    enqueue_service_control_audit(
+        {
+            "at": utc_now(),
+            "action": "plan_backlog_stale_dispose",
+            "command": result.get("command", "plan.backlog.stale_dispose"),
+            "status": result.get("status"),
+            "plan_id": result.get("plan_id"),
+            "commit": result.get("commit"),
+            "stale_count": result.get("stale_count"),
+            "disposed_count": result.get("disposed_count"),
+            "reason": result.get("reason") or result.get("blocked_reason"),
+        },
+        root=root,
+    )
+    result["audit_async"] = True
+    return result
+
+
+def runtime_plan_backlog_stale_dispose(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    command = "plan.backlog.stale_dispose"
+    base = {"schema": "a9.plan_backlog_stale_dispose.v1", "command": command}
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        return audit_plan_backlog_stale_dispose({**base, "status": "blocked", "blocked_reason": str(exc)}, root=root)
+    gate = command_gate(command, root=root)
+    if not gate.get("allowed"):
+        return audit_plan_backlog_stale_dispose({**base, "status": "blocked", "gate": gate}, root=root)
+    mod = supervisor()
+    plan_id = str(payload.get("plan_id") or "").strip() or str(mod.active_plan_id() or "").strip()
+    if not plan_id:
+        return audit_plan_backlog_stale_dispose({**base, "status": "missing_plan", "gate": gate, "reason": "active_plan_missing"}, root=root)
+    plan = mod.load_plan(plan_id)
+    if not isinstance(plan, dict) or not plan:
+        return audit_plan_backlog_stale_dispose({**base, "status": "missing_plan", "gate": gate, "plan_id": plan_id, "reason": "plan_not_found"}, root=root)
+    stale = stale_queued_backlog_items(plan, root=root)
+    requested_ids = payload.get("item_ids", [])
+    if isinstance(requested_ids, str):
+        requested_ids = [requested_ids]
+    requested = {str(item).strip() for item in requested_ids if str(item).strip()} if isinstance(requested_ids, list) else set()
+    selected = [
+        item
+        for item in stale
+        if not requested
+        or item["id"] in requested
+        or item["queued_task_id"] in requested
+        or item["last_run_id"] in requested
+    ]
+    commit = bool(payload.get("commit"))
+    if not commit:
+        return audit_plan_backlog_stale_dispose(
+            {
+                **base,
+                "status": "dry-run",
+                "gate": gate,
+                "plan_id": plan_id,
+                "commit": False,
+                "stale_count": len(stale),
+                "disposed_count": 0,
+                "selected_count": len(selected),
+                "stale_items": stale,
+                "selected_items": selected,
+            },
+            root=root,
+        )
+    backlog = plan.get("execution_backlog") if isinstance(plan.get("execution_backlog"), dict) else {}
+    items = backlog.get("items") if isinstance(backlog.get("items"), list) else []
+    disposed: list[dict[str, Any]] = []
+    now = utc_now()
+    selected_indexes = {int(item["index"]) for item in selected}
+    for index in selected_indexes:
+        if index < 0 or index >= len(items) or not isinstance(items[index], dict):
+            continue
+        item = items[index]
+        previous_status = str(item.get("status") or "")
+        summary_status = next((entry.get("summary_status") for entry in selected if int(entry["index"]) == index), "")
+        new_status = str(summary_status or "stale-queued").strip()
+        item["status"] = new_status
+        item["stale_disposition"] = "marked_from_last_run_summary"
+        item["stale_disposed_at"] = now
+        item["previous_status"] = previous_status
+        item["stale_queued_task_id"] = str(item.get("queued_task_id") or "")
+        item.pop("queued_at", None)
+        disposed.append(
+            {
+                "id": str(item.get("id") or ""),
+                "queued_task_id": str(item.get("queued_task_id") or ""),
+                "last_run_id": str(item.get("last_run_id") or ""),
+                "previous_status": previous_status,
+                "new_status": new_status,
+            }
+        )
+    activate = plan_id == str(mod.active_plan_id() or "").strip()
+    plan_dir = mod.write_plan_files(plan, activate=activate)
+    if disposed:
+        mod.append_plan_progress(
+            plan_dir,
+            f"stale_queued_dispose: disposed={len(disposed)} actor={str(payload.get('actor') or 'monitor')} reason={str(payload.get('reason') or 'stale queued item had last run evidence')}",
+        )
+    return audit_plan_backlog_stale_dispose(
+        {
+            **base,
+            "status": "disposed",
+            "gate": gate,
+            "plan_id": plan_id,
+            "commit": True,
+            "stale_count": len(stale),
+            "disposed_count": len(disposed),
+            "disposed_items": disposed,
+            "plan_dir": str(plan_dir),
+        },
+        root=root,
+    )
+
+
 def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     try:
         require_phone_admin(payload)
@@ -12266,6 +12424,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_plan_backlog_run_once(payload))
             elif self.path == "/api/runtime/plan-backlog-run-loop":
                 self.write_json(200, runtime_plan_backlog_run_loop(payload))
+            elif self.path == "/api/runtime/plan-backlog-stale-dispose":
+                self.write_json(200, runtime_plan_backlog_stale_dispose(payload))
             elif self.path == "/api/monitor/intervention":
                 self.write_json(200, monitor_intervention(payload))
             elif self.path == "/api/worker/transport-policy":

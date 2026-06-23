@@ -757,7 +757,10 @@ Implementation guardrail:
   execution without hiding failure classification from the monitor. A dry-run
   preview path now returns the exact executable backlog candidates without
   dispatching workers, and plan-status separates stale queued bookkeeping from
-  runnable queued backlog.
+  runnable queued backlog. `/api/runtime/plan-backlog-stale-dispose` now gives
+  the monitor a dry-run/commit path to dispose historical queued-looking items
+  that already have run evidence, marking them from the authoritative last run
+  summary instead of re-running blindly.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

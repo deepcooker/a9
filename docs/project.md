@@ -205,7 +205,11 @@ P7 NZX technical MVP
   It also supports `dry_run=true`, which previews the executable backlog slice
   without dispatching relay workers. `plan-status` now separates historical
   queued-looking items with run evidence as `execution_backlog_stale_queued_count`
-  so monitor UI does not confuse stale bookkeeping with runnable backlog.
+  so monitor UI does not confuse stale bookkeeping with runnable backlog. The
+  first stale-backlog disposition endpoint is
+  `/api/runtime/plan-backlog-stale-dispose`: dry-run lists stale queued items
+  with their last summary status, and commit marks them from that last summary
+  instead of re-running or pretending they are still queued.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or
