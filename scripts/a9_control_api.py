@@ -522,6 +522,7 @@ PHONE_CONTROL_GROUPS = {
         "plan.decision.approve",
         "plan.debate.next",
         "plan.backlog.next",
+        "plan.backlog.run_once",
         "approval.approve",
         "approval.reject",
         "eval.override",
@@ -3573,6 +3574,7 @@ def controller_discovery() -> dict[str, Any]:
             "runtime_plan_decision_approve": "/api/runtime/plan-decision-approve",
             "runtime_plan_debate_next": "/api/runtime/plan-debate-next",
             "runtime_plan_backlog_next": "/api/runtime/plan-backlog-next",
+            "runtime_plan_backlog_run_once": "/api/runtime/plan-backlog-run-once",
             "services_start": "/api/services/start",
             "eval_override": "/api/eval/override",
             "gateway_transport_contract": "/api/gateway/transport-contract",
@@ -11172,6 +11174,161 @@ def runtime_plan_backlog_next(payload: dict[str, Any], *, root: Path = ROOT) -> 
     )
 
 
+def audit_plan_backlog_run_once(result: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    enqueue_service_control_audit(
+        {
+            "at": utc_now(),
+            "action": "plan_backlog_run_once",
+            "command": result.get("command", "plan.backlog.run_once"),
+            "status": result.get("status"),
+            "plan_id": result.get("plan_id"),
+            "relay_id": result.get("relay_id"),
+            "summary_status": (result.get("ingest") or {}).get("summary_status"),
+            "reason": result.get("reason") or result.get("blocked_reason"),
+            "dispatch_status": (result.get("dispatch") or {}).get("status"),
+            "wait_status": (result.get("wait") or {}).get("status"),
+        },
+        root=root,
+    )
+    result["audit_async"] = True
+    return result
+
+
+def relay_id_from_backlog_dispatch(dispatch_result: dict[str, Any]) -> str:
+    dispatch = dispatch_result.get("dispatch") if isinstance(dispatch_result.get("dispatch"), dict) else {}
+    start = dispatch.get("relay_worker_start") if isinstance(dispatch.get("relay_worker_start"), dict) else {}
+    binding = start.get("binding") if isinstance(start.get("binding"), dict) else {}
+    relay_id = str(binding.get("relay_id") or start.get("relay_id") or "").strip()
+    if relay_id:
+        return relay_id
+    state_path = str((start.get("relay_start") or {}).get("state_path") or "").strip() if isinstance(start.get("relay_start"), dict) else ""
+    if state_path:
+        path = Path(state_path)
+        if path.exists():
+            state = read_json(path)
+            return str(state.get("relay_id") or "").strip()
+    return ""
+
+
+def relay_state_path_from_backlog_dispatch(dispatch_result: dict[str, Any], relay_id: str, *, root: Path = ROOT) -> Path:
+    dispatch = dispatch_result.get("dispatch") if isinstance(dispatch_result.get("dispatch"), dict) else {}
+    start = dispatch.get("relay_worker_start") if isinstance(dispatch.get("relay_worker_start"), dict) else {}
+    relay_start = start.get("relay_start") if isinstance(start.get("relay_start"), dict) else {}
+    state_path_text = str(relay_start.get("state_path") or "").strip()
+    if state_path_text:
+        path = Path(state_path_text)
+        return path if path.is_absolute() else root / path
+    return root / ".a9" / "runtime" / "active_run_relays" / f"{relay_id}.json"
+
+
+def wait_for_relay_terminal(relay_id: str, state_path: Path, *, max_wait_seconds: float, poll_seconds: float) -> dict[str, Any]:
+    deadline = time.monotonic() + max(0.0, max_wait_seconds)
+    attempts = 0
+    terminal = {"stopped", "blocked", "failed"}
+    last_state: dict[str, Any] = {}
+    while True:
+        attempts += 1
+        if state_path.exists():
+            last_state = read_json(state_path)
+            status = str(last_state.get("status") or "").strip()
+            if status in terminal:
+                return {
+                    "status": "terminal",
+                    "relay_id": relay_id,
+                    "relay_status": status,
+                    "attempts": attempts,
+                    "state_path": str(state_path),
+                    "event_count": last_state.get("event_count"),
+                    "last_event": last_state.get("last_event"),
+                }
+        else:
+            status = "missing_state"
+        if time.monotonic() >= deadline:
+            return {
+                "status": "timeout",
+                "relay_id": relay_id,
+                "relay_status": str(last_state.get("status") or status),
+                "attempts": attempts,
+                "state_path": str(state_path),
+                "event_count": last_state.get("event_count"),
+                "last_event": last_state.get("last_event"),
+            }
+        time.sleep(max(0.1, poll_seconds))
+
+
+def runtime_plan_backlog_run_once(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
+    command = "plan.backlog.run_once"
+    base = {"schema": "a9.plan_backlog_run_once.v1", "command": command}
+    try:
+        require_phone_admin(payload)
+    except PermissionError as exc:
+        return audit_plan_backlog_run_once({**base, "status": "blocked", "blocked_reason": str(exc)}, root=root)
+    gate = command_gate(command, root=root)
+    if not gate.get("allowed"):
+        return audit_plan_backlog_run_once({**base, "status": "blocked", "gate": gate}, root=root)
+    try:
+        max_wait_seconds = float(payload.get("max_wait_seconds", payload.get("wait_relay_seconds", 900)))
+        poll_seconds = float(payload.get("poll_seconds", 2))
+        count = int(payload.get("count", 1) or 1)
+    except (TypeError, ValueError):
+        return audit_plan_backlog_run_once({**base, "status": "invalid_request", "gate": gate, "reason": "numeric_fields_must_be_number"}, root=root)
+    dispatch_payload = {
+        **payload,
+        "count": count,
+        "dispatch": "relay_worker",
+        "auto_next": bool(payload.get("auto_next", False)),
+        "operator_scopes": payload.get("operator_scopes") or [],
+    }
+    dispatch_result = runtime_plan_backlog_next(dispatch_payload, root=root)
+    relay_id = relay_id_from_backlog_dispatch(dispatch_result)
+    result_base = {
+        **base,
+        "gate": gate,
+        "plan_id": dispatch_result.get("plan_id"),
+        "relay_id": relay_id,
+        "dispatch": dispatch_result,
+    }
+    if dispatch_result.get("status") != "dispatched" or not relay_id:
+        return audit_plan_backlog_run_once(
+            {
+                **result_base,
+                "status": str(dispatch_result.get("status") or "not_dispatched"),
+                "reason": str(dispatch_result.get("reason") or dispatch_result.get("blocked_reason") or "relay_dispatch_not_started"),
+            },
+            root=root,
+        )
+    state_path = relay_state_path_from_backlog_dispatch(dispatch_result, relay_id, root=root)
+    wait = wait_for_relay_terminal(relay_id, state_path, max_wait_seconds=max_wait_seconds, poll_seconds=poll_seconds)
+    if wait.get("status") != "terminal":
+        return audit_plan_backlog_run_once(
+            {
+                **result_base,
+                "status": "relay_not_terminal",
+                "reason": str(wait.get("status") or "wait_failed"),
+                "wait": wait,
+            },
+            root=root,
+        )
+    ingest_payload = {
+        **payload,
+        "relay_id": relay_id,
+        "operator_scopes": payload.get("operator_scopes") or [],
+    }
+    ingest = active_run_relay_ingest(ingest_payload, root=root)
+    return audit_plan_backlog_run_once(
+        {
+            **result_base,
+            "status": "completed" if ingest.get("status") == "ingested" else "ingest_failed",
+            "reason": str(ingest.get("reason") or ingest.get("status") or ""),
+            "wait": wait,
+            "ingest": ingest,
+            "summary_status": ingest.get("summary_status"),
+            "summary_path": ingest.get("summary_path"),
+        },
+        root=root,
+    )
+
+
 def service_start_action(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     try:
         require_phone_admin(payload)
@@ -11959,6 +12116,8 @@ class ControlHandler(BaseHTTPRequestHandler):
                 self.write_json(200, runtime_plan_debate_next(payload))
             elif self.path == "/api/runtime/plan-backlog-next":
                 self.write_json(200, runtime_plan_backlog_next(payload))
+            elif self.path == "/api/runtime/plan-backlog-run-once":
+                self.write_json(200, runtime_plan_backlog_run_once(payload))
             elif self.path == "/api/monitor/intervention":
                 self.write_json(200, monitor_intervention(payload))
             elif self.path == "/api/worker/transport-policy":

@@ -742,6 +742,13 @@ Implementation guardrail:
   prompt contract exists. This copies Codex-style thread/session ownership:
   completion belongs to the originating task context, not to whichever plan is
   visible at collection time.
+- Twentieth concrete code cut completed: control API now exposes
+  `/api/runtime/plan-backlog-run-once` as the first 24h relay automation atom.
+  It composes the existing primitives instead of replacing them:
+  `plan.backlog.next dispatch=relay_worker`, relay terminal wait, then
+  `active_run.relay.ingest`. The endpoint returns `relay_not_terminal` on wait
+  timeout and deliberately avoids ingesting a still-running relay, preserving
+  A9's evidence-first completion rule.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

@@ -193,7 +193,12 @@ P7 NZX technical MVP
   The broader supervisor plan update path now also prefers a task prompt's
   embedded `plan_id` over the current `.active_plan`, so long-running workers
   cannot write completion evidence into the wrong plan after a monitor switches
-  active plans.
+  active plans. Control API now has the first run-once automation atom at
+  `/api/runtime/plan-backlog-run-once`: it dispatches one decided backlog item
+  through the relay-worker path, waits for the relay to reach terminal state,
+  then calls ingest and plan update. If the relay is still running when the
+  wait budget expires, it returns `relay_not_terminal` and does not ingest or
+  fake completion.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

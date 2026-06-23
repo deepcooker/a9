@@ -12708,6 +12708,7 @@ Do risky work.
         self.assertEqual(discovery["endpoints"]["eval_override"], "/api/eval/override")
         self.assertEqual(discovery["endpoints"]["runtime_run_one_with_transport"], "/api/runtime/run-one-with-transport")
         self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_next"], "/api/runtime/plan-backlog-next")
+        self.assertEqual(discovery["endpoints"]["runtime_plan_backlog_run_once"], "/api/runtime/plan-backlog-run-once")
         self.assertEqual(discovery["endpoints"]["runtime_active_run_relay_start"], "/api/runtime/active-run-relay/start")
         self.assertEqual(
             discovery["endpoints"]["runtime_active_run_relay_worker_start"],
@@ -13443,6 +13444,36 @@ Do risky work.
         self.assertEqual(captured["response"]["command"], "plan.backlog.next")
         self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
 
+    def test_api_runtime_plan_backlog_run_once_route_calls_handler(self):
+        mod = load_control_api()
+        original_handler = mod.runtime_plan_backlog_run_once
+        captured = {}
+
+        def fake_runtime_plan_backlog_run_once(payload):
+            captured["payload"] = payload
+            return {"schema": "a9.plan_backlog_run_once.v1", "status": "completed", "command": "plan.backlog.run_once"}
+
+        body = json.dumps({"operator_scopes": ["operator.admin"]}).encode("utf-8")
+
+        class DummyPlanBacklogRunOncePostHandler:
+            path = "/api/runtime/plan-backlog-run-once"
+            headers = {"Content-Length": str(len(body))}
+            rfile = io.BytesIO(body)
+
+            def write_json(self, status, payload):
+                captured["status"] = status
+                captured["response"] = payload
+
+        try:
+            mod.runtime_plan_backlog_run_once = fake_runtime_plan_backlog_run_once
+            mod.ControlHandler.do_POST(DummyPlanBacklogRunOncePostHandler())
+        finally:
+            mod.runtime_plan_backlog_run_once = original_handler
+
+        self.assertEqual(captured["status"], 200)
+        self.assertEqual(captured["response"]["command"], "plan.backlog.run_once")
+        self.assertEqual(captured["payload"]["operator_scopes"], ["operator.admin"])
+
     def test_api_active_run_relay_ingest_post_route_calls_handler(self):
         mod = load_control_api()
         original_handler = mod.active_run_relay_ingest
@@ -13748,6 +13779,101 @@ Do risky work.
         self.assertEqual(result["dispatch"]["relay_worker_start"]["status"], "blocked")
         self.assertTrue(result["dispatch"]["requeued_task_path"].endswith("exec-001.md"))
         self.assertEqual(audit_calls[0][0]["status"], "enqueued")
+
+    def test_runtime_plan_backlog_run_once_waits_and_ingests_terminal_relay(self):
+        mod = load_control_api()
+        calls = {"ingest": []}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / ".a9" / "runtime" / "active_run_relays" / "relay-1.json"
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text(
+                json.dumps({"relay_id": "relay-1", "status": "stopped", "event_count": 4, "last_event": "turn/completed"}),
+                encoding="utf-8",
+            )
+
+            def fake_runtime_plan_backlog_next(payload, *, root):
+                return {
+                    "status": "dispatched",
+                    "plan_id": "plan-1",
+                    "dispatch": {
+                        "relay_worker_start": {
+                            "status": "running",
+                            "binding": {"relay_id": "relay-1"},
+                            "relay_start": {"state_path": str(state_path)},
+                        }
+                    },
+                }
+
+            def fake_active_run_relay_ingest(payload, *, root):
+                calls["ingest"].append(payload)
+                return {"status": "ingested", "summary_status": "pass", "summary_path": str(root / "summary.json"), "reason": "ok"}
+
+            original_next = mod.runtime_plan_backlog_next
+            original_ingest = mod.active_run_relay_ingest
+            try:
+                mod.runtime_plan_backlog_next = fake_runtime_plan_backlog_next
+                mod.active_run_relay_ingest = fake_active_run_relay_ingest
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_run_once(
+                    {"operator_scopes": ["operator.admin"], "max_wait_seconds": 0, "poll_seconds": 0.1},
+                    root=root,
+                )
+            finally:
+                mod.runtime_plan_backlog_next = original_next
+                mod.active_run_relay_ingest = original_ingest
+
+        self.assertEqual(result["schema"], "a9.plan_backlog_run_once.v1")
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["summary_status"], "pass")
+        self.assertEqual(result["wait"]["status"], "terminal")
+        self.assertEqual(calls["ingest"][0]["relay_id"], "relay-1")
+
+    def test_runtime_plan_backlog_run_once_timeout_does_not_ingest_running_relay(self):
+        mod = load_control_api()
+        calls = {"ingest": []}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / ".a9" / "runtime" / "active_run_relays" / "relay-running.json"
+            state_path.parent.mkdir(parents=True)
+            state_path.write_text(json.dumps({"relay_id": "relay-running", "status": "running"}), encoding="utf-8")
+
+            def fake_runtime_plan_backlog_next(payload, *, root):
+                return {
+                    "status": "dispatched",
+                    "plan_id": "plan-1",
+                    "dispatch": {
+                        "relay_worker_start": {
+                            "status": "running",
+                            "binding": {"relay_id": "relay-running"},
+                            "relay_start": {"state_path": str(state_path)},
+                        }
+                    },
+                }
+
+            def fake_active_run_relay_ingest(payload, *, root):
+                calls["ingest"].append(payload)
+                return {"status": "ingested"}
+
+            original_next = mod.runtime_plan_backlog_next
+            original_ingest = mod.active_run_relay_ingest
+            try:
+                mod.runtime_plan_backlog_next = fake_runtime_plan_backlog_next
+                mod.active_run_relay_ingest = fake_active_run_relay_ingest
+                mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+                result = mod.runtime_plan_backlog_run_once(
+                    {"operator_scopes": ["operator.admin"], "max_wait_seconds": 0, "poll_seconds": 0.1},
+                    root=root,
+                )
+            finally:
+                mod.runtime_plan_backlog_next = original_next
+                mod.active_run_relay_ingest = original_ingest
+
+        self.assertEqual(result["status"], "relay_not_terminal")
+        self.assertEqual(result["wait"]["status"], "timeout")
+        self.assertEqual(calls["ingest"], [])
 
     def test_runtime_plan_backlog_next_no_items_returns_review_closure_diagnostics(self):
         mod = load_control_api()
