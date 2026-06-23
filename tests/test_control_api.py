@@ -1017,6 +1017,26 @@ demo
         self.assertEqual(session.calls[0]["params"]["expectedTurnId"], "turn-1")
         self.assertEqual(session.calls[0]["params"]["input"][0]["text"], "same connection steer")
 
+    def test_codex_ws_session_preserves_notifications_while_waiting_for_response(self):
+        mod = load_control_api()
+
+        class FakeWebSocket:
+            def __init__(self):
+                self.messages = [
+                    json.dumps({"method": "turn/event", "params": {"event": {"text": "notice"}}}),
+                    json.dumps({"id": "a9-test", "result": {"ok": True}}),
+                ]
+
+            def recv(self):
+                return self.messages.pop(0)
+
+        session = mod.CodexWebsocketJsonRpcSession("ws://example.invalid")
+        session._ws = FakeWebSocket()
+        response = session._recv_response("a9-test", error_prefix="jsonrpc error")
+
+        self.assertEqual(response["result"]["ok"], True)
+        self.assertEqual(session.notifications[0]["method"], "turn/event")
+
     def test_active_run_relays_status_reads_relay_state_files(self):
         mod = load_control_api()
         with tempfile.TemporaryDirectory() as tmp:
@@ -1375,6 +1395,82 @@ demo
         self.assertEqual(summary["worker_envelope"]["status"], "missing")
         self.assertTrue(done_task_exists)
         self.assertFalse(running_task_exists)
+
+    def test_active_run_relay_ingest_extracts_worker_envelope_from_relay_events(self):
+        mod = load_control_api()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            relays = root / ".a9" / "runtime" / "active_run_relays"
+            bindings = root / ".a9" / "runtime" / "active_run_relay_bindings"
+            running = root / ".a9" / "tasks" / "running"
+            relays.mkdir(parents=True)
+            bindings.mkdir(parents=True)
+            running.mkdir(parents=True)
+            task = running / "task-relay.md"
+            task.write_text("phase: implement\nDo relay work.\n", encoding="utf-8")
+            events = relays / "relay-done.events.jsonl"
+            envelope = {
+                "protocolVersion": 1,
+                "ok": True,
+                "status": "ok",
+                "output": {
+                    "changed_files": [],
+                    "worker_commands_run": [],
+                    "supervisor_declared_checks": [],
+                },
+            }
+            events.write_text(
+                json.dumps(
+                    {
+                        "schema": "a9.active_run_relay_event.v1",
+                        "payload": {
+                            "method": "turn/event",
+                            "params": {"event": {"type": "item.completed", "text": json.dumps(envelope)}},
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = relays / "relay-done.json"
+            state.write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-done",
+                        "run_id": "run-relay",
+                        "task_id": "task-relay",
+                        "status": "stopped",
+                        "events_path": str(events),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (bindings / "relay-done.json").write_text(
+                json.dumps(
+                    {
+                        "relay_id": "relay-done",
+                        "run_id": "run-relay",
+                        "task_id": "task-relay",
+                        "task_path": str(task),
+                        "state_path": str(state),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            mod.phone_control_arm({"group": "runtime", "duration": "30s", "operator_scopes": ["operator.admin"]}, root=root)
+            result = mod.active_run_relay_ingest(
+                {"operator_scopes": ["operator.admin"], "relay_id": "relay-done"},
+                root=root,
+            )
+            summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(result["status"], "ingested")
+        self.assertEqual(result["summary_status"], "needs-followup")
+        self.assertEqual(result["reason"], "worker_envelope_pass_checks_not_run")
+        self.assertEqual(summary["worker_envelope"]["status"], "pass")
+        self.assertEqual(summary["final_source"], str(events))
+        self.assertEqual(summary["relay_event_count"], 1)
 
     def test_active_run_transport_probe_reports_disabled_and_dry_run(self):
         mod = load_control_api()

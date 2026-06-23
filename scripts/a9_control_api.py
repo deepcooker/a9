@@ -7715,6 +7715,7 @@ class CodexWebsocketJsonRpcSession:
         self._websocket_module: Any | None = None
         self._ws: Any | None = None
         self._request_counter = 0
+        self.notifications: list[dict[str, Any]] = []
 
     def __enter__(self) -> "CodexWebsocketJsonRpcSession":
         self.open()
@@ -7778,6 +7779,36 @@ class CodexWebsocketJsonRpcSession:
         )
         return self._recv_response(request_id, error_prefix="jsonrpc error")
 
+    def drain_notifications(self, *, max_messages: int = 100, idle_timeout_seconds: float = 0.01) -> list[dict[str, Any]]:
+        if self._ws is None:
+            return []
+        drained: list[dict[str, Any]] = []
+        previous_timeout = None
+        try:
+            previous_timeout = self._ws.gettimeout()
+        except Exception:
+            previous_timeout = None
+        try:
+            try:
+                self._ws.settimeout(idle_timeout_seconds)
+            except Exception:
+                pass
+            for _index in range(max(0, max_messages)):
+                try:
+                    payload = json.loads(self._ws.recv())
+                except Exception:
+                    break
+                if isinstance(payload, dict):
+                    self.notifications.append(payload)
+                    drained.append(payload)
+        finally:
+            if previous_timeout is not None:
+                try:
+                    self._ws.settimeout(previous_timeout)
+                except Exception:
+                    pass
+        return drained
+
     def _next_request_id(self, prefix: str) -> str:
         self._request_counter += 1
         return f"{prefix}-{utc_now().replace(':', '')}-{self._request_counter}"
@@ -7795,6 +7826,7 @@ class CodexWebsocketJsonRpcSession:
             if not isinstance(payload, dict):
                 continue
             if payload.get("id") != request_id:
+                self.notifications.append(payload)
                 continue
             if payload.get("error"):
                 raise RuntimeError(
@@ -8612,6 +8644,122 @@ def relay_ingest_status(
     return "needs-repair", f"relay_status_{relay_status or 'unknown'}"
 
 
+def collect_text_values(value: Any, *, limit: int = 200) -> list[str]:
+    texts: list[str] = []
+    interesting = {"text", "content", "message", "final", "output", "summary"}
+
+    def walk(item: Any, key: str = "") -> None:
+        if len(texts) >= limit:
+            return
+        if isinstance(item, str):
+            if key in interesting or ("{" in item and "ok" in item):
+                stripped = item.strip()
+                if stripped:
+                    texts.append(stripped)
+            return
+        if isinstance(item, list):
+            for child in item:
+                walk(child, key)
+            return
+        if isinstance(item, dict):
+            for child_key, child in item.items():
+                walk(child, str(child_key))
+
+    walk(value)
+    return texts
+
+
+def relay_final_text_from_events(relay_state: dict[str, Any], *, root: Path = ROOT) -> tuple[str, str, int]:
+    events_path_text = str(relay_state.get("events_path") or "").strip()
+    if not events_path_text:
+        return "", "", 0
+    events_path = Path(events_path_text)
+    if not events_path.is_absolute():
+        events_path = root / events_path
+    rows, _skipped = read_jsonl(events_path, limit=500)
+    texts: list[str] = []
+    for row in rows:
+        payload = row.get("payload") if isinstance(row.get("payload"), dict) else row
+        texts.extend(collect_text_values(payload))
+    return "\n\n".join(texts[-20:]), str(events_path), len(rows)
+
+
+def worker_envelope_from_final_text(final_text: str, *, run_dir: Path) -> dict[str, Any]:
+    output_path = run_dir / "worker_envelope.json"
+    result: dict[str, Any] = {
+        "status": "missing",
+        "kind": "worker_envelope",
+        "required": True,
+        "output_path": str(output_path),
+        "findings": [],
+    }
+    if not final_text.strip():
+        result["findings"].append({"level": "error", "message": "final message missing"})
+        output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return result
+    mod = supervisor()
+    candidates = [item for item in mod.find_json_objects(final_text) if mod.is_worker_envelope_candidate(item)]
+    if not candidates:
+        result["status"] = "fail"
+        result["findings"].append({"level": "error", "message": "no worker envelope JSON object found"})
+        output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        return result
+    envelope = candidates[-1]
+    result["envelope"] = envelope
+    ok = envelope.get("ok")
+    protocol_version, normalized_protocol_from = mod.normalize_worker_envelope_protocol_version(envelope.get("protocolVersion"), ok)
+    if normalized_protocol_from is not None:
+        envelope["protocolVersion"] = protocol_version
+        result["findings"].append(
+            {"level": "info", "message": f"normalized protocolVersion alias from {normalized_protocol_from!r} to {protocol_version!r}"}
+        )
+    status, normalized_from = mod.normalize_worker_envelope_status(envelope.get("status"), ok)
+    if normalized_from is not None:
+        envelope["status"] = status
+        result["findings"].append({"level": "info", "message": f"normalized status alias from {normalized_from!r} to {status!r}"})
+    if protocol_version not in {1, "1"}:
+        result["findings"].append({"level": "error", "message": "protocolVersion must be 1"})
+    if not isinstance(ok, bool):
+        result["findings"].append({"level": "error", "message": "ok must be boolean"})
+    if ok is False:
+        error = envelope.get("error")
+        if not isinstance(error, dict) or not error.get("message"):
+            result["findings"].append({"level": "error", "message": "error envelope must include error.message"})
+        result["status"] = "fail"
+    elif ok is True:
+        if status not in {"ok", "needs_approval", "cancelled"}:
+            result["findings"].append({"level": "error", "message": "status must be ok, needs_approval, or cancelled"})
+        output = envelope.get("output")
+        if status == "ok" and "output" in envelope and not isinstance(output, (dict, list)):
+            result["findings"].append({"level": "error", "message": "output must be an object or list when present"})
+        has_error = any(item.get("level") == "error" for item in result["findings"])
+        if has_error:
+            result["status"] = "fail"
+        elif status == "needs_approval":
+            result["status"] = "needs-approval"
+        elif status == "cancelled":
+            result["status"] = "fail"
+        else:
+            result["status"] = "pass"
+    else:
+        result["status"] = "fail"
+    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return result
+
+
+def relay_summary_status_from_envelope(base_status: str, base_reason: str, worker_envelope: dict[str, Any], payload: dict[str, Any]) -> tuple[str, str]:
+    envelope_status = str(worker_envelope.get("status") or "")
+    if envelope_status == "pass":
+        if bool(payload.get("trust_envelope_pass")):
+            return "pass", "worker_envelope_pass_operator_trusted"
+        return "needs-followup", "worker_envelope_pass_checks_not_run"
+    if envelope_status == "needs-approval":
+        return "needs-approval", "worker_envelope_needs_approval"
+    if envelope_status == "fail":
+        return "needs-repair", "worker_envelope_fail"
+    return base_status, base_reason
+
+
 def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> dict[str, Any]:
     require_phone_admin(payload)
     gate = command_gate("active_run.relay.ingest", root=root)
@@ -8685,6 +8833,24 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
     task_text = ""
     if task_path_text and task_path.exists():
         task_text = task_path.read_text(encoding="utf-8")
+    final_text = str(payload.get("final_text") or "").strip()
+    final_source = "payload.final_text" if final_text else ""
+    final_path_text = str(payload.get("final_path") or "").strip()
+    if not final_text and final_path_text:
+        final_path = Path(final_path_text)
+        final_path = final_path if final_path.is_absolute() else root / final_path
+        if final_path.exists():
+            final_text = final_path.read_text(encoding="utf-8", errors="backslashreplace")
+            final_source = str(final_path)
+    events_final_text, events_path, relay_event_count = relay_final_text_from_events(relay_state, root=root)
+    if not final_text and events_final_text:
+        final_text = events_final_text
+        final_source = events_path
+    final_path = run_dir / "final.md"
+    final_path.write_text(final_text, encoding="utf-8")
+    worker_envelope = worker_envelope_from_final_text(final_text, run_dir=run_dir)
+    if not (str(payload.get("status") or payload.get("completion_status") or "").strip()):
+        status, status_reason = relay_summary_status_from_envelope(status, status_reason, worker_envelope, payload)
     summary = {
         "schema": "a9.relay_worker_run_summary.v1",
         "run_id": run_ref,
@@ -8700,16 +8866,16 @@ def active_run_relay_ingest(payload: dict[str, Any], *, root: Path = ROOT) -> di
         "binding": binding,
         "delivery_results": delivery_results,
         "delivery_result_count": len(delivery_results),
+        "relay_event_count": relay_event_count,
+        "final_path": str(final_path),
+        "final_source": final_source,
         "worker": {
             "worker_transport_backend": "codex_active_run_relay",
             "worker_model": "codex_app_server_active_run",
             "raw_task_path": str(task_path) if task_path_text else "",
+            "final_path": str(final_path),
         },
-        "worker_envelope": {
-            "status": "missing",
-            "required": True,
-            "reason": "active_run_relay_ingest_does_not_yet_parse_codex_final_output",
-        },
+        "worker_envelope": worker_envelope,
         "checks": [],
         "evidence_refs": {
             "summary_path": str(run_dir / "summary.json"),

@@ -170,7 +170,12 @@ P7 NZX technical MVP
   delivery results, writes `.a9/runs/<run>/summary.json`, and can move the
   running task into `.a9/tasks/done`. Because Codex active-run final output is
   not yet parsed into a strict worker envelope, stopped relays default to
-  `needs-repair` instead of fake `pass`.
+  `needs-repair` instead of fake `pass`. The relay now also preserves
+  non-response Codex WebSocket notifications into
+  `.a9/runtime/active_run_relays/*.events.jsonl`; ingest extracts final text
+  from those relay events and parses strict worker envelopes. A valid envelope
+  without outer A9 checks upgrades the run only to `needs-followup` by default,
+  not `pass`, unless the operator explicitly trusts the envelope.
 - Mobile/control gateway remains required. The current Codex thread-view work
   only means Barter-rs is not placed as a direct lower layer under Codex.
   Barter-rs stays as the event/service gateway reference for trading or

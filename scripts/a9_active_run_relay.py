@@ -52,6 +52,10 @@ def state_path(relay_id: str) -> Path:
     return RELAYS_DIR / f"{relay_id}.json"
 
 
+def events_path(relay_id: str) -> Path:
+    return RELAYS_DIR / f"{relay_id}.events.jsonl"
+
+
 def update_state(path: Path, **updates: Any) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -61,6 +65,19 @@ def update_state(path: Path, **updates: Any) -> dict[str, Any]:
     payload["updated_at"] = utc_now()
     write_json(path, payload)
     return payload
+
+
+def append_jsonl(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def drain_relay_events(session: Any, event_path: Path, *, max_messages: int = 100) -> list[dict[str, Any]]:
+    drained = session.drain_notifications(max_messages=max_messages) if hasattr(session, "drain_notifications") else []
+    for payload in drained:
+        append_jsonl(event_path, {"schema": "a9.active_run_relay_event.v1", "recorded_at": utc_now(), "payload": payload})
+    return drained
 
 
 def matching_delivery(row: dict[str, Any], *, run_id: str, thread_id: str, task_id: str) -> bool:
@@ -164,6 +181,7 @@ def start_relay(args: argparse.Namespace) -> int:
 
     relay_id = args.relay_id or stable_relay_id()
     path = state_path(relay_id)
+    event_path = events_path(relay_id)
     base_state = {
         "schema": "a9.active_run_relay_state.v1",
         "relay_id": relay_id,
@@ -179,6 +197,7 @@ def start_relay(args: argparse.Namespace) -> int:
         "pid": os.getpid(),
         "started_at": utc_now(),
         "state_path": str(path),
+        "events_path": str(event_path),
         "last_event": "starting",
     }
     write_json(path, base_state)
@@ -200,6 +219,7 @@ def start_relay(args: argparse.Namespace) -> int:
                 update_state(path, status="blocked", last_event="prompt_required_for_new_turn")
                 raise SystemExit("prompt is required unless --attach-thread-id and --attach-turn-id are provided")
             thread = session.request("thread/start", {"cwd": args.cwd, "ephemeral": bool(args.ephemeral)})
+            initial_events = drain_relay_events(session, event_path)
             thread_id = str(thread.get("result", {}).get("thread", {}).get("id") or "")
             turn = session.request(
                 "turn/start",
@@ -208,6 +228,7 @@ def start_relay(args: argparse.Namespace) -> int:
                     "input": [{"type": "text", "text": prompt, "text_elements": []}],
                 },
             )
+            initial_events.extend(drain_relay_events(session, event_path))
             turn_id = str(turn.get("result", {}).get("turn", {}).get("id") or "")
         state = update_state(
             path,
@@ -215,19 +236,31 @@ def start_relay(args: argparse.Namespace) -> int:
             thread_id=thread_id,
             current_turn_id=turn_id,
             last_event="active_turn_owned",
-            evidence={"relay_state_path": str(path)},
+            event_count=len(initial_events) if "initial_events" in locals() else 0,
+            evidence={"relay_state_path": str(path), "events_path": str(event_path)},
         )
 
         deadline = time.monotonic() + max(1, int(args.max_seconds))
         poll_seconds = max(0.1, float(args.poll_seconds))
         processed_count = 0
+        event_count = int(state.get("event_count") or 0)
         while time.monotonic() < deadline:
+            drained = drain_relay_events(session, event_path)
+            if drained:
+                event_count += len(drained)
+                state = update_state(path, event_count=event_count, last_event="relay_event_captured")
             processed = consume_matching_deliveries(mod, session=session, config=config, state=state, root=ROOT)
             if processed:
                 processed_count += len(processed)
                 state = update_state(path, delivered_count=processed_count, last_event="delivery_processed")
+            drained = drain_relay_events(session, event_path)
+            if drained:
+                event_count += len(drained)
+                state = update_state(path, event_count=event_count, last_event="relay_event_captured")
             time.sleep(poll_seconds)
-        update_state(path, status="stopped", delivered_count=processed_count, last_event="max_seconds_elapsed")
+        drained = drain_relay_events(session, event_path, max_messages=200)
+        event_count += len(drained)
+        update_state(path, status="stopped", delivered_count=processed_count, event_count=event_count, last_event="max_seconds_elapsed")
     print(json.dumps({"status": "stopped", "relay_id": relay_id, "state_path": str(path)}, ensure_ascii=False, indent=2))
     return 0
 

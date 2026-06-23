@@ -705,6 +705,13 @@ Implementation guardrail:
   the running task into `.a9/tasks/done`. This is intentionally conservative:
   until Codex active-run final output is parsed into a strict worker envelope
   and checks, a stopped relay becomes `needs-repair`, not `pass`.
+- Fifteenth concrete code cut completed: the Codex WebSocket relay now preserves
+  non-response app-server notifications instead of dropping them while waiting
+  for JSON-RPC responses. `scripts/a9_active_run_relay.py` writes those events
+  to `.a9/runtime/active_run_relays/*.events.jsonl`, and relay ingest can
+  extract final text from the events and parse strict worker envelopes. A valid
+  worker envelope without outer A9 checks becomes `needs-followup` by default,
+  not `pass`, preserving evidence-first completion semantics.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.
