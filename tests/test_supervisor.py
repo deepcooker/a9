@@ -12440,6 +12440,23 @@ Continue A9 24-hour automation.
 
         self.assertEqual(failure["status"], "retryable-worker-startup")
 
+    def test_worker_outside_bounded_read_scope_is_process_governance(self):
+        mod = load_supervisor()
+        worker = {
+            "timed_out": False,
+            "idle_timed_out": False,
+            "budget_stopped": True,
+            "budget_stop_kind": "outside_bounded_read_scope",
+            "budget_reason": "worker command is outside the task's explicit bounded read scope",
+            "return_code": -9,
+        }
+
+        failure = mod.classify_worker_failure(worker)
+
+        self.assertEqual(failure["status"], "monitor-blocked")
+        self.assertEqual(failure["category"], "process_governance")
+        self.assertEqual(failure["matched_pattern"], "outside_bounded_read_scope")
+
     def test_worker_model_usage_limit_is_budget_retryable(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

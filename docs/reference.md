@@ -783,6 +783,11 @@ Implementation guardrail:
   stale queue metadata, appends plan progress, and applies the latest open
   change request. This is the first deterministic bridge from failure repair
   packet -> monitor decision -> resumable backlog.
+- Twenty-fifth concrete code cut completed: `outside_bounded_read_scope` and
+  `workspace_escape` budget stops are now classified as
+  `monitor-blocked/process_governance`, not model/token budget. This came from
+  real backlog-040 observation after quota resume: the worker was stopped by
+  task read-scope governance, so retrying through quota gates would be wrong.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

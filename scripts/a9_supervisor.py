@@ -8135,12 +8135,12 @@ def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
             "matched_pattern": "transport_exhausted",
         }
     if worker.get("budget_stopped"):
-        if worker.get("budget_stop_kind") == "command_bounds":
+        if worker.get("budget_stop_kind") in {"command_bounds", "outside_bounded_read_scope", "workspace_escape"}:
             return {
                 "status": "monitor-blocked",
                 "category": "process_governance",
                 "reason": worker.get("budget_reason", "worker command blocked by task bounds"),
-                "matched_pattern": "command_bounds",
+                "matched_pattern": str(worker.get("budget_stop_kind") or "command_bounds"),
             }
         return {
             "status": "retryable-worker-budget",

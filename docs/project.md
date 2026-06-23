@@ -305,6 +305,12 @@ P7 NZX technical MVP
   clears stale queue metadata, appends progress, and marks the latest open
   change request applied. This keeps quota reset/fallback decisions outside
   worker self-judgment.
+- After quota resume, backlog-041 passed and produced the closure wording
+  cleanup. Backlog-040 no longer fails because of model quota; its latest
+  failure is an `outside_bounded_read_scope` command stop. That is
+  process-governance/monitor-blocked, not budget, so quota resume must not pick
+  it up again. The next repair must narrow the task prompt/read command contract
+  or update process governance, not switch models.
 - `crates/a9-gateway`, `crates/a9-worker` and `crates/a9-client` are Rust-side
   control/runtime pieces.
 - `.a9/` contains runtime evidence and archives, not source truth.
