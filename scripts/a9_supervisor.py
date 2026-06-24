@@ -307,6 +307,7 @@ WORKER_MODEL_LIMIT_PATTERNS = [
 ]
 WORKER_TRANSPORT_OBSERVATION_PATTERNS = [
     re.compile(r"\bTransport channel closed\b", re.I),
+    re.compile(r"\bfailed to connect to websocket\b", re.I),
     re.compile(r"\bhttp/request failed\b", re.I),
     re.compile(r"\berror sending request\b", re.I),
     re.compile(r"\bCreateProcess\b.*\bRejected\b", re.I),
@@ -315,6 +316,7 @@ WORKER_TRANSPORT_OBSERVATION_PATTERNS = [
 ]
 WORKER_TRANSPORT_EXHAUSTED_PATTERNS = [
     re.compile(r"\bReconnecting\.\.\.\s*5/5\b.*\btimeout waiting for child process to exit\b", re.I | re.S),
+    re.compile(r"\bfailed to connect to websocket\b.*\btls handshake eof\b", re.I | re.S),
 ]
 
 
@@ -8148,6 +8150,15 @@ def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
             "reason": worker.get("budget_reason", "worker budget stopped"),
             "matched_pattern": "budget_stopped",
         }
+    text = worker_failure_text(worker)
+    transport_exhausted_reason = worker_transport_exhausted_text_reason(text)
+    if transport_exhausted_reason and (worker.get("timed_out") or worker.get("idle_timed_out") or worker.get("return_code", 0) != 0):
+        return {
+            "status": "retryable-worker-transport",
+            "category": "transport",
+            "reason": transport_exhausted_reason,
+            "matched_pattern": "transport_exhausted_text",
+        }
     if worker.get("timed_out") or worker.get("idle_timed_out"):
         return {
             "status": "retryable-timeout",
@@ -8158,7 +8169,6 @@ def classify_worker_failure(worker: dict[str, Any]) -> dict[str, Any]:
     if worker.get("return_code", 0) == 0:
         return {"status": "", "category": "", "reason": "", "matched_pattern": ""}
 
-    text = worker_failure_text(worker)
     for pattern in WORKER_MODEL_LIMIT_PATTERNS:
         match = pattern.search(text)
         if match:

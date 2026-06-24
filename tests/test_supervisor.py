@@ -12465,6 +12465,29 @@ Continue A9 24-hour automation.
 
         self.assertEqual(failure["status"], "")
 
+    def test_idle_timeout_with_websocket_tls_eof_is_transport(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr = Path(tmp) / "stderr.log"
+            stderr.write_text(
+                "ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: "
+                "IO error: tls handshake eof\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "timed_out": False,
+                "idle_timed_out": True,
+                "budget_stopped": False,
+                "return_code": -9,
+                "stderr_path": str(stderr),
+            }
+
+            failure = mod.classify_worker_failure(worker)
+
+        self.assertEqual(failure["status"], "retryable-worker-transport")
+        self.assertEqual(failure["category"], "transport")
+        self.assertEqual(failure["matched_pattern"], "transport_exhausted_text")
+
     def test_transport_observation_records_transient_tool_errors_without_failure(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
