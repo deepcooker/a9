@@ -53,6 +53,15 @@ Raw external Codex/operator session:
   commits runs alongside requirements debate and backlog execution lanes. Each
   lane has its own closure packet; stale one-off closure markdowns are not
   recreated.
+  - Role-scoped distribution for session-lane outputs:
+    - `product/mainline`: scenario pressure, tradeoff framing, and business impact notes.
+    - `architecture`: boundary/state-flow deltas, dependency risks, and stale-branch links.
+    - `test`: acceptance criteria, negative cases, and reproducible exception checks.
+    - `execution`: decided backlog item drafts plus read_commands/checks/allowed paths.
+    - `monitor`: stale markers, drift observations, and repair/rollback flags.
+  - Stale packets route only to `monitor` and `product/mainline` as review
+    inputs; other roles treat stale packets as non-current until a fresh packet
+    is emitted.
 - Current provider entry is `scripts/a9_mempalace_provider.py`; it supports
   `status`, source-preserving `search`, `wakeup` and official-style `recall`
   packets with native search hits, hydrated drawers and fallback evidence refs.

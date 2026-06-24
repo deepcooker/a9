@@ -13678,10 +13678,18 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
     backlog = execution_backlog_state(plan)
     generated_task_ids = {str(item) for item in backlog.get("generated_task_ids", []) if str(item).strip()}
     raw_items = [item for item in backlog.get("items", []) if isinstance(item, dict)]
+    schedulable_statuses = {
+        "",
+        "ready",
+        "pending",
+        "retryable-worker-transport",
+        "retryable-worker-network",
+        "retryable-timeout",
+    }
     ready_items = [
         normalize_execution_backlog_item(item, index=index, plan=plan)
         for index, item in enumerate(raw_items, start=1)
-        if str(item.get("status") or "ready").strip() in ("", "ready", "pending")
+        if str(item.get("status") or "ready").strip() in schedulable_statuses
     ]
     if ready_items:
         return ready_items[:count] if count > 0 else ready_items

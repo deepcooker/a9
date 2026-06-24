@@ -4710,6 +4710,54 @@ Do the work.
         self.assertNotIn("docs/a9-24h-two-lane-review-closure.md", items[0]["prompt"])
         self.assertNotIn("allowed_execution: stale/path.md", items[0]["prompt"])
 
+    def test_plan_execution_backlog_items_reschedule_retryable_transport_item(self):
+        mod = load_supervisor()
+        plan = mod.create_plan_payload(
+            plan_id="plan-retryable-item",
+            goal_id="goal-retryable-item",
+            contract={
+                "problem": "Retry a backlog item that failed before token use.",
+                "why_now": "Transport failures can happen before worker execution.",
+                "must": "Reschedule transport retry items.",
+                "system_requirement": "retryable transport item remains schedulable.",
+                "data_shape": "execution_backlog item status.",
+                "normal_flow": "retryable-worker-transport -> enqueue again.",
+                "exception_flow": "needs-repair remains blocked.",
+                "acceptance": "transport item returns, repair item does not.",
+                "out_of_scope": "retry all failure types.",
+                "allowed_execution": "docs/project.md",
+                "reference_entry": "A9 transport retry policy.",
+            },
+        )
+        backlog = mod.execution_backlog_state(plan)
+        backlog["items"].extend(
+            [
+                {
+                    "id": "backlog-001-transport",
+                    "title": "Retry transport item",
+                    "phase": "record",
+                    "prompt": "Retry after transport failure.",
+                    "allowed_paths": ["docs/project.md"],
+                    "checks": ["rg -n -m 1 \"A9\" docs/project.md"],
+                    "status": "retryable-worker-transport",
+                },
+                {
+                    "id": "backlog-002-repair",
+                    "title": "Needs repair item",
+                    "phase": "record",
+                    "prompt": "Do not retry automatically.",
+                    "allowed_paths": ["docs/project.md"],
+                    "checks": ["rg -n -m 1 \"A9\" docs/project.md"],
+                    "status": "needs-repair",
+                },
+            ]
+        )
+
+        items = mod.plan_execution_backlog_items(plan, count=2)
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["backlog_id"], "backlog-001-transport")
+
     def test_plan_execution_backlog_items_fall_back_after_completed_custom_backlog(self):
         mod = load_supervisor()
         plan = mod.create_plan_payload(
