@@ -13411,6 +13411,23 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str],
     return str(backlog_update.get("status") or "") == "appended" and int(backlog_update.get("added_count") or 0) > 0
 
 
+def backlog_generation_task_already_active(plan_ref: str) -> bool:
+    needle = f"backlog-generation-{plan_ref}-"
+    for directory in (QUEUE_DIR, RUNNING_DIR):
+        if not directory.exists():
+            continue
+        for path in directory.glob("*.md"):
+            if needle in path.stem:
+                return True
+        for path in directory.glob("*.json"):
+            if needle in path.stem:
+                return True
+            data = read_json_file(path)
+            if needle in str(data.get("task_id") or ""):
+                return True
+    return False
+
+
 def plan_backlog_generation_continuation_item(
     plan: dict[str, Any],
     *,
@@ -13419,6 +13436,8 @@ def plan_backlog_generation_continuation_item(
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
+    if backlog_generation_task_already_active(plan_ref):
+        return None
     bounded_read_paths = plan_bounded_read_paths(str(plan.get("plan_id") or ""), allowed_paths)
     bounded_read_lines = [f"bounded read: {path}" for path in bounded_read_paths[:10]]
     plan_id = str(plan.get("plan_id") or "")

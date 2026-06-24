@@ -5674,6 +5674,61 @@ Do the work.
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-monitor-superseded-002")
 
+    def test_plan_backlog_generation_suppressed_when_same_plan_generation_active(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
+            old_runs = mod.RUNS_DIR
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.RUNNING_DIR = tmp_path / "running"
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.QUEUE_DIR.mkdir(parents=True)
+            mod.RUNNING_DIR.mkdir(parents=True)
+            mod.RUNS_DIR.mkdir(parents=True)
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-active-generation",
+                    goal_id="goal-active-generation",
+                    contract={
+                        "problem": "Only one backlog generation may run per active plan.",
+                        "why_now": "Duplicate supervisor loops can otherwise enqueue overlapping generation tasks.",
+                        "must": "Suppress new generation while same plan generation is queued or running.",
+                        "system_requirement": "active generation presence is a deterministic enqueue guard.",
+                        "data_shape": "queue/running task filenames and task_id metadata.",
+                        "normal_flow": "active generation -> no new generation item.",
+                        "exception_flow": "no active generation -> normal continuation rules.",
+                        "acceptance": "plan_execution_backlog_items returns no new generation item.",
+                        "out_of_scope": "parallel backlog-generation for the same plan.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 duplicate generation monitor incident.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-active-generation",
+                        "exec-002-mechanism_extract-plan-active-generation",
+                        "exec-003-vendor_import-plan-active-generation",
+                        "exec-004-implement-plan-active-generation",
+                        "exec-005-test-plan-active-generation",
+                        "exec-006-record-plan-active-generation",
+                    ]
+                )
+                (mod.RUNNING_DIR / "idle-backlog-exec-backlog-generation-plan-active-generation-001.md").write_text(
+                    "active generation",
+                    encoding="utf-8",
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(items, [])
+
     def test_plan_backlog_add_persists_item_and_next_marks_queued(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
