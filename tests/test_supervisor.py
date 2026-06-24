@@ -16483,6 +16483,55 @@ role_signoff: product, business, architecture, test approved.
                 else:
                     os.environ["A9_SUPERVISOR_FALLBACK_MODEL"] = old_fallback
 
+    def test_schedule_next_task_does_not_fallback_without_explicit_model(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_queue = mod.QUEUE_DIR
+            old_policy_path = mod.WORKER_MODEL_POLICY_PATH
+            old_fallback = os.environ.get("A9_SUPERVISOR_FALLBACK_MODEL")
+            mod.QUEUE_DIR = Path(tmp) / "queue"
+            mod.WORKER_MODEL_POLICY_PATH = Path(tmp) / "runtime" / "worker_model_policy.json"
+            mod.QUEUE_DIR.mkdir(parents=True)
+            os.environ.pop("A9_SUPERVISOR_FALLBACK_MODEL", None)
+            try:
+                task = mod.Task(
+                    path=Path("task.md"),
+                    task_id="transport-no-default-fallback",
+                    prompt="strict_worker_envelope: true\nRecord smoke.",
+                    phase="record",
+                    checks=["git diff --check"],
+                    allowed_paths=["docs/mistakes.md"],
+                )
+                summary = {
+                    "task_id": task.task_id,
+                    "status": "retryable-worker-transport",
+                    "run_dir": "/tmp/run-transport",
+                    "worker": {
+                        "worker_model": mod.DEFAULT_WORKER_MODEL,
+                        "worker_model_source": "DEFAULT_WORKER_MODEL",
+                    },
+                    "worker_failure": {
+                        "status": "retryable-worker-transport",
+                        "reason": "worker transport exhausted",
+                    },
+                    "auto_loop_guard": {"status": "watching"},
+                }
+
+                next_path = mod.schedule_next_task(task, summary)
+                policy = mod.worker_model_policy_state()
+
+                self.assertIsNone(next_path)
+                self.assertEqual(policy["phase_models"], {})
+                self.assertEqual(summary["worker_model_fallback"]["status"], "skipped")
+                self.assertEqual(summary["worker_model_fallback"]["reason"], "missing_or_same_fallback_model")
+            finally:
+                mod.QUEUE_DIR = old_queue
+                mod.WORKER_MODEL_POLICY_PATH = old_policy_path
+                if old_fallback is None:
+                    os.environ.pop("A9_SUPERVISOR_FALLBACK_MODEL", None)
+                else:
+                    os.environ["A9_SUPERVISOR_FALLBACK_MODEL"] = old_fallback
+
     def test_session_refresh_prompt_parser_accepts_key_value_spec(self):
         mod = load_supervisor()
 

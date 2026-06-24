@@ -10919,7 +10919,7 @@ def worker_failure_short_circuits_checks(worker_failure: dict[str, Any]) -> bool
 
 
 def worker_model_fallback_model() -> str:
-    return os.getenv("A9_SUPERVISOR_FALLBACK_MODEL", DEFAULT_WORKER_MODEL_FALLBACK).strip()
+    return os.getenv("A9_SUPERVISOR_FALLBACK_MODEL", "").strip()
 
 
 def maybe_apply_worker_model_fallback(task: Task, summary: dict[str, Any]) -> dict[str, Any]:
