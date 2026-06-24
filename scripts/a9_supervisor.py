@@ -13255,6 +13255,17 @@ def backlog_generation_retryable_timeout_summary(summary: dict[str, Any]) -> boo
     return status == "retryable-timeout" or worker_failure.get("category") == "timeout"
 
 
+def backlog_generation_monitor_superseded_summary(summary: dict[str, Any]) -> bool:
+    status = str(summary.get("status") or "").strip()
+    worker_failure = summary.get("worker_failure") if isinstance(summary.get("worker_failure"), dict) else {}
+    disposition = summary.get("monitor_disposition") if isinstance(summary.get("monitor_disposition"), dict) else {}
+    return (
+        status in {"monitor-superseded", "superseded"}
+        or worker_failure.get("category") == "monitor_superseded"
+        or disposition.get("status") == "superseded"
+    )
+
+
 def backlog_generation_needs_retry_after_code_update(summary: dict[str, Any]) -> bool:
     status = str(summary.get("status") or "")
     if status not in {"needs-followup", "needs-repair", "monitor-blocked", "retryable-worker-budget", "retryable-timeout"}:
@@ -13371,6 +13382,8 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str],
         return backlog_generation_consecutive_retryable_interrupted_count(plan_ref) < 3
     if backlog_generation_retryable_timeout_summary(summary):
         return backlog_generation_consecutive_retryable_timeout_count(plan_ref) < 3
+    if backlog_generation_monitor_superseded_summary(summary):
+        return True
     if backlog_generation_needs_retry_after_code_update(summary):
         return True
     if plan is not None and backlog_generation_has_monitor_closure_after_summary(plan, summary):

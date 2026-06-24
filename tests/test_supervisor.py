@@ -5576,6 +5576,77 @@ Do the work.
         self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-monitor-closure-002")
         self.assertIn("previous_backlog_generation_status: needs-followup", items[0]["prompt"])
 
+    def test_plan_backlog_generation_continues_after_monitor_superseded_duplicate(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.PLANS_DIR = tmp_path / "plans"
+            mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+            mod.RUNS_DIR.mkdir(parents=True)
+            mod.PLANS_DIR.mkdir(parents=True)
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-monitor-superseded",
+                    goal_id="goal-monitor-superseded",
+                    contract={
+                        "problem": "Duplicate backlog generation should not burn retry budget.",
+                        "why_now": "Manual/auto overlap can spawn duplicate workers during monitor closure.",
+                        "must": "Continue after monitor marks duplicates superseded.",
+                        "system_requirement": "monitor-superseded backlog generation is not a worker failure.",
+                        "data_shape": "summary status plus monitor_disposition.",
+                        "normal_flow": "duplicate generation -> monitor-superseded -> one clean next generation.",
+                        "exception_flow": "real interrupted retries still stop after repeated failures.",
+                        "acceptance": "next generation item is emitted after monitor-superseded summary.",
+                        "out_of_scope": "blindly retrying duplicate workers in parallel.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 monitor duplicate-disposition evidence.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-monitor-superseded",
+                        "exec-002-mechanism_extract-plan-monitor-superseded",
+                        "exec-003-vendor_import-plan-monitor-superseded",
+                        "exec-004-implement-plan-monitor-superseded",
+                        "exec-005-test-plan-monitor-superseded",
+                        "exec-006-record-plan-monitor-superseded",
+                        "exec-backlog-generation-plan-monitor-superseded-001",
+                    ]
+                )
+                mod.write_plan_files(plan)
+                run_dir = mod.RUNS_DIR / "monitor-superseded-run"
+                run_dir.mkdir()
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "exec-backlog-generation-plan-monitor-superseded-001",
+                        "status": "monitor-superseded",
+                        "worker_failure": {
+                            "category": "monitor_superseded",
+                            "reason": "duplicate_generation_interrupted_by_monitor",
+                        },
+                        "monitor_disposition": {
+                            "status": "superseded",
+                            "reason": "duplicate backlog-generation spawned during manual/auto overlap",
+                        },
+                        "run_dir": str(run_dir),
+                    },
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["task_id"], "exec-backlog-generation-plan-monitor-superseded-002")
+
     def test_plan_backlog_add_persists_item_and_next_marks_queued(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
