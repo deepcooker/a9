@@ -13396,6 +13396,17 @@ def plan_backlog_generation_continuation_item(
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
     bounded_read_paths = plan_bounded_read_paths(str(plan.get("plan_id") or ""), allowed_paths)
     bounded_read_lines = [f"bounded read: {path}" for path in bounded_read_paths[:10]]
+    plan_id = str(plan.get("plan_id") or "")
+    plan_dir = PLANS_DIR / plan_id if plan_id else PLANS_DIR / "missing-plan"
+    bounded_read_commands = [
+        f'rg -n -m 20 "Current State|contract|backlog|decision_status|problem|must|out_of_scope|allowed_execution|role_signoff|active" {shlex.quote(str(ROOT / "docs/project.md"))}',
+        f'rg -n -m 20 "decision_status|system_requirement|state_flow|exception_flow|acceptance|out_of_scope|debate_next|execution_next|role_signoff|change_record|contract" {shlex.quote(str(ROOT / "docs/method.md"))}',
+        f'rg -n -m 20 "current|causal|decision|mainline|24h|MemPalace|session|next" {shlex.quote(str(ROOT / "docs/session.md"))}',
+        f'rg -n -m 20 "plan_id|contract|requirements_debate|execution_backlog|generated_task_ids|status|allowed_execution" {shlex.quote(str(plan_dir / "plan.json"))}',
+        f'rg -n -m 20 "monitor_disposition|execution_backlog|change_request|transport|read_contract|next" {shlex.quote(str(plan_dir / "progress.md"))}',
+        f'rg -n -m 20 "status: proposed|status: applied|proposal|reason|evidence_refs" {shlex.quote(str(plan_dir / "change_request.md"))}',
+        f'rg -n -m 20 "MemPalace|causal|recall|transport|backlog|contract" {shlex.quote(str(plan_dir / "findings.md"))} {shlex.quote(str(plan_dir / "mistakes.md"))}',
+    ]
     if not backlog_generation_can_continue(plan_ref, generated_task_ids, plan=plan):
         return None
     latest_generation = latest_backlog_generation_summary(plan_ref)
@@ -13497,10 +13508,15 @@ def plan_backlog_generation_continuation_item(
             "- If the contract is stale or insufficient, set output.decision_status to not_decided and output.change_request.status to required.",
             "- Do not mutate plan contract fields directly; use change_request for contract changes.",
             "",
+            "Bounded read commands for this task:",
+            *[f"- {command}" for command in bounded_read_commands],
+            "",
             "Rules:",
             "- This is requirements/backlog shaping, not execution.",
             "- live_read_budget_policy: stop.",
-            "- Read only bounded slices from the exact read_commands you output; do not cd to /root/a9 or search broad roots.",
+            "- Before any evidence/source read, use only the exact Bounded read commands listed above.",
+            "- Do not use `jq`, `python`, `git diff`, `cat`, `ls`, or ad-hoc shell pipelines as non-test evidence reads in this task.",
+            "- Read only bounded slices from the exact read_commands listed above; do not cd to /root/a9 or search broad roots.",
             "- Use capped `rg -n -m 20` or `rg ... | head -n 40`; never run uncapped rg in read-heavy phases.",
             "- Keep each `sed -n` source window <= 120 lines and total requested source lines <= 180.",
             "- Do not search `.a9` roots; use exact evidence paths already provided in the prompt.",

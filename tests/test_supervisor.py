@@ -5045,6 +5045,9 @@ Do the work.
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["source"], "plan.execution_backlog_generation")
         self.assertIn("route: debate_next", items[0]["prompt"])
+        self.assertIn("Bounded read commands for this task:", items[0]["prompt"])
+        self.assertIn("rg -n -m 20", items[0]["prompt"])
+        self.assertIn("Do not use `jq`, `python`, `git diff`, `cat`, `ls`", items[0]["prompt"])
 
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()
