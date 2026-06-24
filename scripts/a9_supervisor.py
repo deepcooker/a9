@@ -8721,7 +8721,12 @@ def runtime_state_from_summary(
     if queued_tasks or running_tasks:
         return "active", "tasks_in_queue_or_running"
     transport_health = worker_transport_health if isinstance(worker_transport_health, dict) else {}
-    if str(transport_health.get("status") or "") == "cooldown":
+    transport_cooldown_until = parse_utc_datetime(str(transport_health.get("cooldown_until") or ""))
+    if (
+        str(transport_health.get("status") or "") == "cooldown"
+        and transport_cooldown_until
+        and transport_cooldown_until > datetime.now(timezone.utc)
+    ):
         return "active", "worker_transport_cooldown"
     plan = current_plan if isinstance(current_plan, dict) else {}
     if plan:

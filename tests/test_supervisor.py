@@ -13657,7 +13657,17 @@ index 0000000..3e75765
                     )
                     os.utime(run_dir / "summary.json", (time.time() + index, time.time() + index))
 
-                state, reason = mod.runtime_state_from_summary(0, 0, {"status": "retryable-worker-transport"}, current_plan=plan)
+                state, reason = mod.runtime_state_from_summary(
+                    0,
+                    0,
+                    {"status": "retryable-worker-transport"},
+                    worker_transport_health={
+                        "schema": "a9.worker_transport_health.v1",
+                        "status": "cooldown",
+                        "cooldown_until": "2000-01-01T00:00:00+00:00",
+                    },
+                    current_plan=plan,
+                )
 
                 self.assertEqual(state, "blocked")
                 self.assertEqual(reason, "backlog_generation_transport_retries_exhausted")
