@@ -45,4 +45,6 @@ business logic.
 ## Closure
 
 A review is closed only when the decision, evidence, tradeoffs, stale branches,
-acceptance and next tasks are explicit. Otherwise it remains debate.
+acceptance and next tasks are explicit. If debate produces an execution backlog
+draft while contract remains unresolved, execution_next must not be re-enqueued
+until review closure is applied; otherwise it remains debate.
