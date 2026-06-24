@@ -14478,6 +14478,27 @@ role_signoff: product, business, architecture, test approved.
         finally:
             next_path.unlink(missing_ok=True)
 
+    def test_schedule_next_task_blocks_repair_recursion(self):
+        mod = load_supervisor()
+        task = mod.Task(
+            path=Path("auto-repair-parent.md"),
+            task_id="auto-repair-parent",
+            prompt="repair exact blocker only",
+            phase="repair",
+            checks=["python3 -m unittest tests.test_supervisor.SupervisorTests.test_schedule_next_task_blocks_repair_recursion"],
+            allowed_paths=["scripts/a9_supervisor.py", "tests/test_supervisor.py"],
+        )
+        summary = {
+            "task_id": task.task_id,
+            "status": "needs-repair",
+            "run_dir": "/tmp/a9-run",
+            "worker_envelope": {"envelope": {"output": {"next_slice": "repair: retry the same repair"}}},
+        }
+
+        self.assertIsNone(mod.schedule_next_task(task, summary))
+        self.assertEqual(summary["auto_next_block"]["reason"], "repair_recursion_requires_monitor")
+        self.assertEqual(summary["auto_next_block"]["task_id"], "auto-repair-parent")
+
     def test_monitor_blocked_repair_checks_keeps_declared_checks_only(self):
         mod = load_supervisor()
         task = mod.Task(

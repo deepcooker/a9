@@ -11378,6 +11378,18 @@ def schedule_next_task(task: Task, summary: dict[str, Any]) -> Path | None:
         return schedule_next_session_refresh_task(task, summary)
     if task.phase == SESSION_CLOSE_READING_PHASE:
         return schedule_next_session_close_reading_task(task, summary)
+    if task.phase == "repair" and (
+        summary["status"] in {"needs-followup", "needs-repair", "monitor-blocked"}
+        or str(summary["status"]).startswith("retryable-")
+    ):
+        summary["auto_next_block"] = {
+            "reason": "repair_recursion_requires_monitor",
+            "status": summary["status"],
+            "task_id": task.task_id,
+            "phase": task.phase,
+            "recommendation": "Stop auto repair-of-repair recursion and require monitor review before retrying.",
+        }
+        return None
     if summary["status"] == "monitor-blocked":
         phase = next_phase_for(summary["status"], task.phase)
         checks = monitor_blocked_repair_checks(task, summary, phase)
