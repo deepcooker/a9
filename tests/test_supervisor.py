@@ -13510,12 +13510,19 @@ index 0000000..3e75765
         mod = load_supervisor()
         old_queue = mod.QUEUE_DIR
         old_running = mod.RUNNING_DIR
+        old_transport = mod.WORKER_TRANSPORT_HEALTH_PATH
+        old_plans = mod.PLANS_DIR
+        old_active = mod.ACTIVE_PLAN_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 mod.QUEUE_DIR = Path(tmp) / "queue"
                 mod.RUNNING_DIR = Path(tmp) / "running"
+                mod.WORKER_TRANSPORT_HEALTH_PATH = Path(tmp) / "worker_transport_health.json"
+                mod.PLANS_DIR = Path(tmp) / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
                 mod.QUEUE_DIR.mkdir(parents=True)
                 mod.RUNNING_DIR.mkdir(parents=True)
+                mod.PLANS_DIR.mkdir(parents=True)
                 summary = {
                     "task_id": "selftest-review-closure-waiting",
                     "status": "pass",
@@ -13527,6 +13534,135 @@ index 0000000..3e75765
         finally:
             mod.QUEUE_DIR = old_queue
             mod.RUNNING_DIR = old_running
+            mod.WORKER_TRANSPORT_HEALTH_PATH = old_transport
+            mod.PLANS_DIR = old_plans
+            mod.ACTIVE_PLAN_PATH = old_active
+
+    def test_service_progress_marks_runtime_active_during_worker_transport_cooldown(self):
+        mod = load_supervisor()
+        old_queue = mod.QUEUE_DIR
+        old_running = mod.RUNNING_DIR
+        old_transport = mod.WORKER_TRANSPORT_HEALTH_PATH
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                mod.QUEUE_DIR = base / "queue"
+                mod.RUNNING_DIR = base / "running"
+                mod.WORKER_TRANSPORT_HEALTH_PATH = base / "worker_transport_health.json"
+                mod.QUEUE_DIR.mkdir(parents=True)
+                mod.RUNNING_DIR.mkdir(parents=True)
+                mod.write_json(
+                    mod.WORKER_TRANSPORT_HEALTH_PATH,
+                    {
+                        "schema": "a9.worker_transport_health.v1",
+                        "status": "cooldown",
+                        "cooldown_until": "2099-01-01T00:00:00+00:00",
+                        "last_failure": {"task_id": "backlog-generation-plan-001"},
+                    },
+                )
+
+                progress = mod.service_progress({"task_id": "transport-failed", "status": "retryable-worker-transport"})
+
+                self.assertEqual(progress["runtime_state"], "active")
+                self.assertEqual(progress["runtime_state_reason"], "worker_transport_cooldown")
+        finally:
+            mod.QUEUE_DIR = old_queue
+            mod.RUNNING_DIR = old_running
+            mod.WORKER_TRANSPORT_HEALTH_PATH = old_transport
+
+    def test_runtime_state_marks_active_plan_transport_retry_pending_before_limit(self):
+        mod = load_supervisor()
+        old_runs = mod.RUNS_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mod.RUNS_DIR = Path(tmp) / "runs"
+                mod.RUNS_DIR.mkdir(parents=True)
+                plan = {
+                    "plan_id": "plan-transport-retry",
+                    "contract": {
+                        "problem": "Generate backlog after transport recovers.",
+                        "why_now": "idle runtime needs next execution batch.",
+                        "out_of_scope": "no product drift.",
+                        "reference_entry": "A9 transport retry policy.",
+                        "must": "retry bounded backlog generation.",
+                        "system_requirement": "show retry state.",
+                        "data_shape": "plan and run summary.",
+                        "normal_flow": "transport failure -> cooldown -> retry.",
+                        "exception_flow": "retry exhaustion -> monitor repair.",
+                        "acceptance": "runtime state is accurate.",
+                        "allowed_execution": "docs/project.md",
+                    },
+                    "execution_backlog": {
+                        "items": [],
+                        "generated_task_ids": ["exec-backlog-generation-plan-transport-retry-001"],
+                    },
+                }
+                run_dir = mod.RUNS_DIR / "retry-001"
+                run_dir.mkdir()
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "exec-backlog-generation-plan-transport-retry-001",
+                        "status": "retryable-worker-transport",
+                        "run_dir": str(run_dir),
+                        "worker_failure": {"category": "transport"},
+                    },
+                )
+
+                state, reason = mod.runtime_state_from_summary(0, 0, {"status": "retryable-worker-transport"}, current_plan=plan)
+
+                self.assertEqual(state, "active")
+                self.assertEqual(reason, "backlog_generation_transport_retry_pending")
+        finally:
+            mod.RUNS_DIR = old_runs
+
+    def test_runtime_state_marks_active_plan_transport_retry_exhausted_at_limit(self):
+        mod = load_supervisor()
+        old_runs = mod.RUNS_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                mod.RUNS_DIR = Path(tmp) / "runs"
+                mod.RUNS_DIR.mkdir(parents=True)
+                plan = {
+                    "plan_id": "plan-transport-exhausted",
+                    "contract": {
+                        "problem": "Generate backlog after transport recovers.",
+                        "why_now": "idle runtime needs next execution batch.",
+                        "out_of_scope": "no product drift.",
+                        "reference_entry": "A9 transport retry policy.",
+                        "must": "retry bounded backlog generation.",
+                        "system_requirement": "show retry exhaustion.",
+                        "data_shape": "plan and run summary.",
+                        "normal_flow": "transport failure -> cooldown -> retry.",
+                        "exception_flow": "retry exhaustion -> monitor repair.",
+                        "acceptance": "runtime state is accurate.",
+                        "allowed_execution": "docs/project.md",
+                    },
+                    "execution_backlog": {
+                        "items": [],
+                        "generated_task_ids": ["exec-backlog-generation-plan-transport-exhausted-001"],
+                    },
+                }
+                for index in range(1, 4):
+                    run_dir = mod.RUNS_DIR / f"retry-{index:03d}"
+                    run_dir.mkdir()
+                    mod.write_json(
+                        run_dir / "summary.json",
+                        {
+                            "task_id": f"exec-backlog-generation-plan-transport-exhausted-{index:03d}",
+                            "status": "retryable-worker-transport",
+                            "run_dir": str(run_dir),
+                            "worker_failure": {"category": "transport"},
+                        },
+                    )
+                    os.utime(run_dir / "summary.json", (time.time() + index, time.time() + index))
+
+                state, reason = mod.runtime_state_from_summary(0, 0, {"status": "retryable-worker-transport"}, current_plan=plan)
+
+                self.assertEqual(state, "blocked")
+                self.assertEqual(reason, "backlog_generation_transport_retries_exhausted")
+        finally:
+            mod.RUNS_DIR = old_runs
 
     def test_service_progress_marks_runtime_complete_when_goal_completion_evidence_exists(self):
         mod = load_supervisor()
@@ -13984,11 +14120,17 @@ role_signoff: product, business, architecture, test approved.
         old_queue = mod.QUEUE_DIR
         old_running = mod.RUNNING_DIR
         old_runs = mod.RUNS_DIR
+        old_transport = mod.WORKER_TRANSPORT_HEALTH_PATH
+        old_plans = mod.PLANS_DIR
+        old_active = mod.ACTIVE_PLAN_PATH
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 mod.QUEUE_DIR = Path(tmp) / "queue"
                 mod.RUNNING_DIR = Path(tmp) / "running"
                 mod.RUNS_DIR = Path(tmp) / "runs"
+                mod.WORKER_TRANSPORT_HEALTH_PATH = Path(tmp) / "worker_transport_health.json"
+                mod.PLANS_DIR = Path(tmp) / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
                 mod.ensure_dirs()
                 run_dir = mod.RUNS_DIR / "selftest-runtime-state-run"
                 run_dir.mkdir(parents=True, exist_ok=True)
@@ -14013,6 +14155,9 @@ role_signoff: product, business, architecture, test approved.
             mod.QUEUE_DIR = old_queue
             mod.RUNNING_DIR = old_running
             mod.RUNS_DIR = old_runs
+            mod.WORKER_TRANSPORT_HEALTH_PATH = old_transport
+            mod.PLANS_DIR = old_plans
+            mod.ACTIVE_PLAN_PATH = old_active
 
     def test_enqueue_task_file_adds_default_strict_envelope_for_worker_phase(self):
         mod = load_supervisor()

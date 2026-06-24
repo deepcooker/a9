@@ -8714,9 +8714,31 @@ def runtime_state_from_summary(
     queued_tasks: int,
     running_tasks: int,
     summary: dict[str, Any] | None = None,
+    *,
+    worker_transport_health: dict[str, Any] | None = None,
+    current_plan: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     if queued_tasks or running_tasks:
         return "active", "tasks_in_queue_or_running"
+    transport_health = worker_transport_health if isinstance(worker_transport_health, dict) else {}
+    if str(transport_health.get("status") or "") == "cooldown":
+        return "active", "worker_transport_cooldown"
+    plan = current_plan if isinstance(current_plan, dict) else {}
+    if plan:
+        debate = requirements_debate_progress(plan)
+        if debate.get("status") == "ready_for_execution_backlog":
+            plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
+            backlog = execution_backlog_state(plan)
+            generated_task_ids = {
+                str(item)
+                for item in backlog.get("generated_task_ids", [])
+                if str(item).strip()
+            }
+            latest_generation = latest_backlog_generation_summary(plan_ref)
+            if backlog_generation_retryable_transport_summary(latest_generation):
+                if backlog_generation_can_continue(plan_ref, generated_task_ids, plan=plan):
+                    return "active", "backlog_generation_transport_retry_pending"
+                return "blocked", "backlog_generation_transport_retries_exhausted"
     if summary_has_explicit_goal_completion(summary):
         return "complete", "goal_completion_evidence_present"
     if closed_execution_route_exists_from_summary(summary):
@@ -11897,7 +11919,13 @@ def service_progress(summary: dict[str, Any] | None = None, next_task_path: Path
         "capability_groups": group_progress,
         "next_goal": "Run the copy pipeline under the daemon for longer unattended soak tests.",
     }
-    progress["runtime_state"], progress["runtime_state_reason"] = runtime_state_from_summary(queued_tasks, running_tasks, summary)
+    progress["runtime_state"], progress["runtime_state_reason"] = runtime_state_from_summary(
+        queued_tasks,
+        running_tasks,
+        summary,
+        worker_transport_health=worker_transport_health,
+        current_plan=current_plan,
+    )
     write_json(PROGRESS_PATH, progress)
     return progress
 
