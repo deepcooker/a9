@@ -788,6 +788,10 @@ Implementation guardrail:
   `monitor-blocked/process_governance`, not model/token budget. This came from
   real backlog-040 observation after quota resume: the worker was stopped by
   task read-scope governance, so retrying through quota gates would be wrong.
+- Twenty-sixth concrete code cut completed: change-request review task ids now
+  include a hash of the latest open proposal. This preserves duplicate
+  suppression for the same CR but allows a later, different CR to get a fresh
+  review task even when old failed backlog items still block normal execution.
 - Remaining candidate projects (`ECC`, `MiroFish`, `Superpowers`, `gstack`,
   deeper `Headroom`) continue as旁路评审. They can improve role debate,
   planning or context shaping, but they should not block the MVP spine.

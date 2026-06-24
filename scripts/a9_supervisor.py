@@ -13139,7 +13139,8 @@ def plan_change_request_continuation_item(
     if not change_request:
         return None
     plan_ref = compact_task_ref(str(plan.get("plan_id") or "plan"), limit=48)
-    task_id = f"exec-change-request-review-{plan_ref}"
+    change_request_hash = hashlib.sha256(change_request.encode("utf-8")).hexdigest()[:10]
+    task_id = f"exec-change-request-review-{plan_ref}-{change_request_hash}"
     if execution_backlog_task_was_generated(task_id, generated_task_ids):
         return None
     contract = plan.get("contract", {}) if isinstance(plan.get("contract"), dict) else {}

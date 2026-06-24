@@ -311,6 +311,10 @@ P7 NZX technical MVP
   process-governance/monitor-blocked, not budget, so quota resume must not pick
   it up again. The next repair must narrow the task prompt/read command contract
   or update process governance, not switch models.
+- Change-request review task IDs now include a hash of the latest open proposal.
+  This prevents one old `change_request_review` generated task from starving a
+  later, different open change request when failed backlog rows are still
+  blocking normal execution.
 - `crates/a9-gateway`, `crates/a9-worker` and `crates/a9-client` are Rust-side
   control/runtime pieces.
 - `.a9/` contains runtime evidence and archives, not source truth.

@@ -4766,6 +4766,74 @@ Do the work.
         self.assertIn("Latest change_request:", items[0]["prompt"])
         self.assertIn("Add deterministic verification after gateway hint filtering.", items[0]["prompt"])
 
+    def test_plan_execution_backlog_items_change_request_review_id_uses_content_hash(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            try:
+                mod.PLANS_DIR = tmp_path / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                plan = mod.create_plan_payload(
+                    plan_id="plan-change-request-hash",
+                    goal_id="goal-change-request-hash",
+                    contract={
+                        "problem": "Need separate review tasks for separate change requests.",
+                        "why_now": "A fixed review task id can starve new CRs after one review run.",
+                        "must": "Task id changes when latest open change_request content changes.",
+                        "system_requirement": "new CR content can be reviewed after old CR review was generated.",
+                        "data_shape": "change_request proposal hash participates in task id.",
+                        "normal_flow": "new proposal -> new review task.",
+                        "exception_flow": "same proposal generated id -> no duplicate.",
+                        "acceptance": "same CR is suppressed, changed CR is returned.",
+                        "out_of_scope": "no direct implementation.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 change_request lane.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "backlog-old-failed",
+                        "title": "Old failed item",
+                        "phase": "execution_next",
+                        "prompt": "Already failed.",
+                        "status": "monitor-blocked",
+                    }
+                )
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-change-request-hash",
+                        "exec-002-mechanism_extract-plan-change-request-hash",
+                    ]
+                )
+                plan_dir = mod.write_plan_files(plan)
+                change_path = plan_dir / "change_request.md"
+                change_path.write_text(
+                    "# Change Request\n\n## cr-1\n\n- status: proposed\n- proposal: First proposal.\n",
+                    encoding="utf-8",
+                )
+                first_items = mod.plan_execution_backlog_items(plan, count=1)
+                first_task_id = first_items[0]["task_id"]
+                backlog["generated_task_ids"].append(first_task_id)
+                suppressed_items = mod.plan_execution_backlog_items(plan, count=1)
+                change_path.write_text(
+                    "# Change Request\n\n## cr-1\n\n- status: applied\n- proposal: First proposal.\n\n"
+                    "## cr-2\n\n- status: proposed\n- proposal: Second proposal.\n",
+                    encoding="utf-8",
+                )
+                second_items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+
+        self.assertTrue(first_task_id.startswith("exec-change-request-review-plan-change-request-hash-"))
+        self.assertEqual(suppressed_items, [])
+        self.assertEqual(len(second_items), 1)
+        self.assertNotEqual(second_items[0]["task_id"], first_task_id)
+        self.assertIn("Second proposal.", second_items[0]["prompt"])
+
     def test_plan_execution_backlog_items_open_change_request_preempts_failed_old_items(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -7762,7 +7830,7 @@ Findings are ready.
         self.assertEqual(parsed.phase, "mechanism_extract")
         self.assertIn("decision_status: debate_next", text)
         self.assertIn("Add next backlog candidate from change_request.", text)
-        self.assertIn("idle-backlog-exec-change-request-review-plan-idle-change-request", generated)
+        self.assertTrue(any("idle-backlog-exec-change-request-review-plan-idle-change-request" in task_id for task_id in generated))
 
     def test_idle_goal_continuation_budget_limits_instead_of_scheduling(self):
         mod = load_supervisor()
