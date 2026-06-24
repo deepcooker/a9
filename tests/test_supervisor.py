@@ -3547,6 +3547,30 @@ Do the work.
         self.assertEqual(health["cooldown_until"], "")
         self.assertIsNone(gate)
 
+    def test_worker_transport_probe_runs_custom_command_template(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            old_tmp = mod.WORKER_TMP_DIR
+            old_health = mod.WORKER_TRANSPORT_HEALTH_PATH
+            mod.WORKER_TMP_DIR = Path(tmp) / "tmp"
+            mod.WORKER_TRANSPORT_HEALTH_PATH = Path(tmp) / "worker_transport_health.json"
+            transport = {
+                "backend": "custom_command",
+                "source": "test",
+                "status": "ok",
+                "custom_command_template": "printf probe-ok > {final_path}",
+            }
+            try:
+                with mock.patch.object(mod, "resolved_worker_transport", return_value=transport):
+                    probe = mod.worker_transport_probe(timeout_seconds=5)
+            finally:
+                mod.WORKER_TMP_DIR = old_tmp
+                mod.WORKER_TRANSPORT_HEALTH_PATH = old_health
+
+        self.assertEqual(probe["status"], "ok")
+        self.assertEqual(probe["backend"], "custom_command")
+        self.assertEqual(probe["reason"], "probe_ok")
+
     def test_run_loop_observes_transport_cooldown_without_claiming_task(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

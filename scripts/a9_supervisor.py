@@ -938,34 +938,30 @@ def worker_transport_probe(timeout_seconds: int = 45, *, ignore_user_config: boo
     stdout_path = probe_dir / "stdout.jsonl"
     stderr_path = probe_dir / "stderr.log"
     final_path = probe_dir / "final.md"
-    if backend != "codex_exec":
-        probe = {
-            "status": "skipped",
-            "backend": backend,
-            "reason": "live probe currently supports codex_exec only",
-            "probe_dir": str(probe_dir),
-            "checked_at": utc_now(),
-        }
-        update_worker_transport_health_from_probe(probe)
-        return probe
     model, model_source = resolved_worker_model(None)
-    cmd = [
-        "env",
-        f"CODEX_HOME={WORKER_CODEX_HOME}",
-        f"HOME={WORKER_CODEX_HOME}",
-        f"TMPDIR={WORKER_TMP_DIR}",
-        "codex",
-        "exec",
-        "--json",
-        "--ephemeral",
-        "--model",
-        model,
-        "-C",
-        str(ROOT),
-    ]
-    if ignore_user_config:
-        cmd.append("--ignore-user-config")
-    cmd.extend(["--output-last-message", str(final_path), "Return exactly: probe-ok"])
+    prompt_text = "Return exactly: probe-ok"
+    if backend == "custom_command":
+        task = Task(path=probe_dir / "probe.md", task_id="worker-transport-probe", prompt=prompt_text, phase="transport_probe")
+        (probe_dir / "prompt.md").write_text(prompt_text, encoding="utf-8")
+        cmd = build_worker_cmd(task, ROOT, probe_dir, final_path, prompt_text)
+    else:
+        cmd = [
+            "env",
+            f"CODEX_HOME={WORKER_CODEX_HOME}",
+            f"HOME={WORKER_CODEX_HOME}",
+            f"TMPDIR={WORKER_TMP_DIR}",
+            "codex",
+            "exec",
+            "--json",
+            "--ephemeral",
+            "--model",
+            model,
+            "-C",
+            str(ROOT),
+        ]
+        if ignore_user_config:
+            cmd.append("--ignore-user-config")
+        cmd.extend(["--output-last-message", str(final_path), prompt_text])
     started = time.monotonic()
     with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open("w", encoding="utf-8") as stderr:
         proc = subprocess.run(
