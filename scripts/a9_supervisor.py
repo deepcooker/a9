@@ -13541,8 +13541,6 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
     if change_request_item:
         return [change_request_item]
     latest_change_request_status = latest_plan_change_request_status(plan)
-    if latest_change_request_status in {"applied", "approved", "satisfied", "done", "closed", "cancelled", "rejected"}:
-        return []
     if raw_items:
         terminal_statuses = {
             "pass",
@@ -13557,6 +13555,11 @@ def plan_execution_backlog_items(plan: dict[str, Any], *, count: int = 0) -> lis
         raw_statuses = {str(item.get("status") or "").strip().lower() for item in raw_items}
         if any(status not in terminal_statuses for status in raw_statuses):
             return []
+    if (
+        latest_change_request_status in {"applied", "approved", "satisfied", "done", "closed", "cancelled", "rejected"}
+        and not raw_items
+    ):
+        return []
     allowed_paths = extract_allowed_paths_from_execution_text(str(contract.get("allowed_execution") or ""))
     bounded_read_lines = [f"bounded read: {path}" for path in allowed_paths[:8]]
     selected_phases = list(EXECUTION_BACKLOG_PHASES)

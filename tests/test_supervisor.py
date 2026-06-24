@@ -4970,6 +4970,82 @@ Do the work.
 
                 self.assertEqual(items, [])
 
+    def test_plan_execution_backlog_items_continue_after_applied_change_request_and_closed_backlog(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_plans = mod.PLANS_DIR
+            old_active = mod.ACTIVE_PLAN_PATH
+            old_runs = mod.RUNS_DIR
+            try:
+                mod.PLANS_DIR = tmp_path / "plans"
+                mod.ACTIVE_PLAN_PATH = mod.PLANS_DIR / ".active_plan"
+                mod.RUNS_DIR = tmp_path / "runs"
+                plan = mod.create_plan_payload(
+                    plan_id="plan-applied-cr-closed-backlog",
+                    goal_id="goal-applied-cr-closed-backlog",
+                    contract={
+                        "problem": "Need next batch after a closed execution backlog.",
+                        "why_now": "Applied change requests should not freeze an exhausted active plan.",
+                        "must": "Continue to backlog generation when existing backlog items are terminal.",
+                        "system_requirement": "closed backlog plus applied CR can generate the next bounded batch.",
+                        "data_shape": "execution_backlog items and generated_task_ids.",
+                        "normal_flow": "all backlog terminal -> next backlog generation.",
+                        "exception_flow": "no backlog items -> closed CR alone does not create work.",
+                        "acceptance": "returned item is plan.execution_backlog_generation.",
+                        "out_of_scope": "do not reopen closed change requests.",
+                        "allowed_execution": "scripts/a9_supervisor.py tests/test_supervisor.py",
+                        "reference_entry": "A9 active plan closure.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["items"].append(
+                    {
+                        "id": "backlog-001-closed",
+                        "title": "Closed item",
+                        "phase": "execution_next",
+                        "prompt": "Already closed.",
+                        "status": "pass",
+                    }
+                )
+                backlog["generated_task_ids"].append(
+                    "idle-backlog-exec-backlog-generation-plan-applied-cr-closed-backlog-001"
+                )
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-applied-cr-closed-backlog",
+                        "exec-002-mechanism_extract-plan-applied-cr-closed-backlog",
+                    ]
+                )
+                run_dir = mod.RUNS_DIR / "idle-backlog-exec-backlog-generation-plan-applied-cr-closed-backlog-001-a1"
+                run_dir.mkdir(parents=True)
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "idle-backlog-exec-backlog-generation-plan-applied-cr-closed-backlog-001",
+                        "status": "needs-followup",
+                        "repo_head": "old-head",
+                    },
+                )
+                plan_dir = mod.write_plan_files(plan)
+                (plan_dir / "change_request.md").write_text(
+                    "# Change Request\n\n"
+                    "## cr-1\n\n"
+                    "- status: applied\n"
+                    "- proposal: Already applied.\n",
+                    encoding="utf-8",
+                )
+
+                items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.PLANS_DIR = old_plans
+                mod.ACTIVE_PLAN_PATH = old_active
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["source"], "plan.execution_backlog_generation")
+        self.assertIn("route: debate_next", items[0]["prompt"])
+
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
