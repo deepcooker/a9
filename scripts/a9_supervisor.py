@@ -13037,7 +13037,7 @@ def merge_unique_paths(*groups: list[str]) -> list[str]:
     return paths
 
 
-REQUIREMENTS_DEBATE_READ_PATHS = ["docs/project.md", "docs/method.md"]
+REQUIREMENTS_DEBATE_READ_PATHS = ["docs/project.md", "docs/method.md", "docs/session.md"]
 
 
 def plan_bounded_read_paths(plan_id: str, contract_paths: list[str] | None = None) -> list[str]:

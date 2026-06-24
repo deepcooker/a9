@@ -5221,6 +5221,7 @@ Do the work.
         self.assertIn("retry_scope: use docs/project.md, docs/method.md, docs/session.md", items[0]["prompt"])
         self.assertIn("allowed_paths, read_commands, checks", items[0]["prompt"])
         self.assertIn("Each backlog item read_commands must be exact bounded commands", items[0]["prompt"])
+        self.assertIn("docs/session.md", items[0]["allowed_paths"])
         self.assertTrue(any(path.endswith("/plans/plan-budget-retry/plan.json") for path in items[0]["allowed_paths"]))
 
     def test_plan_backlog_generation_retries_budget_after_code_update_even_after_limit(self):
