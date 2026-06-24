@@ -5085,6 +5085,77 @@ Do the work.
                 }
                 self.assertTrue(mod.backlog_generation_needs_retry_after_code_update(summary))
 
+    def test_plan_backlog_generation_retries_transport_failures_with_limit(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old_runs = mod.RUNS_DIR
+            mod.RUNS_DIR = tmp_path / "runs"
+            mod.RUNS_DIR.mkdir(parents=True)
+            try:
+                plan = mod.create_plan_payload(
+                    plan_id="plan-transport-retry",
+                    goal_id="goal-transport-retry",
+                    contract={
+                        "problem": "Transport failures should retry only within a bounded count.",
+                        "why_now": "Spark websocket transport can fail before any token use.",
+                        "must": "Retry transient transport failures without infinite loops.",
+                        "system_requirement": "transport retry count controls backlog generation continuation.",
+                        "data_shape": "run summary status and worker_failure category.",
+                        "normal_flow": "transport failure -> cooldown -> bounded retry.",
+                        "exception_flow": "three consecutive transport failures stop for monitor review.",
+                        "acceptance": "one failure emits next generation; three failures emit none.",
+                        "out_of_scope": "automatic expensive model fallback.",
+                        "allowed_execution": "docs/project.md docs/session.md",
+                        "reference_entry": "A9 transport cooldown policy.",
+                    },
+                )
+                backlog = mod.execution_backlog_state(plan)
+                backlog["generated_task_ids"].extend(
+                    [
+                        "exec-001-reference_scan-plan-transport-retry",
+                        "exec-002-mechanism_extract-plan-transport-retry",
+                        "exec-003-vendor_import-plan-transport-retry",
+                        "exec-004-implement-plan-transport-retry",
+                        "exec-005-test-plan-transport-retry",
+                        "exec-006-record-plan-transport-retry",
+                        "exec-backlog-generation-plan-transport-retry-001",
+                    ]
+                )
+                run_dir = mod.RUNS_DIR / "transport-retry-001"
+                run_dir.mkdir()
+                mod.write_json(
+                    run_dir / "summary.json",
+                    {
+                        "task_id": "exec-backlog-generation-plan-transport-retry-001",
+                        "status": "retryable-worker-transport",
+                        "worker_failure": {"category": "transport"},
+                    },
+                )
+
+                first_items = mod.plan_execution_backlog_items(plan, count=1)
+
+                for index in (2, 3):
+                    run_dir = mod.RUNS_DIR / f"transport-retry-00{index}"
+                    run_dir.mkdir()
+                    mod.write_json(
+                        run_dir / "summary.json",
+                        {
+                            "task_id": f"exec-backlog-generation-plan-transport-retry-00{index}",
+                            "status": "retryable-worker-transport",
+                            "worker_failure": {"category": "transport"},
+                        },
+                    )
+                    backlog["generated_task_ids"].append(f"exec-backlog-generation-plan-transport-retry-00{index}")
+
+                stopped_items = mod.plan_execution_backlog_items(plan, count=1)
+            finally:
+                mod.RUNS_DIR = old_runs
+
+        self.assertEqual(len(first_items), 1)
+        self.assertEqual(first_items[0]["task_id"], "exec-backlog-generation-plan-transport-retry-002")
+        self.assertEqual(stopped_items, [])
+
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

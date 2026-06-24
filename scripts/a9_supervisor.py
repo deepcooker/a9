@@ -13259,6 +13259,15 @@ def backlog_generation_retryable_timeout_summary(summary: dict[str, Any]) -> boo
     return status == "retryable-timeout" or worker_failure.get("category") == "timeout"
 
 
+def backlog_generation_retryable_transport_summary(summary: dict[str, Any]) -> bool:
+    status = str(summary.get("status") or "")
+    worker_failure = summary.get("worker_failure") if isinstance(summary.get("worker_failure"), dict) else {}
+    return status in {"retryable-worker-transport", "retryable-worker-network"} or worker_failure.get("category") in {
+        "transport",
+        "network",
+    }
+
+
 def backlog_generation_monitor_superseded_summary(summary: dict[str, Any]) -> bool:
     status = str(summary.get("status") or "").strip()
     worker_failure = summary.get("worker_failure") if isinstance(summary.get("worker_failure"), dict) else {}
@@ -13379,6 +13388,30 @@ def backlog_generation_consecutive_retryable_timeout_count(plan_ref: str) -> int
     return count
 
 
+def backlog_generation_consecutive_retryable_transport_count(plan_ref: str) -> int:
+    prefix = f"exec-backlog-generation-{plan_ref}-"
+    summaries: list[tuple[float, dict[str, Any]]] = []
+    for summary_path in RUNS_DIR.glob("*/summary.json"):
+        try:
+            mtime = summary_path.stat().st_mtime
+        except OSError:
+            continue
+        data = read_json_file(summary_path)
+        if not data:
+            continue
+        task_id = str(data.get("task_id") or "")
+        if prefix not in task_id:
+            continue
+        summaries.append((mtime, data))
+    summaries.sort(key=lambda item: item[0], reverse=True)
+    count = 0
+    for _, summary in summaries:
+        if not backlog_generation_retryable_transport_summary(summary):
+            break
+        count += 1
+    return count
+
+
 def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str], *, plan: dict[str, Any] | None = None) -> bool:
     prefix = f"exec-backlog-generation-{plan_ref}-"
     if not any(prefix in str(task_id) for task_id in generated_task_ids):
@@ -13394,6 +13427,8 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str],
         return backlog_generation_consecutive_retryable_interrupted_count(plan_ref) < 3
     if backlog_generation_retryable_timeout_summary(summary):
         return backlog_generation_consecutive_retryable_timeout_count(plan_ref) < 3
+    if backlog_generation_retryable_transport_summary(summary):
+        return backlog_generation_consecutive_retryable_transport_count(plan_ref) < 3
     if backlog_generation_monitor_superseded_summary(summary):
         return True
     if backlog_generation_needs_retry_after_code_update(summary):
