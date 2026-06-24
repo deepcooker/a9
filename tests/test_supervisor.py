@@ -5090,8 +5090,16 @@ Do the work.
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             old_runs = mod.RUNS_DIR
+            old_transport = mod.WORKER_TRANSPORT_HEALTH_PATH
+            old_queue = mod.QUEUE_DIR
+            old_running = mod.RUNNING_DIR
             mod.RUNS_DIR = tmp_path / "runs"
+            mod.WORKER_TRANSPORT_HEALTH_PATH = tmp_path / "worker_transport_health.json"
+            mod.QUEUE_DIR = tmp_path / "queue"
+            mod.RUNNING_DIR = tmp_path / "running"
             mod.RUNS_DIR.mkdir(parents=True)
+            mod.QUEUE_DIR.mkdir(parents=True)
+            mod.RUNNING_DIR.mkdir(parents=True)
             try:
                 plan = mod.create_plan_payload(
                     plan_id="plan-transport-retry",
@@ -5130,6 +5138,7 @@ Do the work.
                         "task_id": "exec-backlog-generation-plan-transport-retry-001",
                         "status": "retryable-worker-transport",
                         "worker_failure": {"category": "transport"},
+                        "run_dir": str(run_dir),
                     },
                 )
 
@@ -5144,17 +5153,42 @@ Do the work.
                             "task_id": f"exec-backlog-generation-plan-transport-retry-00{index}",
                             "status": "retryable-worker-transport",
                             "worker_failure": {"category": "transport"},
+                            "run_dir": str(run_dir),
                         },
                     )
                     backlog["generated_task_ids"].append(f"exec-backlog-generation-plan-transport-retry-00{index}")
 
                 stopped_items = mod.plan_execution_backlog_items(plan, count=1)
+
+                latest_summary = mod.RUNS_DIR / "transport-retry-003" / "summary.json"
+                later = latest_summary.stat().st_mtime + 10
+                probe_time = datetime.fromtimestamp(later, tz=timezone.utc).isoformat()
+                mod.write_json(
+                    mod.WORKER_TRANSPORT_HEALTH_PATH,
+                    {
+                        "schema": "a9.worker_transport_health.v1",
+                        "status": "ok",
+                        "cooldown_until": "",
+                        "consecutive_failures": 0,
+                        "last_probe": {
+                            "status": "ok",
+                            "checked_at": probe_time,
+                        },
+                        "updated_at": probe_time,
+                    },
+                )
+                recovered_items = mod.plan_execution_backlog_items(plan, count=1)
             finally:
                 mod.RUNS_DIR = old_runs
+                mod.WORKER_TRANSPORT_HEALTH_PATH = old_transport
+                mod.QUEUE_DIR = old_queue
+                mod.RUNNING_DIR = old_running
 
         self.assertEqual(len(first_items), 1)
         self.assertEqual(first_items[0]["task_id"], "exec-backlog-generation-plan-transport-retry-002")
         self.assertEqual(stopped_items, [])
+        self.assertEqual(len(recovered_items), 1)
+        self.assertEqual(recovered_items[0]["task_id"], "exec-backlog-generation-plan-transport-retry-004")
 
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()

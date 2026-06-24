@@ -13412,6 +13412,24 @@ def backlog_generation_consecutive_retryable_transport_count(plan_ref: str) -> i
     return count
 
 
+def worker_transport_probe_recovered_after_summary(summary: dict[str, Any]) -> bool:
+    state = worker_transport_health_state()
+    if str(state.get("status") or "") != "ok":
+        return False
+    probe = state.get("last_probe") if isinstance(state.get("last_probe"), dict) else {}
+    if str(probe.get("status") or "") != "ok":
+        return False
+    checked_at = parse_utc_datetime(str(probe.get("checked_at") or state.get("updated_at") or ""))
+    if not checked_at:
+        return False
+    summary_path = Path(str(summary.get("run_dir") or "")) / "summary.json"
+    try:
+        summary_time = datetime.fromtimestamp(summary_path.stat().st_mtime, tz=timezone.utc)
+    except OSError:
+        return False
+    return checked_at > summary_time
+
+
 def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str], *, plan: dict[str, Any] | None = None) -> bool:
     prefix = f"exec-backlog-generation-{plan_ref}-"
     if not any(prefix in str(task_id) for task_id in generated_task_ids):
@@ -13428,6 +13446,8 @@ def backlog_generation_can_continue(plan_ref: str, generated_task_ids: set[str],
     if backlog_generation_retryable_timeout_summary(summary):
         return backlog_generation_consecutive_retryable_timeout_count(plan_ref) < 3
     if backlog_generation_retryable_transport_summary(summary):
+        if worker_transport_probe_recovered_after_summary(summary):
+            return True
         return backlog_generation_consecutive_retryable_transport_count(plan_ref) < 3
     if backlog_generation_monitor_superseded_summary(summary):
         return True
