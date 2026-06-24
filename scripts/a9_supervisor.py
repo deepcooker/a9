@@ -315,7 +315,11 @@ WORKER_TRANSPORT_OBSERVATION_PATTERNS = [
     re.compile(r"\brmcp::transport::worker\b", re.I),
 ]
 WORKER_TRANSPORT_EXHAUSTED_PATTERNS = [
-    re.compile(r"\bReconnecting\.\.\.\s*5/5\b.*\btimeout waiting for child process to exit\b", re.I | re.S),
+    re.compile(
+        r"\bReconnecting\.\.\.\s*5/5\b.*\b(timeout waiting for child process to exit|request timed out|Connection reset by peer|stream disconnected before completion)\b",
+        re.I | re.S,
+    ),
+    re.compile(r"\bfailed to connect to websocket\b.*\bConnection reset by peer\b", re.I | re.S),
     re.compile(r"\bfailed to connect to websocket\b.*\btls handshake eof\b", re.I | re.S),
 ]
 
@@ -13268,7 +13272,15 @@ def backlog_generation_monitor_superseded_summary(summary: dict[str, Any]) -> bo
 
 def backlog_generation_needs_retry_after_code_update(summary: dict[str, Any]) -> bool:
     status = str(summary.get("status") or "")
-    if status not in {"needs-followup", "needs-repair", "monitor-blocked", "retryable-worker-budget", "retryable-timeout"}:
+    if status not in {
+        "needs-followup",
+        "needs-repair",
+        "monitor-blocked",
+        "retryable-worker-budget",
+        "retryable-timeout",
+        "retryable-worker-network",
+        "retryable-worker-transport",
+    }:
         return False
     summary_head = str(summary.get("repo_head") or "").strip()
     if not summary_head:

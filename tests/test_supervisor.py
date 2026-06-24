@@ -3336,6 +3336,21 @@ Do the work.
         self.assertEqual(mod.worker_transport_exhausted_reason(command_payload), "")
         self.assertIn("worker transport exhausted", mod.worker_transport_exhausted_reason(error_payload))
 
+    def test_transport_exhausted_detects_websocket_reset_reconnect_five(self):
+        mod = load_supervisor()
+
+        timed_out_payload = {
+            "type": "error",
+            "message": "Reconnecting... 5/5 (request timed out)",
+        }
+        reset_payload = {
+            "type": "error",
+            "message": "Reconnecting... 5/5 (stream disconnected before completion: Connection reset by peer (os error 104))",
+        }
+
+        self.assertIn("worker transport exhausted", mod.worker_transport_exhausted_reason(timed_out_payload))
+        self.assertIn("worker transport exhausted", mod.worker_transport_exhausted_reason(reset_payload))
+
     def test_live_worker_observes_declared_check_execution_without_stopping(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:
@@ -5058,6 +5073,17 @@ Do the work.
 
         with mock.patch.object(mod, "git_head", return_value="new-head"):
             self.assertTrue(mod.backlog_generation_needs_retry_after_code_update(summary))
+
+    def test_backlog_generation_transport_failures_retry_after_code_update(self):
+        mod = load_supervisor()
+
+        with mock.patch.object(mod, "git_head", return_value="new-head"):
+            for status in ("retryable-worker-network", "retryable-worker-transport"):
+                summary = {
+                    "status": status,
+                    "repo_head": "old-head",
+                }
+                self.assertTrue(mod.backlog_generation_needs_retry_after_code_update(summary))
 
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()
@@ -12656,6 +12682,29 @@ Continue A9 24-hour automation.
             stderr.write_text(
                 "ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: "
                 "IO error: tls handshake eof\n",
+                encoding="utf-8",
+            )
+            worker = {
+                "timed_out": False,
+                "idle_timed_out": True,
+                "budget_stopped": False,
+                "return_code": -9,
+                "stderr_path": str(stderr),
+            }
+
+            failure = mod.classify_worker_failure(worker)
+
+        self.assertEqual(failure["status"], "retryable-worker-transport")
+        self.assertEqual(failure["category"], "transport")
+        self.assertEqual(failure["matched_pattern"], "transport_exhausted_text")
+
+    def test_idle_timeout_with_websocket_reset_is_transport(self):
+        mod = load_supervisor()
+        with tempfile.TemporaryDirectory() as tmp:
+            stderr = Path(tmp) / "stderr.log"
+            stderr.write_text(
+                "ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: "
+                "IO error: Connection reset by peer (os error 104)\n",
                 encoding="utf-8",
             )
             worker = {
