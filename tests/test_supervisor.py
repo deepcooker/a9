@@ -5049,6 +5049,16 @@ Do the work.
         self.assertIn("rg -n -m 20", items[0]["prompt"])
         self.assertIn("Do not use `jq`, `python`, `git diff`, `cat`, `ls`", items[0]["prompt"])
 
+    def test_backlog_generation_monitor_blocked_retries_after_code_update(self):
+        mod = load_supervisor()
+        summary = {
+            "status": "monitor-blocked",
+            "repo_head": "old-head",
+        }
+
+        with mock.patch.object(mod, "git_head", return_value="new-head"):
+            self.assertTrue(mod.backlog_generation_needs_retry_after_code_update(summary))
+
     def test_plan_backlog_next_enqueues_decided_execution_tasks(self):
         mod = load_supervisor()
         with tempfile.TemporaryDirectory() as tmp:

@@ -13257,7 +13257,7 @@ def backlog_generation_retryable_timeout_summary(summary: dict[str, Any]) -> boo
 
 def backlog_generation_needs_retry_after_code_update(summary: dict[str, Any]) -> bool:
     status = str(summary.get("status") or "")
-    if status not in {"needs-followup", "needs-repair", "retryable-worker-budget", "retryable-timeout"}:
+    if status not in {"needs-followup", "needs-repair", "monitor-blocked", "retryable-worker-budget", "retryable-timeout"}:
         return False
     summary_head = str(summary.get("repo_head") or "").strip()
     if not summary_head:
